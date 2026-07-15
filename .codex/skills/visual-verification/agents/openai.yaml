@@ -1,0 +1,4 @@
+interface:
+  display_name: "Visual Verification"
+  short_description: "Inspect user-visible TuberNotes changes."
+  default_prompt: "Run DeveloperTools/verify-scenario.sh for the right DEBUG scenario, mechanically verify the TuberNotes UI change, and return Docs/templates/EvidencePacket.md. For feel/taste judgments, use human-device-loop so verdict and optional notes are indexed."

@@ -1,0 +1,63 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {};
+	objectVersion = 56;
+	objects = {
+
+		A00000000000000000000001 = {isa = PBXBuildFile; fileRef = A00000000000000000000101; };
+		A00000000000000000000002 = {isa = PBXBuildFile; fileRef = A00000000000000000000102; };
+		A00000000000000000000003 = {isa = PBXBuildFile; fileRef = A00000000000000000000103; };
+		A00000000000000000000004 = {isa = PBXBuildFile; fileRef = A00000000000000000000104; };
+		A00000000000000000000005 = {isa = PBXBuildFile; fileRef = A00000000000000000000105; };
+		A00000000000000000000006 = {isa = PBXBuildFile; fileRef = A00000000000000000000106; };
+		A00000000000000000000007 = {isa = PBXBuildFile; fileRef = A00000000000000000000107; };
+		A00000000000000000000008 = {isa = PBXBuildFile; fileRef = A00000000000000000000108; };
+		A00000000000000000000009 = {isa = PBXBuildFile; fileRef = A00000000000000000000109; };
+		A0000000000000000000000A = {isa = PBXBuildFile; fileRef = A0000000000000000000010A; };
+		A0000000000000000000000B = {isa = PBXBuildFile; fileRef = A0000000000000000000010B; };
+		A0000000000000000000000C = {isa = PBXBuildFile; fileRef = A0000000000000000000010C; };
+		A0000000000000000000000D = {isa = PBXBuildFile; fileRef = A0000000000000000000010D; };
+
+		A00000000000000000000101 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TuberNotesApp.swift; sourceTree = "<group>"; };
+		A00000000000000000000102 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
+		A00000000000000000000103 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpatialCanvasView.swift; sourceTree = "<group>"; };
+		A00000000000000000000104 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PencilCanvas.swift; sourceTree = "<group>"; };
+		A00000000000000000000105 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Pin.swift; sourceTree = "<group>"; };
+		A00000000000000000000106 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PinOverlayView.swift; sourceTree = "<group>"; };
+		A00000000000000000000107 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentClient.swift; sourceTree = "<group>"; };
+		A00000000000000000000108 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KnowledgeSearching.swift; sourceTree = "<group>"; };
+		A00000000000000000000109 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DevelopmentScenario.swift; sourceTree = "<group>"; };
+		A0000000000000000000010A = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PenFixture.swift; sourceTree = "<group>"; };
+		A0000000000000000000010B = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TuberNotes.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A0000000000000000000010C = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentInteractionSession.swift; sourceTree = "<group>"; };
+		A0000000000000000000010D = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentRequestBanner.swift; sourceTree = "<group>"; };
+
+		A00000000000000000000201 = {isa = PBXGroup; children = (A00000000000000000000202, A00000000000000000000208); sourceTree = "<group>"; };
+		A00000000000000000000202 = {isa = PBXGroup; children = (A00000000000000000000203, A00000000000000000000204, A00000000000000000000205, A00000000000000000000206, A00000000000000000000207, A00000000000000000000209); path = TuberNotes; sourceTree = "<group>"; };
+		A00000000000000000000203 = {isa = PBXGroup; children = (A00000000000000000000101, A00000000000000000000102); path = App; sourceTree = "<group>"; };
+		A00000000000000000000204 = {isa = PBXGroup; children = (A00000000000000000000103, A00000000000000000000104); path = SpatialCanvas; sourceTree = "<group>"; };
+		A00000000000000000000205 = {isa = PBXGroup; children = (A00000000000000000000105, A00000000000000000000106); path = Pins; sourceTree = "<group>"; };
+		A00000000000000000000206 = {isa = PBXGroup; children = (A00000000000000000000107); path = AgentHarness; sourceTree = "<group>"; };
+		A00000000000000000000207 = {isa = PBXGroup; children = (A00000000000000000000108); path = Knowledge; sourceTree = "<group>"; };
+		A00000000000000000000209 = {isa = PBXGroup; children = (A00000000000000000000109, A0000000000000000000010A, A0000000000000000000010C, A0000000000000000000010D); path = DeveloperSupport; sourceTree = "<group>"; };
+		A00000000000000000000208 = {isa = PBXGroup; children = (A0000000000000000000010B); name = Products; sourceTree = "<group>"; };
+
+		A00000000000000000000301 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A00000000000000000000001, A00000000000000000000002, A00000000000000000000003, A00000000000000000000004, A00000000000000000000005, A00000000000000000000006, A00000000000000000000007, A00000000000000000000008, A00000000000000000000009, A0000000000000000000000A, A0000000000000000000000C, A0000000000000000000000D); runOnlyForDeploymentPostprocessing = 0; };
+		A00000000000000000000302 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		A00000000000000000000303 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+
+		A00000000000000000000401 = {isa = PBXNativeTarget; buildConfigurationList = A00000000000000000000602; buildPhases = (A00000000000000000000301, A00000000000000000000302, A00000000000000000000303); buildRules = (); dependencies = (); name = TuberNotes; productName = TuberNotes; productReference = A0000000000000000000010B; productType = "com.apple.product-type.application"; };
+
+		A00000000000000000000501 = {isa = PBXProject; attributes = {BuildIndependentTargetsInParallel = 1; LastSwiftUpdateCheck = 2660; LastUpgradeCheck = 2660; TargetAttributes = {A00000000000000000000401 = {CreatedOnToolsVersion = 26.6; };};}; buildConfigurationList = A00000000000000000000601; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base); mainGroup = A00000000000000000000201; productRefGroup = A00000000000000000000208; projectDirPath = ""; projectRoot = ""; targets = (A00000000000000000000401); };
+
+		A00000000000000000000701 = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; CLANG_ENABLE_OBJC_ARC = YES; COPY_PHASE_STRIP = NO; DEBUG_INFORMATION_FORMAT = dwarf; ENABLE_TESTABILITY = YES; GCC_C_LANGUAGE_STANDARD = gnu17; GCC_OPTIMIZATION_LEVEL = 0; GCC_PREPROCESSOR_DEFINITIONS = ("DEBUG=1", "$(inherited)"); IPHONEOS_DEPLOYMENT_TARGET = 17.0; MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE; ONLY_ACTIVE_ARCH = YES; SDKROOT = iphoneos; SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)"; SWIFT_OPTIMIZATION_LEVEL = "-Onone"; }; name = Debug; };
+		A00000000000000000000702 = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; CLANG_ENABLE_OBJC_ARC = YES; COPY_PHASE_STRIP = YES; DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym"; GCC_C_LANGUAGE_STANDARD = gnu17; IPHONEOS_DEPLOYMENT_TARGET = 17.0; SDKROOT = iphoneos; SWIFT_COMPILATION_MODE = wholemodule; SWIFT_OPTIMIZATION_LEVEL = "-O"; VALIDATE_PRODUCT = YES; }; name = Release; };
+		A00000000000000000000703 = {isa = XCBuildConfiguration; buildSettings = {ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; DEVELOPMENT_TEAM = ""; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_CFBundleDisplayName = TuberNotes; INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES; INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES; INFOPLIST_KEY_UILaunchScreen_Generation = YES; INFOPLIST_KEY_UIRequiresFullScreen = YES; INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"; IPHONEOS_DEPLOYMENT_TARGET = 17.0; MARKETING_VERSION = 0.1; PRODUCT_BUNDLE_IDENTIFIER = com.tubernotes.app; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SUPPORTS_MACCATALYST = NO; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = 2; }; name = Debug; };
+		A00000000000000000000704 = {isa = XCBuildConfiguration; buildSettings = {ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; DEVELOPMENT_TEAM = ""; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_CFBundleDisplayName = TuberNotes; INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES; INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES; INFOPLIST_KEY_UILaunchScreen_Generation = YES; INFOPLIST_KEY_UIRequiresFullScreen = YES; INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"; IPHONEOS_DEPLOYMENT_TARGET = 17.0; MARKETING_VERSION = 0.1; PRODUCT_BUNDLE_IDENTIFIER = com.tubernotes.app; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SUPPORTS_MACCATALYST = NO; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = 2; }; name = Release; };
+
+		A00000000000000000000601 = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000701, A00000000000000000000702); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		A00000000000000000000602 = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000703, A00000000000000000000704); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+	};
+	rootObject = A00000000000000000000501;
+}

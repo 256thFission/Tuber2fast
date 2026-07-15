@@ -1,0 +1,9 @@
+.DS_Store
+DerivedData*/
+build/
+*.xcuserstate
+xcuserdata/
+.pencil-fixtures/
+DeveloperTools/PencilFixtureMCP/.venv/
+DeveloperTools/PencilFixtureMCP/__pycache__/
+tmp/
