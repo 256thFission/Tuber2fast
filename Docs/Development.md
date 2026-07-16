@@ -108,7 +108,7 @@ PencilFixtureMCP exposes two separate Debug-only protocols. Use feedback threads
 
 Keep the returned `owner_token`; only its hash is persisted. A human reply moves the active feedback thread to `awaiting-model`, retaining the device slot. A genuinely `blocked`, `resolved`, or `cancelled` thread releases the slot and advances the next queued scenario cleanly. Prefer one focused clarification before revising; ask another only when the answer exposes a materially different ambiguity.
 
-Screenshots are human-triggered. The model may request one in a message but cannot invoke capture or send. The human must preview, may annotate with the native PencilKit tool palette, caption, cancel, and explicitly send. History emphasizes the annotated preview while collection retains both clean and annotated PNG paths. Feedback-thread UI is excluded from the captured product viewport.
+Screenshots are human-triggered. The model may request one in a message but cannot invoke capture or send. The human must preview, may annotate with the native PencilKit tool palette, then attach the result to the reply composer. The annotation remains an unsent draft until the human explicitly sends the reply, which may include text and the screenshot as one message. Canceling or removing the draft publishes nothing. History emphasizes the annotated preview while collection retains both clean and annotated PNG paths. Feedback-thread UI is excluded from the captured product viewport.
 
 ### Pen-fixture agent path
 

@@ -5,6 +5,12 @@ import SwiftUI
 #if DEBUG
 @MainActor
 final class FeedbackThreadSession: ObservableObject {
+    struct PendingCapture {
+        let feedbackThreadID: String
+        let cleanImage: UIImage
+        let annotatedImage: UIImage
+    }
+
     enum Preference: String, CaseIterable, Identifiable {
         case a = "Prefer A", b = "Prefer B", neither = "Neither", none = "No preference"
         var id: String { rawValue }
@@ -18,6 +24,7 @@ final class FeedbackThreadSession: ObservableObject {
     @Published private(set) var isResettingComparison = false
     @Published var isPresentingFullThread = false
     @Published var capturedImage: UIImage?
+    @Published private(set) var pendingCapture: PendingCapture?
     @Published var statusMessage: String?
 
     private var pollTask: Task<Void, Never>?
@@ -205,81 +212,64 @@ final class FeedbackThreadSession: ObservableObject {
         statusMessage = nil
     }
 
-    func sendCapture(drawing: PKDrawing, caption: String) {
-        guard var value = activeFeedbackThread, let cleanImage = capturedImage else { return }
-        let messageID = "feedback-message-\(UUID().uuidString.lowercased())"
-        let attachmentID = "feedback-attachment-\(UUID().uuidString.lowercased())"
-        let directory = FeedbackThreadStore.attachmentDirectory(feedbackThreadID: value.id)
-        let cleanURL = directory.appendingPathComponent("\(attachmentID)-clean.png")
-        let annotatedURL = directory.appendingPathComponent("\(attachmentID)-annotated.png")
+    func attachCapture(drawing: PKDrawing) {
+        guard let value = activeFeedbackThread, let cleanImage = capturedImage else { return }
         let annotated = UIGraphicsImageRenderer(size: cleanImage.size).image { _ in
             cleanImage.draw(in: CGRect(origin: .zero, size: cleanImage.size))
             drawing.image(from: CGRect(origin: .zero, size: cleanImage.size), scale: cleanImage.scale)
                 .draw(in: CGRect(origin: .zero, size: cleanImage.size))
         }
-        guard let cleanData = cleanImage.pngData(), let annotatedData = annotated.pngData() else {
-            statusMessage = "Could not encode viewport capture."
-            return
+        pendingCapture = PendingCapture(feedbackThreadID: value.id, cleanImage: cleanImage, annotatedImage: annotated)
+        capturedImage = nil
+        statusMessage = nil
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            guard !Task.isCancelled else { return }
+            self?.isPresentingFullThread = true
         }
+    }
 
-        let idempotencyKey = "human-capture-\(UUID().uuidString.lowercased())"
-        let attachment = FeedbackAttachment(
-            id: attachmentID,
-            messageID: messageID,
-            kind: "annotated-screenshot",
-            cleanPath: "attachments/\(cleanURL.lastPathComponent)",
-            annotatedPath: "attachments/\(annotatedURL.lastPathComponent)",
-            caption: caption.nilIfBlank,
-            pixelWidth: cleanImage.cgImage?.width ?? Int(cleanImage.size.width * cleanImage.scale),
-            pixelHeight: cleanImage.cgImage?.height ?? Int(cleanImage.size.height * cleanImage.scale),
-            orientation: cleanImage.size.width >= cleanImage.size.height ? "landscape" : "portrait",
-            scenario: value.scenario,
-            surfaceRevision: value.surfaceRevision,
-            createdAt: Date()
-        )
-        let message = FeedbackMessage(
-            id: messageID,
-            feedbackThreadID: value.id,
-            sequence: value.lastSequence + 1,
-            author: .human,
-            body: caption.nilIfBlank,
-            createdAt: Date(),
-            interaction: nil,
-            attachments: [attachment],
-            surfaceDirective: nil,
-            inReplyTo: activeQuestion?.id,
-            idempotencyKey: idempotencyKey,
-            selectedOptionID: nil
-        )
-        value.state = .awaitingModel
-        do {
-            try cleanData.write(to: cleanURL, options: .atomic)
-            try annotatedData.write(to: annotatedURL, options: .atomic)
-            try FeedbackThreadStore.appendMessage(message, to: &value)
-            FeedbackThreadStore.appendEvent("annotated-screenshot-sent", feedbackThreadID: value.id, values: ["attachmentID": attachmentID, "messageID": messageID])
-            capturedImage = nil
-            reload()
-        } catch {
-            try? FileManager.default.removeItem(at: cleanURL)
-            try? FileManager.default.removeItem(at: annotatedURL)
-            statusMessage = error.localizedDescription
-        }
+    func removePendingCapture() {
+        pendingCapture = nil
     }
 
     private func appendHumanMessage(body: String, selectedOptionID: String?, answering questionID: String?) {
         guard var value = activeFeedbackThread else { return }
         let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty || selectedOptionID != nil else { return }
+        let capture = pendingCapture.flatMap { $0.feedbackThreadID == value.id ? $0 : nil }
+        guard !trimmed.isEmpty || selectedOptionID != nil || capture != nil else { return }
+        let messageID = "feedback-message-\(UUID().uuidString.lowercased())"
+        let attachmentID = capture.map { _ in "feedback-attachment-\(UUID().uuidString.lowercased())" }
+        let directory = FeedbackThreadStore.attachmentDirectory(feedbackThreadID: value.id)
+        let cleanURL = attachmentID.map { directory.appendingPathComponent("\($0)-clean.png") }
+        let annotatedURL = attachmentID.map { directory.appendingPathComponent("\($0)-annotated.png") }
+        let attachment: FeedbackAttachment? = capture.flatMap { capture in
+            guard let attachmentID, let cleanURL, let annotatedURL else { return nil }
+            return FeedbackAttachment(
+                id: attachmentID,
+                messageID: messageID,
+                kind: "annotated-screenshot",
+                cleanPath: "attachments/\(cleanURL.lastPathComponent)",
+                annotatedPath: "attachments/\(annotatedURL.lastPathComponent)",
+                caption: nil,
+                pixelWidth: capture.cleanImage.cgImage?.width ?? Int(capture.cleanImage.size.width * capture.cleanImage.scale),
+                pixelHeight: capture.cleanImage.cgImage?.height ?? Int(capture.cleanImage.size.height * capture.cleanImage.scale),
+                orientation: capture.cleanImage.size.width >= capture.cleanImage.size.height ? "landscape" : "portrait",
+                scenario: value.scenario,
+                surfaceRevision: value.surfaceRevision,
+                createdAt: Date()
+            )
+        }
         let idempotencyKey = "human-reply-\(UUID().uuidString.lowercased())"
         let message = FeedbackMessage(
-            id: "feedback-message-\(UUID().uuidString.lowercased())",
+            id: messageID,
             feedbackThreadID: value.id,
             sequence: value.lastSequence + 1,
             author: .human,
             body: trimmed.nilIfBlank,
             createdAt: Date(),
             interaction: nil,
-            attachments: [],
+            attachments: attachment.map { [$0] } ?? [],
             surfaceDirective: nil,
             inReplyTo: questionID,
             idempotencyKey: idempotencyKey,
@@ -287,10 +277,26 @@ final class FeedbackThreadSession: ObservableObject {
         )
         value.state = .awaitingModel
         do {
+            if let capture, let cleanURL, let annotatedURL {
+                guard let cleanData = capture.cleanImage.pngData(), let annotatedData = capture.annotatedImage.pngData() else {
+                    statusMessage = "Could not encode viewport capture."
+                    return
+                }
+                try cleanData.write(to: cleanURL, options: .atomic)
+                try annotatedData.write(to: annotatedURL, options: .atomic)
+            }
             try FeedbackThreadStore.appendMessage(message, to: &value)
             FeedbackThreadStore.appendEvent("message-posted", feedbackThreadID: value.id, values: ["messageID": message.id, "author": "human"])
+            if let attachmentID {
+                FeedbackThreadStore.appendEvent("annotated-screenshot-sent", feedbackThreadID: value.id, values: ["attachmentID": attachmentID, "messageID": messageID])
+                pendingCapture = nil
+            }
             reload()
-        } catch { statusMessage = error.localizedDescription }
+        } catch {
+            if let cleanURL { try? FileManager.default.removeItem(at: cleanURL) }
+            if let annotatedURL { try? FileManager.default.removeItem(at: annotatedURL) }
+            statusMessage = error.localizedDescription
+        }
     }
 }
 

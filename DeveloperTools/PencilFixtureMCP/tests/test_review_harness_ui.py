@@ -64,7 +64,42 @@ class ReviewHarnessUISourceTests(unittest.TestCase):
         self.assertIn("captureViewportAfterOverlayDismissal", root)
         self.assertIn(".opacity(feedbackSession.isCapturing ? 0 : 1)", root)
         self.assertIn('Button("Cancel")', views)
-        self.assertIn('Button("Send")', views)
+        self.assertIn('Button("Attach")', views)
+
+    def test_annotation_is_a_removable_draft_until_the_final_composer_send(self):
+        session = (ROOT / "TuberNotes/DeveloperSupport/FeedbackThreadSession.swift").read_text()
+        views = (ROOT / "TuberNotes/DeveloperSupport/FeedbackThreadViews.swift").read_text()
+
+        self.assertIn("@Published private(set) var pendingCapture", session)
+        self.assertIn("func attachCapture(drawing: PKDrawing)", session)
+        self.assertIn("pendingCapture = PendingCapture(", session)
+        self.assertIn("func removePendingCapture()", session)
+        self.assertIn("pendingCapture = nil", session)
+        self.assertIn('Button("Attach") { session.attachCapture(drawing: drawing) }', views)
+        self.assertIn("session.removePendingCapture()", views)
+        self.assertNotIn("sendCapture(", session)
+        self.assertNotIn("sendCapture(", views)
+
+        attach_body = session.split("func attachCapture(drawing: PKDrawing)", 1)[1].split(
+            "func removePendingCapture()", 1
+        )[0]
+        self.assertNotIn("appendMessage", attach_body)
+        self.assertNotIn("write(to:", attach_body)
+
+        cancel_body = session.split("func cancelCapture()", 1)[1].split(
+            "func attachCapture(drawing: PKDrawing)", 1
+        )[0]
+        self.assertNotIn("appendMessage", cancel_body)
+        self.assertNotIn("write(to:", cancel_body)
+
+        append_body = session.split("private func appendHumanMessage", 1)[1]
+        self.assertIn("let capture = pendingCapture", append_body)
+        self.assertIn("attachments: attachment.map { [$0] } ?? []", append_body)
+        self.assertLess(
+            append_body.index("try FeedbackThreadStore.appendMessage(message, to: &value)"),
+            append_body.index("pendingCapture = nil"),
+        )
+        self.assertIn("session.sendReply(reply)", views)
 
     def test_live_ab_seam_is_bounded_and_pen_fixture_path_stays_separate(self):
         views = (ROOT / "TuberNotes/DeveloperSupport/FeedbackThreadViews.swift").read_text()

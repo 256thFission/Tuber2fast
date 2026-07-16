@@ -19,7 +19,7 @@ This is development tooling, not product chat or project-management software. It
 - Both human and model may resolve, subject to optimistic concurrency.
 - Resolved threads are terminal and immutable until explicitly reopened.
 - The floating harness preserves the prior quick context interaction: collapsed bar, bounded expanded current-turn card, and a full-screen thread view for complete history.
-- The model may ask for a screenshot but cannot trigger one. Capture and send are separate, explicit human actions.
+- The model may ask for a screenshot but cannot trigger one. Capture, attachment drafting, and final message send are separate, explicit human actions.
 - The initial structured interaction is single-choice only. Multi-choice and Pencil capture as feedback-thread interactions are deferred.
 - A/B review is one compiled, Debug-only comparison seam with synchronized reset, not a generalized variant platform.
 - Messages, answers, attachments, and events are append-only and idempotent.
@@ -150,10 +150,11 @@ The model may request visual clarification in a normal message. It cannot invoke
 1. The human taps `Capture & Annotate` in the full-screen thread view.
 2. The harness captures the TuberNotes product viewport while excluding all feedback-thread UI.
 3. A frozen preview opens.
-4. The human may draw with Apple Pencil using the native PencilKit tool picker, add a one-line caption, cancel, or send.
-5. `Cancel` creates no sent attachment and no successful attachment message.
-6. `Send` atomically persists attachment metadata and appends its owning message.
-7. The MCP collection path mirrors both PNGs to durable model-accessible paths.
+4. The human may draw with Apple Pencil using the native PencilKit tool picker, cancel, or attach the result as an unsent composer draft.
+5. The reply composer previews the draft and lets the human add optional text or remove the attachment.
+6. `Cancel` and `Remove Attachment` create no sent attachment and no successful attachment message.
+7. The reply composer's `Send Reply` atomically persists the clean and annotated images, attachment metadata, optional text, and their single owning message.
+8. The MCP collection path mirrors both PNGs to durable model-accessible paths.
 
 M2 persists:
 
@@ -164,7 +165,7 @@ M2 persists:
 - surface revision;
 - feedback-thread ID and owning message ID;
 - capture and send timestamps;
-- optional caption.
+- optional message text on the owning reply.
 
 Photos import, custom media-library behavior, editable drawing archives, deletion UX, and elaborate retake flows are deferred. Captures from other apps or system UI are prohibited.
 
@@ -334,7 +335,8 @@ Every meaningful event is appended to a mergeable JSONL schema with a globally u
 
 - capture only from a human action;
 - harness UI excluded by construction;
-- frozen preview with Pencil annotation, optional one-line caption, explicit Send/Cancel;
+- frozen preview with Pencil annotation, explicit Attach/Cancel, and a removable composer draft;
+- one final reply send for optional text and the annotated screenshot together;
 - atomic clean/annotated PNG persistence and durable Mac paths;
 - cancelled/failed capture produces no sent attachment or successful message.
 

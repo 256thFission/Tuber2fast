@@ -203,6 +203,7 @@ struct FeedbackThreadView: View {
                                     messageView(message, feedbackThreadID: feedbackThread.id)
                                         .id(message.id)
                                 }
+                                pendingAttachmentDraft
                                 interactionComposer
                                 threadActions
                             }
@@ -268,6 +269,37 @@ struct FeedbackThreadView: View {
     }
 
     @ViewBuilder
+    private var pendingAttachmentDraft: some View {
+        if let capture = session.pendingCapture,
+           capture.feedbackThreadID == session.activeFeedbackThread?.id {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .top, spacing: 12) {
+                    Image(uiImage: capture.annotatedImage)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 160, height: 110)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .accessibilityLabel("Pending annotated screenshot")
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label("Attached to this reply", systemImage: "paperclip")
+                            .font(.headline)
+                        Text("Complete the reply below, then send both as one message.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Button("Remove Attachment", role: .destructive) {
+                            session.removePendingCapture()
+                        }
+                        .font(.caption.weight(.semibold))
+                    }
+                }
+            }
+            .padding(14)
+            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12))
+            .accessibilityIdentifier("pending-feedback-attachment")
+        }
+    }
+
+    @ViewBuilder
     private var interactionComposer: some View {
         if let question = session.activeQuestion, question.interaction?.kind == .singleChoice {
             VStack(alignment: .leading, spacing: 10) {
@@ -312,7 +344,10 @@ struct FeedbackThreadView: View {
                 Button("Send Reply") {
                     session.sendReply(reply)
                     reply = ""
-                }.buttonStyle(.borderedProminent).disabled(reply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(reply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && session.pendingCapture == nil)
+                .accessibilityIdentifier(session.pendingCapture == nil ? "send-feedback-reply" : "send-reply-with-attachment")
             }
         } else {
             Text("Awaiting the model. Your submitted response is read-only.")
@@ -364,7 +399,6 @@ private struct FeedbackAttachmentPreview: View {
 struct FeedbackAnnotationView: View {
     @ObservedObject var session: FeedbackThreadSession
     @State private var drawing = PKDrawing()
-    @State private var caption = ""
 
     var body: some View {
         NavigationStack {
@@ -380,13 +414,20 @@ struct FeedbackAnnotationView: View {
                 }
             }
             .safeAreaInset(edge: .bottom) {
-                TextField("Optional caption", text: $caption).textFieldStyle(.roundedBorder).padding().background(.bar)
+                Text("Draw on the screenshot, then attach it to a reply.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .padding()
+                    .frame(maxWidth: .infinity)
+                    .background(.bar)
             }
             .navigationTitle("Annotate Viewport")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) { Button("Cancel") { session.cancelCapture() } }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Send") { session.sendCapture(drawing: drawing, caption: caption) }.buttonStyle(.borderedProminent)
+                    Button("Attach") { session.attachCapture(drawing: drawing) }
+                        .buttonStyle(.borderedProminent)
+                        .accessibilityIdentifier("attach-feedback-annotation")
                 }
             }
         }

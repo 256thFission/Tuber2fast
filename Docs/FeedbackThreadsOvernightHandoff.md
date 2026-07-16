@@ -70,7 +70,7 @@ Incorporate these decisions into `Docs/FeedbackThreadsSpec.md` before implementa
 11. Pen fixtures remain a separate protocol and corpus. Do not absorb `request_pen_fixture` into feedback threads.
 12. M1 questions are free-text. M3 adds single-choice with optional comment and attachment. Defer multi-choice and Pencil capture as feedback-thread interaction types.
 13. Screenshot capture is always triggered by the human. The model may ask for one but cannot trigger it.
-14. Before sending a screenshot, the human must receive a preview and may annotate it with Apple Pencil, caption it, cancel it, or explicitly send it.
+14. Before sending a screenshot, the human must receive a preview and may annotate it with Apple Pencil, cancel it, or attach it as an unsent reply draft; optional text and the screenshot are explicitly sent together as one message from the composer.
 15. M2 persists and collects clean and annotated PNGs. Defer Photos import, custom media-library behavior, editable drawing archives, deletion UX, and elaborate retake flows.
 16. Revision metadata is carried on a normal message/surface directive: summary, build ID, scenario, surface revision, and reset policy. Do not build a mini CI system.
 17. Store durable device-side thread JSON, a gitignored Mac mirror, and append-only JSONL events. Defer search, archive UI, storage dashboards, and general export UI.
@@ -101,8 +101,9 @@ Incorporate these decisions into `Docs/FeedbackThreadsSpec.md` before implementa
 - Capture excludes the feedback-thread UI and preserves the tested product viewport.
 - The human sees a preview before sending.
 - Apple Pencil annotation is supported on the frozen image.
-- Optional one-line caption.
-- Explicit `Send` and `Cancel`.
+- Explicit `Attach` and `Cancel`; attaching returns to the composer without sending.
+- The composer previews a removable attachment draft and accepts optional message text.
+- One explicit composer `Send Reply` publishes the text and screenshot as a single message.
 - Persist clean and annotated PNGs with dimensions, orientation, scenario, surface revision, thread ID, and message ID.
 - Append the sent attachment to the feedback thread.
 - MCP collection returns durable Mac-side paths the model can inspect.
