@@ -1,636 +1,1189 @@
-# TuberNotes - Build Week Spec
+# TuberNotes — Build Week Product and Implementation Spec
+
+Status: working specification
+
+Target: iPad, iPadOS 17+, Apple Pencil
+
+Primary implementation target: one-week Codex hackathon
+
+Long-term intent: distributable application
+
+Shared contract revision: v1, frozen July 15, 2026
 
 TuberNotes is a spatial AI notebook for iPad.
 
-Circle anything on the canvas with Apple Pencil. An agent sees exactly what you selected, gathers whatever additional context it needs, and places answers back onto the page as spatially anchored **Pins**.
+The user circles visible work with Apple Pencil. An agent sees the selected pixels, investigates additional context when useful, and places answers back onto the page as spatially anchored Pins.
 
-The core interaction is:
+> **Point → Investigate → Point Back**
 
-> **Point -> Investigate -> Point Back**
+This document is both a product specification and the coordination contract for parallel agentic implementation. It defines the critical path, shared interfaces, subsystem ownership, verification evidence, and stopping conditions.
 
-## 1. Product thesis
+## 1. Decisions and open questions
 
-Most AI note-taking tools move the user out of their work and into a chat box. TuberNotes keeps the interaction on the page.
+### Confirmed
 
-The user can circle:
+1. Magic Lasso is an explicit tool mode. The app does not infer that an ordinary ink circle is a command.
+2. PDF documents and blank notebooks are both critical-path document types.
+3. Documents use discrete horizontal pages rather than one continuous vertical canvas.
+4. At fit-to-page zoom, a horizontal finger swipe turns the page. Above fit-to-page zoom, horizontal movement pans within the page. Previous/next controls remain available at every zoom level.
+5. A blank notebook begins with branded TuberNotes dot-grid paper and supports appending additional blank pages.
+6. Blank notebook pages are a separate critical-path document flow. Inserting or reordering blank pages inside an imported PDF is deferred.
+7. The critical path supports a bundled demo PDF, one basic system PDF-import path, and creation of a blank notebook. A full document library is deferred.
+8. The hackathon build uses a DEBUG-only direct provider adapter with locally supplied configuration. The architecture must support a distributable app without embedding a provider secret.
+9. Selected pixels are the primary source of truth. OCR or extracted text may supplement but never replace an available image.
+10. Persistent spatial data is never stored in screen coordinates.
 
-- Handwritten work
-- Equations
-- Textbook content
-- Diagrams
-- Mixed ink and document content
-- An entire worked solution
+### Explicitly unresolved
 
-The selected region is sent directly to a multimodal model as an image. The agent can additionally inspect the surrounding page, search a preprocessed textbook, search notebook context, or use the web.
+- Final provider and model selection
+- Deployment location and authentication mechanism for the production agent gateway
+- Whether Ask voice input remains a reach goal or returns to the primary demo
 
-The result is not merely a chat response. The agent returns one or more Pins attached to precise points in the selected content.
+Changes to confirmed decisions or shared contracts require human review before implementation continues.
+
+## 2. Product thesis
+
+Most AI note tools move the user away from their work and into a chat box. TuberNotes keeps the interaction on the page.
+
+The user can select:
+
+- handwriting;
+- equations;
+- printed PDF content;
+- diagrams;
+- mixtures of ink and document content; or
+- an entire worked solution.
+
+The selected region is rendered as an image containing the same PDF background, ink, and diagrams visible to the user. The agent may inspect surrounding page context, search a preprocessed textbook, search earlier notebook pages, or use other explicitly configured tools.
+
+The result is one or more spatial annotations attached to precise locations in the selected work.
 
 Examples:
 
 - “This is the key substitution.”
 - “The sign error begins here.”
 - “This definition comes from Chapter 7.”
-- “You used this same idea three pages ago.”
-- “These two lines contradict each other.”
+- “You used this idea on page 3.”
+- “These two lines contradict one another.”
 
 The canvas is both the agent's input surface and its output surface.
 
-## 2. Hero interaction
+## 3. Critical-path user story
 
-### Magic Lasso
+The primary demo uses a multipage STEM PDF with a handwritten derivation over one page.
 
-The user circles anything on the page. The selected region glows and lifts visually from the canvas. A compact action strip appears immediately:
+1. The user turns to the prepared page.
+2. The user selects **Magic Lasso** in the toolbar.
+3. The user circles the complete derivation with Apple Pencil.
+4. The selected region glows and visually lifts from the page.
+5. An action strip appears with **Explain**, **Check**, and **Ask**.
+6. The user chooses **Check**.
+7. The app immediately shows a truthful progress state.
+8. The agent inspects the image and optionally searches the bundled textbook index.
+9. Multiple Pins appear at relevant steps:
+   - a subtle confirmation beside a correct step;
+   - a primary Pin at the first incorrect step; and
+   - optionally, a downstream Pin explaining inherited error.
+10. The user taps the primary Pin and reads the explanation in place.
+11. The user pans or zooms; every Pin remains attached to its page location.
+12. The user turns away and back; ink and Pins remain on the correct page.
 
-> **Explain · Check · Ask**
+The demo's closing idea is:
 
-### Explain
+> You point at your work. The agent investigates it. Then it points back.
 
-Understand the selected content and annotate the important parts.
+The second critical document path starts from a new blank notebook:
 
-Possible output:
+1. The user creates a notebook and receives a polished dot-grid first page.
+2. The user writes with Apple Pencil and can use the same Magic Lasso interaction on the ink.
+3. The user appends another dot-grid page and turns between the pages horizontally.
+4. Ink and Pins remain attached to their originating blank pages.
 
-- One Pin with a concise explanation
-- Multiple Pins explaining different components
-- A connection between related regions
+The blank notebook path proves that PDF support is a page background capability rather than the identity of the entire product.
 
-### Check
+## 4. Critical-path scope
 
-Critique the selected work.
+### Required
 
-Possible output:
+- Ordered multipage document model
+- Bundled PDF loading
+- Basic PDF import through the system picker
+- Blank notebook creation
+- Branded dot-grid paper rendering
+- Appending blank notebook pages
+- Discrete page turning
+- Per-page PencilKit ink
+- Fit-to-page, pan, and zoom
+- Explicit Magic Lasso mode
+- Lasso path capture and selection rendering
+- Explain, Check, and typed Ask intents
+- Deterministic fake agent
+- Real multimodal agent request
+- One or more spatial Pins
+- Pin expansion
+- Per-page persistence sufficient for repeatable demos
+- Bundled, preprocessed textbook search fixture
+- Truthful tool/progress events
+- Deterministic verification scenarios
+- Cancellation, retry, and safe failure behavior
 
-- Correctness confirmation
-- The first incorrect step
-- Multiple localized issues
-- Confidence or uncertainty
-- A concise correction
+### Deferred until the hero path is reliable
 
-### Ask
+- Full document library and folder organization
+- Rich PDF editing or annotation compatibility
+- Inserting or reordering blank pages inside an imported PDF
+- Exhaustive pen tools
+- Multiple windows and multi-device sync
+- Production migrations
+- Generalized textbook ingestion UI
+- Runtime DeepSeek-OCR preprocessing on iPad
+- Handwritten follow-up recognition
+- Voice Ask
+- Full long-press conversation UI
+- Agent-drawn connectors
+- Semantic Pin clustering
+- Visual correction overlays
+- Web research placed on canvas
 
-The action strip immediately exposes a keyboard field and voice input. The question and selected image are sent together.
+Deferred features may be promoted only when the critical hero scenario passes its reliability gate.
 
-Examples:
+## 5. Hero interaction contract
 
-- “Why does this term disappear?”
-- “Explain this like I know calculus but not linear algebra.”
-- “Does this contradict what I wrote above?”
-- “Where did I first go wrong?”
+### 5.1 Tool modes
 
-No additional mode-selection screen is required.
+The canvas has an explicit input mode:
 
-## 3. The signature primitive: Pins
+```swift
+enum CanvasToolMode: Equatable {
+    case ink
+    case erase
+    case magicLasso
+    case navigate
+}
+```
 
-A Pin is a persistent AI annotation attached to a precise point or region on the page.
+The exact toolbar design may evolve, but the active mode must always be visible. Drawing an ordinary circle in ink mode must create ink and must not invoke the agent.
 
-- **Collapsed:** ✦ Sign error starts here
-- **Tap:** expands the explanation inline, streams additional content if still generating, and shows citations or source links.
-- **Long-press:** opens the full conversation Thread behind the Pin.
+### 5.2 Magic Lasso state machine
 
-A single lasso may produce multiple Pins.
+```swift
+enum LassoState: Equatable {
+    case idle
+    case drawing
+    case selected(selectionID: UUID)
+    case submitting(investigationID: UUID)
+    case receiving(investigationID: UUID)
+    case completed(investigationID: UUID)
+    case failed(investigationID: UUID, recoverable: Bool)
+}
+```
 
-~~~text
-  x² - 4 = 0          ✦ Correct factorization
-  (x - 2)(x + 2)
-  x = 2               ✦ You dropped the second solution
-~~~
+Required transitions:
 
-The model reasons about the image and returns normalized coordinates relative to the selected crop. The app owns coordinate transforms and rendering. The model owns semantic targeting.
+```text
+idle
+  → drawing
+  → selected
+  → submitting
+  → receiving
+  → completed
+```
 
-## 4. Core loop
+From `selected`, tapping outside the selection or choosing Cancel returns to `idle`. From `submitting` or `receiving`, Cancel terminates the active investigation and preserves the page. A recoverable failure offers Retry without requiring the user to redraw the lasso.
 
-~~~text
-Apple Pencil lasso
-        ↓
-capture exact visible selection
-(background + handwriting + diagrams)
-        ↓
-optional contextual envelope
-(document identity, page number, nearby text)
-        ↓
-multimodal agent
-        ↓
-agent optionally calls tools
-        ↓
-place_pins(...)
-        ↓
-crop coordinates → page coordinates
-        ↓
-Pins appear directly on the canvas
-~~~
+The first version may close an almost-closed Pencil path automatically. It must preserve the captured path used to construct the selection and must reject degenerate paths that contain no meaningful area.
 
-The live interaction is explicitly vision-first, not OCR-first. The selected pixels are the primary source of truth. Structured context may supplement the image when useful but never replaces it.
+### 5.3 Selection presentation
 
-## 5. Context envelope
+After a valid lasso closes:
 
-The model receives the exact selected image plus lightweight metadata when available.
+- the selected pixels remain unchanged;
+- the boundary receives a visible glow or lift treatment;
+- content outside the selection may dim slightly;
+- the action strip appears adjacent to the selection without obscuring its center;
+- page turning, mode changes, or cancellation dismiss the action strip safely.
 
-~~~swift
-struct LassoSelection: Identifiable {
+### 5.4 Intents
+
+```swift
+enum InvestigationIntent: Codable, Equatable, Sendable {
+    case explain
+    case check
+    case ask(question: String)
+}
+```
+
+**Explain** requests localized understanding.
+
+**Check** requests a correctness review and prioritizes the first meaningful error.
+
+**Ask** immediately reveals a keyboard field; submitting combines typed text with the retained selection image.
+
+No additional mode-selection screen is allowed between lasso completion and these actions.
+
+## 6. Document and page model
+
+### 6.1 Document
+
+A document is an ordered collection of stable page identities.
+
+```swift
+struct NotebookDocument: Identifiable, Codable, Sendable {
     let id: UUID
-    let pageID: UUID
-    var path: [CGPoint]        // normalized page coordinates
-    var regionRect: CGRect     // normalized page coordinates
-    var image: CGImage         // background + PDF/textbook + ink + diagrams
-    var context: SelectionContext
+    var title: String
+    var source: DocumentSource
+    var pages: [PageRecord]
+    var currentPageID: UUID?
 }
 
-struct SelectionContext {
-    var documentID: UUID?
+enum DocumentSource: Codable, Sendable {
+    case bundledPDF(resourceName: String)
+    case importedPDF(bookmarkData: Data)
+    case notebook(defaultPaperStyle: PaperStyle)
+}
+
+enum PaperStyle: String, Codable, Sendable {
+    case plain
+    case ruled
+    case grid
+    case tuberDotGrid
+}
+
+struct PageDimensions: Codable, Equatable, Sendable {
+    let width: Double
+    let height: Double
+
+    static let tuberPortrait = PageDimensions(width: 768, height: 1024)
+}
+
+struct InkReference: Codable, Equatable, Sendable {
+    let relativePath: String
+}
+```
+
+Exact persistence types may change to accommodate security-scoped URLs, but callers must not use a transient file URL as document identity.
+
+### 6.2 Page
+
+```swift
+struct PageRecord: Identifiable, Codable, Sendable {
+    let id: UUID
+    var index: Int
+    var background: PageBackground
+    var inkReference: InkReference?
+    var annotations: [PageAnnotation]
+}
+
+enum PageBackground: Codable, Sendable {
+    case pdf(documentID: UUID, pageIndex: Int)
+    case blank(style: PaperStyle, dimensions: PageDimensions)
+}
+```
+
+Each PDF page remains an immutable background. TuberNotes ink and Pins are stored as overlays and never destructively written into the source PDF during the critical path.
+
+The default blank page uses `.tuberDotGrid` and `.tuberPortrait`. The theme should feel intentionally designed rather than like a generic graph-paper texture: warm paper, low-contrast graphite or indigo dots, generous margins, and enough restraint that Pencil ink and Pins remain dominant. Exact color and spacing values belong to the visual implementation and require human review.
+
+A new notebook starts with one page. Appending a page creates a new stable `pageID` with the document's default paper style. Deleting, reordering, and inserting pages are deferred for the critical path.
+
+### 6.3 Page rendering
+
+- The active page renders at sufficient resolution for the current zoom.
+- Neighboring pages may be prefetched, but only the active page requires full interactive state.
+- Page identity, not array index, owns ink, Pins, selections, and investigations.
+- Rotated PDF pages must render upright and use the same top-left page-normalized coordinate convention as unrotated pages.
+- The visible selection renderer must composite the PDF background and ink exactly as shown.
+
+### 6.4 Page turning and gesture precedence
+
+1. Apple Pencil input follows the active Pencil tool and never turns pages.
+2. At fit-to-page zoom, a deliberate horizontal finger swipe turns one page.
+3. Above fit-to-page zoom, finger gestures pan and pinch-zoom the current page.
+4. Previous/next controls provide deterministic page navigation at every zoom level.
+5. An active lasso selection is cancelled before changing pages.
+6. An in-flight investigation may continue after a page turn, but its results attach only to its original `pageID`.
+
+## 7. Spatial coordinate contract
+
+Spatial correctness is a shared product invariant owned in implementation by `SpatialCanvas`.
+
+### 7.1 Coordinate spaces
+
+TuberNotes uses these named spaces:
+
+1. **PDF space** — source PDF coordinates, including PDF rotation and bottom-left conventions.
+2. **Page space** — logical page coordinates after PDF rotation is resolved.
+3. **Page-normalized space** — top-left origin, x and y in `0...1` over the page bounds.
+4. **Crop pixel space** — pixels in the encoded selection image.
+5. **Crop-normalized space** — top-left origin, x and y in `0...1` over the encoded crop bounds.
+6. **Canvas space** — the scroll/zoom content coordinate system.
+7. **View space** — transient on-screen points.
+
+Only page-normalized coordinates may persist for page annotations. Crop-normalized coordinates may cross the agent boundary. Canvas and view coordinates are ephemeral.
+
+### 7.2 Strong spatial types
+
+Raw `CGPoint` and `CGRect` values must not cross subsystem boundaries without a named wrapper.
+
+```swift
+struct PageNormalizedPoint: Codable, Equatable, Sendable {
+    var x: Double
+    var y: Double
+}
+
+struct PageNormalizedRect: Codable, Equatable, Sendable {
+    var x: Double
+    var y: Double
+    var width: Double
+    var height: Double
+}
+
+struct CropNormalizedPoint: Codable, Equatable, Sendable {
+    var x: Double
+    var y: Double
+}
+
+struct CropNormalizedRect: Codable, Equatable, Sendable {
+    var x: Double
+    var y: Double
+    var width: Double
+    var height: Double
+}
+```
+
+Decoding invalid, non-finite, or materially out-of-range model coordinates must fail validation. Tiny floating-point excursions may be clamped only at the provider-decoding boundary and must be logged as validation events.
+
+### 7.3 Transform invariant
+
+For a stable page point `p`, the following must remain true across pan, zoom, rotation handling, and page reuse:
+
+```text
+pageNormalizedToView(p, viewportA)
+    → viewport changes
+pageNormalizedToView(p, viewportB)
+```
+
+The projected view point changes, but the stored `p` does not.
+
+Crop output maps through the selection geometry:
+
+```text
+crop-normalized target
+    → crop pixel target
+    → page-space target
+    → page-normalized target
+    → persisted PageAnnotation
+```
+
+The model never receives or returns screen coordinates.
+
+## 8. Selection artifact contract
+
+`SpatialCanvas` produces an immutable selection artifact for the agent boundary.
+
+```swift
+struct SelectionArtifact: Identifiable, Sendable {
+    let id: UUID
+    let documentID: UUID
+    let pageID: UUID
+    let pageIndex: Int
+    let lassoPath: [PageNormalizedPoint]
+    let pageBounds: PageNormalizedRect
+    let crop: SelectionCrop
+    let context: SelectionContext
+}
+
+struct SelectionCrop: Sendable {
+    let imageData: Data
+    let mediaType: String
+    let pixelWidth: Int
+    let pixelHeight: Int
+    let pageBounds: PageNormalizedRect
+}
+
+struct SelectionContext: Codable, Sendable {
     var documentTitle: String?
+    var sourceDocumentID: UUID?
     var pageNumber: Int?
     var nearbyText: String?
 }
-~~~
+```
 
-The context envelope exists to provide information the crop itself may not contain:
+Requirements:
 
-- Which textbook this is
-- Which page
-- Relevant text just outside the lasso
-- Notebook identity
-- Retrieval routing information
+- `imageData` contains the PDF background, current visible ink, and other user-visible page content.
+- The crop is an axis-aligned image corresponding exactly to `pageBounds`.
+- Pixels inside the lasso remain visually exact.
+- Pixels inside the crop but outside the lasso are visually de-emphasized so the model can distinguish the intended selection while retaining local layout.
+- Crop-normalized coordinates refer to the complete encoded image, not the lasso polygon's internal bounding shape.
+- The artifact remains valid for Retry even if the viewport changes.
+- Nearby text is optional supplementary context and must not replace the image.
 
-**Principle:** Never replace available pixels with extracted structure. Attach useful structure to the pixels.
+## 9. Pin and annotation contract
 
-## 6. Pin output contract
+A Pin is a persistent page annotation derived from an agent target.
 
-~~~swift
-struct PinPlacement: Codable, Identifiable {
+```swift
+struct PageAnnotation: Codable, Identifiable, Sendable {
     let id: UUID
+    let pageID: UUID
     let threadID: UUID
-    var target: NormalizedPoint       // normalized 0...1 inside lasso crop
-    var targetRegion: NormalizedRect? // optional highlight/connection area
+    var target: PageNormalizedPoint
+    var targetRegion: PageNormalizedRect?
+    var kind: AnnotationKind
+    var teaser: String
+    var body: String
+    var citations: [Citation]
+    var status: AnnotationStatus
+}
+
+struct Citation: Codable, Identifiable, Sendable {
+    let id: UUID
+    var title: String
+    var pageNumber: Int?
+    var url: URL?
+    var excerpt: String?
+}
+
+enum AnnotationKind: String, Codable, Sendable {
+    case confirmation
+    case issue
+    case explanation
+    case source
+    case uncertainty
+    case suggestion
+}
+
+enum AnnotationStatus: String, Codable, Sendable {
+    case streaming
+    case complete
+    case failed
+}
+```
+
+The agent first produces a crop-relative draft:
+
+```swift
+struct PinDraft: Codable, Identifiable, Sendable {
+    let id: UUID
+    var target: CropNormalizedPoint
+    var targetRegion: CropNormalizedRect?
+    var kind: AnnotationKind
     var teaser: String
     var body: String
     var citations: [Citation]
 }
-~~~
+```
 
-The model calls place_pins.
+`App` coordinates conversion of validated `PinDraft` values through `SpatialCanvas` geometry into `PageAnnotation` values. `AgentHarness` does not render Pins and `Pins` does not interpret crop coordinates.
 
-Example:
+### Pin behavior
 
-~~~json
-{
-  "pins": [
-    {
-      "x": 0.71,
-      "y": 0.43,
-      "teaser": "The sign error starts here",
-      "body": "When moving this term across the equality..."
-    }
-  ]
+- Collapsed Pins show a marker and concise teaser.
+- Tapping expands the explanation in place.
+- Streaming content may update an expanded Pin without moving its target.
+- Pins remain attached across pan, zoom, page turns, relaunch, and view reuse.
+- Multiple Pins must avoid making their targets ambiguous. Labels may move or collapse; target anchors may not.
+- Citations display source title and page or URL when available.
+- Full conversation Thread UI is deferred, but every Pin retains `threadID` for forward compatibility.
+
+## 10. Agent runtime and gateway
+
+Development agents, Codex skills, MCP tools, and Xcode tooling are not the agent shipped inside TuberNotes. Product runtime uses only explicitly implemented application interfaces.
+
+### 10.1 Security boundary
+
+The distributable app must not contain a reusable provider API secret.
+
+```text
+iPad app
+   → authenticated TuberNotes Agent Gateway
+   → model provider Responses API
+```
+
+For the hackathon, a DEBUG-only direct provider adapter will be used. Its credential is supplied locally at runtime and never committed, logged, included in fixtures, or compiled into a distributable build. Release builds must use the gateway interface.
+
+“ChatGPT/Codex OAuth” is not an implementation assumption. Authentication will be specified against the chosen gateway when that service is selected.
+
+### 10.2 Harness interface
+
+```swift
+protocol AgentClient: Sendable {
+    func investigate(_ request: InvestigationRequest) -> AsyncThrowingStream<AgentEvent, Error>
+    func cancel(investigationID: UUID) async
 }
-~~~
 
-The app transforms selection-image coordinates to page-normalized coordinates and then to canvas/view coordinates. Nothing persistent is stored in screen coordinates.
+struct InvestigationRequest: Identifiable, Sendable {
+    let id: UUID
+    let intent: InvestigationIntent
+    let selection: SelectionArtifact
+    let conversationID: String?
+}
+```
 
-## 7. Agent harness
+### 10.3 Events
 
-The harness is responsible for:
+```swift
+enum AgentEvent: Sendable {
+    case accepted
+    case inspectingSelection
+    case toolStarted(ToolInvocationSummary)
+    case toolFinished(ToolInvocationSummary)
+    case pinStarted(PinDraft)
+    case pinDelta(id: UUID, bodyDelta: String)
+    case pinCompleted(PinDraft)
+    case completed(conversationID: String?)
+    case failed(AgentFailure)
+}
 
-- ChatGPT/Codex OAuth authentication
-- Multimodal model requests
-- Tool calling
-- Context gathering
-- Streaming
-- Structured Pin creation
+enum ProductToolName: String, Codable, Sendable {
+    case searchTextbook = "search_textbook"
+    case placePins = "place_pins"
+}
 
-Tools:
+struct ToolInvocationSummary: Codable, Identifiable, Sendable {
+    let id: UUID
+    let tool: ProductToolName
+    let userVisibleStatus: String
+}
 
-- inspect_selection
-- read_page_context
-- search_textbook
-- search_notebook
-- web_search
-- place_pins
+struct AgentFailure: Error, Codable, Sendable {
+    enum Code: String, Codable, Sendable {
+        case unavailable
+        case unauthorized
+        case timedOut
+        case invalidResponse
+        case cancelled
+    }
 
-The agent chooses how much investigation is required.
+    let code: Code
+    let userMessage: String
+    let recoverable: Bool
+}
+```
 
-~~~text
-User selects equation
-        ↓
-Agent inspects image
-        ↓
-Needs definition from chapter?
-    ├── no → answer
-    └── yes
-         ↓
-    search_textbook
-         ↓
-    synthesize
-         ↓
-    place_pins
-~~~
+Events expose observable activity and high-level progress, not hidden chain-of-thought. Tool summaries contain only user-safe names such as “Checking the textbook…” or “Comparing earlier notes…”.
 
-The user may see lightweight progress states:
+### 10.4 Tools
 
-- Looking at your work…
-- Checking the textbook…
-- Comparing earlier notes…
-- Searching the web…
+Critical-path tools:
 
-The internal tool loop should feel visible enough to demonstrate agency without becoming a developer console.
+- `search_textbook`
+- `place_pins`
 
-## 8. Knowledge architecture
+Supported by local context without a model tool call:
+
+- selection image inspection through the request itself;
+- current document and page identity; and
+- optional nearby text.
+
+Deferred tools:
+
+- `search_notebook`
+- `web_search`
+- connectors or external workspace search
+
+`place_pins` uses a strict structured schema. Provider output is untrusted until decoded, bounds-checked, associated with the active selection, and converted to page-normalized annotations.
+
+### 10.5 Failure behavior
+
+- Network failure preserves the selection and offers Retry.
+- Retrieval failure does not prevent a vision-only answer when the model can continue honestly.
+- Invalid Pin coordinates reject the affected Pin rather than corrupting page state.
+- Cancellation stops new events; already completed Pins may remain only if the user has seen them.
+- Late events for an inactive or mismatched investigation ID are ignored and logged.
+- Provider diagnostics must not expose secrets or selected page content in normal console logs.
+
+## 11. Knowledge architecture
 
 There are two intentionally different paths.
 
-### Live understanding
+### 11.1 Live understanding
 
-~~~text
-Magic Lasso → rendered image crop → frontier multimodal model
-~~~
+```text
+Magic Lasso → rendered selection image → multimodal model
+```
 
-No OCR prerequisite. The model directly sees handwriting, equations, diagrams, spatial layout, printed material, and mixtures of all of the above.
+There is no OCR prerequisite for a lasso. The model sees handwriting, equations, diagrams, layout, PDF material, and mixtures of these.
 
-### Important-document preprocessing
+### 11.2 Important-document preprocessing
 
-~~~text
-PDF / textbook
-    → DeepSeek-OCR offline preprocessing
-    → structured searchable index
+```text
+PDF/textbook
+    → offline OCR/layout preprocessing
+    → structured searchable artifact
     → bundled or imported knowledge source
-~~~
+```
 
-The goal is not to OCR every lasso. The goal is to turn important long-form documents into high-quality agent tools.
+DeepSeek-OCR is a candidate preprocessing implementation, not a runtime requirement or a shared contract. The hackathon critical path may use a checked-in, preprocessed fixture produced by any suitable offline process.
 
-The index should preserve document identity, page numbers, section/chapter information, text, and useful layout structure where practical.
-
-Initial retrieval can remain simple. The impressive behavior is: the agent sees something on the canvas, realizes it needs outside information, searches the correct textbook, and returns the answer to the exact place where it matters.
-
-## 9. Canvas and document scope
-
-The canvas exists to support the spatial AI interaction.
-
-### Build
-
-- Apple Pencil ink
-- Pan and zoom
-- PDF/textbook background
-- Multiple pages if straightforward
-- Persistence sufficient for the demo
-- Reliable coordinate transforms
-- Pin overlays
-
-### Deprioritize
-
-- Exhaustive GoodNotes feature parity
-- Sophisticated document management
-- Advanced notebook organization
-- Broad import compatibility
-- Production-grade migration
-- Elaborate pen-tool customization
-
-The test is: does this feature make the spatial agent interaction more impressive or more reliable? If not, it is not on the critical path.
-
-## 10. Build architecture
-
-### Thread 1 - Spatial Canvas
-
-Owns PencilKit canvas, page rendering, PDF background, lasso geometry, crop rendering, and page/crop/view transforms.
-
-**Demoable-alone bar:** Draw and lasso arbitrary mixed content. A fake Pin lands at a specified coordinate and remains attached during pan and zoom.
-
-### Thread 2 - Pins and Threads
-
-Owns Pin visual design, Pin placement, expansion, streamed body, citations, long-press Thread UI, and multi-Pin collision handling.
-
-**Demoable-alone bar:** Feed canned Pin placements into the canvas and produce a polished spatial annotation experience.
-
-### Thread 3 - Agent Harness
-
-Owns ChatGPT/Codex OAuth, multimodal request, tool loop, structured place_pins, and token/event streaming.
-
-**Demoable-alone bar:** Give the harness a screenshot and intent. Receive one or more correctly structured Pins from a real model.
-
-### Thread 4 - Knowledge
-
-Owns DeepSeek-OCR textbook preprocessing, static index, textbook search, notebook search, and web search adapter.
-
-**Demoable-alone bar:** Query a known textbook concept and return the correct page and supporting content.
-
-### Thread 5 - Integration and Adversarial QA
-
-Owns the end-to-end hero slice, shared contracts, regression scenarios, demo reliability, and latency tuning.
-
-The QA role actively attempts to disprove milestone claims:
-
-- Does the Pin drift after zooming?
-- Does the model point outside the crop?
-- Does the lasso correctly capture mixed background and ink?
-- Can multiple Pins overlap catastrophically?
-- Does the agent still succeed when textbook retrieval fails?
-- Can the hero scenario be reproduced repeatedly?
-
-## 11. Milestones
-
-### M0 - Spatial illusion
-
-~~~text
-draw → lasso → fake Pin
-~~~
-
-The Pin lands exactly where requested and survives zoom/pan. This milestone proves the fundamental interaction before any intelligence exists.
-
-### M1 - The canvas points back
-
-~~~text
-lasso → real multimodal model → place_pins → real Pin
-~~~
-
-No retrieval required. This is the first true product milestone.
-
-### M2 - Multi-Pin intelligence
-
-~~~text
-lasso complex region
-    → model analyzes multiple subregions
-    → several Pins appear at meaningful points
-~~~
-
-This proves the product is more than a spatially positioned chat bubble.
-
-### M3 - Agent investigation
-
-~~~text
-lasso
-    → agent decides more context is needed
-    → searches textbook/notebook/web
-    → grounded Pins with citations
-~~~
-
-This proves the harness matters.
-
-### M4 - Reach goals
-
-Once the hero path is reliable, implement the highest-impact reach capabilities available within the remaining time. Reach goals are explicitly allowed to displace conventional note-app polish.
-
-## 12. Primary demo
-
-Open a STEM textbook or notebook page. The user has written a multi-step solution with a subtle mistake. Circle the entire derivation and tap **Check**.
-
-The selection glows. Status briefly shows:
-
-- Looking at your work…
-- Checking the textbook…
-
-Multiple Pins appear:
-
-- A subtle confirmation beside a correct step
-- A prominent Pin beside the first mistake
-- Optionally, a downstream Pin noting that later steps inherit the error
-
-Tap the mistake Pin. The explanation expands directly beside the work.
-
-Ask by voice:
-
-> “Why can't I do that here?”
-
-The Thread continues with the selected work and prior agent context already attached.
-
-Closing line:
-
-> You point at your work. The agent investigates it. Then it points back.
-
-## 13. Reach goals / nice-to-haves
-
-These features are not required for the core hero slice. They exist to make the project feel surprising, visually memorable, and clearly beyond a conventional notes app with an attached chatbot.
-
-Priority should be based on:
-
-1. Demo impact
-2. Implementation leverage from systems already built
-3. Reliability on the actual demo device
-
-### Reach A - Multi-Pin teacher markup
-
-Highest-priority reach goal. The user circles an entire page, derivation, proof, essay, or diagram. Instead of returning one generic answer, the agent performs a spatial review and places multiple localized Pins.
-
-~~~text
-Step 1        ✦ Correct setup
-Step 2        ✦ Nice substitution
-Step 3        ✦ First error occurs here
-Step 4        ✦ This result inherits the earlier error
-~~~
-
-Possible Pin types: positive confirmation, issue, explanation, source, uncertainty, and suggestion.
-
-**Why it demos well:** It proves that the system understands the whole selection, distinct subregions, relationships between steps, and spatially targeted output. This should feel like an intelligent teacher marking up the actual work.
-
-### Reach B - Agent-drawn connectors
-
-Allow the agent to point to relationships between two or more locations.
-
-Examples:
-
-- “These expressions are equivalent.”
-- “This variable refers to the quantity defined here.”
-- “These two statements contradict one another.”
-- “This step follows from this theorem.”
-
-~~~swift
-struct ConnectionPlacement {
-    var source: NormalizedPoint
-    var destination: NormalizedPoint
-    var label: String?
+```swift
+protocol KnowledgeSearching: Sendable {
+    func searchTextbook(_ query: KnowledgeQuery) async throws -> [KnowledgeHit]
 }
-~~~
 
-The app renders an animated curved connector or arrow.
+struct KnowledgeQuery: Codable, Sendable {
+    let documentID: UUID?
+    let text: String
+    let limit: Int
+}
 
-~~~text
-[ earlier equation ] ─────────────→ [ later substitution ]
-                         same term
-~~~
+struct KnowledgeHit: Codable, Identifiable, Sendable {
+    let id: UUID
+    let documentID: UUID
+    let documentTitle: String
+    let pageNumber: Int
+    let sectionTitle: String?
+    let excerpt: String
+    let score: Double?
+}
+```
 
-**Why it demos well:** It gives the agent a visual vocabulary beyond chat bubbles. The AI can express relationships spatially.
+The demo corpus must preserve document identity and page numbers so citations can return the user to the correct PDF page.
 
-### Reach C - Connect to my notes
+Initial retrieval may be lexical or hybrid. Retrieval sophistication is not a milestone unless it improves the fixed demo queries.
 
-The agent can search earlier notebook pages.
+## 12. Persistence contract
 
-The user circles a concept and asks, “Where have I seen this before?” The agent searches notebook context and creates a Pin:
+Persistence exists to make the hero demo repeatable, not to implement a production document database.
 
-> You used the same idea on page 4 →
+The app must persist:
 
-Tapping the Pin jumps to the earlier location.
+- imported document identity and access information;
+- ordered stable page IDs;
+- current page;
+- per-page PencilKit drawing data;
+- completed PageAnnotations;
+- annotation-to-thread identifiers; and
+- sufficient investigation metadata to render existing Pins after relaunch.
 
-Possible uses include connecting repeated concepts, finding earlier definitions, recalling prior mistakes, connecting lecture notes to homework, and connecting a textbook concept to the user's own explanation.
+The app need not persist:
 
-**Why it demos well:** The notebook begins to feel like an external memory system rather than a collection of pages.
+- an in-flight provider stream after process termination;
+- raw selected crops after an investigation completes;
+- provider secrets;
+- full source-tool traces; or
+- generalized schema migrations.
 
-### Reach D - Visual web research dropped onto the canvas
+Raw selection images should be treated as transient user content. Any retention beyond the active investigation requires an explicit later product decision.
 
-The agent may use web search when notebook and textbook context are insufficient.
+## 13. Shared contracts and change control
 
-Examples:
+Shared contract revision v1 is frozen in coordinator-owned files under `TuberNotes/App/Contracts/`. The runtime boundary protocols remain in their owning subsystem directories and compile only against these shared types.
 
-- “Find a better explanation.”
-- “What does the current documentation say?”
-- “Find a diagram of this.”
-- “Is there a more recent result?”
+The initial frozen contracts are:
 
-Possible output:
+- document and page identity;
+- named normalized spatial types;
+- `SelectionArtifact`;
+- `CanvasToolMode` and `LassoState`;
+- `InvestigationIntent` and `InvestigationRequest`;
+- `AgentClient` and `AgentEvent`;
+- `PinDraft` and `PageAnnotation`;
+- `KnowledgeSearching`, `KnowledgeQuery`, and `KnowledgeHit`; and
+- deterministic scenario identifiers.
 
-- A source Pin
-- An explanation Pin
-- A citation card
-- A visual reference placed beside the notes
+Parallel threads may implement against these contracts but may not silently modify them. A requested contract change must include:
 
-Web results should return to the spatial canvas rather than forcing the user into a separate browser or chat experience.
+1. the blocking use case;
+2. the smallest proposed change;
+3. affected modules and fixtures;
+4. migration or compatibility impact; and
+5. a human/coordinator decision.
 
-**Why it demos well:** It shows the canvas acting as a destination for external research.
+## 14. Parallel work packages
 
-### Reach E - Live professor mode
+These are work threads, not additional runtime agents or permission domains. After contract freeze they can proceed independently. `App` integration and final product judgment remain with the coordinating agent.
 
-Use harness events to turn latency into visible activity.
+### WP1 — SpatialCanvas: paged spatial surface
 
-Possible transient states:
+**Owns**
 
-- Looking at your work…
-- Checking the textbook…
-- Comparing earlier notes…
-- Searching the web…
-- Found the first issue…
+- PDF page rendering
+- page viewport and page turning mechanics
+- PencilKit ink per page
+- explicit Magic Lasso input capture
+- selection crop compositing
+- all coordinate transforms
+- projection of page-normalized anchors into the current view
 
-For a multi-step Check operation, progress may appear spatially or in a lightweight floating status indicator.
+**Consumes**
 
-These states must describe observable tool activity or high-level progress. They should not expose private model reasoning or raw chain-of-thought.
+- `NotebookDocument`
+- `PageRecord`
+- deterministic PDF and Pencil fixtures
 
-**Why it demos well:** The user can see that the agent is actively investigating rather than merely waiting for a chatbot response.
+**Produces**
 
-### Reach F - Handwritten follow-up on the canvas
+- `SelectionArtifact`
+- page viewport state
+- pure crop-to-page and page-to-view transform operations
 
-A user should eventually be able to continue a Thread without opening chat UI.
+**Non-goals**
 
-Example:
+- agent calls
+- Pin visual design
+- document library UI
+- OCR
 
-1. The user receives a Pin beside an equation.
-2. The user writes why? beside the Pin.
-3. TuberNotes recognizes the new nearby handwriting as a follow-up.
-4. The same agent Thread continues.
-5. Another Pin or expanded explanation appears.
+**Demoable-alone bar**
 
-Other examples: show me, why not?, prove it, simpler, and source?.
+Load a known multipage PDF, turn pages, draw on two different pages, lasso mixed PDF and ink, inspect the deterministic crop, and project a fake page-normalized target without drift through zoom, pan, page turn, and return. Separately, load a deterministic two-page dot-grid notebook fixture, draw on both blank pages, and verify page-specific state. Notebook creation and append commands remain coordinator-owned App integration behavior.
 
-**Why it demos well:** This makes the notebook feel truly conversational without becoming a chat application. The canvas itself becomes the conversation.
+**Required evidence**
 
-### Reach G - Semantic zoom and Pin clustering
+- build pass
+- coordinate round-trip checks
+- crop fixture artifact
+- `pdf-pages` scenario
+- `blank-notebook` scenario
+- `notebook-pages` scenario
+- `lasso-crop` scenario
+- `pin-drift` scenario before and after viewport changes
+- human Pencil review for lasso feel
 
-Pins adapt to the user's zoom level.
+**Stop** when the demoable-alone bar passes or a shared contract change is required.
 
-At close zoom, individual Pins are visible and precise targets are obvious. At distant zoom, related Pins collapse into clusters such as 3 issues, 5 explanations, and 2 sources. Zooming back in separates them again.
+### WP2 — Pins: spatial annotation experience
 
-**Why it demos well:** It makes a heavily annotated page remain usable and gives the interface a polished spatial feel.
+**Owns**
 
-### Reach H - Visual correction overlay
+- Pin marker and teaser design
+- expansion/collapse
+- streaming body presentation
+- citation presentation
+- label positioning and collision policy
+- selection and accessibility behavior
 
-For corrections, the agent can optionally show the proposed change directly beside or over the user's work.
+**Consumes**
 
-~~~text
-your result:       x = -4
-suggested result:  x =  4
-~~~
+- `[PageAnnotation]`
+- projected target positions supplied by the spatial surface
+- deterministic Pin fixtures
 
-Possible implementations include ghosted replacement text, strikethrough plus correction, a lightweight inline diff, or a temporary overlay accepted or dismissed by the user.
+**Produces**
 
-No handwriting synthesis is required for the first version.
+- user-visible Pin overlay events such as expand and dismiss
 
-**Why it demos well:** The AI does not merely describe a correction. It visually demonstrates it.
+**Non-goals**
 
-### Reach I - “Find my first mistake”
+- crop coordinate conversion
+- model output decoding
+- page navigation
+- retrieval
 
-This is both a potential hero feature and a reach-quality specialization of Check.
+**Demoable-alone bar**
 
-The user circles a multi-step derivation. The agent evaluates the work in order, identifies the earliest incorrect transformation, places the primary Pin at that exact step, and optionally marks later consequences separately.
+Render one, several, and edge-positioned canned Pins; expand each Pin; stream a canned body; show a citation; keep targets unambiguous without clipping primary content.
 
-~~~text
-Step 1      ✓
-Step 2      ✓
-Step 3      ✦ First mistake
-Step 4      ↳ depends on Step 3
-~~~
+**Required evidence**
 
-**Why it demos well:** It combines multimodal understanding, reasoning, spatial targeting, multi-Pin output, and potentially textbook retrieval. This may be the strongest single demo behavior in the project.
+- build pass
+- `fake-pin`, `multi-pin`, and `edge-pins` scenarios
+- deterministic target positions
+- no primary clipping or catastrophic overlap
+- human visual review after mechanical checks
 
-## 14. Reach-goal priority order
+**Stop** when the demoable-alone bar passes or a shared contract change is required.
 
-Recommended implementation order after the hero path:
+### WP3 — AgentHarness: multimodal investigation loop
 
-### Tier 1 - Maximum demo impact
+**Owns**
 
-- Multi-Pin teacher markup
-- Find my first mistake
+- gateway client
+- DEBUG direct provider adapter
+- multimodal request construction
+- tool loop orchestration
+- structured `place_pins` decoding
+- streaming event translation
+- cancellation, timeouts, and provider error mapping
+
+**Consumes**
+
+- `InvestigationRequest`
+- `KnowledgeSearching`
+- provider/gateway configuration
+- recorded provider fixtures
+
+**Produces**
+
+- `AsyncThrowingStream<AgentEvent, Error>`
+
+**Non-goals**
+
+- rendering Pins
+- coordinate conversion into page space
+- storing provider credentials in source or app assets
+- implementing OCR
+
+**Demoable-alone bar**
+
+Given a fixed selection image and intent, a recorded adapter produces a deterministic truthful event sequence and valid PinDraft values. A separately gated live smoke test produces at least one relevant, valid PinDraft from the real provider.
+
+**Required evidence**
+
+- recorded success, retrieval, invalid-coordinate, cancellation, and network-failure fixtures
+- strict schema validation
+- secret scan of changed files and artifacts
+- one live smoke artifact with user content redacted from logs
+
+**Stop** when recorded cases and the live smoke test pass, or gateway/auth requires an external decision.
+
+### WP4 — Knowledge: demo textbook retrieval
+
+**Owns**
+
+- preprocessed corpus format
+- corpus loader
+- textbook query implementation
+- document/page-aware results
+- deterministic retrieval fixtures
+
+**Consumes**
+
+- a known demo PDF
+- a checked-in or generated offline index
+
+**Produces**
+
+- `[KnowledgeHit]`
+
+**Non-goals**
+
+- OCR every live lasso
+- generalized import pipeline
+- notebook-wide search
+- web search
+
+**Demoable-alone bar**
+
+Known queries from the primary demo return the expected document, page, section, and supporting excerpt. A missing query returns an empty result without inventing a citation.
+
+**Required evidence**
+
+- fixed query fixture set
+- expected page assertions
+- malformed/missing index failure case
+- compact query result artifact
+
+**Stop** when all fixed demo queries pass or the source corpus is unavailable.
+
+### WP5 — DeveloperSupport and DeveloperTools: verification surface
+
+**Owns**
+
+- deterministic scenario selection
+- fake document, selection, agent-event, Pin, and retrieval fixtures
+- build/install/launch/screenshot automation
+- mechanical assertions and compact evidence artifacts
+- human-device request plumbing
+
+**Consumes**
+
+- frozen scenario names and fixture schemas
+- module demoable-alone bars
+
+**Produces**
+
+- repeatable scenarios and evidence directories
+
+**Non-goals**
+
+- product runtime behavior
+- visual taste judgments
+- model-provider logic
+
+**Demoable-alone bar**
+
+Each required scenario launches deterministically, identifies its expected state, captures artifacts, reports crash status, and can be invoked independently by another work thread.
+
+**Required evidence**
+
+- scenario help output
+- one passing artifact bundle per fixture family
+- one intentionally failing mechanical assertion proving failure reporting
+
+**Stop** when all currently required scenarios are callable and produce compact evidence.
+
+### Coordinator-owned App integration
+
+The coordinating agent owns:
+
+- shared contract creation and approval;
+- root composition and dependency injection;
+- document/session state machine;
+- conversion of agent drafts into persisted annotations;
+- integration order;
+- architecture decisions;
+- final diff and evidence judgment; and
+- the primary demo.
+
+App integration begins with fakes immediately and replaces them with module implementations as their demoable-alone bars pass.
+
+## 15. Integration sequence
+
+```text
+Contract freeze
+    ├── WP1 SpatialCanvas
+    ├── WP2 Pins
+    ├── WP3 AgentHarness
+    ├── WP4 Knowledge
+    └── WP5 Verification
+
+SpatialCanvas + Pins + fake agent
+    → M0 paged spatial illusion
+
+SpatialCanvas + Pins + recorded agent
+    → M1 deterministic point-back loop
+
+Real AgentHarness
+    → M2 live multimodal point-back loop
+
+Knowledge tool
+    → M3 agent investigation
+
+Reliability and human review
+    → M4 demo candidate
+```
+
+Work packages may land in any order after contract freeze. Integration accepts only outputs that meet their package evidence bar.
+
+## 16. Milestones and acceptance gates
+
+### M0 — Paged spatial illusion
+
+```text
+PDF or blank notebook → turn page → draw → fake Pin → zoom/pan → turn away/back
+```
+
+Pass when:
+
+- at least three PDF pages render and turn correctly;
+- a new notebook renders the TuberNotes dot-grid first page and can append a second page;
+- horizontal page turning works for both PDF and blank notebook documents;
+- ink stays on its originating page;
+- a fake page-normalized Pin remains attached through viewport changes;
+- returning to the page restores the same ink and Pin; and
+- deterministic scenarios show no crash, clipping of primary UI, or Pin drift.
+
+No model or retrieval is required.
+
+### M1 — Deterministic point-back loop
+
+```text
+Magic Lasso → rendered crop → recorded agent events → real Pin UI
+```
+
+Pass when:
+
+- the crop includes visible PDF and ink;
+- Explain, Check, and typed Ask produce the correct request intent;
+- recorded AgentEvents drive truthful progress states;
+- valid crop-relative drafts become page-normalized annotations;
+- Retry works without redrawing the lasso; and
+- cancellation and invalid output do not corrupt page state.
+
+### M2 — Live multimodal point-back loop
+
+```text
+Magic Lasso → real provider → place_pins → page annotations
+```
+
+Pass when:
+
+- the primary demo selection produces at least one semantically relevant localized Pin;
+- all returned coordinates validate;
+- no provider secret is present in source, fixtures, logs, or a Release build;
+- a provider failure is recoverable; and
+- the primary live scenario succeeds repeatedly on the demo device.
+
+Retrieval is not required.
+
+### M3 — Agent investigation
+
+```text
+lasso → agent requests textbook context → search → grounded Pins
+```
+
+Pass when:
+
+- the fixed demo query invokes textbook search only when useful;
+- progress truthfully indicates textbook activity;
+- the returned citation identifies the correct document and page;
+- a retrieval miss degrades honestly to vision-only output or uncertainty; and
+- the result returns to the original selected page location.
+
+### M4 — Demo candidate
+
+Pass when:
+
+- all deterministic hero scenarios pass;
+- the complete hero path succeeds on the actual demo device in three consecutive runs;
+- no crash or secret exposure is observed;
+- mechanical spatial checks pass after pan, zoom, page turn, and return;
+- a human has reviewed Pencil feel, visual taste, and interaction timing; and
+- remaining issues are documented as non-critical or explicitly accepted.
+
+## 17. Deterministic scenario contract
+
+Existing scenarios remain valid during migration:
+
+- `blank-canvas`
+- `fake-pin`
+- `multi-pin`
+
+Required new scenarios:
+
+- `pdf-pages` — known multipage PDF at a deterministic page
+- `blank-notebook` — new notebook on the branded dot-grid first page
+- `notebook-pages` — distinct canned drawings on two appended blank pages
+- `ink-pages` — distinct canned drawings on two pages
+- `lasso-crop` — known PDF + ink selection with inspectable crop artifact
+- `pin-drift` — known anchor before and after deterministic viewport changes
+- `edge-pins` — multiple Pins near all page edges
+- `agent-recorded-success` — complete recorded event sequence
+- `agent-recorded-retrieval` — recorded textbook tool sequence
+- `agent-recorded-failure` — recoverable provider failure
+- `hero-recorded` — deterministic end-to-end Check interaction
+
+Scenario names and expected states are shared contracts. `Docs/Development.md` must be updated when a scenario becomes runnable, not before.
+
+## 18. Verification rules
+
+Compilation is necessary but insufficient for user-visible work.
+
+Each package handoff includes:
+
+- objective and files changed;
+- short scoped diff summary;
+- canonical build result;
+- scenarios run and expected state;
+- screenshot, crop, fixture, or query artifact paths;
+- crash and console status;
+- mechanical checks performed;
+- human-only checks remaining or collected; and
+- stop reason or unresolved contract request.
+
+### Mechanical spatial checks
+
+- Named coordinate values are finite and validated.
+- Pure page-normalized → page-space → page-normalized round trips differ by no more than `1e-6` per axis.
+- Crop corners map to the corresponding page bounds within one crop pixel.
+- After a viewport transition settles, a known Pin anchor differs from its expected projected location by no more than two screen points.
+- Pin anchors do not change when their label layout changes.
+- Pin anchors remain deterministic across page reuse and relaunch.
+- No Pin result attaches to a page or investigation other than its originating IDs.
+
+### Reliability checks
+
+- No immediate crash or silent exit
+- Cancellation is idempotent
+- Late events cannot mutate inactive investigations
+- Missing PDF/index/provider state produces an actionable failure
+- Deterministic scenarios do not depend on network access
+- Live provider tests are separately labeled and never used as the only acceptance evidence
+
+### Initial interaction budgets
+
+Measure these on the physical demo iPad. They are local UI budgets, not provider service-level guarantees.
+
+- A valid completed lasso reveals its action strip within 200 ms.
+- Tapping Explain, Check, or submitting Ask changes the visible state within 100 ms.
+- Selection crop rendering completes within 500 ms for the primary demo region.
+- A prefetched adjacent PDF page becomes visible within 250 ms of a page-turn action.
+- A newly appended blank page becomes visible within 250 ms of the append action.
+- A slow provider never blocks drawing, page navigation, cancellation, or reading existing Pins.
+
+### Human-only checks
+
+- Apple Pencil latency and lasso feel on physical iPad
+- Selection glow and lift quality
+- Pin legibility and animation taste
+- Gesture conflict between page turning, pan/zoom, and lasso
+- Perceived latency of the live hero interaction
+
+Use the repo human-device loop so verdicts and notes become durable artifacts.
+
+## 19. Scaffold migration plan
+
+The current source tree is a disposable integration scaffold, not an architecture to preserve at all costs.
+
+### Retain and extend
+
+- canonical Xcode project and scheme;
+- subsystem directory ownership;
+- `DevelopmentScenario` launch routing;
+- verification script and evidence packet pattern;
+- human-device request banner and Pencil fixture storage; and
+- the rule that persistent Pin positions are normalized to the page.
+
+### Rewrite behind frozen contracts
+
+- `App/RootView.swift` into dependency-injected document/session composition;
+- `SpatialCanvas/PencilCanvas.swift` for per-page drawing lifecycle and explicit input modes;
+- `SpatialCanvas/SpatialCanvasView.swift` for PDF page viewport, turning, lasso, and transforms;
+- `Pins/Pin.swift` into the shared `PageAnnotation` representation or a view model derived from it;
+- `Pins/PinOverlayView.swift` to consume projected page annotations;
+- `AgentHarness/AgentClient.swift` into the streaming gateway boundary; and
+- `Knowledge/KnowledgeSearching.swift` into document/page-aware retrieval.
+
+### Preserve unless a concrete blocker appears
+
+- DEBUG human-device loop types and storage;
+- project bundle identity;
+- canonical simulator configuration; and
+- evidence templates.
+
+Do not perform a broad rewrite in one change. Each replacement must enter through a bounded work package, compile against frozen contracts, and prove its demoable-alone bar before integration.
+
+## 20. Reach backlog
+
+After M4, prioritize by demo impact and leverage:
+
+### Tier 1
+
+- Multi-Pin teacher markup refinement
+- “Find my first mistake” specialization
 - Agent-drawn connectors
 
-### Tier 2 - Makes the product feel new
+### Tier 2
 
+- Search earlier notebook pages
 - Handwritten follow-up on the canvas
-- Connect to my notes
-- Live professor mode
+- Voice Ask
+- Richer live professor progress
 
-### Tier 3 - Polish and spectacle
+### Tier 3
 
-- Visual correction overlay
-- Visual web research
+- Visual correction overlays
+- Web research placed on the canvas
 - Semantic zoom and Pin clustering
+- Full persistent conversation Thread UI
 
-This ordering is not strict. A partially implemented Tier 1 feature that is unreliable should not displace a polished, reliable Tier 2 feature.
+No reach item may weaken page stability, spatial correctness, provider security, or hero reliability.
 
-## 15. Product principles
+## 21. Product principles
 
-1. **Vision-native:** The model sees the same visual content the user sees.
-2. **Spatial output:** The answer belongs on the work, not in a detached chatbot.
-3. **Multiple insights, multiple Pins:** One selection may contain many meaningful targets.
-4. **The agent can express relationships:** Pins are not the only possible visual output. Connections and overlays may communicate information better.
-5. **Agentic only when useful:** The harness investigates when necessary rather than blindly calling every tool.
-6. **Hackathon-first:** Prefer spectacular interaction quality over broad application completeness.
-7. **Robust enough to demo:** The hero path must work repeatedly on the actual iPad.
+1. **Vision-native:** the model sees the same visual work the user sees.
+2. **Spatial output:** answers belong on the work, not in a detached chatbot.
+3. **Stable page identity:** ink, selections, and annotations belong to pages, not views.
+4. **Multiple insights, multiple Pins:** one selection may contain several meaningful targets.
+5. **Agentic when useful:** tool use is purposeful and visible at a safe level.
+6. **Runtime/tooling separation:** Codex development tools never become implicit product capabilities.
+7. **Hackathon-first:** build the smallest version that proves the interaction.
+8. **Distributable boundary:** prototype shortcuts may not embed reusable secrets or prevent a later gateway.
+9. **Robust enough to demo:** the complete hero path must work repeatedly on the actual iPad.
 
-## 16. Explicitly out of scope for the critical path
+## 22. Success criterion
 
-- GoodNotes migration
-- Production-grade document library
-- Rich folder organization
-- Exhaustive pen tools
-- Multi-device sync
-- Generalized textbook ingestion UX
-- Broad file compatibility
-- Production hardening beyond demo reliability
+A judge should understand the product after watching one interaction:
 
-These may be added only after the spatial agent experience is compelling.
+> A person turns to a page in a PDF, circles visible work with Apple Pencil, and asks the AI to check it. The agent sees the exact work, investigates the relevant source, and places useful responses at the exact locations they refer to.
 
-## 17. Scope rule
+The desired reaction is not:
 
-Nothing is allowed onto the critical path unless it makes this interaction more impressive or more reliable:
-
-~~~text
-circle work
-    → agent understands it
-    → agent investigates when necessary
-    → intelligence appears at the correct place
-~~~
-
-Conventional note-taking features may be sacrificed to improve:
-
-- Pin placement
-- Pin animation
-- Multi-Pin reasoning
-- Spatial relationships
-- Agent visibility
-- Demo reliability
-
-## 18. Success criterion
-
-A judge should understand the product without explanation after watching one interaction:
-
-> A person circles something on an iPad. The AI understands the visual work, investigates additional sources when necessary, and places useful responses back at the exact locations they refer to.
-
-The ideal reaction is not:
-
-> “That is a nice AI note-taking app.”
+> “That is a note app with an AI chat feature.”
 
 It is:
 
-> “Wait - the agent can actually see and inhabit the page with you.”
+> “The agent can actually see and inhabit the page with you.”

@@ -1,13 +1,7 @@
 import Foundation
 
 /// Boundary for the AI agent shipped inside TuberNotes. Development agents and MCPs do not conform to this.
-protocol AgentClient {
-    func investigate(_ selection: SpatialSelection) async throws -> [Pin]
+protocol AgentClient: Sendable {
+    func investigate(_ request: InvestigationRequest) -> AsyncThrowingStream<AgentEvent, Error>
+    func cancel(investigationID: UUID) async
 }
-
-struct SpatialSelection: Sendable {
-    let pageID: UUID
-    let normalizedBounds: CGRect
-    let imageData: Data
-}
-
