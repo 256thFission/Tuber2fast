@@ -51,7 +51,7 @@ End user-visible tasks with the evidence packet in `Docs/templates/EvidencePacke
 | Pin layout | `fake-pin`, `multi-pin`, and `edge-pins` | Check deterministic positions, overlap, and edge clipping |
 | App composition / root chrome | `blank-canvas`, `fake-pin`, and `multi-pin` | All three DEBUG states |
 | Coordinate / transform work | `pin-drift` before and after viewport change | Fixture selection is callable; viewport assertion requires coordinator App wiring; use `spatial-debugging` Skill |
-| Human feel / taste / interaction quality | scenario that exposes the change | Mechanical verify first, then `request_human_review` |
+| Human feel / taste / interaction quality | scenario that exposes the change | Mechanical verify first, then create a feedback thread; use the morning queue for human-only checks |
 | Non-UI / pure contract text | none required | Still avoid product/runtime vs tooling confusion |
 
 M0 verifier values are `blank-canvas`, `fake-pin`, `multi-pin`, `pdf-pages`, `blank-notebook`, `notebook-pages`, `ink-pages`, `pin-drift`, and `edge-pins`. Default is `blank-canvas`.
@@ -95,32 +95,45 @@ Physical Apple Pencil feel and latency require a human on real iPad hardware.
 
 ## Human device loop
 
-For authentic Pencil fixtures or human UI verdicts, use PencilFixtureMCP (Skill: `human-device-loop`). Full tool list and install: `DeveloperTools/PencilFixtureMCP/README.md`.
+PencilFixtureMCP exposes two separate Debug-only protocols. Use feedback threads for conversational UI review. Use the pen-fixture protocol only when authentic Apple Pencil input must become a replayable fixture. Skill: `human-device-loop`; tool details and installation: `DeveloperTools/PencilFixtureMCP/README.md`.
 
-### Agent path
+### Feedback-thread agent path
 
-1. `request_pen_fixture(description)` or `request_human_review(prompt)` pushes a request into the Debug app on the connected device (physical preferred; simulator fallback) and launches it.
-2. The Debug app shows the agent prompt in a top banner (`AgentRequestBanner`).
-3. `await_interaction` / `collect_interaction` pulls indexed JSON from the device.
-4. Record the request id, verdict, optional `humanNotes`, fixture path, and index entry in the evidence packet.
+1. `create_feedback_thread` creates an owned, target-pinned review session and either activates it or queues it FIFO.
+2. The Debug app shows a minimal floating bar. The human uses the full-screen thread view to reply, answer, annotate, block, or resolve.
+3. `await_thread_response` waits for a newer human reply; `collect_thread_updates` collects ordered messages and durable attachment paths after a sequence cursor.
+4. Use `post_thread_message` for normal follow-up or bounded revision metadata and `ask_thread_question` for free-text or single-choice questions.
+5. Use `set_feedback_thread_state` for optimistic block, resolve, cancel, resume, or reopen transitions; pass the last sequence consumed so newer human feedback cannot be skipped.
+6. Use `get_feedback_thread` for durable state/history and `export_feedback_thread` for a bounded Markdown evidence transcript.
 
-### What the human does on device
+Keep the returned `owner_token`; only its hash is persisted. A human reply moves the active feedback thread to `awaiting-model`, retaining the device slot. A genuinely `blocked`, `resolved`, or `cancelled` thread releases the slot and advances the next queued scenario cleanly. Prefer one focused clarification before revising; ask another only when the answer exposes a materially different ambiguity.
 
-| Request kind | Required | Optional |
-|---|---|---|
-| `pen-fixture` | Draw the requested stroke once | After capture: verdict + free-text note |
-| `review` | Tap a verdict: `looks-good` / `needs-work` / `blocked` | Free-text note (`humanNotes`) |
+Screenshots are human-triggered. The model may request one in a message but cannot invoke capture or send. The human must preview, may annotate/caption/cancel, and must explicitly send. Collect both clean and annotated PNG paths from thread updates. Feedback-thread UI is excluded from the captured product viewport.
 
-Textual feedback is never required. Verdicts and notes are indexed with the request; strokes are stored as normalized fixture JSON.
+### Pen-fixture agent path
 
-### On-device index
+1. `request_pen_fixture(description)` pushes a Pencil capture request into the Debug app on the connected device.
+2. The human draws the requested stroke and may add a verdict/note.
+3. `await_interaction` / `collect_interaction` pulls the indexed fixture JSON.
+4. Record request ID, verdict, optional `humanNotes`, fixture path, and index entry in the evidence packet.
+
+Pen fixtures are a separate protocol and corpus; they are not feedback-thread interaction types.
+
+### On-device data
 
 ```text
 Documents/
+  feedback-threads/
+    queue.json
+    events.jsonl
+    <feedback-thread-id>/
+      thread.json
+      messages/*.json
+      attachments/*.png
   agent-requests/pending/<id>.json
   agent-requests/completed/<id>.json
   pen-fixtures/<name>.json
   pen-fixtures/index.json
 ```
 
-App ownership: `DeveloperSupport` (`PenFixture.swift`, `AgentInteractionSession.swift`, `AgentRequestBanner.swift`). MCP ownership: `DeveloperTools/PencilFixtureMCP`. The human should not set environment variables or copy container files.
+App ownership remains `DeveloperSupport`; MCP ownership remains `DeveloperTools/PencilFixtureMCP`. The human should not set environment variables or copy container files. Feedback-thread mirrors, attachments, event logs, and exports are gitignored and collected by the MCP.

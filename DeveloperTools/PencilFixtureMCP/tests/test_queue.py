@@ -96,12 +96,12 @@ class QueueTests(unittest.TestCase):
     def _launch_records(self):
         return [json.loads(line) for line in self.launches.read_text().splitlines()]
 
-    def _request(self, label, *, kind="review", stale_after_seconds=3600):
+    def _request(self, label, *, kind="review", scenario="blank-canvas", stale_after_seconds=3600):
         return server._new_request(
             kind=kind,
             title=label,
             prompt=f"Prompt {label}",
-            scenario="blank-canvas",
+            scenario=scenario,
             requester_id=f"agent-{label}",
             fixture_name=f"fixture-{label}" if kind == "pen-fixture" else None,
             stale_after_seconds=stale_after_seconds,
@@ -151,6 +151,21 @@ class QueueTests(unittest.TestCase):
         server._collect_request(second["id"], owner_token=second_token)
         ledger = server._load_ledger()
         self.assertEqual([entry["id"] for entry in server._active_ledger_entries(ledger)], [third["id"]])
+
+    def test_queued_requests_preserve_distinct_scenarios_during_advance(self):
+        first, first_token = self._request("first-scenario", scenario="blank-canvas")
+        second, _ = self._request("second-scenario", scenario="pin-drift")
+        server._enqueue_request(first, first_token, prefer_device=True)
+        server._enqueue_request(second, "second-token", prefer_device=True)
+
+        self.assertEqual(json.loads(server._request_paths(first["id"])["local"].read_text())["scenario"], "blank-canvas")
+        self.assertEqual(json.loads(server._request_paths(second["id"])["local"].read_text())["scenario"], "pin-drift")
+        self._complete_remotely(first)
+        server._collect_request(first["id"], owner_token=first_token)
+
+        active = server._active_ledger_entries(server._load_ledger())
+        self.assertEqual([entry["id"] for entry in active], [second["id"]])
+        self.assertEqual(json.loads(server._request_paths(second["id"])["local"].read_text())["scenario"], "pin-drift")
 
     def test_interleaved_processes_share_one_atomic_ledger_and_one_launch(self):
         context = multiprocessing.get_context("fork")

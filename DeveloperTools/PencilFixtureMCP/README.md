@@ -19,6 +19,36 @@ Canonical docs: `Docs/Development.md` § Human device loop, Skill `human-device-
 | `list_pen_fixtures()` / `get_pen_fixture(name)` | Read fixtures |
 | `replay_pen_fixture(name)` | Install fixture and relaunch replay seam |
 
+Feedback threads are a separate protocol and store. They do not replace Pencil
+fixture capture or change its corpus.
+
+| Feedback-thread tool | Purpose |
+|---|---|
+| `create_feedback_thread(...)` | Create an owned thread, pin its target, and enter the single-active FIFO |
+| `post_thread_message(...)` | Append an idempotent model message |
+| `ask_thread_question(...)` | Append a free-text or single-choice question |
+| `await_thread_response(...)` | Wait from an exclusive message-sequence cursor for a human response |
+| `collect_thread_updates(...)` | Mirror new messages and sent screenshot files to durable Mac paths |
+| `set_feedback_thread_state(...)` | Optimistically transition lifecycle state and advance FIFO when appropriate |
+| `get_feedback_thread(...)` | Read the durable snapshot and append-only history |
+| `export_feedback_thread(...)` | Write an evidence-oriented Markdown transcript and attachment path list |
+
+Every mutating model operation uses an `idempotency_key`. State changes also
+require `expected_last_sequence` and `last_consumed_sequence`; stale resolution
+is rejected so the model cannot resolve across an unseen human reply. Keep the
+`owner_token` returned by creation. Only its SHA-256 hash is persisted.
+
+A normal loop is:
+
+```text
+create_feedback_thread
+collect_thread_updates / await_thread_response
+ask_thread_question or post_thread_message
+collect_thread_updates / await_thread_response
+set_feedback_thread_state
+export_feedback_thread
+```
+
 ## Feedback model
 
 | Kind | Required on device | Optional |
@@ -56,6 +86,11 @@ Documents/
 ```
 
 Mac-side mirror (gitignored): `.pencil-fixtures/requests/`, `.pencil-fixtures/collected/`.
+
+Feedback-thread device storage is under
+`Documents/feedback-threads/`; its gitignored Mac mirror is
+`.feedback-threads/`, including `threads/`, `collected/`, `attachments/`, the
+FIFO `queue.json`, and append-only `event-log.jsonl`.
 
 Reviewed fixtures can be copied into `Fixtures/` for the repo.
 

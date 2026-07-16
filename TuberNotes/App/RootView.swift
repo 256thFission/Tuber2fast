@@ -4,14 +4,18 @@ import SwiftUI
 
 struct RootView: View {
     let scenario: DevelopmentScenario
+    @State private var displayedScenario: DevelopmentScenario
     @State private var document: NotebookDocument?
     @State private var currentPageID: UUID?
+    @State private var surfaceGeneration = 0
 #if DEBUG
     @StateObject private var agentSession = AgentInteractionSession()
+    @StateObject private var feedbackSession = FeedbackThreadSession()
 #endif
 
     init(scenario: DevelopmentScenario) {
         self.scenario = scenario
+        _displayedScenario = State(initialValue: scenario)
         _document = State(initialValue: scenario.fixture.document)
         _currentPageID = State(initialValue: scenario.fixture.currentPageID)
     }
@@ -20,14 +24,34 @@ struct RootView: View {
         NavigationStack {
             scenarioSurface
 #if DEBUG
-                .id(agentSession.resetGeneration)
+                .id(surfaceGeneration)
                 .environmentObject(agentSession)
-                .overlay(alignment: .top) {
-                    AgentRequestBanner(session: agentSession)
+                .overlay(alignment: .topLeading) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        FeedbackThreadBar(session: feedbackSession)
+                        AgentRequestBanner(session: agentSession)
+                    }
+                    .opacity(feedbackSession.isCapturing ? 0 : 1)
+                    .padding(.leading, 20)
+                    .padding(.top, 8)
                 }
                 .onChange(of: agentSession.resetGeneration) { _, _ in
-                    document = scenario.fixture.document
-                    currentPageID = scenario.fixture.currentPageID
+                    resetScenarioSurface()
+                }
+                .onChange(of: agentSession.activeRequest?.id) { _, _ in
+                    bindScenarioToActiveRequest()
+                }
+                .onChange(of: feedbackSession.activeFeedbackThread?.id) { _, _ in
+                    bindScenarioToActiveRequest()
+                }
+                .onChange(of: feedbackSession.resetGeneration) { _, _ in
+                    resetScenarioSurface()
+                }
+                .onChange(of: feedbackSession.captureRequestGeneration) { _, _ in
+                    captureViewportAfterOverlayDismissal()
+                }
+                .fullScreenCover(isPresented: annotationPresented) {
+                    FeedbackAnnotationView(session: feedbackSession)
                 }
 #endif
             .navigationTitle("TuberNotes")
@@ -42,7 +66,7 @@ struct RootView: View {
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Text(scenario.displayName)
+                    Text(displayedScenario.displayName)
                         .font(.caption.monospaced())
                         .foregroundStyle(.secondary)
                         .accessibilityIdentifier("scenario-label")
@@ -53,13 +77,15 @@ struct RootView: View {
             print("TuberNotes scenario=\(scenario.rawValue) pins=\(scenario.pins.count)")
 #if DEBUG
             agentSession.reload()
+            feedbackSession.reload()
+            bindScenarioToActiveRequest()
 #endif
         }
     }
 
     @ViewBuilder
     private var scenarioSurface: some View {
-        switch scenario {
+        switch displayedScenario {
         case .fakePin, .multiPin, .edgePins:
             standalonePinSurface
         case .blankCanvas, .pdfPages, .blankNotebook, .notebookPages, .inkPages, .pinDrift:
@@ -80,7 +106,7 @@ struct RootView: View {
                 document: document,
                 currentPageID: $currentPageID,
                 pdfDocument: pdfDocument(for: document),
-                penFixturesByPageID: scenario.fixture.penFixturesByPageID,
+                penFixturesByPageID: displayedScenario.fixture.penFixturesByPageID,
                 pageOverlay: { page, projection in
                     AnyView(
                         PinOverlayView(
@@ -97,7 +123,7 @@ struct RootView: View {
     private var standalonePinSurface: some View {
         GeometryReader { proxy in
             ZStack {
-                Color(red: 0.992, green: 0.978, blue: 0.936)
+                pinComparisonBackground
                 PinOverlayView(
                     annotations: standalonePinAnnotations,
                     projectAnchor: { point in
@@ -106,15 +132,15 @@ struct RootView: View {
                             y: point.y * proxy.size.height
                         )
                     },
-                    initiallyExpandedAnnotationID: scenario == .fakePin
+                    initiallyExpandedAnnotationID: displayedScenario == .fakePin
                         ? standalonePinAnnotations.first?.id
                         : nil
                 )
             }
-            .clipShape(RoundedRectangle(cornerRadius: 18))
+            .clipShape(RoundedRectangle(cornerRadius: pinComparisonCornerRadius))
             .overlay {
-                RoundedRectangle(cornerRadius: 18)
-                    .stroke(.black.opacity(0.08), lineWidth: 1)
+                RoundedRectangle(cornerRadius: pinComparisonCornerRadius)
+                    .stroke(pinComparisonBorder, lineWidth: pinComparisonBorderWidth)
             }
         }
         .padding(20)
@@ -123,7 +149,7 @@ struct RootView: View {
     }
 
     private var standalonePinAnnotations: [PageAnnotation] {
-        switch scenario {
+        switch displayedScenario {
         case .fakePin: PinFixtures.fakePin
         case .multiPin: PinFixtures.multiPin
         case .edgePins: PinFixtures.edgePins
@@ -138,7 +164,7 @@ struct RootView: View {
     }
 
     private func spatialAnnotations(for page: PageRecord) -> [PageAnnotation] {
-        let fixtureAnnotations = scenario.fixture.annotations.filter { $0.pageID == page.id }
+        let fixtureAnnotations = displayedScenario.fixture.annotations.filter { $0.pageID == page.id }
         let fixtureIDs = Set(fixtureAnnotations.map(\.id))
         return page.annotations.filter { !fixtureIDs.contains($0.id) } + fixtureAnnotations
     }
@@ -164,6 +190,79 @@ struct RootView: View {
     private func pdfDocument(for document: NotebookDocument) -> PDFDocument? {
         guard case .bundledPDF = document.source else { return nil }
         return SpatialCanvasFixtures.makeM0DemoPDF()
+    }
+
+#if DEBUG
+    private func bindScenarioToActiveRequest() {
+        let feedbackScenario = feedbackSession.activeFeedbackThread
+            .flatMap { DevelopmentScenario(rawValue: $0.scenario) }
+        let legacyScenario = agentSession.activeRequest?.scenario
+            .flatMap { DevelopmentScenario(rawValue: $0) }
+        let requestedScenario = feedbackScenario ?? legacyScenario ?? scenario
+        displayedScenario = requestedScenario
+        resetScenarioSurface()
+    }
+
+    private var annotationPresented: Binding<Bool> {
+        Binding(
+            get: { feedbackSession.capturedImage != nil },
+            set: { if !$0 { feedbackSession.cancelCapture() } }
+        )
+    }
+
+    private func captureViewportAfterOverlayDismissal() {
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            guard let window = UIApplication.shared.connectedScenes
+                .compactMap({ $0 as? UIWindowScene })
+                .flatMap(\.windows)
+                .first(where: { $0.isKeyWindow }) else {
+                feedbackSession.receiveCapturedImage(nil)
+                return
+            }
+            let renderer = UIGraphicsImageRenderer(bounds: window.bounds)
+            let image = renderer.image { _ in
+                window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+            }
+            feedbackSession.receiveCapturedImage(image)
+        }
+    }
+#endif
+
+    private var pinComparisonBackground: Color {
+#if DEBUG
+        if feedbackSession.isLiveComparison && feedbackSession.activeVariant == "b" {
+            return Color(red: 0.955, green: 0.975, blue: 1.0)
+        }
+#endif
+        return Color(red: 0.992, green: 0.978, blue: 0.936)
+    }
+
+    private var pinComparisonCornerRadius: CGFloat {
+#if DEBUG
+        if feedbackSession.isLiveComparison && feedbackSession.activeVariant == "b" { return 8 }
+#endif
+        return 18
+    }
+
+    private var pinComparisonBorder: Color {
+#if DEBUG
+        if feedbackSession.isLiveComparison && feedbackSession.activeVariant == "b" { return .blue.opacity(0.32) }
+#endif
+        return .black.opacity(0.08)
+    }
+
+    private var pinComparisonBorderWidth: CGFloat {
+#if DEBUG
+        if feedbackSession.isLiveComparison && feedbackSession.activeVariant == "b" { return 2 }
+#endif
+        return 1
+    }
+
+    private func resetScenarioSurface() {
+        document = displayedScenario.fixture.document
+        currentPageID = displayedScenario.fixture.currentPageID
+        surfaceGeneration += 1
     }
 
     private var drawingSnapshotHandler: (UUID, PKDrawing, CGSize) -> Void {

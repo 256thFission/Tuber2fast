@@ -25,6 +25,9 @@
 		A00000000000000000000011 /* InteractionContracts.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000111 /* InteractionContracts.swift */; };
 		A00000000000000000000012 /* AgentContracts.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000112 /* AgentContracts.swift */; };
 		A00000000000000000000013 /* KnowledgeContracts.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000113 /* KnowledgeContracts.swift */; };
+		A00000000000000000000014 /* FeedbackThread.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000114 /* FeedbackThread.swift */; };
+		A00000000000000000000015 /* FeedbackThreadSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000115 /* FeedbackThreadSession.swift */; };
+		A00000000000000000000016 /* FeedbackThreadViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000116 /* FeedbackThreadViews.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -47,6 +50,9 @@
 		A00000000000000000000111 /* InteractionContracts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InteractionContracts.swift; sourceTree = "<group>"; };
 		A00000000000000000000112 /* AgentContracts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentContracts.swift; sourceTree = "<group>"; };
 		A00000000000000000000113 /* KnowledgeContracts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KnowledgeContracts.swift; sourceTree = "<group>"; };
+		A00000000000000000000114 /* FeedbackThread.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedbackThread.swift; sourceTree = "<group>"; };
+		A00000000000000000000115 /* FeedbackThreadSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedbackThreadSession.swift; sourceTree = "<group>"; };
+		A00000000000000000000116 /* FeedbackThreadViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedbackThreadViews.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -140,6 +146,9 @@
 				A0000000000000000000010A /* PenFixture.swift */,
 				A0000000000000000000010C /* AgentInteractionSession.swift */,
 				A0000000000000000000010D /* AgentRequestBanner.swift */,
+				A00000000000000000000114 /* FeedbackThread.swift */,
+				A00000000000000000000115 /* FeedbackThreadSession.swift */,
+				A00000000000000000000116 /* FeedbackThreadViews.swift */,
 			);
 			path = DeveloperSupport;
 			sourceTree = "<group>";
@@ -243,6 +252,9 @@
 				A00000000000000000000011 /* InteractionContracts.swift in Sources */,
 				A00000000000000000000012 /* AgentContracts.swift in Sources */,
 				A00000000000000000000013 /* KnowledgeContracts.swift in Sources */,
+				A00000000000000000000014 /* FeedbackThread.swift in Sources */,
+				A00000000000000000000015 /* FeedbackThreadSession.swift in Sources */,
+				A00000000000000000000016 /* FeedbackThreadViews.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
