@@ -9,6 +9,7 @@ final class AgentInteractionSession: ObservableObject {
     @Published private(set) var lastCapturedFixtureName: String?
     @Published var draftNotes: String = ""
     @Published private(set) var statusMessage: String?
+    @Published private(set) var resetGeneration = 0
 
     private var hasCapturedStroke = false
     private var pollTask: Task<Void, Never>?
@@ -27,6 +28,12 @@ final class AgentInteractionSession: ObservableObject {
         return activeRequest.kind == .penFixture && activeRequest.status == .awaitingHuman && !hasCapturedStroke
     }
 
+    var hasPendingPenCapture: Bool {
+        activeRequest?.kind == .penFixture
+            && activeRequest?.status == .awaitingHuman
+            && hasCapturedStroke
+    }
+
     var bannerTitle: String {
         activeRequest?.title ?? "Agent request"
     }
@@ -36,13 +43,7 @@ final class AgentInteractionSession: ObservableObject {
     }
 
     func reload() {
-        activeRequest = PenFixtureStore.resolveActiveRequest()
-        hasCapturedStroke = activeRequest?.status == .recorded || activeRequest?.status == .answered
-        if let activeRequest, activeRequest.status == .awaitingHuman {
-            statusMessage = activeRequest.kind == .penFixture
-                ? "Draw the requested stroke once with Apple Pencil."
-                : "Review the running UI, then choose a verdict."
-        }
+        activate(PenFixtureStore.resolveActiveRequest())
     }
 
     func handleDrawingChange(drawing: PKDrawing, canvasSize: CGSize) {
@@ -59,22 +60,50 @@ final class AgentInteractionSession: ObservableObject {
 
         do {
             try PenFixtureStore.saveFixture(fixture)
-            var completed = request
-            completed.status = .recorded
-            completed.completedAt = Date()
-            completed.eventCount = fixture.events.count
-            if !draftNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                completed.humanNotes = draftNotes.trimmingCharacters(in: .whitespacesAndNewlines)
-            }
-            try PenFixtureStore.completeRequest(completed)
-            activeRequest = completed
+            var captured = request
+            captured.eventCount = fixture.events.count
+            captured.fixturePath = "Documents/pen-fixtures/\(fixture.name).json"
+            activeRequest = captured
             lastCapturedFixtureName = fixture.name
             hasCapturedStroke = true
-            statusMessage = "Captured \(fixture.events.count) points · indexed as \(fixture.name)"
-            print("TuberNotes recorded fixture \(fixture.name) for request \(request.id)")
+            statusMessage = "Captured \(fixture.events.count) points. Use Capture or Reset."
+            print("TuberNotes drafted fixture \(fixture.name) for request \(request.id)")
         } catch {
             statusMessage = "Failed to save fixture: \(error.localizedDescription)"
         }
+    }
+
+    func confirmPenCapture() {
+        guard var request = activeRequest,
+              hasPendingPenCapture,
+              let fixtureName = request.fixtureName else { return }
+        request.status = .recorded
+        request.completedAt = Date()
+        request.fixturePath = "Documents/pen-fixtures/\(fixtureName).json"
+        let notes = draftNotes.trimmingCharacters(in: .whitespacesAndNewlines)
+        request.humanNotes = notes.isEmpty ? nil : notes
+        do {
+            try PenFixtureStore.completeRequest(request)
+            advanceAfterTerminal(message: "Indexed capture as \(fixtureName)")
+            print("TuberNotes recorded fixture \(fixtureName) for request \(request.id)")
+        } catch {
+            statusMessage = "Failed to finalize fixture: \(error.localizedDescription)"
+        }
+    }
+
+    func resetScenario() {
+        if hasPendingPenCapture, let fixtureName = activeRequest?.fixtureName {
+            try? PenFixtureStore.deleteFixture(named: fixtureName)
+            activeRequest?.eventCount = nil
+            activeRequest?.fixturePath = nil
+            lastCapturedFixtureName = nil
+            hasCapturedStroke = false
+        }
+        draftNotes = ""
+        resetGeneration += 1
+        statusMessage = activeRequest?.kind == .penFixture
+            ? "Canvas reset. Draw the requested stroke once."
+            : "Scenario reset to its initial state."
     }
 
     func submitVerdict(_ verdict: AgentInteractionRequest.Verdict) {
@@ -86,8 +115,7 @@ final class AgentInteractionSession: ObservableObject {
         request.humanNotes = notes.isEmpty ? request.humanNotes : notes
         do {
             try PenFixtureStore.completeRequest(request)
-            activeRequest = request
-            statusMessage = "Recorded verdict: \(verdict.rawValue)"
+            advanceAfterTerminal(message: "Recorded verdict: \(verdict.rawValue)")
         } catch {
             statusMessage = "Failed to save verdict: \(error.localizedDescription)"
         }
@@ -100,6 +128,26 @@ final class AgentInteractionSession: ObservableObject {
         statusMessage = nil
     }
 
+    private func activate(_ request: AgentInteractionRequest?) {
+        activeRequest = request
+        hasCapturedStroke = request?.status == .recorded || request?.status == .answered
+        guard let request else { return }
+        if request.status == .awaitingHuman {
+            statusMessage = request.kind == .penFixture
+                ? "Draw the requested stroke once with Apple Pencil."
+                : "Review the running UI, then choose a verdict."
+        }
+    }
+
+    private func advanceAfterTerminal(message: String) {
+        draftNotes = ""
+        let next = PenFixtureStore.resolveActiveRequest()
+        activate(next)
+        if next == nil {
+            statusMessage = message
+        }
+    }
+
     private func startPolling() {
         pollTask = Task { [weak self] in
             while !Task.isCancelled {
@@ -107,11 +155,10 @@ final class AgentInteractionSession: ObservableObject {
                 await MainActor.run {
                     guard let self else { return }
                     // Pick up newly pushed requests without relaunching.
-                    if self.activeRequest == nil || self.activeRequest?.status == .awaitingHuman {
-                        let latest = PenFixtureStore.resolveActiveRequest()
-                        if latest?.id != self.activeRequest?.id {
-                            self.reload()
-                        }
+                    let latest = PenFixtureStore.resolveActiveRequest()
+                    if latest?.id != self.activeRequest?.id
+                        || self.activeRequest?.status != .awaitingHuman {
+                        self.activate(latest)
                     }
                 }
             }

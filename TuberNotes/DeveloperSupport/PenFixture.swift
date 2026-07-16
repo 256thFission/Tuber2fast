@@ -59,6 +59,30 @@ struct AgentInteractionRequest: Codable, Equatable, Identifiable {
         case blocked
     }
 
+    struct Requester: Codable, Equatable {
+        var id: String
+    }
+
+    struct Owner: Codable, Equatable {
+        var tokenHash: String
+        var tokenRequired: Bool
+    }
+
+    struct Delivery: Codable, Equatable {
+        struct Target: Codable, Equatable {
+            var kind: String
+            var id: String
+        }
+
+        var sequence: Int?
+        var state: String
+        var target: Target
+        var selectedAt: Date?
+        var deliveredAt: Date?
+        var launchAttempted: Bool?
+    }
+
+    var schemaVersion: Int?
     var id: String
     var kind: Kind
     var title: String
@@ -67,15 +91,22 @@ struct AgentInteractionRequest: Codable, Equatable, Identifiable {
     var status: Status
     var createdAt: Date
     var completedAt: Date?
+    var expiresAt: Date?
+    var cancellationReason: String?
     var fixtureName: String?
+    var fixturePath: String?
     var eventCount: Int?
     var verdict: Verdict?
     var humanNotes: String?
     var scenario: String?
     var screenshotHint: String?
+    var requester: Requester?
+    var owner: Owner?
+    var delivery: Delivery?
 
     static func penFixture(id: String, prompt: String, fixtureName: String, scenario: String? = nil) -> Self {
         Self(
+            schemaVersion: nil,
             id: id,
             kind: .penFixture,
             title: "Pencil capture",
@@ -83,12 +114,18 @@ struct AgentInteractionRequest: Codable, Equatable, Identifiable {
             status: .awaitingHuman,
             createdAt: Date(),
             completedAt: nil,
+            expiresAt: nil,
+            cancellationReason: nil,
             fixtureName: fixtureName,
+            fixturePath: nil,
             eventCount: nil,
             verdict: nil,
             humanNotes: nil,
             scenario: scenario,
-            screenshotHint: nil
+            screenshotHint: nil,
+            requester: nil,
+            owner: nil,
+            delivery: nil
         )
     }
 }
@@ -108,6 +145,11 @@ struct AgentInteractionIndex: Codable, Equatable {
         var completedAt: Date?
         var verdict: AgentInteractionRequest.Verdict?
         var eventCount: Int?
+        var requesterID: String?
+        var deliveryTarget: AgentInteractionRequest.Delivery.Target?
+        var humanNotes: String?
+        var fixturePath: String?
+        var cancellationReason: String?
     }
 
     static var empty: Self { Self(updatedAt: Date(), entries: []) }
@@ -123,7 +165,12 @@ struct AgentInteractionIndex: Codable, Equatable {
             createdAt: request.createdAt,
             completedAt: request.completedAt,
             verdict: request.verdict,
-            eventCount: request.eventCount
+            eventCount: request.eventCount,
+            requesterID: request.requester?.id,
+            deliveryTarget: request.delivery?.target,
+            humanNotes: request.humanNotes,
+            fixturePath: request.fixturePath,
+            cancellationReason: request.cancellationReason
         )
         if let idx = entries.firstIndex(where: { $0.id == request.id }) {
             entries[idx] = entry
@@ -183,6 +230,12 @@ enum PenFixtureStore {
         try JSONEncoder.pretty.encode(fixture).write(to: url, options: .atomic)
     }
 
+    static func deleteFixture(named name: String) throws {
+        let url = fixturesDirectory.appendingPathComponent(name).appendingPathExtension("json")
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        try FileManager.default.removeItem(at: url)
+    }
+
     static func loadIndex() -> AgentInteractionIndex {
         guard let data = try? Data(contentsOf: indexURL),
               let index = try? JSONDecoder.iso8601.decode(AgentInteractionIndex.self, from: data) else {
@@ -196,6 +249,13 @@ enum PenFixtureStore {
     }
 
     static func loadPendingRequests() -> [AgentInteractionRequest] {
+        reconcileTerminalPendingRequests()
+        return decodedPendingRequests()
+            .filter { $0.status == .awaitingHuman }
+            .sorted(by: fifoPrecedes)
+    }
+
+    private static func decodedPendingRequests() -> [AgentInteractionRequest] {
         let urls = (try? FileManager.default.contentsOfDirectory(
             at: pendingRequestsDirectory,
             includingPropertiesForKeys: [.contentModificationDateKey],
@@ -207,7 +267,35 @@ enum PenFixtureStore {
                 guard let data = try? Data(contentsOf: url) else { return nil }
                 return try? JSONDecoder.iso8601.decode(AgentInteractionRequest.self, from: data)
             }
-            .sorted { $0.createdAt > $1.createdAt }
+    }
+
+    private static func fifoPrecedes(_ lhs: AgentInteractionRequest, _ rhs: AgentInteractionRequest) -> Bool {
+        switch (lhs.delivery?.sequence, rhs.delivery?.sequence) {
+        case let (lhsSequence?, rhsSequence?) where lhsSequence != rhsSequence:
+            return lhsSequence < rhsSequence
+        case (_?, nil):
+            return true
+        case (nil, _?):
+            return false
+        default:
+            if lhs.createdAt != rhs.createdAt { return lhs.createdAt < rhs.createdAt }
+            return lhs.id < rhs.id
+        }
+    }
+
+    private static func reconcileTerminalPendingRequests(now: Date = Date()) {
+        for request in decodedPendingRequests() {
+            var terminal = request
+            if terminal.status == .awaitingHuman,
+               let expiresAt = terminal.expiresAt,
+               expiresAt <= now {
+                terminal.status = .cancelled
+                terminal.cancellationReason = terminal.cancellationReason ?? "stale-expired"
+                terminal.completedAt = terminal.completedAt ?? now
+            }
+            guard terminal.status == .cancelled else { continue }
+            try? completeRequest(terminal)
+        }
     }
 
     static func savePendingRequest(_ request: AgentInteractionRequest) throws {
@@ -222,6 +310,22 @@ enum PenFixtureStore {
         var finished = request
         if finished.completedAt == nil { finished.completedAt = Date() }
         let completedURL = completedRequestsDirectory.appendingPathComponent(finished.id).appendingPathExtension("json")
+
+        // A cancellation can race a Pencil stroke or verdict crossing the USB boundary.
+        // Preserve the human's already-written result instead of replacing it with a
+        // later cancellation copied into pending/.
+        if finished.status == .cancelled,
+           let existingData = try? Data(contentsOf: completedURL),
+           let existing = try? JSONDecoder.iso8601.decode(AgentInteractionRequest.self, from: existingData),
+           existing.status != .cancelled {
+            let pendingURL = pendingRequestsDirectory.appendingPathComponent(finished.id).appendingPathExtension("json")
+            try? FileManager.default.removeItem(at: pendingURL)
+            var index = loadIndex()
+            index.upsert(existing)
+            try saveIndex(index)
+            return
+        }
+
         try JSONEncoder.pretty.encode(finished).write(to: completedURL, options: .atomic)
         let pendingURL = pendingRequestsDirectory.appendingPathComponent(finished.id).appendingPathExtension("json")
         try? FileManager.default.removeItem(at: pendingURL)
@@ -233,10 +337,11 @@ enum PenFixtureStore {
     /// Prefer on-disk pending request; fall back to legacy launch env vars.
     static func resolveActiveRequest() -> AgentInteractionRequest? {
 #if DEBUG
-        if let pending = loadPendingRequests().first(where: { $0.status == .awaitingHuman }) {
+        if let pending = loadPendingRequests().first {
             return pending
         }
         if let name = ProcessInfo.processInfo.environment["TUBER_RECORD_PEN_FIXTURE"] {
+            guard !hasCompletedRequest(idOrFixtureName: name) else { return nil }
             let prompt = ProcessInfo.processInfo.environment["TUBER_PEN_DESCRIPTION"] ?? name
             let request = AgentInteractionRequest.penFixture(
                 id: name,
@@ -249,6 +354,26 @@ enum PenFixtureStore {
         }
 #endif
         return nil
+    }
+
+    private static func hasCompletedRequest(idOrFixtureName name: String) -> Bool {
+        let exactURL = completedRequestsDirectory.appendingPathComponent(name).appendingPathExtension("json")
+        if FileManager.default.fileExists(atPath: exactURL.path) { return true }
+
+        let urls = (try? FileManager.default.contentsOfDirectory(
+            at: completedRequestsDirectory,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        )) ?? []
+        return urls
+            .filter { $0.pathExtension == "json" }
+            .contains { url in
+                guard let data = try? Data(contentsOf: url),
+                      let request = try? JSONDecoder.iso8601.decode(AgentInteractionRequest.self, from: data) else {
+                    return false
+                }
+                return request.id == name || request.fixtureName == name
+            }
     }
 
     private static func ensureDirectory(_ url: URL) -> URL {

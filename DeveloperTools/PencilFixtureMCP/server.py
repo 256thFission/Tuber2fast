@@ -8,14 +8,20 @@ indexes the result. Agents collect durable JSON without Mac-side human steps.
 from __future__ import annotations
 
 import json
+import fcntl
+import hashlib
+import hmac
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 import uuid
-from datetime import datetime, timezone
+from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +33,11 @@ FIXTURES = Path(__file__).resolve().parent / "Fixtures"
 LOCAL_STORE = ROOT / ".pencil-fixtures"
 REQUESTS = LOCAL_STORE / "requests"
 COLLECTED = LOCAL_STORE / "collected"
+QUEUE_LEDGER = LOCAL_STORE / "queue-ledger.json"
+QUEUE_LOCK = LOCAL_STORE / "queue.lock"
+QUEUE_SCHEMA_VERSION = 2
+DEFAULT_STALE_AFTER_SECONDS = 3600.0
+_THREAD_LOCK = threading.RLock()
 mcp = FastMCP("PencilFixtureMCP")
 
 
@@ -45,8 +56,8 @@ def _run(cmd: list[str], *, env: dict[str, str] | None = None, check: bool = Tru
     return subprocess.run(cmd, check=check, capture_output=True, text=True, env=env)
 
 
-def _simulator_data_dir() -> Path:
-    result = _run(["xcrun", "simctl", "get_app_container", "booted", APP_ID, "data"])
+def _simulator_data_dir(simulator_id: str = "booted") -> Path:
+    result = _run(["xcrun", "simctl", "get_app_container", simulator_id, APP_ID, "data"])
     return Path(result.stdout.strip())
 
 
@@ -103,6 +114,107 @@ def _ensure_local_dirs() -> None:
     FIXTURES.mkdir(parents=True, exist_ok=True)
 
 
+def _atomic_write_json(path: Path, value: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(handle, "w") as stream:
+            json.dump(value, stream, indent=2, sort_keys=True)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+@contextmanager
+def _locked_ledger() -> Any:
+    """Serialize queue mutations across threads and independent MCP processes."""
+    _ensure_local_dirs()
+    with _THREAD_LOCK:
+        with QUEUE_LOCK.open("a+") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
+def _empty_ledger() -> dict[str, Any]:
+    return {
+        "schemaVersion": QUEUE_SCHEMA_VERSION,
+        "nextSequence": 1,
+        "updatedAt": _utc_now(),
+        "requests": {},
+    }
+
+
+def _load_ledger() -> dict[str, Any]:
+    if not QUEUE_LEDGER.exists():
+        return _empty_ledger()
+    try:
+        ledger = json.loads(QUEUE_LEDGER.read_text())
+    except (OSError, json.JSONDecodeError):
+        return _empty_ledger()
+    ledger.setdefault("schemaVersion", QUEUE_SCHEMA_VERSION)
+    ledger.setdefault("nextSequence", 1)
+    ledger.setdefault("requests", {})
+    return ledger
+
+
+def _save_ledger(ledger: dict[str, Any]) -> None:
+    ledger["schemaVersion"] = QUEUE_SCHEMA_VERSION
+    ledger["updatedAt"] = _utc_now()
+    _atomic_write_json(QUEUE_LEDGER, ledger)
+
+
+def _read_local_request(request_id: str) -> dict[str, Any]:
+    path = _request_paths(request_id)["local"]
+    if not path.exists():
+        raise FileNotFoundError(f"Unknown interaction request: {request_id}")
+    payload = json.loads(path.read_text())
+    if payload.get("id") != request_id:
+        raise RuntimeError(f"Local request identity mismatch for {request_id}")
+    return payload
+
+
+def _owner_token_hash(owner_token: str) -> str:
+    return hashlib.sha256(owner_token.encode("utf-8")).hexdigest()
+
+
+def _validate_owner(request: dict[str, Any], owner_token: str | None) -> str:
+    owner = request.get("owner")
+    # Compatibility is intentionally limited to records created before schema v2.
+    if not owner:
+        return "request-id-only-legacy"
+    expected = owner.get("tokenHash")
+    if not owner_token:
+        raise PermissionError(f"owner_token is required for request {request['id']}")
+    if not expected or not hmac.compare_digest(expected, _owner_token_hash(owner_token)):
+        raise PermissionError(f"owner_token does not own request {request['id']}")
+    return "owner-token"
+
+
+def _parse_timestamp(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _is_expired(request: dict[str, Any]) -> bool:
+    expires_at = _parse_timestamp(request.get("expiresAt"))
+    return expires_at is not None and expires_at <= datetime.now(timezone.utc)
+
+
+def _target_key(target: dict[str, str]) -> str:
+    return f"{target['kind']}:{target['id']}"
+
+
 def _request_paths(request_id: str) -> dict[str, Path]:
     return {
         "local": REQUESTS / f"{request_id}.json",
@@ -116,20 +228,24 @@ def _request_paths(request_id: str) -> dict[str, Path]:
 def _write_request(request: dict[str, Any]) -> Path:
     _ensure_local_dirs()
     path = REQUESTS / f"{request['id']}.json"
-    path.write_text(json.dumps(request, indent=2) + "\n")
+    _atomic_write_json(path, request)
     return path
 
 
-def _push_to_simulator(local_file: Path, relative_destination: Path) -> dict[str, str]:
-    data_dir = _simulator_data_dir()
+def _push_to_simulator(local_file: Path, relative_destination: Path, simulator_id: str = "booted") -> dict[str, str]:
+    data_dir = _simulator_data_dir(simulator_id)
     destination = data_dir / relative_destination
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(local_file, destination)
-    return {"target": "simulator", "path": str(destination)}
+    return {"target": "simulator", "id": simulator_id, "path": str(destination)}
 
 
-def _pull_from_simulator(relative_source: Path, local_destination: Path) -> Path | None:
-    source = _simulator_data_dir() / relative_source
+def _pull_from_simulator(
+    relative_source: Path,
+    local_destination: Path,
+    simulator_id: str = "booted",
+) -> Path | None:
+    source = _simulator_data_dir(simulator_id) / relative_source
     if not source.exists():
         return None
     local_destination.parent.mkdir(parents=True, exist_ok=True)
@@ -193,15 +309,15 @@ def _pull_from_device(device_id: str, relative_source: Path, local_destination: 
     return local_destination if local_destination.exists() else None
 
 
-def _launch_simulator(env: dict[str, str]) -> dict[str, str]:
+def _launch_simulator(env: dict[str, str], simulator_id: str = "booted") -> dict[str, str]:
     merged = os.environ.copy()
     for key, value in env.items():
         merged[f"SIMCTL_CHILD_{key}"] = value
     result = _run(
-        ["xcrun", "simctl", "launch", "--terminate-running-process", "booted", APP_ID],
+        ["xcrun", "simctl", "launch", "--terminate-running-process", simulator_id, APP_ID],
         env=merged,
     )
-    return {"target": "simulator", "process": result.stdout.strip()}
+    return {"target": "simulator", "id": simulator_id, "process": result.stdout.strip()}
 
 
 def _launch_device(device_id: str, env: dict[str, str]) -> dict[str, str]:
@@ -231,64 +347,234 @@ def _select_target(prefer_device: bool = True) -> dict[str, str]:
         device_id = _available_device_id()
         if device_id:
             return {"kind": "device", "id": device_id}
-    if _booted_simulator_udid():
-        return {"kind": "simulator", "id": "booted"}
+    simulator_id = _booted_simulator_udid()
+    if simulator_id:
+        return {"kind": "simulator", "id": simulator_id}
     device_id = _available_device_id()
     if device_id:
         return {"kind": "device", "id": device_id}
     raise RuntimeError("No booted simulator or available connected device found")
 
 
-def _deliver_request(request: dict[str, Any], *, prefer_device: bool = True) -> dict[str, Any]:
-    local_path = _write_request(request)
-    paths = _request_paths(request["id"])
-    errors: list[str] = []
+def _push_to_target(target: dict[str, str], local_file: Path, relative_destination: Path) -> dict[str, str]:
+    if target["kind"] == "simulator":
+        return _push_to_simulator(local_file, relative_destination, target["id"])
+    return _push_to_device(target["id"], local_file, relative_destination)
 
-    order = ["device", "simulator"] if prefer_device else ["simulator", "device"]
-    for kind in order:
-        try:
-            if kind == "simulator":
-                if not _booted_simulator_udid():
-                    continue
-                pushed = _push_to_simulator(local_path, paths["pending_rel"])
-                launch = _launch_simulator(
-                    {
-                        "TUBER_SCENARIO": request.get("scenario") or "blank-canvas",
-                        "TUBER_RECORD_PEN_FIXTURE": request.get("fixtureName") or request["id"],
-                        "TUBER_PEN_DESCRIPTION": request["prompt"],
-                    }
-                )
-            else:
-                device_id = _available_device_id()
-                if not device_id:
-                    continue
-                pushed = _push_to_device(device_id, local_path, paths["pending_rel"])
-                launch = _launch_device(
-                    device_id,
-                    {
-                        "TUBER_SCENARIO": request.get("scenario") or "blank-canvas",
-                        "TUBER_RECORD_PEN_FIXTURE": request.get("fixtureName") or request["id"],
-                        "TUBER_PEN_DESCRIPTION": request["prompt"],
-                    },
-                )
-            return {
-                **request,
-                "local_request": str(local_path),
-                "delivery": pushed,
-                "launch": launch,
-                "human_step": "On the connected test device, read the banner and draw once (or tap a verdict). No Mac-side steps.",
-            }
-        except Exception as exc:  # noqa: BLE001
-            errors.append(f"{kind}: {exc}")
+
+def _pull_from_target(
+    target: dict[str, str],
+    relative_source: Path,
+    local_destination: Path,
+) -> Path | None:
+    if target["kind"] == "simulator":
+        return _pull_from_simulator(relative_source, local_destination, target["id"])
+    return _pull_from_device(target["id"], relative_source, local_destination)
+
+
+def _launch_target(target: dict[str, str], env: dict[str, str]) -> dict[str, str]:
+    if target["kind"] == "simulator":
+        return _launch_simulator(env, target["id"])
+    return _launch_device(target["id"], env)
+
+
+def _active_ledger_entries(ledger: dict[str, Any]) -> list[dict[str, Any]]:
+    active: list[dict[str, Any]] = []
+    for request_id, entry in ledger["requests"].items():
+        if entry.get("state") not in {"queued", "delivered"}:
             continue
+        try:
+            request = _read_local_request(request_id)
+        except (FileNotFoundError, json.JSONDecodeError, RuntimeError):
+            entry["state"] = "missing"
+            continue
+        if _is_expired(request):
+            request["status"] = "cancelled"
+            request["completedAt"] = request.get("completedAt") or _utc_now()
+            request["cancellationReason"] = request.get("cancellationReason") or "stale-expired"
+            request.setdefault("delivery", {})["state"] = "cancelled"
+            _write_request(request)
+            entry["state"] = "cancelled"
+            continue
+        active.append(entry)
+    return sorted(active, key=lambda entry: (entry.get("sequence", 0), entry.get("id", "")))
 
-    raise RuntimeError("Failed to deliver request to device or simulator: " + "; ".join(errors))
+
+def _delivery_response(request: dict[str, Any], owner_token: str, *, idempotent: bool) -> dict[str, Any]:
+    return {
+        **request,
+        "owner_token": owner_token,
+        "local_request": str(_request_paths(request["id"])["local"]),
+        "idempotent": idempotent,
+        "human_step": "On the connected test device, complete only the single request shown in the banner. Queued requests advance automatically.",
+    }
 
 
-def _collect_request(request_id: str, *, prefer_device: bool = True) -> dict[str, Any]:
+def _deliver_request_locked(
+    request: dict[str, Any],
+    ledger: dict[str, Any],
+    owner_token: str,
+    *,
+    should_launch: bool,
+) -> dict[str, Any]:
+    entry = ledger["requests"][request["id"]]
+    if entry.get("state") == "delivered":
+        return _delivery_response(request, owner_token, idempotent=True)
+
+    target = request["delivery"]["target"]
+    request["delivery"].update(
+        {
+            "state": "delivered",
+            "deliveredAt": _utc_now(),
+            "launchAttempted": should_launch,
+        }
+    )
+    local_path = _write_request(request)
+    try:
+        request["delivery"]["pushed"] = _push_to_target(
+            target,
+            local_path,
+            _request_paths(request["id"])["pending_rel"],
+        )
+        if should_launch:
+            request["delivery"]["launch"] = _launch_target(
+                target,
+                {
+                    "TUBER_SCENARIO": request.get("scenario") or "blank-canvas",
+                },
+            )
+        entry["state"] = "delivered"
+        entry["deliveredAt"] = request["delivery"]["deliveredAt"]
+    except Exception as exc:  # noqa: BLE001
+        request["delivery"]["state"] = "delivery-failed"
+        request["delivery"]["error"] = str(exc)
+        entry["state"] = "delivery-failed"
+        entry["error"] = str(exc)
+    _write_request(request)
+    _save_ledger(ledger)
+    return _delivery_response(request, owner_token, idempotent=False)
+
+
+def _enqueue_request(
+    request: dict[str, Any],
+    owner_token: str,
+    *,
+    prefer_device: bool,
+) -> dict[str, Any]:
+    with _locked_ledger():
+        ledger = _load_ledger()
+        existing_entry = ledger["requests"].get(request["id"])
+        if existing_entry:
+            existing = _read_local_request(request["id"])
+            _validate_owner(existing, owner_token)
+            return _delivery_response(existing, owner_token, idempotent=True)
+        active = _active_ledger_entries(ledger)
+        target = dict(active[0]["target"]) if active else _select_target(prefer_device=prefer_device)
+        sequence = int(ledger.get("nextSequence", 1))
+        ledger["nextSequence"] = sequence + 1
+        request["delivery"] = {
+            "sequence": sequence,
+            "state": "queued",
+            "target": target,
+            "selectedAt": _utc_now(),
+            "launchAttempted": False,
+        }
+        ledger["requests"][request["id"]] = {
+            "id": request["id"],
+            "requesterID": request["requester"]["id"],
+            "sequence": sequence,
+            "state": "queued",
+            "target": target,
+            "createdAt": request["createdAt"],
+            "expiresAt": request.get("expiresAt"),
+        }
+        _write_request(request)
+        _save_ledger(ledger)
+        return _deliver_request_locked(
+            request,
+            ledger,
+            owner_token,
+            should_launch=not active,
+        )
+
+
+def _deliver_request(request_id: str, owner_token: str) -> dict[str, Any]:
+    """Idempotent internal retry seam used by pure tests and future recovery tooling."""
+    with _locked_ledger():
+        request = _read_local_request(request_id)
+        _validate_owner(request, owner_token)
+        ledger = _load_ledger()
+        entry = ledger["requests"].get(request_id)
+        if not entry:
+            raise RuntimeError(f"Request {request_id} is missing from queue ledger")
+        active_others = [item for item in _active_ledger_entries(ledger) if item["id"] != request_id]
+        return _deliver_request_locked(
+            request,
+            ledger,
+            owner_token,
+            should_launch=not active_others and entry.get("state") != "delivered",
+        )
+
+
+def _request_target(
+    request: dict[str, Any],
+    *,
+    prefer_device: bool,
+) -> tuple[dict[str, str], bool]:
+    target = request.get("delivery", {}).get("target")
+    if target:
+        return dict(target), False
+    # Pre-v2 compatibility: select once, persist, and never switch on later polls.
+    target = _select_target(prefer_device=prefer_device)
+    request["delivery"] = {
+        "sequence": None,
+        "state": "legacy-pinned",
+        "target": target,
+        "selectedAt": _utc_now(),
+    }
+    _write_request(request)
+    return target, True
+
+
+def _validate_collected_payload(
+    local_request: dict[str, Any],
+    payload: dict[str, Any],
+    target: dict[str, str],
+) -> None:
+    request_id = local_request["id"]
+    if payload.get("id") != request_id:
+        raise RuntimeError(f"Collected payload for {request_id} contained id {payload.get('id')!r}")
+    local_requester = local_request.get("requester", {}).get("id")
+    payload_requester = payload.get("requester", {}).get("id")
+    if local_requester and payload_requester != local_requester:
+        raise RuntimeError(f"Collected payload requester mismatch for {request_id}")
+    payload_target = payload.get("delivery", {}).get("target")
+    if payload_target and _target_key(payload_target) != _target_key(target):
+        raise RuntimeError(f"Collected payload target mismatch for {request_id}")
+
+
+def _record_local_terminal(request: dict[str, Any], state: str) -> None:
+    _write_request(request)
+    ledger = _load_ledger()
+    entry = ledger["requests"].get(request["id"])
+    if entry:
+        entry["state"] = state
+        entry["completedAt"] = request.get("completedAt") or _utc_now()
+        _save_ledger(ledger)
+
+
+def _collect_request(
+    request_id: str,
+    *,
+    owner_token: str | None,
+    prefer_device: bool = True,
+) -> dict[str, Any]:
     _ensure_local_dirs()
     paths = _request_paths(request_id)
-    target = _select_target(prefer_device=prefer_device)
+    with _locked_ledger():
+        local_request = _read_local_request(request_id)
+        owner_validation = _validate_owner(local_request, owner_token)
+        target, legacy_target_selected = _request_target(local_request, prefer_device=prefer_device)
     stamp = request_id
     out_dir = COLLECTED / stamp
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -297,24 +583,25 @@ def _collect_request(request_id: str, *, prefer_device: bool = True) -> dict[str
     fixture_dir = out_dir / "pen-fixtures"
     index_local = out_dir / "index.json"
 
-    if target["kind"] == "simulator":
-        completed = _pull_from_simulator(paths["completed_rel"], completed_local)
-        _pull_from_simulator(paths["fixture_rel"], fixture_dir)
-        _pull_from_simulator(paths["index_rel"], index_local)
-    else:
-        completed = _pull_from_device(target["id"], paths["completed_rel"], completed_local)
-        _pull_from_device(target["id"], paths["fixture_rel"], fixture_dir)
-        _pull_from_device(target["id"], paths["index_rel"], index_local)
+    completed = _pull_from_target(target, paths["completed_rel"], completed_local)
+    _pull_from_target(target, paths["fixture_rel"], fixture_dir)
+    _pull_from_target(target, paths["index_rel"], index_local)
 
     result: dict[str, Any] = {
         "id": request_id,
         "target": target,
         "collected_dir": str(out_dir),
         "status": "pending",
+        "owner_validation": owner_validation,
+        "legacy_target_selected": legacy_target_selected,
     }
 
     if completed and completed.exists():
         payload = json.loads(completed.read_text())
+        _validate_collected_payload(local_request, payload, target)
+        payload.setdefault("requester", local_request.get("requester"))
+        payload.setdefault("owner", local_request.get("owner"))
+        payload.setdefault("delivery", local_request.get("delivery"))
         result["status"] = payload.get("status", "completed")
         result["request"] = payload
         fixture_name = payload.get("fixtureName")
@@ -325,47 +612,143 @@ def _collect_request(request_id: str, *, prefer_device: bool = True) -> dict[str
                 shutil.copy2(source, dest)
                 result["fixture_path"] = str(dest)
                 result["fixture"] = json.loads(source.read_text())
+                payload["fixturePath"] = str(dest)
         if index_local.exists():
             result["index"] = json.loads(index_local.read_text())
+        with _locked_ledger():
+            _record_local_terminal(payload, "completed")
         return result
 
     # Still pending?
     pending_local = out_dir / "pending.json"
-    if target["kind"] == "simulator":
-        pending = _pull_from_simulator(paths["pending_rel"], pending_local)
-    else:
-        pending = _pull_from_device(target["id"], paths["pending_rel"], pending_local)
+    pending = _pull_from_target(target, paths["pending_rel"], pending_local)
     if pending and pending.exists():
-        result["request"] = json.loads(pending.read_text())
+        pending_payload = json.loads(pending.read_text())
+        _validate_collected_payload(local_request, pending_payload, target)
+        result["request"] = pending_payload
         result["status"] = result["request"].get("status", "awaiting-human")
     return result
 
 
-@mcp.tool()
-def request_pen_fixture(description: str, scenario: str = "blank-canvas", prefer_device: bool = True) -> dict:
-    """Push a Pencil capture request into the Debug app on the connected test device.
+def _normalized_requester_id(requester_id: str) -> str:
+    value = requester_id.strip()
+    if not value:
+        raise ValueError("requester_id must not be empty")
+    if len(value) > 128:
+        raise ValueError("requester_id must be 128 characters or fewer")
+    return value
 
-    The app shows the agent prompt at the top. The human draws once; the app
-    indexes the fixture. Call collect_interaction / await_interaction afterward.
-    """
-    fixture_name = _safe_name(description)
-    request_id = f"{fixture_name}-{uuid.uuid4().hex[:8]}"
+
+def _new_request(
+    *,
+    kind: str,
+    title: str,
+    prompt: str,
+    scenario: str,
+    requester_id: str,
+    fixture_name: str | None,
+    stale_after_seconds: float,
+) -> tuple[dict[str, Any], str]:
+    if stale_after_seconds <= 0:
+        raise ValueError("stale_after_seconds must be greater than zero")
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    request_id = f"{kind}-{uuid.uuid4().hex}"
+    owner_token = secrets.token_urlsafe(32)
     request = {
+        "schemaVersion": QUEUE_SCHEMA_VERSION,
         "id": request_id,
-        "kind": "pen-fixture",
-        "title": "Pencil capture",
-        "prompt": description,
+        "kind": kind,
+        "title": title,
+        "prompt": prompt,
         "status": "awaiting-human",
-        "createdAt": _utc_now(),
+        "createdAt": now.isoformat().replace("+00:00", "Z"),
         "completedAt": None,
+        "expiresAt": (now + timedelta(seconds=stale_after_seconds)).isoformat().replace("+00:00", "Z"),
+        "cancellationReason": None,
         "fixtureName": fixture_name,
+        "fixturePath": None,
         "eventCount": None,
         "verdict": None,
         "humanNotes": None,
         "scenario": scenario,
         "screenshotHint": None,
+        "requester": {"id": _normalized_requester_id(requester_id)},
+        "owner": {
+            "tokenHash": _owner_token_hash(owner_token),
+            "tokenRequired": True,
+        },
     }
-    return _deliver_request(request, prefer_device=prefer_device)
+    return request, owner_token
+
+
+def _cancel_request(
+    request_id: str,
+    *,
+    owner_token: str | None,
+    reason: str,
+    prefer_device: bool,
+) -> dict[str, Any]:
+    normalized_reason = reason.strip() or "cancelled-by-requester"
+    with _locked_ledger():
+        request = _read_local_request(request_id)
+        owner_validation = _validate_owner(request, owner_token)
+        if request.get("status") in {"cancelled", "recorded", "answered"}:
+            return {
+                "id": request_id,
+                "status": request.get("status"),
+                "idempotent": True,
+                "owner_validation": owner_validation,
+                "target": request.get("delivery", {}).get("target"),
+            }
+        target, legacy_target_selected = _request_target(request, prefer_device=prefer_device)
+        request["status"] = "cancelled"
+        request["completedAt"] = _utc_now()
+        request["cancellationReason"] = normalized_reason
+        request.setdefault("delivery", {})["state"] = "cancelled"
+        _record_local_terminal(request, "cancelled")
+
+    delivery_error: str | None = None
+    try:
+        _push_to_target(target, _request_paths(request_id)["local"], _request_paths(request_id)["pending_rel"])
+    except Exception as exc:  # noqa: BLE001
+        delivery_error = str(exc)
+    return {
+        "id": request_id,
+        "status": "cancelled",
+        "idempotent": False,
+        "owner_validation": owner_validation,
+        "target": target,
+        "legacy_target_selected": legacy_target_selected,
+        "cancellationReason": normalized_reason,
+        "delivery_error": delivery_error,
+    }
+
+
+@mcp.tool()
+def request_pen_fixture(
+    description: str,
+    scenario: str = "blank-canvas",
+    prefer_device: bool = True,
+    requester_id: str = "anonymous-agent",
+    stale_after_seconds: float = DEFAULT_STALE_AFTER_SECONDS,
+) -> dict:
+    """Push a Pencil capture request into the Debug app on the connected test device.
+
+    The app shows the agent prompt at the top. The human draws once; the app
+    indexes the fixture. Call collect_interaction / await_interaction afterward.
+    """
+    unique_suffix = uuid.uuid4().hex[:12]
+    fixture_name = f"{_safe_name(description)[:35]}-{unique_suffix}"
+    request, owner_token = _new_request(
+        kind="pen-fixture",
+        title="Pencil capture",
+        prompt=description,
+        scenario=scenario,
+        requester_id=requester_id,
+        fixture_name=fixture_name,
+        stale_after_seconds=stale_after_seconds,
+    )
+    return _enqueue_request(request, owner_token, prefer_device=prefer_device)
 
 
 @mcp.tool()
@@ -374,47 +757,67 @@ def request_human_review(
     title: str = "Human review",
     scenario: str = "blank-canvas",
     prefer_device: bool = True,
+    requester_id: str = "anonymous-agent",
+    stale_after_seconds: float = DEFAULT_STALE_AFTER_SECONDS,
 ) -> dict:
     """Push a review request into the Debug app banner for a verdict + optional note."""
-    request_id = f"review-{_safe_name(title)}-{uuid.uuid4().hex[:8]}"
-    request = {
-        "id": request_id,
-        "kind": "review",
-        "title": title,
-        "prompt": prompt,
-        "status": "awaiting-human",
-        "createdAt": _utc_now(),
-        "completedAt": None,
-        "fixtureName": None,
-        "eventCount": None,
-        "verdict": None,
-        "humanNotes": None,
-        "scenario": scenario,
-        "screenshotHint": None,
-    }
-    return _deliver_request(request, prefer_device=prefer_device)
+    request, owner_token = _new_request(
+        kind="review",
+        title=title,
+        prompt=prompt,
+        scenario=scenario,
+        requester_id=requester_id,
+        fixture_name=None,
+        stale_after_seconds=stale_after_seconds,
+    )
+    return _enqueue_request(request, owner_token, prefer_device=prefer_device)
 
 
 @mcp.tool()
-def collect_interaction(request_id: str, prefer_device: bool = True) -> dict:
+def collect_interaction(
+    request_id: str,
+    prefer_device: bool = True,
+    owner_token: str | None = None,
+) -> dict:
     """Pull a completed interaction (fixture, verdict, notes, index) from the connected device."""
-    return _collect_request(request_id, prefer_device=prefer_device)
+    return _collect_request(request_id, owner_token=owner_token, prefer_device=prefer_device)
 
 
 @mcp.tool()
-def await_interaction(request_id: str, timeout_seconds: float = 180.0, prefer_device: bool = True) -> dict:
+def await_interaction(
+    request_id: str,
+    timeout_seconds: float = 180.0,
+    prefer_device: bool = True,
+    owner_token: str | None = None,
+) -> dict:
     """Poll until the human completes the in-app request, then return the collected artifacts."""
     deadline = time.time() + timeout_seconds
     last: dict[str, Any] = {}
     while time.time() < deadline:
-        last = _collect_request(request_id, prefer_device=prefer_device)
+        last = _collect_request(request_id, owner_token=owner_token, prefer_device=prefer_device)
         status = last.get("status")
-        if status in {"recorded", "answered"}:
+        if status in {"recorded", "answered", "cancelled"}:
             return last
         time.sleep(2.0)
     last["status"] = "timeout"
     last["message"] = f"Timed out after {timeout_seconds:.0f}s waiting for request {request_id}"
     return last
+
+
+@mcp.tool()
+def cancel_interaction(
+    request_id: str,
+    owner_token: str | None = None,
+    reason: str = "cancelled-by-requester",
+    prefer_device: bool = True,
+) -> dict:
+    """Cancel one owned pending request without changing its pinned delivery target."""
+    return _cancel_request(
+        request_id,
+        owner_token=owner_token,
+        reason=reason,
+        prefer_device=prefer_device,
+    )
 
 
 @mcp.tool()

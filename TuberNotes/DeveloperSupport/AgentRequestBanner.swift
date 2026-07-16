@@ -27,15 +27,30 @@ struct AgentRequestBanner: View {
                         .foregroundStyle(.secondary)
                 }
 
-                if request.kind == .review || request.status == .recorded {
+                if request.status == .awaitingHuman {
                     TextField("Optional note for the agent", text: $session.draftNotes)
                         .textFieldStyle(.roundedBorder)
+                }
 
+                if request.kind == .review {
                     HStack(spacing: 8) {
                         verdictButton("Looks good", verdict: .looksGood)
                         verdictButton("Needs work", verdict: .needsWork)
                         verdictButton("Blocked", verdict: .blocked)
                     }
+                }
+
+                if request.kind == .penFixture && session.hasPendingPenCapture {
+                    HStack(spacing: 8) {
+                        Button("Use Capture") { session.confirmPenCapture() }
+                            .buttonStyle(.borderedProminent)
+                        Button("Reset") { session.resetScenario() }
+                            .buttonStyle(.bordered)
+                    }
+                } else if request.status == .awaitingHuman {
+                    Button("Reset Scenario") { session.resetScenario() }
+                        .buttonStyle(.bordered)
+                        .font(.caption.weight(.semibold))
                 }
 
                 if request.status != .awaitingHuman {

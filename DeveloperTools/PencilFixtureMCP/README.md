@@ -10,10 +10,11 @@ Canonical docs: `Docs/Development.md` § Human device loop, Skill `human-device-
 
 | Tool | Purpose |
 |---|---|
-| `request_pen_fixture(description, scenario?, prefer_device?)` | Push a Pencil capture request and launch the app |
-| `request_human_review(prompt, title?, scenario?, prefer_device?)` | Push a review request for looks-good / needs-work / blocked |
-| `await_interaction(request_id, timeout_seconds?)` | Poll until the human finishes; return fixture/verdict/index |
-| `collect_interaction(request_id)` | One-shot pull of completed artifacts |
+| `request_pen_fixture(description, scenario?, prefer_device?, requester_id?, stale_after_seconds?)` | Enqueue a Pencil capture request; launch only when the queue was idle |
+| `request_human_review(prompt, title?, scenario?, prefer_device?, requester_id?, stale_after_seconds?)` | Enqueue a review request for looks-good / needs-work / blocked |
+| `await_interaction(request_id, timeout_seconds?, prefer_device?, owner_token?)` | Poll until the human finishes; return fixture/verdict/index |
+| `collect_interaction(request_id, prefer_device?, owner_token?)` | One-shot pull of completed artifacts |
+| `cancel_interaction(request_id, owner_token?, reason?, prefer_device?)` | Safely cancel an owned pending or stale request |
 | `list_interactions()` | On-device index + local request catalog |
 | `list_pen_fixtures()` / `get_pen_fixture(name)` | Read fixtures |
 | `replay_pen_fixture(name)` | Install fixture and relaunch replay seam |
@@ -22,10 +23,25 @@ Canonical docs: `Docs/Development.md` § Human device loop, Skill `human-device-
 
 | Kind | Required on device | Optional |
 |---|---|---|
-| `pen-fixture` | One Apple Pencil stroke | Verdict + free-text `humanNotes` after capture |
+| `pen-fixture` | One Apple Pencil stroke | Free-text `humanNotes` entered before drawing |
 | `review` | Verdict: `looks-good` / `needs-work` / `blocked` | Free-text `humanNotes` |
 
 Text is never required. Collected payloads include `status`, `verdict`, `humanNotes`, `fixtureName` / fixture JSON, and the `pen-fixtures/index.json` entry.
+
+## Queue and ownership
+
+Requests share a stable FIFO queue across MCP processes. The first enqueue into
+an idle queue launches TuberNotes; later enqueues are copied to the same pinned
+device and the running app advances automatically after each terminal result.
+
+Every new request returns an `owner_token`. Keep it with that agent's request ID
+and pass it to collect, await, or cancel. Only a SHA-256 hash is persisted; a
+different agent's token is rejected. Records created by the pre-queue tools have
+no owner and remain collectable by request ID alone. `requester_id` is retained
+in the completed request and index so results can be routed to the correct agent.
+
+The delivery target is selected once and stored with the request. Polling never
+switches a request from its original iPad or simulator to another target.
 
 ## On-device layout
 

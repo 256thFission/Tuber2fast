@@ -17,13 +17,27 @@ For user-visible work, prefer the one-shot verifier (build → install → launc
 DeveloperTools/verify-scenario.sh fake-pin
 ```
 
-Artifacts land under `tmp/verify/<timestamp>-<scenario>/` and include `summary.txt`, `build.log`, `launch.log`, and `screenshot.png`. The script reports mechanical pass/fail only. It does not judge visual taste or Apple Pencil feel.
+Artifacts land under `tmp/verify/<timestamp>-<scenario>/` and include `summary.txt`, `build.log`, `launch.log`, `scenario-selection.json`, and `screenshot.png`. The script reports mechanical pass/fail only. It does not judge visual taste or Apple Pencil feel.
+
+Show the exact M0 allowlist and expected states:
+
+```sh
+DeveloperTools/verify-scenario.sh --help
+```
 
 Reuse an existing build:
 
 ```sh
 SKIP_BUILD=1 DeveloperTools/verify-scenario.sh multi-pin
 ```
+
+Prove that mechanical failures produce a failing summary and a durable artifact without changing the normal app:
+
+```sh
+FORCE_MECHANICAL_FAILURE=1 SKIP_BUILD=1 DeveloperTools/verify-scenario.sh blank-canvas
+```
+
+This command is expected to exit nonzero. Its bundle includes `intentional-failure.txt`; later verifier runs remain normal because the failure is opt-in for that process only.
 
 End user-visible tasks with the evidence packet in `Docs/templates/EvidencePacket.md`. Use `Docs/templates/Handoff.md` when transferring work between sessions or models.
 
@@ -32,13 +46,17 @@ End user-visible tasks with the evidence packet in `Docs/templates/EvidencePacke
 | Change type | Required scenarios | Notes |
 |---|---|---|
 | Canvas / PencilKit drawing surface | `blank-canvas`; reviewed pen fixture when applicable | Confirm ink and paper without Pin clutter; use `human-device-loop` for authentic Pencil |
-| Pin layout or spatial anchoring | `fake-pin` and `multi-pin` | Check deterministic positions and overlap |
+| PDF page surface | `pdf-pages` and `ink-pages` | Fixture selection is callable; expected UI requires coordinator App wiring |
+| Blank notebook surface | `blank-notebook` and `notebook-pages` | Fixture selection is callable; expected UI requires coordinator App wiring |
+| Pin layout | `fake-pin`, `multi-pin`, and `edge-pins` | Check deterministic positions, overlap, and edge clipping |
 | App composition / root chrome | `blank-canvas`, `fake-pin`, and `multi-pin` | All three DEBUG states |
-| Coordinate / transform work | `fake-pin` and `multi-pin`, before and after viewport change | Once pan/zoom exists; use `spatial-debugging` Skill |
+| Coordinate / transform work | `pin-drift` before and after viewport change | Fixture selection is callable; viewport assertion requires coordinator App wiring; use `spatial-debugging` Skill |
 | Human feel / taste / interaction quality | scenario that exposes the change | Mechanical verify first, then `request_human_review` |
 | Non-UI / pure contract text | none required | Still avoid product/runtime vs tooling confusion |
 
-Supported scenario values: `blank-canvas`, `fake-pin`, `multi-pin`. Default is `blank-canvas`.
+M0 verifier values are `blank-canvas`, `fake-pin`, `multi-pin`, `pdf-pages`, `blank-notebook`, `notebook-pages`, `ink-pages`, `pin-drift`, and `edge-pins`. Default is `blank-canvas`.
+
+`DevelopmentScenario.fixture` owns stable documents, page IDs, page-specific `PenFixture` values, canned `PageAnnotation` values, expected state, and integration readiness. `blank-canvas`, `fake-pin`, and `multi-pin` are rendered by the current scaffold. The other M0 selections, fixture inputs, expected-state reporting, and evidence capture are runnable, but their full expected UI states remain **ready for coordinator App wiring**. A verifier PASS for those scenarios proves the automation path, launch, screenshot integrity, console scan, and crash scan; it does not accept the pending UI state.
 
 ## Manual loop
 
