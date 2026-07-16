@@ -104,7 +104,7 @@ Text follow-ups preserve the current product surface unless their normal message
 
 ### 6.1 Minimal product-facing bar
 
-The floating bar starts at the top-trailing safe-area edge every time, and remains draggable and collapsible. Collapsed, it shows compact session information. Expanded, it preserves the quick context UI: the exact current model turn, its immediate reply or single-choice control, state actions, and `View Full Thread`. It does not browse older history and does not participate in product layout.
+The floating bar starts at the top-trailing safe-area edge every time, and remains draggable and collapsible. Collapsed, it shows compact session information. Expanded, it preserves the quick context UI: the exact current model turn, its immediate reply or single-choice control, high-contrast state actions, and `View Full Thread`. Compact context arrows occupy the header corners when navigation is available: back priority-reopens the most recent blocked/resolved thread, while forward yields the current thread to the next queued review without resolving it. It does not browse older history and does not participate in product layout.
 
 During the registered live A/B comparison only, it additionally exposes:
 

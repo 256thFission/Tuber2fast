@@ -42,10 +42,20 @@ class ReviewHarnessUISourceTests(unittest.TestCase):
     def test_blocked_thread_has_human_priority_reopen_affordance(self):
         views = (ROOT / "TuberNotes/DeveloperSupport/FeedbackThreadViews.swift").read_text()
         session = (ROOT / "TuberNotes/DeveloperSupport/FeedbackThreadSession.swift").read_text()
-        self.assertIn('Button("Reopen with Priority")', views)
+        self.assertIn('Image(systemName: "chevron.backward")', views)
         self.assertIn("func reopen(_ feedbackThread: FeedbackThread)", session)
         self.assertIn("value.state = hasActive ? .queued : .open", session)
         self.assertIn("value.queueSequence = (feedbackThreads.map", session)
+
+    def test_context_navigation_uses_compact_arrows_and_legible_action_roles(self):
+        views = (ROOT / "TuberNotes/DeveloperSupport/FeedbackThreadViews.swift").read_text()
+        session = (ROOT / "TuberNotes/DeveloperSupport/FeedbackThreadSession.swift").read_text()
+        self.assertIn('Image(systemName: "chevron.backward")', views)
+        self.assertIn('Image(systemName: "chevron.forward")', views)
+        self.assertNotIn('Button("Reopen ', views)
+        self.assertIn("func skipForward()", session)
+        self.assertIn(".tint(.orange)", views)
+        self.assertIn(".tint(.green)", views)
 
     def test_capture_is_human_triggered_and_hides_feedback_ui(self):
         root = (ROOT / "TuberNotes/App/RootView.swift").read_text()

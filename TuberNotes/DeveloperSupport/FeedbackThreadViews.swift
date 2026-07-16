@@ -13,6 +13,7 @@ struct FeedbackThreadBar: View {
         if let feedbackThread = session.activeFeedbackThread {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 10) {
+                    contextBackButton
                     Label(feedbackThread.title, systemImage: "text.bubble")
                         .font(.subheadline.weight(.semibold))
                         .lineLimit(1)
@@ -20,6 +21,7 @@ struct FeedbackThreadBar: View {
                     Text(feedbackThread.state.rawValue)
                         .font(.caption.monospaced())
                         .foregroundStyle(.secondary)
+                    contextForwardButton
                     Button {
                         withAnimation(.snappy) { isCollapsed.toggle() }
                     } label: {
@@ -54,14 +56,21 @@ struct FeedbackThreadBar: View {
             }
         } else if let candidate = session.reopenCandidate {
             HStack(spacing: 10) {
+                Button { session.reopen(candidate) } label: {
+                    Image(systemName: "chevron.backward")
+                        .font(.headline.weight(.bold))
+                        .frame(width: 30, height: 30)
+                }
+                .buttonStyle(.borderedProminent)
+                .buttonBorderShape(.circle)
+                .tint(.indigo)
+                .accessibilityLabel("Reopen previous feedback thread with priority")
                 Label(candidate.title, systemImage: "arrow.uturn.backward.circle")
                     .font(.subheadline.weight(.semibold))
                     .lineLimit(1)
                 Text(candidate.state.rawValue)
                     .font(.caption.monospaced())
                     .foregroundStyle(.secondary)
-                Button("Reopen with Priority") { session.reopen(candidate) }
-                    .buttonStyle(.borderedProminent)
             }
             .padding(14)
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
@@ -97,6 +106,7 @@ struct FeedbackThreadBar: View {
                             quickReply = ""
                         }
                         .buttonStyle(.borderedProminent)
+                        .tint(.indigo)
                         .disabled(quickReply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
                 } else {
@@ -124,14 +134,43 @@ struct FeedbackThreadBar: View {
 
         HStack(spacing: 8) {
             Button("View Full Thread") { session.isPresentingFullThread = true }
-                .buttonStyle(.bordered)
-            if let candidate = session.reopenCandidate {
-                Button("Reopen \(candidate.title)") { session.reopen(candidate) }
-                    .buttonStyle(.bordered)
-            }
+                .buttonStyle(.borderedProminent)
+                .tint(.indigo)
             Spacer()
-            Button("Blocked") { session.setState(.blocked) }.buttonStyle(.bordered)
-            Button("Resolve") { session.setState(.resolved) }.buttonStyle(.borderedProminent)
+            Button("Blocked") { session.setState(.blocked) }
+                .buttonStyle(.borderedProminent)
+                .tint(.orange)
+            Button("Resolve") { session.setState(.resolved) }
+                .buttonStyle(.borderedProminent)
+                .tint(.green)
+        }
+    }
+
+    @ViewBuilder
+    private var contextBackButton: some View {
+        if let candidate = session.reopenCandidate {
+            Button { session.reopen(candidate) } label: {
+                Image(systemName: "chevron.backward")
+                    .font(.caption.weight(.bold))
+            }
+            .buttonStyle(.bordered)
+            .buttonBorderShape(.circle)
+            .tint(.indigo)
+            .accessibilityLabel("Reopen \(candidate.title) with priority")
+        }
+    }
+
+    @ViewBuilder
+    private var contextForwardButton: some View {
+        if session.queuedCandidate != nil {
+            Button { session.skipForward() } label: {
+                Image(systemName: "chevron.forward")
+                    .font(.caption.weight(.bold))
+            }
+            .buttonStyle(.bordered)
+            .buttonBorderShape(.circle)
+            .tint(.indigo)
+            .accessibilityLabel("Skip to next queued feedback thread")
         }
     }
 

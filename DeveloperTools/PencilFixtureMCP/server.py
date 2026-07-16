@@ -1475,7 +1475,7 @@ def _sync_feedback_thread_from_target(feedback_thread_id: str) -> None:
         activated: dict[str, Any] | None = None
         entry["state"] = remote_thread["state"]
         entry["queueSequence"] = remote_thread.get("queueSequence", entry.get("queueSequence", 0))
-        if remote_thread["state"] in {"blocked", *FEEDBACK_TERMINAL_STATES}:
+        if remote_thread["state"] in {"queued", "blocked", *FEEDBACK_TERMINAL_STATES}:
             if ledger.get("activeFeedbackThreadID") == feedback_thread_id:
                 ledger["activeFeedbackThreadID"] = None
             activated = _advance_feedback_queue_locked(ledger)

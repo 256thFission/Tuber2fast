@@ -57,6 +57,12 @@ final class FeedbackThreadSession: ObservableObject {
             .max { ($0.updatedAt, $0.id) < ($1.updatedAt, $1.id) }
     }
 
+    var queuedCandidate: FeedbackThread? {
+        feedbackThreads
+            .filter { $0.state == .queued }
+            .min { ($0.queueSequence, $0.id) < ($1.queueSequence, $1.id) }
+    }
+
     var comparisonID: String? {
         activeFeedbackThread?.activeComparisonID
             ?? activeFeedbackThread?.messages.reversed().compactMap { $0.surfaceDirective?.comparisonID ?? $0.interaction?.comparisonID }.first
@@ -117,6 +123,27 @@ final class FeedbackThreadSession: ObservableObject {
                 "thread-reopened",
                 feedbackThreadID: value.id,
                 values: ["actor": "human", "priority": "true", "state": value.state.rawValue]
+            )
+            reload()
+        } catch { statusMessage = error.localizedDescription }
+    }
+
+    func skipForward() {
+        guard var current = activeFeedbackThread, var next = queuedCandidate else { return }
+        current.state = .queued
+        current.queueSequence = (feedbackThreads.map(\.queueSequence).max() ?? 0) + 1
+        current.updatedAt = Date()
+        current.revision += 1
+        next.state = .open
+        next.updatedAt = Date()
+        next.revision += 1
+        do {
+            try FeedbackThreadStore.save(current)
+            try FeedbackThreadStore.save(next)
+            FeedbackThreadStore.appendEvent(
+                "thread-skipped-forward",
+                feedbackThreadID: current.id,
+                values: ["actor": "human", "nextFeedbackThreadID": next.id]
             )
             reload()
         } catch { statusMessage = error.localizedDescription }
