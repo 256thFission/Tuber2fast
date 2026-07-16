@@ -169,10 +169,17 @@ enum FeedbackThreadStore {
     }
 
     static func appendEvent(_ name: String, feedbackThreadID: String, values: [String: String] = [:]) {
-        var event = values
+        let sequenceKey = "feedback-thread-device-event-sequence"
+        let defaults = UserDefaults.standard
+        let sourceSequence = defaults.integer(forKey: sequenceKey) + 1
+        defaults.set(sourceSequence, forKey: sequenceKey)
+        var event: [String: Any] = values
+        event["eventID"] = "device-event-\(UUID().uuidString.lowercased())"
         event["event"] = name
         event["feedbackThreadID"] = feedbackThreadID
         event["timestamp"] = ISO8601DateFormatter().string(from: Date())
+        event["source"] = "device"
+        event["sourceSequence"] = sourceSequence
         guard JSONSerialization.isValidJSONObject(event),
               let data = try? JSONSerialization.data(withJSONObject: event),
               let line = String(data: data, encoding: .utf8),

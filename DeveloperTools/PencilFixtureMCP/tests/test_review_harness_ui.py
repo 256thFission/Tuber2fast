@@ -15,7 +15,7 @@ class ReviewHarnessUISourceTests(unittest.TestCase):
 
     def test_request_change_rebinds_and_rebuilds_scenario_surface(self):
         source = (ROOT / "TuberNotes/App/RootView.swift").read_text()
-        self.assertIn(".overlay(alignment: .topLeading)", source)
+        self.assertIn(".overlay(alignment: .topTrailing)", source)
         self.assertIn(".onChange(of: agentSession.activeRequest?.id)", source)
         self.assertIn("displayedScenario = requestedScenario", source)
         self.assertIn("document = displayedScenario.fixture.document", source)
@@ -29,13 +29,23 @@ class ReviewHarnessUISourceTests(unittest.TestCase):
         self.assertIn("var feedbackThreadID: String", source)
         self.assertIn("Messages have their own append-only files", source)
 
-    def test_feedback_ui_has_only_minimal_bar_and_full_screen_history(self):
+    def test_feedback_ui_keeps_quick_current_turn_and_full_screen_history(self):
         source = (ROOT / "TuberNotes/DeveloperSupport/FeedbackThreadViews.swift").read_text()
         self.assertIn("struct FeedbackThreadBar", source)
         self.assertIn("struct FeedbackThreadView", source)
         self.assertIn(".fullScreenCover", source)
-        self.assertNotIn("ExpandedPanel", source)
+        self.assertIn("session.currentTurn", source)
+        self.assertIn('Button("View Full Thread")', source)
+        self.assertIn('TextField("Reply to this turn"', source)
         self.assertIn('Button("Capture & Annotate"', source)
+
+    def test_blocked_thread_has_human_priority_reopen_affordance(self):
+        views = (ROOT / "TuberNotes/DeveloperSupport/FeedbackThreadViews.swift").read_text()
+        session = (ROOT / "TuberNotes/DeveloperSupport/FeedbackThreadSession.swift").read_text()
+        self.assertIn('Button("Reopen with Priority")', views)
+        self.assertIn("func reopen(_ feedbackThread: FeedbackThread)", session)
+        self.assertIn("value.state = hasActive ? .queued : .open", session)
+        self.assertIn("value.queueSequence = (feedbackThreads.map", session)
 
     def test_capture_is_human_triggered_and_hides_feedback_ui(self):
         root = (ROOT / "TuberNotes/App/RootView.swift").read_text()
@@ -54,7 +64,16 @@ class ReviewHarnessUISourceTests(unittest.TestCase):
         self.assertIn('comparisonButton("B"', views)
         self.assertIn('Button("Reset")', views)
         self.assertIn('comparisonID == "pin-presentation-01"', session)
+        self.assertIn("isResettingComparison", session)
+        self.assertIn('Text("Resetting")', views)
         self.assertIn("request.kind == .penFixture", legacy)
+
+    def test_annotation_uses_native_tool_picker_and_history_prioritizes_annotated_image(self):
+        views = (ROOT / "TuberNotes/DeveloperSupport/FeedbackThreadViews.swift").read_text()
+        self.assertIn("PKToolPicker()", views)
+        self.assertIn("toolPicker.setVisible(true", views)
+        self.assertIn('labeledImage(annotated, label: "Annotated")', views)
+        self.assertIn("Clean original retained for collection", views)
 
 
 if __name__ == "__main__":

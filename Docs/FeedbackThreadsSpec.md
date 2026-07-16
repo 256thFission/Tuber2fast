@@ -18,7 +18,7 @@ This is development tooling, not product chat or project-management software. It
 - A human reply does not resolve the thread. It moves the thread to `awaiting-model`, which retains the device slot.
 - Both human and model may resolve, subject to optimistic concurrency.
 - Resolved threads are terminal and immutable until explicitly reopened.
-- The harness has only a minimal floating bar and a full-screen thread view. There is no intermediate expanded overlay.
+- The floating harness preserves the prior quick context interaction: collapsed bar, bounded expanded current-turn card, and a full-screen thread view for complete history.
 - The model may ask for a screenshot but cannot trigger one. Capture and send are separate, explicit human actions.
 - The initial structured interaction is single-choice only. Multi-choice and Pencil capture as feedback-thread interactions are deferred.
 - A/B review is one compiled, Debug-only comparison seam with synchronized reset, not a generalized variant platform.
@@ -58,7 +58,7 @@ stateDiagram-v2
     Resolved --> Queued: explicitly reopened
 ```
 
-When the active feedback thread becomes `blocked`, `resolved`, or `cancelled`, the next queued thread advances and loads its pinned scenario cleanly. A blocked thread does not retain the device slot. Reopening or resuming joins the FIFO queue unless the slot is idle, in which case it opens immediately. When it joins an occupied queue it receives a new queue sequence after existing waiters; its message history and per-thread sequences are preserved.
+When the active feedback thread becomes `blocked`, `resolved`, or `cancelled`, the next queued thread advances and loads its pinned scenario cleanly. A blocked thread does not retain the device slot. Reopening or resuming joins the queue unless the slot is idle, in which case it opens immediately. A human-requested reopen receives priority ahead of ordinary waiters without stealing the currently active slot; model/system requeues remain FIFO. Message history and per-thread sequences are preserved.
 
 ### Optimistic concurrency
 
@@ -104,7 +104,7 @@ Text follow-ups preserve the current product surface unless their normal message
 
 ### 6.1 Minimal product-facing bar
 
-The floating bar is draggable and collapsible. It may show only compact session information such as title, state, unread count, queue count, and a control to enter the full thread view. It is an overlay and does not participate in product layout.
+The floating bar starts at the top-trailing safe-area edge every time, and remains draggable and collapsible. Collapsed, it shows compact session information. Expanded, it preserves the quick context UI: the exact current model turn, its immediate reply or single-choice control, state actions, and `View Full Thread`. It does not browse older history and does not participate in product layout.
 
 During the registered live A/B comparison only, it additionally exposes:
 
@@ -112,7 +112,7 @@ During the registered live A/B comparison only, it additionally exposes:
 [A] [B] [Reset]
 ```
 
-There is no rich intermediate expanded overlay and no conversation composer over the product.
+The expanded current-turn card is intentionally bounded; complete history, attachment review, comments, and longer interaction remain in the full-screen view.
 
 ### 6.2 Full-screen thread view
 
@@ -120,7 +120,7 @@ The full-screen view contains:
 
 - complete chronological, append-only history;
 - the current free-text composer or single-choice question;
-- clean and annotated screenshot previews;
+- the annotated screenshot as the primary history preview, with clean-image retention indicated as metadata;
 - implementation and surface revision markers;
 - human actions for `Reply`, `Capture & Annotate`, `Blocked`, and `Resolve`;
 - live A/B preference controls when the registered comparison is active.
@@ -150,7 +150,7 @@ The model may request visual clarification in a normal message. It cannot invoke
 1. The human taps `Capture & Annotate` in the full-screen thread view.
 2. The harness captures the TuberNotes product viewport while excluding all feedback-thread UI.
 3. A frozen preview opens.
-4. The human may draw with Apple Pencil, add a one-line caption, cancel, or send.
+4. The human may draw with Apple Pencil using the native PencilKit tool picker, add a one-line caption, cancel, or send.
 5. `Cancel` creates no sent attachment and no successful attachment message.
 6. `Send` atomically persists attachment metadata and appends its owning message.
 7. The MCP collection path mirrors both PNGs to durable model-accessible paths.
@@ -197,7 +197,7 @@ M4 registers one Debug-only live comparison, preferably a small existing Pin pre
 - A and B are compiled into one manually integrated build.
 - Both render switch-in-place in the identical product viewport geometry.
 - Switching does not reinstall or relaunch the app.
-- Every switch and `[Reset]` applies the same deterministic synchronized reset.
+- Every switch and `[Reset]` applies the same deterministic synchronized reset and briefly shows `Resetting` before accepting more comparison input.
 - The minimal bar exposes `[A] [B] [Reset]` only while comparison is active.
 - The full thread view offers `Prefer A`, `Prefer B`, `Neither`, and `No preference`, with optional comment and human-triggered annotation.
 - The event log records each variant exposure, switch, reset, and submitted preference.
@@ -297,7 +297,7 @@ Gitignored Mac mirror:
 
 Collected attachment paths are added to the owning message's attachment metadata as `collectedPaths`; they are not maintained in a separate attachment index. The per-thread `collected/.../device` directory is the raw pull, while durable PNG copies live under `attachments/<feedback-thread-id>/`.
 
-Every meaningful event is appended to JSONL with event ID, feedback-thread ID, sequence, timestamp, requester ID, pinned target, scenario, surface revision, and relevant message/attachment/comparison fields. Required events cover creation, queueing, activation, message/question/answer, state transition, capture cancellation/send/collection, surface revision, variant exposure/switch/reset/preference, reopen, and export.
+Every meaningful event is appended to a mergeable JSONL schema with a globally unique event ID, source (`backend` or `device`), per-source sequence, feedback-thread ID, timestamp, requester ID, pinned target, scenario, surface revision, and relevant message/attachment/comparison fields. Collection deduplicates device events by event ID into the canonical Mac event log while preserving the pulled device log as an evidence artifact. Required events cover creation, queueing, activation, message/question/answer, state transition, capture cancellation/send/collection, surface revision, variant exposure/switch/reset/preference, reopen, and export.
 
 `export_feedback_thread` writes a bounded Markdown transcript plus references only to durable attachments already collected into the Mac mirror. Export does not pull uncollected device attachments implicitly. It does not add a general export UI, archive browser, search index, or storage dashboard.
 
@@ -362,7 +362,7 @@ The milestone is accepted mechanically only with focused state/persistence/MCP t
 
 Deferred from v0.2:
 
-- rich intermediate overlay;
+- a rich intermediate history browser beyond the bounded current-turn card;
 - Photos import or general media management;
 - editable drawing archives, attachment deletion UX, elaborate retake flows;
 - multi-choice and feedback-thread Pencil-capture interactions;

@@ -26,13 +26,13 @@ struct RootView: View {
 #if DEBUG
                 .id(surfaceGeneration)
                 .environmentObject(agentSession)
-                .overlay(alignment: .topLeading) {
-                    VStack(alignment: .leading, spacing: 8) {
+                .overlay(alignment: .topTrailing) {
+                    VStack(alignment: .trailing, spacing: 8) {
                         FeedbackThreadBar(session: feedbackSession)
                         AgentRequestBanner(session: agentSession)
                     }
                     .opacity(feedbackSession.isCapturing ? 0 : 1)
-                    .padding(.leading, 20)
+                    .padding(.trailing, 20)
                     .padding(.top, 8)
                 }
                 .onChange(of: agentSession.resetGeneration) { _, _ in

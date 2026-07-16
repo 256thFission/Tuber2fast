@@ -4,47 +4,40 @@ import SwiftUI
 #if DEBUG
 struct FeedbackThreadBar: View {
     @ObservedObject var session: FeedbackThreadSession
-    @State private var isCollapsed = true
+    @State private var isCollapsed = false
+    @State private var quickReply = ""
     @State private var settledOffset: CGSize = .zero
     @GestureState private var dragOffset: CGSize = .zero
 
     var body: some View {
         if let feedbackThread = session.activeFeedbackThread {
-            HStack(spacing: 10) {
-                Button {
-                    session.isPresentingFullThread = true
-                } label: {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 10) {
                     Label(feedbackThread.title, systemImage: "text.bubble")
+                        .font(.subheadline.weight(.semibold))
                         .lineLimit(1)
-                }
-                .buttonStyle(.plain)
-
-                Text(feedbackThread.state.rawValue)
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.secondary)
-
-                if session.isLiveComparison && !isCollapsed {
-                    Divider().frame(height: 22)
-                    comparisonButton("A", variant: "a")
-                    comparisonButton("B", variant: "b")
-                    Button("Reset") { session.resetComparison() }
-                        .buttonStyle(.bordered)
-                        .font(.caption.weight(.semibold))
+                    Spacer()
+                    Text(feedbackThread.state.rawValue)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                    Button {
+                        withAnimation(.snappy) { isCollapsed.toggle() }
+                    } label: {
+                        Image(systemName: isCollapsed ? "chevron.down" : "chevron.up")
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(isCollapsed ? "Expand feedback context" : "Collapse feedback context")
                 }
 
-                Button {
-                    withAnimation(.snappy) { isCollapsed.toggle() }
-                } label: {
-                    Image(systemName: isCollapsed ? "chevron.right" : "chevron.left")
+                if !isCollapsed {
+                    quickContext(feedbackThread)
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel(isCollapsed ? "Expand feedback bar" : "Collapse feedback bar")
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(.ultraThinMaterial, in: Capsule())
-            .overlay { Capsule().strokeBorder(.orange.opacity(0.65), lineWidth: 1) }
-            .contentShape(Capsule())
+            .padding(14)
+            .frame(maxWidth: isCollapsed ? 360 : 520, alignment: .leading)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
+            .overlay { RoundedRectangle(cornerRadius: 14).strokeBorder(.orange.opacity(0.65), lineWidth: 1) }
+            .contentShape(RoundedRectangle(cornerRadius: 14))
             .offset(x: settledOffset.width + dragOffset.width, y: settledOffset.height + dragOffset.height)
             .gesture(
                 DragGesture()
@@ -59,6 +52,86 @@ struct FeedbackThreadBar: View {
             .fullScreenCover(isPresented: $session.isPresentingFullThread) {
                 FeedbackThreadView(session: session)
             }
+        } else if let candidate = session.reopenCandidate {
+            HStack(spacing: 10) {
+                Label(candidate.title, systemImage: "arrow.uturn.backward.circle")
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
+                Text(candidate.state.rawValue)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                Button("Reopen with Priority") { session.reopen(candidate) }
+                    .buttonStyle(.borderedProminent)
+            }
+            .padding(14)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
+            .overlay { RoundedRectangle(cornerRadius: 14).strokeBorder(.orange.opacity(0.65), lineWidth: 1) }
+            .accessibilityIdentifier("feedback-thread-reopen")
+        }
+    }
+
+    @ViewBuilder
+    private func quickContext(_ feedbackThread: FeedbackThread) -> some View {
+        if let turn = session.currentTurn {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(turn.body ?? "Current feedback turn")
+                    .font(.body)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if let interaction = turn.interaction, interaction.kind == .singleChoice,
+                   session.activeQuestion?.id == turn.id {
+                    HStack(spacing: 8) {
+                        ForEach(interaction.options ?? []) { option in
+                            Button(option.label) {
+                                session.answer(turn, optionID: option.id, comment: "")
+                            }
+                            .buttonStyle(.bordered)
+                        }
+                    }
+                } else if feedbackThread.state == .open {
+                    HStack(spacing: 8) {
+                        TextField("Reply to this turn", text: $quickReply)
+                            .textFieldStyle(.roundedBorder)
+                        Button("Send") {
+                            session.sendReply(quickReply)
+                            quickReply = ""
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(quickReply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                } else {
+                    Text("Your response is read-only while the model is working.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+
+        if session.isLiveComparison {
+            HStack(spacing: 8) {
+                if session.isResettingComparison {
+                    ProgressView().controlSize(.small)
+                    Text("Resetting").font(.caption.weight(.semibold))
+                } else {
+                    comparisonButton("A", variant: "a")
+                    comparisonButton("B", variant: "b")
+                    Button("Reset") { session.resetComparison() }
+                        .buttonStyle(.bordered)
+                        .font(.caption.weight(.semibold))
+                }
+            }
+        }
+
+        HStack(spacing: 8) {
+            Button("View Full Thread") { session.isPresentingFullThread = true }
+                .buttonStyle(.bordered)
+            if let candidate = session.reopenCandidate {
+                Button("Reopen \(candidate.title)") { session.reopen(candidate) }
+                    .buttonStyle(.bordered)
+            }
+            Spacer()
+            Button("Blocked") { session.setState(.blocked) }.buttonStyle(.bordered)
+            Button("Resolve") { session.setState(.resolved) }.buttonStyle(.borderedProminent)
         }
     }
 
@@ -223,12 +296,10 @@ private struct FeedbackAttachmentPreview: View {
     var body: some View {
         if let annotated = UIImage(contentsOfFile: annotatedPath) {
             VStack(alignment: .leading) {
-                HStack(alignment: .top) {
-                    if let clean = UIImage(contentsOfFile: cleanPath) {
-                        labeledImage(clean, label: "Clean")
-                    }
-                    labeledImage(annotated, label: "Annotated")
-                }
+                labeledImage(annotated, label: "Annotated")
+                Label("Clean original retained for collection", systemImage: "checkmark.circle")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
                 if let caption = attachment.caption { Text(caption).font(.caption) }
             }
         } else {
@@ -249,11 +320,6 @@ private struct FeedbackAttachmentPreview: View {
             .appendingPathComponent(attachment.annotatedPath).path
     }
 
-    private var cleanPath: String {
-        FeedbackThreadStore.rootURL
-            .appendingPathComponent(feedbackThreadID, isDirectory: true)
-            .appendingPathComponent(attachment.cleanPath).path
-    }
 }
 
 struct FeedbackAnnotationView: View {
@@ -301,6 +367,11 @@ private struct FeedbackPencilCanvas: UIViewRepresentable {
         canvas.drawingPolicy = .pencilOnly
         canvas.tool = PKInkingTool(.pen, color: .systemRed, width: 5)
         canvas.delegate = context.coordinator
+        let toolPicker = PKToolPicker()
+        toolPicker.addObserver(canvas)
+        toolPicker.setVisible(true, forFirstResponder: canvas)
+        context.coordinator.toolPicker = toolPicker
+        DispatchQueue.main.async { canvas.becomeFirstResponder() }
         return canvas
     }
     func updateUIView(_ canvas: PKCanvasView, context: Context) {
@@ -308,6 +379,7 @@ private struct FeedbackPencilCanvas: UIViewRepresentable {
     }
     final class Coordinator: NSObject, PKCanvasViewDelegate {
         var drawing: Binding<PKDrawing>
+        var toolPicker: PKToolPicker?
         init(drawing: Binding<PKDrawing>) { self.drawing = drawing }
         func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) { drawing.wrappedValue = canvasView.drawing }
     }

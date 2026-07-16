@@ -91,6 +91,9 @@ Feedback-thread device storage is under
 `Documents/feedback-threads/`; its gitignored Mac mirror is
 `.feedback-threads/`, including `threads/`, `collected/`, `attachments/`, the
 FIFO `queue.json`, and append-only `event-log.jsonl`.
+Device-originated events carry unique IDs and source sequences. Collection
+preserves the pulled device JSONL and deduplicates its events into the canonical
+Mac event log.
 
 Reviewed fixtures can be copied into `Fixtures/` for the repo.
 

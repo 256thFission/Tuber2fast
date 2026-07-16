@@ -15,11 +15,13 @@ final class FeedbackThreadSession: ObservableObject {
     @Published private(set) var resetGeneration = 0
     @Published private(set) var captureRequestGeneration = 0
     @Published private(set) var isCapturing = false
+    @Published private(set) var isResettingComparison = false
     @Published var isPresentingFullThread = false
     @Published var capturedImage: UIImage?
     @Published var statusMessage: String?
 
     private var pollTask: Task<Void, Never>?
+    private var resetFeedbackTask: Task<Void, Never>?
 
     init() {
         reload()
@@ -32,7 +34,10 @@ final class FeedbackThreadSession: ObservableObject {
         }
     }
 
-    deinit { pollTask?.cancel() }
+    deinit {
+        pollTask?.cancel()
+        resetFeedbackTask?.cancel()
+    }
 
     var activeQuestion: FeedbackMessage? {
         guard let value = activeFeedbackThread else { return nil }
@@ -40,6 +45,16 @@ final class FeedbackThreadSession: ObservableObject {
         return value.messages.reversed().first {
             $0.interaction?.state == .awaitingHuman && !answeredIDs.contains($0.id)
         }
+    }
+
+    var currentTurn: FeedbackMessage? {
+        activeQuestion ?? activeFeedbackThread?.messages.reversed().first(where: { $0.author == .model })
+    }
+
+    var reopenCandidate: FeedbackThread? {
+        feedbackThreads
+            .filter { $0.state == .blocked || $0.state == .resolved }
+            .max { ($0.updatedAt, $0.id) < ($1.updatedAt, $1.id) }
     }
 
     var comparisonID: String? {
@@ -87,6 +102,26 @@ final class FeedbackThreadSession: ObservableObject {
         } catch { statusMessage = error.localizedDescription }
     }
 
+    func reopen(_ feedbackThread: FeedbackThread) {
+        guard feedbackThread.state == .blocked || feedbackThread.state == .resolved else { return }
+        var value = feedbackThread
+        let hasActive = feedbackThreads.contains(where: { $0.state.ownsDeviceSlot })
+        value.state = hasActive ? .queued : .open
+        value.queueSequence = (feedbackThreads.map(\.queueSequence).min() ?? 0) - 1
+        value.lastConsumedSequence = value.lastSequence
+        value.updatedAt = Date()
+        value.revision += 1
+        do {
+            try FeedbackThreadStore.save(value)
+            FeedbackThreadStore.appendEvent(
+                "thread-reopened",
+                feedbackThreadID: value.id,
+                values: ["actor": "human", "priority": "true", "state": value.state.rawValue]
+            )
+            reload()
+        } catch { statusMessage = error.localizedDescription }
+    }
+
     func selectVariant(_ variant: String) {
         guard var value = activeFeedbackThread, isLiveComparison, variant == "a" || variant == "b" else { return }
         value.activeComparisonID = "pin-presentation-01"
@@ -96,15 +131,26 @@ final class FeedbackThreadSession: ObservableObject {
         do {
             try FeedbackThreadStore.save(value)
             activeFeedbackThread = value
-            resetGeneration += 1
+            showComparisonResetFeedback()
             FeedbackThreadStore.appendEvent("variant-exposed", feedbackThreadID: value.id, values: ["comparisonID": "pin-presentation-01", "variantID": variant])
         } catch { statusMessage = error.localizedDescription }
     }
 
     func resetComparison() {
         guard let id = activeFeedbackThread?.id, isLiveComparison else { return }
-        resetGeneration += 1
+        showComparisonResetFeedback()
         FeedbackThreadStore.appendEvent("comparison-reset", feedbackThreadID: id, values: ["comparisonID": "pin-presentation-01"])
+    }
+
+    private func showComparisonResetFeedback() {
+        resetFeedbackTask?.cancel()
+        isResettingComparison = true
+        resetGeneration += 1
+        resetFeedbackTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            guard !Task.isCancelled else { return }
+            self?.isResettingComparison = false
+        }
     }
 
     func submitPreference(_ preference: Preference, comment: String) {

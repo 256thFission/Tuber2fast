@@ -103,12 +103,12 @@ PencilFixtureMCP exposes two separate Debug-only protocols. Use feedback threads
 2. The Debug app shows a minimal floating bar. The human uses the full-screen thread view to reply, answer, annotate, block, or resolve.
 3. `await_thread_response` waits for a newer human reply; `collect_thread_updates` collects ordered messages and durable attachment paths after a sequence cursor.
 4. Use `post_thread_message` for normal follow-up or bounded revision metadata and `ask_thread_question` for free-text or single-choice questions.
-5. Use `set_feedback_thread_state` for optimistic block, resolve, cancel, resume, or reopen transitions; pass the last sequence consumed so newer human feedback cannot be skipped.
+5. Use `set_feedback_thread_state` for optimistic block, resolve, cancel, resume, or reopen transitions; pass the last sequence consumed so newer human feedback cannot be skipped. A human-requested reopen is prioritized ahead of ordinary queued work without preempting the active review.
 6. Use `get_feedback_thread` for durable state/history and `export_feedback_thread` for a bounded Markdown evidence transcript.
 
 Keep the returned `owner_token`; only its hash is persisted. A human reply moves the active feedback thread to `awaiting-model`, retaining the device slot. A genuinely `blocked`, `resolved`, or `cancelled` thread releases the slot and advances the next queued scenario cleanly. Prefer one focused clarification before revising; ask another only when the answer exposes a materially different ambiguity.
 
-Screenshots are human-triggered. The model may request one in a message but cannot invoke capture or send. The human must preview, may annotate/caption/cancel, and must explicitly send. Collect both clean and annotated PNG paths from thread updates. Feedback-thread UI is excluded from the captured product viewport.
+Screenshots are human-triggered. The model may request one in a message but cannot invoke capture or send. The human must preview, may annotate with the native PencilKit tool palette, caption, cancel, and explicitly send. History emphasizes the annotated preview while collection retains both clean and annotated PNG paths. Feedback-thread UI is excluded from the captured product viewport.
 
 ### Pen-fixture agent path
 

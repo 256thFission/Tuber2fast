@@ -164,6 +164,7 @@ def _empty_feedback_ledger() -> dict[str, Any]:
     return {
         "schemaVersion": FEEDBACK_SCHEMA_VERSION,
         "nextQueueSequence": 1,
+        "nextPrioritySequence": -1,
         "activeFeedbackThreadID": None,
         "creationKeys": {},
         "feedbackThreads": {},
@@ -180,6 +181,7 @@ def _load_feedback_ledger() -> dict[str, Any]:
         return _empty_feedback_ledger()
     value.setdefault("schemaVersion", FEEDBACK_SCHEMA_VERSION)
     value.setdefault("nextQueueSequence", 1)
+    value.setdefault("nextPrioritySequence", -1)
     value.setdefault("activeFeedbackThreadID", None)
     value.setdefault("creationKeys", {})
     value.setdefault("feedbackThreads", {})
@@ -248,6 +250,8 @@ def _append_feedback_event(event_type: str, thread: dict[str, Any], **fields: An
         "feedbackThreadID": thread["id"],
         "timestamp": _utc_now(),
         "sequence": thread.get("eventSequence", 0) + 1,
+        "source": "backend",
+        "sourceSequence": thread.get("eventSequence", 0) + 1,
         "requesterID": thread.get("requester", {}).get("id"),
         "scenario": thread.get("scenario"),
         "surfaceRevision": thread.get("surfaceRevision", 0),
@@ -260,6 +264,44 @@ def _append_feedback_event(event_type: str, thread: dict[str, Any], **fields: An
         stream.flush()
         os.fsync(stream.fileno())
     return event
+
+
+def _merge_device_feedback_events(device_log: Path, feedback_thread_id: str) -> int:
+    """Merge one device event stream into the canonical Mac JSONL by event ID."""
+    if not device_log.exists():
+        return 0
+    existing_ids: set[str] = set()
+    if FEEDBACK_EVENT_LOG.exists():
+        for line in FEEDBACK_EVENT_LOG.read_text().splitlines():
+            try:
+                event_id = json.loads(line).get("eventID")
+            except json.JSONDecodeError:
+                continue
+            if event_id:
+                existing_ids.add(str(event_id))
+
+    merged: list[dict[str, Any]] = []
+    for line in device_log.read_text().splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        event_id = str(event.get("eventID") or "")
+        if event.get("feedbackThreadID") != feedback_thread_id or not event_id or event_id in existing_ids:
+            continue
+        event.setdefault("source", "device")
+        existing_ids.add(event_id)
+        merged.append(event)
+    if not merged:
+        return 0
+
+    FEEDBACK_EVENT_LOG.parent.mkdir(parents=True, exist_ok=True)
+    with FEEDBACK_EVENT_LOG.open("a") as stream:
+        for event in merged:
+            stream.write(json.dumps(event, sort_keys=True) + "\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+    return len(merged)
 
 
 def _feedback_remote_root() -> Path:
@@ -1396,6 +1438,10 @@ def _sync_feedback_thread_from_target(feedback_thread_id: str) -> None:
     pulled = _pull_from_target(target, _feedback_remote_root() / feedback_thread_id, remote_dir)
     if not pulled or not remote_dir.exists() or not (remote_dir / "thread.json").exists():
         return
+    device_events = FEEDBACK_COLLECTED / feedback_thread_id / "device-events.jsonl"
+    pulled_events = _pull_from_target(target, _feedback_remote_root() / "events.jsonl", device_events)
+    if pulled_events:
+        _merge_device_feedback_events(device_events, feedback_thread_id)
     remote_thread = json.loads((remote_dir / "thread.json").read_text())
     if remote_thread.get("id") != feedback_thread_id:
         raise RuntimeError(f"Collected feedback thread identity mismatch for {feedback_thread_id}")
@@ -1428,6 +1474,7 @@ def _sync_feedback_thread_from_target(feedback_thread_id: str) -> None:
     if entry:
         activated: dict[str, Any] | None = None
         entry["state"] = remote_thread["state"]
+        entry["queueSequence"] = remote_thread.get("queueSequence", entry.get("queueSequence", 0))
         if remote_thread["state"] in {"blocked", *FEEDBACK_TERMINAL_STATES}:
             if ledger.get("activeFeedbackThreadID") == feedback_thread_id:
                 ledger["activeFeedbackThreadID"] = None
@@ -1562,8 +1609,12 @@ def set_feedback_thread_state(
         entry["state"] = state
         activated: dict[str, Any] | None = None
         if state == "queued":
-            queue_sequence = int(ledger["nextQueueSequence"])
-            ledger["nextQueueSequence"] = queue_sequence + 1
+            if actor == "human":
+                queue_sequence = int(ledger["nextPrioritySequence"])
+                ledger["nextPrioritySequence"] = queue_sequence - 1
+            else:
+                queue_sequence = int(ledger["nextQueueSequence"])
+                ledger["nextQueueSequence"] = queue_sequence + 1
             thread["queueSequence"] = queue_sequence
             entry["queueSequence"] = queue_sequence
         _write_feedback_thread(thread)

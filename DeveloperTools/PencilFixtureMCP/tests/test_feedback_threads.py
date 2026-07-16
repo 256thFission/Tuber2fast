@@ -111,6 +111,30 @@ class FeedbackThreadTests(unittest.TestCase):
         self.assertEqual(server._read_feedback_thread(second["feedback_thread_id"])["state"], "open")
         self.assertEqual(server._load_feedback_ledger()["activeFeedbackThreadID"], second["feedback_thread_id"])
 
+    def test_human_requested_reopen_has_priority_over_existing_waiters(self):
+        first = self._create("priority-first")
+        second = self._create("priority-second")
+        third = self._create("priority-third")
+        server.set_feedback_thread_state(
+            first["feedback_thread_id"], "resolved", first["owner_token"], "model",
+            "resolve-priority-first", 1, 1,
+        )
+        reopened = server.set_feedback_thread_state(
+            first["feedback_thread_id"], "queued", first["owner_token"], "human",
+            "human-reopen-priority-first", 1, 1,
+        )
+        self.assertEqual(reopened["state"], "queued")
+        first_record = server._read_feedback_thread(first["feedback_thread_id"])
+        third_record = server._read_feedback_thread(third["feedback_thread_id"])
+        self.assertLess(first_record["queueSequence"], third_record["queueSequence"])
+
+        server.set_feedback_thread_state(
+            second["feedback_thread_id"], "resolved", second["owner_token"], "model",
+            "resolve-priority-second", 1, 1,
+        )
+        self.assertEqual(server._read_feedback_thread(first["feedback_thread_id"])["state"], "open")
+        self.assertEqual(server._read_feedback_thread(third["feedback_thread_id"])["state"], "queued")
+
     def test_owner_idempotency_and_optimistic_concurrency(self):
         created = self._create("owner")
         thread_id = created["feedback_thread_id"]
@@ -186,6 +210,16 @@ class FeedbackThreadTests(unittest.TestCase):
         (remote_thread_dir / "attachments").mkdir(parents=True, exist_ok=True)
         (remote_thread_dir / "attachments" / "attachment-one-clean.png").write_bytes(b"clean")
         (remote_thread_dir / "attachments" / "attachment-one-annotated.png").write_bytes(b"annotated")
+        device_event = {
+            "eventID": "device-event-one",
+            "event": "annotated-screenshot-sent",
+            "feedbackThreadID": thread_id,
+            "timestamp": server._utc_now(),
+            "source": "device",
+            "sourceSequence": 1,
+        }
+        device_event_log = self._target_root() / server._feedback_remote_root() / "events.jsonl"
+        device_event_log.write_text(json.dumps(device_event) + "\n")
 
         updates = server.collect_thread_updates(thread_id, created["owner_token"], after_sequence=1)
         self.assertEqual([item["sequence"] for item in updates["messages"]], [2])
@@ -195,6 +229,10 @@ class FeedbackThreadTests(unittest.TestCase):
         exported = server.export_feedback_thread(thread_id, created["owner_token"])
         self.assertTrue(Path(exported["markdown_path"]).exists())
         self.assertEqual(len(exported["attachment_paths"]), 2)
+        server.collect_thread_updates(thread_id, created["owner_token"], after_sequence=1)
+        merged_events = [json.loads(line) for line in server.FEEDBACK_EVENT_LOG.read_text().splitlines()]
+        self.assertEqual(sum(event.get("eventID") == "device-event-one" for event in merged_events), 1)
+        self.assertTrue((server.FEEDBACK_COLLECTED / thread_id / "device-events.jsonl").exists())
 
 
 if __name__ == "__main__":
