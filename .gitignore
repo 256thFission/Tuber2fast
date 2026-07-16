@@ -4,6 +4,7 @@ build/
 *.xcuserstate
 xcuserdata/
 .pencil-fixtures/
+.feedback-threads/
 DeveloperTools/PencilFixtureMCP/.venv/
 DeveloperTools/PencilFixtureMCP/__pycache__/
 tmp/
