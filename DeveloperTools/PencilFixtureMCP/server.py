@@ -1,12 +1,14 @@
-"""Development-only PencilFixtureMCP for TuberNotes.
+"""Development-only human review and Pencil fixture tooling for TuberNotes.
 
-Pushes agent interaction requests into the Debug app on a connected simulator
-or physical device, where the human sees the prompt, draws once, and the app
-indexes the result. Agents collect durable JSON without Mac-side human steps.
+Conversational feedback threads persist messages, attachments, queue state,
+and automatic-wake cursors. The separate pen-fixture protocol captures and
+replays authentic Pencil input. Humans complete both workflows entirely in the
+Debug app; agents collect durable evidence without Mac-side human steps.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import fcntl
 import hashlib
@@ -42,6 +44,7 @@ FEEDBACK_STORE = ROOT / ".feedback-threads"
 FEEDBACK_THREADS = FEEDBACK_STORE / "threads"
 FEEDBACK_COLLECTED = FEEDBACK_STORE / "collected"
 FEEDBACK_ATTACHMENTS = FEEDBACK_STORE / "attachments"
+FEEDBACK_WATCHES = FEEDBACK_STORE / "watches"
 FEEDBACK_LEDGER = FEEDBACK_STORE / "queue.json"
 FEEDBACK_LOCK = FEEDBACK_STORE / "store.lock"
 FEEDBACK_EVENT_LOG = FEEDBACK_STORE / "event-log.jsonl"
@@ -51,11 +54,44 @@ FEEDBACK_SLOT_STATES = {"open", "awaiting-model"}
 FEEDBACK_TERMINAL_STATES = {"resolved", "cancelled"}
 FEEDBACK_QUESTION_KINDS = {"free-text", "single-choice"}
 _FEEDBACK_THREAD_LOCK = threading.RLock()
+_FEEDBACK_DEVICE_LOCK = threading.Lock()
+COMMAND_TIMEOUT_SECONDS = 15.0
+FEEDBACK_LOCK_TIMEOUT_SECONDS = 5.0
 mcp = FastMCP("PencilFixtureMCP")
 
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _feedback_watch_path(feedback_thread_id: str) -> Path:
+    return FEEDBACK_WATCHES / f"{feedback_thread_id}.json"
+
+
+def _read_feedback_watch(feedback_thread_id: str) -> dict[str, Any]:
+    path = _feedback_watch_path(feedback_thread_id)
+    if not path.exists():
+        raise FileNotFoundError(f"No feedback watch for {feedback_thread_id}")
+    return json.loads(path.read_text())
+
+
+def _write_feedback_watch(value: dict[str, Any]) -> None:
+    FEEDBACK_WATCHES.mkdir(parents=True, exist_ok=True)
+    _atomic_write_json(_feedback_watch_path(value["feedbackThreadID"]), value)
+
+
+def _new_feedback_watch(thread: dict[str, Any]) -> dict[str, Any]:
+    now = _utc_now()
+    return {
+        "schemaVersion": 1,
+        "feedbackThreadID": thread["id"],
+        "requesterID": thread["requester"]["id"],
+        "state": "watching",
+        "lastAcknowledgedSequence": 0,
+        "acknowledgedWakeIDs": [],
+        "createdAt": now,
+        "updatedAt": now,
+    }
 
 
 def _safe_name(name: str) -> str:
@@ -65,8 +101,15 @@ def _safe_name(name: str) -> str:
     return value[:48]
 
 
-def _run(cmd: list[str], *, env: dict[str, str] | None = None, check: bool = True) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(cmd, check=check, capture_output=True, text=True, env=env)
+def _run(
+    cmd: list[str],
+    *,
+    env: dict[str, str] | None = None,
+    check: bool = True,
+    timeout: float = COMMAND_TIMEOUT_SECONDS,
+) -> subprocess.CompletedProcess[str]:
+    """Run one external command with a hard bound on device-tool stalls."""
+    return subprocess.run(cmd, check=check, capture_output=True, text=True, env=env, timeout=timeout)
 
 
 def _simulator_data_dir(simulator_id: str = "booted") -> Path:
@@ -143,7 +186,7 @@ def _atomic_write_json(path: Path, value: dict[str, Any]) -> None:
 
 
 def _ensure_feedback_dirs() -> None:
-    for path in (FEEDBACK_THREADS, FEEDBACK_COLLECTED, FEEDBACK_ATTACHMENTS):
+    for path in (FEEDBACK_THREADS, FEEDBACK_COLLECTED, FEEDBACK_ATTACHMENTS, FEEDBACK_WATCHES):
         path.mkdir(parents=True, exist_ok=True)
 
 
@@ -151,13 +194,25 @@ def _ensure_feedback_dirs() -> None:
 def _locked_feedback_store() -> Any:
     """Serialize thread, message sequence, queue, and event mutations."""
     _ensure_feedback_dirs()
-    with _FEEDBACK_THREAD_LOCK:
+    if not _FEEDBACK_THREAD_LOCK.acquire(timeout=FEEDBACK_LOCK_TIMEOUT_SECONDS):
+        raise TimeoutError("Timed out waiting for the in-process feedback store lock")
+    try:
         with FEEDBACK_LOCK.open("a+") as lock_file:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            deadline = time.monotonic() + FEEDBACK_LOCK_TIMEOUT_SECONDS
+            while True:
+                try:
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError("Timed out waiting for the cross-process feedback store lock")
+                    time.sleep(0.05)
             try:
                 yield
             finally:
                 fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+    finally:
+        _FEEDBACK_THREAD_LOCK.release()
 
 
 def _empty_feedback_ledger() -> dict[str, Any]:
@@ -1021,7 +1076,11 @@ def request_human_review(
     requester_id: str = "anonymous-agent",
     stale_after_seconds: float = DEFAULT_STALE_AFTER_SECONDS,
 ) -> dict:
-    """Push a review request into the Debug app banner for a verdict + optional note."""
+    """Push a legacy one-shot verdict request into the Debug app banner.
+
+    Prefer create_feedback_thread for new conversational UI review. Keep legacy
+    multi-part prompts short, with one requested check per ``-`` bullet.
+    """
     request, owner_token = _new_request(
         kind="review",
         title=title,
@@ -1045,7 +1104,7 @@ def collect_interaction(
 
 
 @mcp.tool()
-def await_interaction(
+async def await_interaction(
     request_id: str,
     timeout_seconds: float = 180.0,
     prefer_device: bool = True,
@@ -1055,11 +1114,16 @@ def await_interaction(
     deadline = time.time() + timeout_seconds
     last: dict[str, Any] = {}
     while time.time() < deadline:
-        last = _collect_request(request_id, owner_token=owner_token, prefer_device=prefer_device)
+        last = await asyncio.to_thread(
+            _collect_request,
+            request_id,
+            owner_token=owner_token,
+            prefer_device=prefer_device,
+        )
         status = last.get("status")
         if status in {"recorded", "answered", "cancelled"}:
             return last
-        time.sleep(2.0)
+        await asyncio.sleep(min(2.0, max(0.0, deadline - time.time())))
     last["status"] = "timeout"
     last["message"] = f"Timed out after {timeout_seconds:.0f}s waiting for request {request_id}"
     return last
@@ -1165,37 +1229,117 @@ def replay_pen_fixture(name: str, prefer_device: bool = False) -> dict:
     return {"name": safe_name, "status": "launched", **launch}
 
 
-def _advance_feedback_queue_locked(ledger: dict[str, Any]) -> dict[str, Any] | None:
-    active_id = ledger.get("activeFeedbackThreadID")
-    if active_id:
-        try:
-            active = _read_feedback_thread(active_id)
-        except (FileNotFoundError, json.JSONDecodeError, RuntimeError):
-            active = None
-        if active and active.get("state") in FEEDBACK_SLOT_STATES:
-            return active
-        ledger["activeFeedbackThreadID"] = None
+def _refresh_feedback_ledger_locked(ledger: dict[str, Any]) -> None:
+    """Refresh the host index without choosing or changing the active thread.
 
-    candidates = sorted(
-        (
-            entry
-            for entry in ledger["feedbackThreads"].values()
-            if entry.get("state") == "queued"
-        ),
-        key=lambda entry: (entry.get("queueSequence", 0), entry.get("id", "")),
+    The device is the sole queue activation authority. The host ledger mirrors
+    snapshot state for ownership and diagnostics only.
+    """
+    slot_owners: list[str] = []
+    max_queue_sequence = 0
+    for thread_id, entry in list(ledger["feedbackThreads"].items()):
+        try:
+            snapshot = _read_feedback_thread(thread_id)
+        except (FileNotFoundError, json.JSONDecodeError, RuntimeError):
+            entry["state"] = "cancelled"
+            continue
+        entry["state"] = snapshot.get("state", entry.get("state"))
+        entry["queueSequence"] = snapshot.get("queueSequence", entry.get("queueSequence", 0))
+        max_queue_sequence = max(max_queue_sequence, int(entry["queueSequence"]))
+        if entry["state"] in FEEDBACK_SLOT_STATES:
+            slot_owners.append(thread_id)
+    ledger["activeFeedbackThreadID"] = slot_owners[0] if len(slot_owners) == 1 else None
+    ledger["nextQueueSequence"] = max(
+        int(ledger.get("nextQueueSequence", 1)), max_queue_sequence + 1
     )
-    if not candidates:
-        return None
-    next_entry = candidates[0]
-    thread = _read_feedback_thread(next_entry["id"])
-    thread["state"] = "open"
-    thread["updatedAt"] = _utc_now()
-    thread["revision"] = int(thread.get("revision", 0)) + 1
-    next_entry["state"] = "open"
-    ledger["activeFeedbackThreadID"] = thread["id"]
-    _append_feedback_event("thread-activated", thread)
-    _write_feedback_thread(thread)
-    return thread
+    if len(slot_owners) > 1:
+        raise RuntimeError(
+            "feedback queue divergence: multiple device-slot owners: " + ", ".join(sorted(slot_owners))
+        )
+
+
+def _cancel_feedback_thread(
+    feedback_thread_id: str,
+    reason: str,
+    owner_token: str | None = None,
+    *,
+    system_cleanup: bool = False,
+    confirm_system_cleanup: bool = False,
+) -> dict[str, Any]:
+    """Cancel one thread and release its slot.
+
+    Normal callers must prove ownership. The deliberately noisy system cleanup
+    path exists for orphaned development-tool sessions whose token is gone; it
+    requires both flags plus a non-empty audit reason and never returns a token.
+    """
+    normalized_reason = reason.strip()
+    if not normalized_reason:
+        raise ValueError("reason must not be empty")
+    if system_cleanup:
+        if not confirm_system_cleanup:
+            raise PermissionError("system cleanup requires confirm_system_cleanup=true")
+        actor = "system-cleanup"
+    else:
+        actor = "owner"
+
+    with _locked_feedback_store():
+        thread = _read_feedback_thread(feedback_thread_id)
+        if not system_cleanup:
+            _validate_feedback_owner(thread, owner_token)
+        if thread.get("state") == "cancelled":
+            return {
+                "feedback_thread_id": feedback_thread_id,
+                "state": "cancelled",
+                "idempotent": True,
+                "activated_feedback_thread_id": None,
+            }
+        if thread.get("state") == "resolved":
+            return {
+                "feedback_thread_id": feedback_thread_id,
+                "state": "resolved",
+                "idempotent": True,
+                "activated_feedback_thread_id": None,
+            }
+
+        ledger = _load_feedback_ledger()
+        thread["state"] = "cancelled"
+        thread["updatedAt"] = _utc_now()
+        thread["revision"] = int(thread.get("revision", 0)) + 1
+        thread["cancellation"] = {"actor": actor, "reason": normalized_reason, "at": thread["updatedAt"]}
+        _append_feedback_event("thread-cancelled", thread, actor=actor, reason=normalized_reason)
+        _write_feedback_thread(thread)
+        entry = ledger["feedbackThreads"].setdefault(feedback_thread_id, {"id": feedback_thread_id})
+        entry["state"] = "cancelled"
+        _refresh_feedback_ledger_locked(ledger)
+        _save_feedback_ledger(ledger)
+
+    delivery_error = _push_feedback_snapshot(thread)
+    return {
+        "feedback_thread_id": feedback_thread_id,
+        "state": "cancelled",
+        "idempotent": False,
+        "activated_feedback_thread_id": None,
+        "delivery_error": delivery_error,
+    }
+
+
+@mcp.tool()
+async def cancel_feedback_thread(
+    feedback_thread_id: str,
+    reason: str,
+    owner_token: str | None = None,
+    system_cleanup: bool = False,
+    confirm_system_cleanup: bool = False,
+) -> dict:
+    """Cancel an owned thread, or explicitly clean up an orphaned development session."""
+    return await asyncio.to_thread(
+        _cancel_feedback_thread,
+        feedback_thread_id,
+        reason,
+        owner_token,
+        system_cleanup=system_cleanup,
+        confirm_system_cleanup=confirm_system_cleanup,
+    )
 
 
 def _feedback_create_response(
@@ -1216,8 +1360,7 @@ def _feedback_create_response(
     }
 
 
-@mcp.tool()
-def create_feedback_thread(
+def _create_feedback_thread(
     title: str,
     objective: str,
     prompt: str,
@@ -1226,8 +1369,14 @@ def create_feedback_thread(
     idempotency_key: str | None = None,
     prefer_device: bool = True,
     owner_token: str | None = None,
+    *,
+    review_run: dict[str, Any] | None = None,
 ) -> dict:
-    """Create an owned persistent feedback thread and enqueue it on one pinned target."""
+    """Create an owned persistent feedback thread and enqueue it on one pinned target.
+
+    Keep the title and objective brief. Format a multi-part prompt as short
+    ``-`` bullets with one requested check per bullet; avoid dense paragraphs.
+    """
     normalized_title = title.strip()
     normalized_objective = objective.strip()
     normalized_prompt = prompt.strip()
@@ -1238,6 +1387,8 @@ def create_feedback_thread(
     scoped_key = f"{requester}:{creation_key}"
     token = owner_token or secrets.token_urlsafe(32)
 
+    # Device discovery can invoke xcrun. Determine whether it is needed without
+    # keeping the cross-process store lock held during that external call.
     with _locked_feedback_store():
         ledger = _load_feedback_ledger()
         existing_id = ledger["creationKeys"].get(scoped_key)
@@ -1246,8 +1397,12 @@ def create_feedback_thread(
             _validate_feedback_owner(thread, owner_token)
             return _feedback_create_response(thread, owner_token, idempotent=True)
 
-        active = _advance_feedback_queue_locked(ledger)
-        target = dict(active["delivery"]["target"]) if active else None
+        active_id = ledger.get("activeFeedbackThreadID")
+        try:
+            active = _read_feedback_thread(active_id) if active_id else None
+        except (FileNotFoundError, json.JSONDecodeError, RuntimeError):
+            active = None
+        target = dict(active["delivery"]["target"]) if active and active.get("state") in FEEDBACK_SLOT_STATES else None
         if target is None:
             target = next(
                 (
@@ -1257,12 +1412,25 @@ def create_feedback_thread(
                 ),
                 None,
             )
-        if target is None:
-            target = _select_target(prefer_device=prefer_device)
+
+    discovered_target = target or _select_target(prefer_device=prefer_device)
+
+    with _locked_feedback_store():
+        # Another process may have created this idempotent thread while target
+        # discovery was in flight.
+        ledger = _load_feedback_ledger()
+        existing_id = ledger["creationKeys"].get(scoped_key)
+        if existing_id:
+            thread = _read_feedback_thread(existing_id)
+            _validate_feedback_owner(thread, owner_token)
+            return _feedback_create_response(thread, owner_token, idempotent=True)
+
+        _refresh_feedback_ledger_locked(ledger)
+        target = discovered_target
         feedback_thread_id = f"feedback-{uuid.uuid4().hex}"
         created_at = _utc_now()
         queue_sequence = int(ledger["nextQueueSequence"])
-        state = "queued" if active else "open"
+        state = "queued"
         thread = {
             "schemaVersion": FEEDBACK_SCHEMA_VERSION,
             "id": feedback_thread_id,
@@ -1285,9 +1453,12 @@ def create_feedback_thread(
             "messageIdempotency": {},
             "delivery": {"target": target, "pinnedAt": created_at},
         }
+        if review_run is not None:
+            thread["reviewRun"] = review_run
         _write_feedback_thread(thread)
+        _write_feedback_watch(_new_feedback_watch(thread))
         _append_feedback_event("thread-created", thread)
-        _append_feedback_event("thread-activated" if state == "open" else "thread-queued", thread)
+        _append_feedback_event("thread-queued", thread)
         _write_feedback_thread(thread)
         message, _ = _append_feedback_message_locked(
             thread,
@@ -1304,20 +1475,170 @@ def create_feedback_thread(
             "state": state,
             "target": target,
         }
-        if state == "open":
-            ledger["activeFeedbackThreadID"] = feedback_thread_id
         _save_feedback_ledger(ledger)
-        delivery_error = _push_feedback_snapshot(thread, message)
-        if state == "open" and delivery_error is None:
-            try:
-                _launch_target(target, {"TUBER_SCENARIO": thread["scenario"]})
-            except Exception as exc:  # noqa: BLE001
-                delivery_error = str(exc)
-        return _feedback_create_response(thread, token, idempotent=False, delivery_error=delivery_error)
+
+    delivery_error = _push_feedback_snapshot(thread, message)
+    if len(ledger["feedbackThreads"]) == 1 and delivery_error is None:
+        try:
+            _launch_target(target, {"TUBER_SCENARIO": thread["scenario"]})
+        except Exception as exc:  # noqa: BLE001
+            delivery_error = str(exc)
+    return _feedback_create_response(thread, token, idempotent=False, delivery_error=delivery_error)
+
+
+def _normalized_review_run(steps: list[dict[str, Any]]) -> dict[str, Any]:
+    if not isinstance(steps, list) or not steps:
+        raise ValueError("review run steps must be a non-empty list")
+    normalized: list[dict[str, Any]] = []
+    known_ids: set[str] = set()
+    for index, raw in enumerate(steps, start=1):
+        if not isinstance(raw, dict):
+            raise ValueError(f"review step {index} must be an object")
+        step_id = str(raw.get("id", "")).strip()
+        title = str(raw.get("title", "")).strip()
+        instruction = str(raw.get("human_instruction", raw.get("humanInstruction", ""))).strip()
+        response_kind = str(raw.get("response_kind", raw.get("responseKind", "verdict"))).strip()
+        classification = str(raw.get("classification", "human-autonomous")).strip()
+        scenario = str(raw.get("scenario", "blank-canvas")).strip() or "blank-canvas"
+        prerequisites = raw.get("prerequisite_ids", raw.get("prerequisiteIDs", []))
+        if not step_id or step_id in known_ids:
+            raise ValueError(f"review step {index} must have a unique non-empty id")
+        if not title or not instruction:
+            raise ValueError(f"review step {step_id} requires title and human_instruction")
+        if classification != "human-autonomous":
+            raise ValueError(f"review step {step_id} is {classification}; asynchronous runs accept human-autonomous steps only")
+        if response_kind not in {"verdict", "choice", "comment"}:
+            raise ValueError(f"review step {step_id} has unsupported response_kind {response_kind!r}")
+        if not isinstance(prerequisites, list) or not all(isinstance(item, str) for item in prerequisites):
+            raise ValueError(f"review step {step_id} prerequisite_ids must be a string list")
+        prerequisite_ids = [item.strip() for item in prerequisites]
+        if len(set(prerequisite_ids)) != len(prerequisite_ids) or any(item not in known_ids for item in prerequisite_ids):
+            raise ValueError(f"review step {step_id} prerequisites must be unique earlier step IDs")
+        options: list[dict[str, str]] = []
+        option_ids: set[str] = set()
+        for option in raw.get("options", []):
+            option_id = str(option.get("id", "")).strip() if isinstance(option, dict) else ""
+            label = str(option.get("label", "")).strip() if isinstance(option, dict) else ""
+            if not option_id or not label or option_id in option_ids:
+                raise ValueError(f"review step {step_id} choice options require unique IDs and labels")
+            option_ids.add(option_id)
+            options.append({"id": option_id, "label": label})
+        if response_kind == "choice" and len(options) < 2:
+            raise ValueError(f"review step {step_id} choice response requires at least two options")
+        if response_kind != "choice" and options:
+            raise ValueError(f"review step {step_id} options are valid only for choice responses")
+        normalized.append(
+            {
+                "id": step_id,
+                "title": title,
+                "humanInstruction": instruction,
+                "responseKind": response_kind,
+                "scenario": scenario,
+                "prerequisiteIDs": prerequisite_ids,
+                "state": "locked" if prerequisite_ids else "ready",
+                "options": options,
+                "allowsComment": bool(raw.get("allows_comment", raw.get("allowsComment", True))),
+                "allowsAttachment": bool(raw.get("allows_attachment", raw.get("allowsAttachment", False))),
+                "verdict": None,
+                "selectedOptionID": None,
+                "comment": "",
+                "attachments": [],
+                "completedAt": None,
+                "blockedReason": None,
+            }
+        )
+        known_ids.add(step_id)
+    created_at = _utc_now()
+    return {
+        "schemaVersion": 1,
+        "id": f"review-run-{uuid.uuid4().hex}",
+        "state": "active",
+        "steps": normalized,
+        "createdAt": created_at,
+        "submittedAt": None,
+    }
+
+
+def _create_review_run(
+    title: str,
+    objective: str,
+    steps: list[dict[str, Any]],
+    scenario: str = "blank-canvas",
+    requester_id: str = "anonymous-agent",
+    idempotency_key: str | None = None,
+    prefer_device: bool = True,
+    owner_token: str | None = None,
+) -> dict[str, Any]:
+    review_run = _normalized_review_run(steps)
+    response = _create_feedback_thread(
+        title,
+        objective,
+        "An asynchronous review packet is ready. Open Review to work through the checks, then tap Finish Review once.",
+        scenario=review_run["steps"][0]["scenario"] or scenario,
+        requester_id=requester_id,
+        idempotency_key=idempotency_key,
+        prefer_device=prefer_device,
+        owner_token=owner_token,
+        review_run=review_run,
+    )
+    thread = _read_feedback_thread(response["feedback_thread_id"])
+    response["review_run_id"] = thread["reviewRun"]["id"]
+    response["step_count"] = len(thread["reviewRun"]["steps"])
+    response["human_step"] = "Complete the visible review packet on the pinned device and tap Finish Review once."
+    return response
 
 
 @mcp.tool()
-def post_thread_message(
+async def create_review_run(
+    title: str,
+    objective: str,
+    steps: list[dict[str, Any]],
+    scenario: str = "blank-canvas",
+    requester_id: str = "anonymous-agent",
+    idempotency_key: str | None = None,
+    prefer_device: bool = True,
+    owner_token: str | None = None,
+) -> dict:
+    """Create one asynchronous, human-autonomous review packet in one visible session."""
+    return await asyncio.to_thread(
+        _create_review_run,
+        title,
+        objective,
+        steps,
+        scenario,
+        requester_id,
+        idempotency_key,
+        prefer_device,
+        owner_token,
+    )
+
+
+@mcp.tool()
+async def create_feedback_thread(
+    title: str,
+    objective: str,
+    prompt: str,
+    scenario: str = "blank-canvas",
+    requester_id: str = "anonymous-agent",
+    idempotency_key: str | None = None,
+    prefer_device: bool = True,
+    owner_token: str | None = None,
+) -> dict:
+    """Create an owned thread and wake record; arm a task heartbeat before ending the turn."""
+    return await asyncio.to_thread(
+        _create_feedback_thread,
+        title,
+        objective,
+        prompt,
+        scenario,
+        requester_id,
+        idempotency_key,
+        prefer_device,
+        owner_token,
+    )
+
+
+def _post_thread_message(
     feedback_thread_id: str,
     body: str,
     owner_token: str,
@@ -1325,13 +1646,24 @@ def post_thread_message(
     expected_last_sequence: int | None = None,
     surface_directive: dict[str, Any] | None = None,
 ) -> dict:
-    """Append one idempotent model message without implicitly resetting the product surface."""
+    """Append one idempotent model message without implicitly resetting the product surface.
+
+    Prefer short ``-`` bullets for multiple points instead of a dense paragraph.
+    """
     with _locked_feedback_store():
         thread = _read_feedback_thread(feedback_thread_id)
         _validate_feedback_owner(thread, owner_token)
         if expected_last_sequence is not None and expected_last_sequence != thread["lastSequence"]:
             raise RuntimeError(
                 f"stale feedback thread: expected last sequence {expected_last_sequence}, actual {thread['lastSequence']}"
+            )
+        existing_sequence = thread.setdefault("messageIdempotency", {}).get(
+            _normalize_idempotency_key(idempotency_key)
+        )
+        if thread["state"] == "awaiting-model" and existing_sequence is None:
+            raise RuntimeError(
+                f"Feedback thread {feedback_thread_id} is awaiting-model; "
+                "use ask_thread_question to present the next actionable human step"
             )
         message, duplicate = _append_feedback_message_locked(
             thread,
@@ -1340,12 +1672,33 @@ def post_thread_message(
             idempotency_key=idempotency_key,
             surface_directive=surface_directive,
         )
-        delivery_error = None if duplicate else _push_feedback_snapshot(thread, message)
-        return {**_message_response(thread, message, idempotent=duplicate), "delivery_error": delivery_error}
+        response = _message_response(thread, message, idempotent=duplicate)
+    delivery_error = None if duplicate else _push_feedback_snapshot(thread, message)
+    return {**response, "delivery_error": delivery_error}
 
 
 @mcp.tool()
-def ask_thread_question(
+async def post_thread_message(
+    feedback_thread_id: str,
+    body: str,
+    owner_token: str,
+    idempotency_key: str,
+    expected_last_sequence: int | None = None,
+    surface_directive: dict[str, Any] | None = None,
+) -> dict:
+    """Append one concise model message; prefer short ``-`` bullets for multiple points."""
+    return await asyncio.to_thread(
+        _post_thread_message,
+        feedback_thread_id,
+        body,
+        owner_token,
+        idempotency_key,
+        expected_last_sequence,
+        surface_directive,
+    )
+
+
+def _ask_thread_question(
     feedback_thread_id: str,
     prompt: str,
     owner_token: str,
@@ -1356,7 +1709,11 @@ def ask_thread_question(
     allows_attachment: bool = True,
     expected_last_sequence: int | None = None,
 ) -> dict:
-    """Append a free-text or single-choice question; answers remain append-only."""
+    """Append a free-text or single-choice question; answers remain append-only.
+
+    Ask one focused question. If supporting context has multiple points, format
+    them as short ``-`` bullets rather than a paragraph.
+    """
     if kind not in FEEDBACK_QUESTION_KINDS:
         raise ValueError(f"Unsupported question kind: {kind}")
     normalized_options: list[dict[str, str]] = []
@@ -1381,6 +1738,48 @@ def ask_thread_question(
             raise RuntimeError(
                 f"stale feedback thread: expected last sequence {expected_last_sequence}, actual {thread['lastSequence']}"
             )
+        existing_sequence = thread.setdefault("messageIdempotency", {}).get(
+            _normalize_idempotency_key(idempotency_key)
+        )
+        if existing_sequence is not None:
+            message = json.loads(
+                _feedback_message_file(feedback_thread_id, int(existing_sequence)).read_text()
+            )
+            return {**_message_response(thread, message, idempotent=True), "delivery_error": None}
+
+        ledger = _load_feedback_ledger()
+        _refresh_feedback_ledger_locked(ledger)
+        if thread.get("state") not in FEEDBACK_SLOT_STATES:
+            raise RuntimeError(
+                f"Feedback thread {feedback_thread_id} does not own the active device slot"
+            )
+        messages = _read_feedback_messages(feedback_thread_id)
+        answered_ids = {message.get("inReplyTo") for message in messages if message.get("inReplyTo")}
+        unanswered = next(
+            (
+                message
+                for message in reversed(messages)
+                if (message.get("interaction") or {}).get("state") == "awaiting-human"
+                and message.get("id") not in answered_ids
+            ),
+            None,
+        )
+        if unanswered is not None:
+            raise RuntimeError(
+                f"Feedback thread {feedback_thread_id} already has an unanswered interaction "
+                f"at sequence {unanswered['sequence']}"
+            )
+
+        # Presenting the next human action and making it actionable are one
+        # store mutation. The current thread retains the slot throughout.
+        if thread["state"] == "awaiting-model":
+            thread["state"] = "open"
+            thread["updatedAt"] = _utc_now()
+            thread["revision"] = int(thread.get("revision", 0)) + 1
+            ledger["feedbackThreads"][feedback_thread_id]["state"] = "open"
+            _save_feedback_ledger(ledger)
+            _append_feedback_event("thread-opened-for-question", thread)
+            _write_feedback_thread(thread)
         interaction = {
             "kind": kind,
             "state": "awaiting-human",
@@ -1398,8 +1797,36 @@ def ask_thread_question(
         if not duplicate:
             _append_feedback_event("interaction-presented", thread, messageID=message["id"], interactionKind=kind)
             _write_feedback_thread(thread)
-        delivery_error = None if duplicate else _push_feedback_snapshot(thread, message)
-        return {**_message_response(thread, message, idempotent=duplicate), "delivery_error": delivery_error}
+        response = _message_response(thread, message, idempotent=duplicate)
+    delivery_error = None if duplicate else _push_feedback_snapshot(thread, message)
+    return {**response, "delivery_error": delivery_error}
+
+
+@mcp.tool()
+async def ask_thread_question(
+    feedback_thread_id: str,
+    prompt: str,
+    owner_token: str,
+    idempotency_key: str,
+    kind: str = "free-text",
+    options: list[dict[str, str]] | None = None,
+    allows_comment: bool = True,
+    allows_attachment: bool = True,
+    expected_last_sequence: int | None = None,
+) -> dict:
+    """Append one focused question; use short ``-`` bullets for multi-point context."""
+    return await asyncio.to_thread(
+        _ask_thread_question,
+        feedback_thread_id,
+        prompt,
+        owner_token,
+        idempotency_key,
+        kind,
+        options,
+        allows_comment,
+        allows_attachment,
+        expected_last_sequence,
+    )
 
 
 def _copy_collected_attachments(feedback_thread_id: str, message: dict[str, Any], remote_dir: Path) -> list[dict[str, Any]]:
@@ -1431,16 +1858,27 @@ def _copy_collected_attachments(feedback_thread_id: str, message: dict[str, Any]
     return results
 
 
-def _sync_feedback_thread_from_target(feedback_thread_id: str) -> None:
-    local_thread = _read_feedback_thread(feedback_thread_id)
-    target = local_thread["delivery"]["target"]
+def _pull_feedback_thread_from_target(feedback_thread_id: str, target: dict[str, str]) -> tuple[Path | None, Path | None]:
+    """Perform potentially slow device copies without holding the store lock."""
     remote_dir = FEEDBACK_COLLECTED / feedback_thread_id / "device"
     pulled = _pull_from_target(target, _feedback_remote_root() / feedback_thread_id, remote_dir)
     if not pulled or not remote_dir.exists() or not (remote_dir / "thread.json").exists():
-        return
+        return None, None
     device_events = FEEDBACK_COLLECTED / feedback_thread_id / "device-events.jsonl"
     pulled_events = _pull_from_target(target, _feedback_remote_root() / "events.jsonl", device_events)
-    if pulled_events:
+    return remote_dir, device_events if pulled_events else None
+
+
+def _merge_pulled_feedback_thread(
+    feedback_thread_id: str,
+    remote_dir: Path | None,
+    device_events: Path | None,
+) -> None:
+    """Merge a completed pull while the caller holds the store lock."""
+    if remote_dir is None or not remote_dir.exists() or not (remote_dir / "thread.json").exists():
+        return
+    local_thread = _read_feedback_thread(feedback_thread_id)
+    if device_events is not None:
         _merge_device_feedback_events(device_events, feedback_thread_id)
     remote_thread = json.loads((remote_dir / "thread.json").read_text())
     if remote_thread.get("id") != feedback_thread_id:
@@ -1464,30 +1902,23 @@ def _sync_feedback_thread_from_target(feedback_thread_id: str) -> None:
             _append_feedback_event("message-collected", local_thread, messageID=message.get("id"), messageSequence=sequence)
     remote_thread["owner"] = local_thread["owner"]
     remote_thread["delivery"] = local_thread["delivery"]
+    if (local_thread.get("reviewRun") or {}).get("state") == "collected" and (
+        remote_thread.get("reviewRun") or {}
+    ).get("state") == "submitted":
+        remote_thread["reviewRun"] = local_thread["reviewRun"]
+    if local_thread.get("state") in FEEDBACK_TERMINAL_STATES:
+        # A delayed/stale device snapshot cannot resurrect a thread that was
+        # explicitly cancelled or resolved on the development host.
+        remote_thread["state"] = local_thread["state"]
+        remote_thread["cancellation"] = local_thread.get("cancellation")
     remote_thread.setdefault("messageIdempotency", local_thread.get("messageIdempotency", {}))
     remote_thread["eventSequence"] = max(
         int(remote_thread.get("eventSequence", 0)), int(local_thread.get("eventSequence", 0))
     )
     _write_feedback_thread(remote_thread)
-    ledger = _load_feedback_ledger()
-    entry = ledger["feedbackThreads"].get(feedback_thread_id)
-    if entry:
-        activated: dict[str, Any] | None = None
-        entry["state"] = remote_thread["state"]
-        entry["queueSequence"] = remote_thread.get("queueSequence", entry.get("queueSequence", 0))
-        if remote_thread["state"] in {"queued", "blocked", *FEEDBACK_TERMINAL_STATES}:
-            if ledger.get("activeFeedbackThreadID") == feedback_thread_id:
-                ledger["activeFeedbackThreadID"] = None
-            activated = _advance_feedback_queue_locked(ledger)
-        elif remote_thread["state"] in FEEDBACK_SLOT_STATES:
-            ledger["activeFeedbackThreadID"] = feedback_thread_id
-        _save_feedback_ledger(ledger)
-        if activated:
-            _push_feedback_snapshot(activated)
 
 
-@mcp.tool()
-def collect_thread_updates(
+def _collect_thread_updates(
     feedback_thread_id: str,
     owner_token: str,
     after_sequence: int = 0,
@@ -1498,46 +1929,229 @@ def collect_thread_updates(
     with _locked_feedback_store():
         thread = _read_feedback_thread(feedback_thread_id)
         _validate_feedback_owner(thread, owner_token)
-        _sync_feedback_thread_from_target(feedback_thread_id)
+        target = dict(thread["delivery"]["target"])
+
+    # Keep two collectors from rewriting the same pulled snapshot concurrently.
+    # The store lock is acquired only after the bounded device copies finish.
+    with _FEEDBACK_DEVICE_LOCK:
+        remote_dir, device_events = _pull_feedback_thread_from_target(feedback_thread_id, target)
+
+        with _locked_feedback_store():
+            _merge_pulled_feedback_thread(feedback_thread_id, remote_dir, device_events)
+            thread = _read_feedback_thread(feedback_thread_id)
+            messages = [
+                message
+                for message in _read_feedback_messages(feedback_thread_id)
+                if message["sequence"] > after_sequence
+            ]
+            attachments = [attachment for message in messages for attachment in message.get("attachments") or []]
+            response = {
+                "feedback_thread_id": feedback_thread_id,
+                "state": thread["state"],
+                "messages": messages,
+                "attachments": attachments,
+                "after_sequence": after_sequence,
+                "next_cursor": thread["lastSequence"],
+                "last_sequence": thread["lastSequence"],
+                "revision": thread["revision"],
+            }
+    return response
+
+
+@mcp.tool()
+async def collect_thread_updates(
+    feedback_thread_id: str,
+    owner_token: str,
+    after_sequence: int = 0,
+) -> dict:
+    """Collect new device messages and screenshot metadata using an exclusive sequence cursor."""
+    return await asyncio.to_thread(_collect_thread_updates, feedback_thread_id, owner_token, after_sequence)
+
+
+def _collect_review_run(feedback_thread_id: str, owner_token: str) -> dict[str, Any]:
+    updates = _collect_thread_updates(feedback_thread_id, owner_token, 0)
+    with _locked_feedback_store():
         thread = _read_feedback_thread(feedback_thread_id)
-        messages = [message for message in _read_feedback_messages(feedback_thread_id) if message["sequence"] > after_sequence]
-        attachments = [attachment for message in messages for attachment in message.get("attachments") or []]
+        _validate_feedback_owner(thread, owner_token)
+        run = thread.get("reviewRun")
+        if not run:
+            raise RuntimeError(f"Feedback thread {feedback_thread_id} is not a review run")
+        if run.get("state") not in {"submitted", "collected"}:
+            raise RuntimeError(f"Review run {run.get('id')} has not been submitted")
+        idempotent = run.get("state") == "collected"
+        if not idempotent:
+            run["state"] = "collected"
+            thread["updatedAt"] = _utc_now()
+            thread["revision"] = int(thread.get("revision", 0)) + 1
+            _append_feedback_event("review-run-collected", thread, reviewRunID=run["id"])
+            _write_feedback_thread(thread)
         return {
             "feedback_thread_id": feedback_thread_id,
+            "review_run": run,
+            "messages": updates["messages"],
+            "attachments": updates["attachments"],
             "state": thread["state"],
-            "messages": messages,
-            "attachments": attachments,
-            "after_sequence": after_sequence,
-            "next_cursor": thread["lastSequence"],
-            "last_sequence": thread["lastSequence"],
-            "revision": thread["revision"],
+            "idempotent": idempotent,
         }
 
 
 @mcp.tool()
-def await_thread_response(
+async def collect_review_run(feedback_thread_id: str, owner_token: str) -> dict:
+    """Collect one submitted review packet and its ordered evidence bundle."""
+    return await asyncio.to_thread(_collect_review_run, feedback_thread_id, owner_token)
+
+
+@mcp.tool()
+async def await_thread_response(
     feedback_thread_id: str,
     owner_token: str,
     after_sequence: int,
     timeout_seconds: float = 180.0,
 ) -> dict:
-    """Poll until a newer human message or terminal/blocked state is collected."""
+    """Active-turn fast path: poll for a newer human message or terminal/blocked state."""
     deadline = time.time() + timeout_seconds
     last: dict[str, Any] = {}
     while time.time() < deadline:
-        last = collect_thread_updates(feedback_thread_id, owner_token, after_sequence)
+        last = await asyncio.to_thread(_collect_thread_updates, feedback_thread_id, owner_token, after_sequence)
         human_messages = [message for message in last["messages"] if message.get("author") == "human"]
         if human_messages or last["state"] in {"blocked", *FEEDBACK_TERMINAL_STATES}:
             last["status"] = "response"
             return last
-        time.sleep(2.0)
+        await asyncio.sleep(min(2.0, max(0.0, deadline - time.time())))
     last["status"] = "timeout"
     last["message"] = f"Timed out after {timeout_seconds:.0f}s waiting for feedback thread {feedback_thread_id}"
     return last
 
 
+def _get_feedback_watch_state(
+    feedback_thread_id: str,
+    owner_token: str,
+    after_sequence: int | None = None,
+) -> dict:
+    """Return one compact, idempotent wake decision for a task heartbeat."""
+    with _locked_feedback_store():
+        thread = _read_feedback_thread(feedback_thread_id)
+        _validate_feedback_owner(thread, owner_token)
+        watch = _read_feedback_watch(feedback_thread_id)
+        acknowledged = int(watch.get("lastAcknowledgedSequence", 0))
+    cursor = max(acknowledged, after_sequence or 0)
+    updates = _collect_thread_updates(feedback_thread_id, owner_token, cursor)
+    human_messages = [message for message in updates["messages"] if message.get("author") == "human"]
+    state = updates["state"]
+    terminal_or_blocked = state in {"blocked", *FEEDBACK_TERMINAL_STATES}
+    wake_sequence = max((int(message["sequence"]) for message in human_messages), default=cursor)
+    wake_id = f"feedback-wake:{feedback_thread_id}:{wake_sequence}:{state}:{updates['revision']}"
+
+    with _locked_feedback_store():
+        watch = _read_feedback_watch(feedback_thread_id)
+        acknowledged_ids = set(watch.get("acknowledgedWakeIDs", []))
+        eligible = watch.get("state") == "watching" and (bool(human_messages) or terminal_or_blocked)
+        eligible = eligible and wake_id not in acknowledged_ids
+        watch["lastCheckedAt"] = _utc_now()
+        watch["updatedAt"] = watch["lastCheckedAt"]
+        if eligible:
+            watch["pendingWakeID"] = wake_id
+            watch["pendingThroughSequence"] = wake_sequence
+        _write_feedback_watch(watch)
+    return {
+        "feedback_thread_id": feedback_thread_id,
+        "status": "updated" if eligible else ("terminal" if terminal_or_blocked else "unchanged"),
+        "thread_state": state,
+        "wake_eligible": eligible,
+        "wake_id": wake_id if eligible else None,
+        "after_sequence": cursor,
+        "next_cursor": updates["next_cursor"],
+        "human_messages": human_messages if eligible else [],
+        "attachments": updates["attachments"] if eligible else [],
+        "suggested_next_poll_seconds": 30 if state in FEEDBACK_SLOT_STATES else None,
+    }
+
+
 @mcp.tool()
-def set_feedback_thread_state(
+async def get_feedback_watch_state(
+    feedback_thread_id: str,
+    owner_token: str,
+    after_sequence: int | None = None,
+) -> dict:
+    """Return unseen human/terminal wake eligibility without mutating the feedback thread."""
+    return await asyncio.to_thread(
+        _get_feedback_watch_state, feedback_thread_id, owner_token, after_sequence
+    )
+
+
+def _acknowledge_feedback_wake(
+    feedback_thread_id: str,
+    owner_token: str,
+    wake_id: str,
+    consumed_through_sequence: int,
+) -> dict:
+    with _locked_feedback_store():
+        thread = _read_feedback_thread(feedback_thread_id)
+        _validate_feedback_owner(thread, owner_token)
+        watch = _read_feedback_watch(feedback_thread_id)
+        acknowledged_ids = list(watch.get("acknowledgedWakeIDs", []))
+        if wake_id in acknowledged_ids:
+            return {"status": "acknowledged", "idempotent": True, **watch}
+        if wake_id != watch.get("pendingWakeID"):
+            raise RuntimeError(f"wake_id is not pending for feedback thread {feedback_thread_id}")
+        previous = int(watch.get("lastAcknowledgedSequence", 0))
+        if consumed_through_sequence < previous or consumed_through_sequence > int(thread["lastSequence"]):
+            raise ValueError("consumed_through_sequence must advance monotonically within the thread")
+        acknowledged_ids.append(wake_id)
+        watch["acknowledgedWakeIDs"] = acknowledged_ids[-128:]
+        watch["lastAcknowledgedSequence"] = consumed_through_sequence
+        watch["lastAcknowledgedAt"] = _utc_now()
+        watch["updatedAt"] = watch["lastAcknowledgedAt"]
+        watch.pop("pendingWakeID", None)
+        watch.pop("pendingThroughSequence", None)
+        _write_feedback_watch(watch)
+        return {"status": "acknowledged", "idempotent": False, **watch}
+
+
+@mcp.tool()
+async def acknowledge_feedback_wake(
+    feedback_thread_id: str,
+    owner_token: str,
+    wake_id: str,
+    consumed_through_sequence: int,
+) -> dict:
+    """Idempotently acknowledge one scheduled/delivered wake and advance its cursor."""
+    return await asyncio.to_thread(
+        _acknowledge_feedback_wake,
+        feedback_thread_id,
+        owner_token,
+        wake_id,
+        consumed_through_sequence,
+    )
+
+
+def _close_feedback_watch(feedback_thread_id: str, owner_token: str, reason: str) -> dict:
+    if not reason.strip():
+        raise ValueError("reason must not be empty")
+    with _locked_feedback_store():
+        thread = _read_feedback_thread(feedback_thread_id)
+        _validate_feedback_owner(thread, owner_token)
+        watch = _read_feedback_watch(feedback_thread_id)
+        idempotent = watch.get("state") == "closed"
+        watch["state"] = "closed"
+        watch["closedReason"] = reason.strip()
+        watch["closedAt"] = watch.get("closedAt") or _utc_now()
+        watch["updatedAt"] = _utc_now()
+        _write_feedback_watch(watch)
+        return {"status": "closed", "idempotent": idempotent, **watch}
+
+
+@mcp.tool()
+async def close_feedback_watch(
+    feedback_thread_id: str,
+    owner_token: str,
+    reason: str,
+) -> dict:
+    """Stop host monitoring only; do not resolve the thread or release its device slot."""
+    return await asyncio.to_thread(_close_feedback_watch, feedback_thread_id, owner_token, reason)
+
+
+def _set_feedback_thread_state(
     feedback_thread_id: str,
     state: str,
     owner_token: str,
@@ -1564,10 +2178,10 @@ def set_feedback_thread_state(
                 f"actual {thread['lastSequence']}"
             )
         current = thread["state"]
-        if current == "cancelled" or (current == "resolved" and state not in {"open", "queued"}):
+        if current in FEEDBACK_TERMINAL_STATES:
             raise RuntimeError(f"Feedback thread {feedback_thread_id} is {current} and immutable")
-        if state == "queued" and current not in {"blocked", "resolved"}:
-            raise RuntimeError("Only blocked or explicitly reopened resolved feedback threads may re-enter the queue")
+        if state == "queued" and current != "blocked":
+            raise RuntimeError("Only blocked feedback threads may re-enter the queue")
         if current == state:
             result = {
                 "feedback_thread_id": feedback_thread_id,
@@ -1581,9 +2195,7 @@ def set_feedback_thread_state(
 
         ledger = _load_feedback_ledger()
         if state == "open":
-            active_id = ledger.get("activeFeedbackThreadID")
-            if active_id and active_id != feedback_thread_id:
-                raise RuntimeError(f"Feedback thread {active_id} already owns the device slot")
+            raise RuntimeError("The device owns queue activation; requeue a blocked thread instead")
         thread["state"] = state
         thread["lastConsumedSequence"] = last_consumed_sequence
         thread["updatedAt"] = _utc_now()
@@ -1592,8 +2204,8 @@ def set_feedback_thread_state(
             "blocked": "thread-blocked",
             "resolved": "thread-resolved",
             "cancelled": "thread-cancelled",
-            "queued": "thread-reopened" if current == "resolved" else "thread-requeued",
-            "open": "thread-reopened" if current == "resolved" else "thread-opened",
+            "queued": "thread-requeued",
+            "open": "thread-opened",
             "awaiting-model": "thread-awaiting-model",
         }[state]
         _append_feedback_event(event_name, thread, actor=actor, lastConsumedSequence=last_consumed_sequence)
@@ -1607,7 +2219,6 @@ def set_feedback_thread_state(
         thread["stateIdempotency"][key] = result
         entry = ledger["feedbackThreads"][feedback_thread_id]
         entry["state"] = state
-        activated: dict[str, Any] | None = None
         if state == "queued":
             if actor == "human":
                 queue_sequence = int(ledger["nextPrioritySequence"])
@@ -1618,29 +2229,37 @@ def set_feedback_thread_state(
             thread["queueSequence"] = queue_sequence
             entry["queueSequence"] = queue_sequence
         _write_feedback_thread(thread)
-        if state in FEEDBACK_SLOT_STATES:
-            ledger["activeFeedbackThreadID"] = feedback_thread_id
-        elif ledger.get("activeFeedbackThreadID") == feedback_thread_id:
-            ledger["activeFeedbackThreadID"] = None
-            activated = _advance_feedback_queue_locked(ledger)
-        elif state == "queued" and not ledger.get("activeFeedbackThreadID"):
-            activated = _advance_feedback_queue_locked(ledger)
-        if activated and activated["id"] == feedback_thread_id:
-            thread = activated
-            result["state"] = activated["state"]
-            result["revision"] = activated["revision"]
-            thread.setdefault("stateIdempotency", {})[key] = result
-            _write_feedback_thread(thread)
+        _refresh_feedback_ledger_locked(ledger)
         _save_feedback_ledger(ledger)
-        delivery_error = _push_feedback_snapshot(thread)
-        if activated:
-            activation_error = _push_feedback_snapshot(activated)
-            delivery_error = delivery_error or activation_error
-        return {**result, "idempotent": False, "delivery_error": delivery_error}
+        response = {**result, "idempotent": False}
+    delivery_error = _push_feedback_snapshot(thread)
+    return {**response, "delivery_error": delivery_error}
 
 
 @mcp.tool()
-def get_feedback_thread(feedback_thread_id: str, owner_token: str, include_messages: bool = True) -> dict:
+async def set_feedback_thread_state(
+    feedback_thread_id: str,
+    state: str,
+    owner_token: str,
+    actor: str,
+    idempotency_key: str,
+    expected_last_sequence: int,
+    last_consumed_sequence: int,
+) -> dict:
+    """Optimistically transition lifecycle state; the device alone advances FIFO."""
+    return await asyncio.to_thread(
+        _set_feedback_thread_state,
+        feedback_thread_id,
+        state,
+        owner_token,
+        actor,
+        idempotency_key,
+        expected_last_sequence,
+        last_consumed_sequence,
+    )
+
+
+def _get_feedback_thread(feedback_thread_id: str, owner_token: str, include_messages: bool = True) -> dict:
     """Return the durable thread snapshot, optionally with its append-only message history."""
     with _locked_feedback_store():
         thread = _read_feedback_thread(feedback_thread_id)
@@ -1654,7 +2273,12 @@ def get_feedback_thread(feedback_thread_id: str, owner_token: str, include_messa
 
 
 @mcp.tool()
-def export_feedback_thread(feedback_thread_id: str, owner_token: str) -> dict:
+async def get_feedback_thread(feedback_thread_id: str, owner_token: str, include_messages: bool = True) -> dict:
+    """Return the durable thread snapshot, optionally with its append-only message history."""
+    return await asyncio.to_thread(_get_feedback_thread, feedback_thread_id, owner_token, include_messages)
+
+
+def _export_feedback_thread(feedback_thread_id: str, owner_token: str) -> dict:
     """Export one evidence-oriented Markdown transcript plus durable attachment paths."""
     with _locked_feedback_store():
         thread = _read_feedback_thread(feedback_thread_id)
@@ -1692,6 +2316,88 @@ def export_feedback_thread(feedback_thread_id: str, owner_token: str) -> dict:
             "markdown_path": str(markdown_path),
             "attachment_paths": sorted(set(attachment_paths)),
         }
+
+
+@mcp.tool()
+async def export_feedback_thread(feedback_thread_id: str, owner_token: str) -> dict:
+    """Export one evidence-oriented Markdown transcript plus durable attachment paths."""
+    return await asyncio.to_thread(_export_feedback_thread, feedback_thread_id, owner_token)
+
+
+def _export_review_run(feedback_thread_id: str, owner_token: str) -> dict[str, Any]:
+    transcript = _export_feedback_thread(feedback_thread_id, owner_token)
+    with _locked_feedback_store():
+        thread = _read_feedback_thread(feedback_thread_id)
+        _validate_feedback_owner(thread, owner_token)
+        run = thread.get("reviewRun")
+        if not run:
+            raise RuntimeError(f"Feedback thread {feedback_thread_id} is not a review run")
+        export_dir = Path(transcript["markdown_path"]).parent
+        json_path = export_dir / "review-run.json"
+        markdown_path = export_dir / "review-run.md"
+        _atomic_write_json(json_path, run)
+        lines = [f"# {thread['title']} — Review Run", "", f"- State: `{run['state']}`", ""]
+        for step in run["steps"]:
+            lines.extend(
+                [
+                    f"## {step['id']} — {step['title']}",
+                    "",
+                    f"- Outcome: `{step['state']}`",
+                    f"- Choice: `{step.get('selectedOptionID') or 'none'}`",
+                    f"- Attachments: {len(step.get('attachments') or [])}",
+                    "",
+                    step.get("comment") or "_(no comment)_",
+                    "",
+                ]
+            )
+        markdown_path.write_text("\n".join(lines).rstrip() + "\n")
+        return {
+            **transcript,
+            "review_run_id": run["id"],
+            "review_run_json_path": str(json_path),
+            "review_run_markdown_path": str(markdown_path),
+        }
+
+
+@mcp.tool()
+async def export_review_run(feedback_thread_id: str, owner_token: str) -> dict:
+    """Export one review packet plus its underlying feedback transcript and attachments."""
+    return await asyncio.to_thread(_export_review_run, feedback_thread_id, owner_token)
+
+
+def _cancel_review_run(feedback_thread_id: str, owner_token: str, reason: str) -> dict[str, Any]:
+    with _locked_feedback_store():
+        thread = _read_feedback_thread(feedback_thread_id)
+        _validate_feedback_owner(thread, owner_token)
+        run = thread.get("reviewRun")
+        if not run:
+            raise RuntimeError(f"Feedback thread {feedback_thread_id} is not a review run")
+        if run.get("state") in {"submitted", "collected"}:
+            raise RuntimeError(f"Submitted review run {run.get('id')} is immutable")
+        if run.get("state") == "cancelled":
+            return {
+                "feedback_thread_id": feedback_thread_id,
+                "state": thread["state"],
+                "review_run_id": run["id"],
+                "review_run_state": "cancelled",
+                "idempotent": True,
+                "delivery_error": None,
+            }
+    result = _cancel_feedback_thread(feedback_thread_id, reason, owner_token)
+    with _locked_feedback_store():
+        thread = _read_feedback_thread(feedback_thread_id)
+        _validate_feedback_owner(thread, owner_token)
+        run = thread.get("reviewRun")
+        run["state"] = "cancelled"
+        _write_feedback_thread(thread)
+    delivery_error = _push_feedback_snapshot(thread)
+    return {**result, "review_run_id": run["id"], "review_run_state": run["state"], "delivery_error": delivery_error}
+
+
+@mcp.tool()
+async def cancel_review_run(feedback_thread_id: str, owner_token: str, reason: str) -> dict:
+    """Cancel an owned asynchronous review packet."""
+    return await asyncio.to_thread(_cancel_review_run, feedback_thread_id, owner_token, reason)
 
 
 def main() -> None:

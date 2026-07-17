@@ -6,6 +6,17 @@ ROOT = Path(__file__).resolve().parents[3]
 
 
 class ReviewHarnessUISourceTests(unittest.TestCase):
+    def test_debug_launch_can_reset_only_feedback_state_before_root_view(self):
+        app = (ROOT / "TuberNotes/App/TuberNotesApp.swift").read_text()
+        store = (ROOT / "TuberNotes/DeveloperSupport/FeedbackThread.swift").read_text()
+
+        self.assertLess(app.index("FeedbackThreadStore.resetIfRequested()"), app.index("RootView("))
+        self.assertIn('#if DEBUG\n        FeedbackThreadStore.resetIfRequested()', app)
+        self.assertIn('environment["TUBER_RESET_FEEDBACK_STATE"] == "1"', store)
+        self.assertIn('appendingPathComponent(rootName, isDirectory: true)', store)
+        self.assertIn('removeObject(forKey: deviceEventSequenceKey)', store)
+        self.assertNotIn('removeItem(at: documents)', store)
+
     def test_banner_is_floating_collapsible_and_draggable(self):
         source = (ROOT / "TuberNotes/DeveloperSupport/AgentRequestBanner.swift").read_text()
         self.assertIn("@State private var isCollapsed", source)
@@ -39,18 +50,27 @@ class ReviewHarnessUISourceTests(unittest.TestCase):
         self.assertIn('TextField("Reply to this turn"', source)
         self.assertIn('Button("Capture & Annotate"', source)
 
-    def test_blocked_thread_has_human_priority_reopen_affordance(self):
+    def test_human_feedback_ui_hides_protocol_bookkeeping(self):
+        source = (ROOT / "TuberNotes/DeveloperSupport/FeedbackThreadViews.swift").read_text()
+        self.assertNotIn("feedbackThread.state.rawValue", source)
+        self.assertNotIn("value.state.rawValue", source)
+        self.assertNotIn("value.scenario", source)
+        self.assertNotIn("message.sequence", source)
+        self.assertNotIn("message.interaction", source)
+        self.assertNotIn("message.inReplyTo", source)
+        self.assertIn('Text(message.author == .human ? "You" : "TuberNotes Review")', source)
+
+    def test_old_threads_have_no_reopen_affordance(self):
         views = (ROOT / "TuberNotes/DeveloperSupport/FeedbackThreadViews.swift").read_text()
         session = (ROOT / "TuberNotes/DeveloperSupport/FeedbackThreadSession.swift").read_text()
-        self.assertIn('Image(systemName: "chevron.backward")', views)
-        self.assertIn("func reopen(_ feedbackThread: FeedbackThread)", session)
-        self.assertIn("value.state = hasActive ? .queued : .open", session)
-        self.assertIn("value.queueSequence = (feedbackThreads.map", session)
+        self.assertNotIn("reopenCandidate", session)
+        self.assertNotIn("func reopen(", session)
+        self.assertNotIn("feedback-thread-reopen", views)
+        self.assertNotIn('Image(systemName: "chevron.backward")', views)
 
     def test_context_navigation_uses_compact_arrows_and_legible_action_roles(self):
         views = (ROOT / "TuberNotes/DeveloperSupport/FeedbackThreadViews.swift").read_text()
         session = (ROOT / "TuberNotes/DeveloperSupport/FeedbackThreadSession.swift").read_text()
-        self.assertIn('Image(systemName: "chevron.backward")', views)
         self.assertIn('Image(systemName: "chevron.forward")', views)
         self.assertNotIn('Button("Reopen ', views)
         self.assertIn("func skipForward()", session)
@@ -99,7 +119,18 @@ class ReviewHarnessUISourceTests(unittest.TestCase):
             append_body.index("try FeedbackThreadStore.appendMessage(message, to: &value)"),
             append_body.index("pendingCapture = nil"),
         )
-        self.assertIn("session.sendReply(reply)", views)
+        self.assertIn("session.sendReply(session.draftReply)", views)
+
+    def test_composer_drafts_live_in_session_until_successful_submission(self):
+        session = (ROOT / "TuberNotes/DeveloperSupport/FeedbackThreadSession.swift").read_text()
+        views = (ROOT / "TuberNotes/DeveloperSupport/FeedbackThreadViews.swift").read_text()
+        self.assertIn("composerDrafts: [String: ComposerDraft]", session)
+        self.assertIn("var draftReply: String", session)
+        self.assertIn("if appendHumanMessage", session)
+        self.assertIn("TextField(\"Reply to this turn\", text: draftReply)", views)
+        self.assertIn("TextField(\"Reply\", text: draftReply", views)
+        self.assertNotIn('@State private var quickReply', views)
+        self.assertNotIn('@State private var reply', views)
 
     def test_live_ab_seam_is_bounded_and_pen_fixture_path_stays_separate(self):
         views = (ROOT / "TuberNotes/DeveloperSupport/FeedbackThreadViews.swift").read_text()
@@ -119,6 +150,23 @@ class ReviewHarnessUISourceTests(unittest.TestCase):
         self.assertIn("toolPicker.setVisible(true", views)
         self.assertIn('labeledImage(annotated, label: "Annotated")', views)
         self.assertIn("Clean original retained for collection", views)
+
+    def test_async_review_run_is_one_persistent_checklist_with_one_finish_action(self):
+        model = (ROOT / "TuberNotes/DeveloperSupport/FeedbackThread.swift").read_text()
+        session = (ROOT / "TuberNotes/DeveloperSupport/FeedbackThreadSession.swift").read_text()
+        views = (ROOT / "TuberNotes/DeveloperSupport/FeedbackThreadViews.swift").read_text()
+        root = (ROOT / "TuberNotes/App/RootView.swift").read_text()
+        self.assertIn("struct ReviewRun", model)
+        self.assertIn("var reviewRun: ReviewRun?", model)
+        self.assertIn("func submitReviewRun()", session)
+        self.assertIn('FeedbackThreadStore.appendEvent("review-step-updated"', session)
+        self.assertIn('FeedbackThreadStore.appendEvent("review-run-submitted"', session)
+        self.assertIn('Button("Finish Review")', views)
+        self.assertIn('Picker("Review point", selection: reviewPointSelection)', views)
+        self.assertIn('accessibilityIdentifier("review-point-picker")', views)
+        self.assertIn("set: { session.selectReviewStep($0) }", views)
+        self.assertIn('accessibilityIdentifier("review-run-view")', views)
+        self.assertIn("feedbackSession.activeFeedbackThread?.scenario", root)
 
 
 if __name__ == "__main__":

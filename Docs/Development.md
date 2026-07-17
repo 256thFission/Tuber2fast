@@ -99,16 +99,35 @@ PencilFixtureMCP exposes two separate Debug-only protocols. Use feedback threads
 
 ### Feedback-thread agent path
 
-1. `create_feedback_thread` creates an owned, target-pinned review session and either activates it or queues it FIFO.
+Feedback threads have three modes. **Guided human review** uses one visible thread for one complete one-at-a-time journey. **Asynchronous Review Run** uses one visible checklist for human-autonomous steps and wakes the task only after `Finish Review`. **Harness conformance** exercises queues, ordering, lifecycle, ownership, and persistence with isolated internal fixtures, preferably automated. Never surface conformance threads as review steps.
+
+1. `create_feedback_thread` creates an owned, target-pinned review session and either activates it or queues it FIFO. Create one thread for a guided journey and reuse it.
+   - Privately separate preconditions, one human action, mechanical assertions, and an optional human-only question.
+   - Show only that action and question. Keep protocol identifiers, cursors, states, queue details, test keys, paths, and expected assertions off the device.
+   - Never combine an exact-answer instruction with a PASS/FAIL request.
 2. The Debug app shows a minimal floating bar. The human uses the full-screen thread view to reply, answer, annotate, block, or resolve.
-3. `await_thread_response` waits for a newer human reply; `collect_thread_updates` collects ordered messages and durable attachment paths after a sequence cursor.
-4. Use `post_thread_message` for normal follow-up or bounded revision metadata and `ask_thread_question` for free-text or single-choice questions.
-5. Use `set_feedback_thread_state` for optimistic block, resolve, cancel, resume, or reopen transitions; pass the last sequence consumed so newer human feedback cannot be skipped. A human-requested reopen is prioritized ahead of ordinary queued work without preempting the active review.
-6. Use `get_feedback_thread` for durable state/history and `export_feedback_thread` for a bounded Markdown evidence transcript.
+3. Before ending the initiating turn, arm a task-attached Codex heartbeat. Guided review defaults to collection-only: it polls `get_feedback_watch_state`, acknowledges an eligible `wake_id`, collects and records updates, and resumes the originating task, but it does not post or activate the next human step. If registration fails, await in the current turn or report `feedback-created-but-not-armed`.
+4. `await_thread_response` remains the fast path when the agent is already present; `collect_thread_updates` collects ordered messages and durable attachment paths after a sequence cursor.
+5. Use `post_thread_message` for normal follow-up or bounded revision metadata and `ask_thread_question` for free-text or single-choice questions.
+6. Use `set_feedback_thread_state` for optimistic block, resolve, cancel, or blocked-thread resume transitions; pass the last sequence consumed so newer human feedback cannot be skipped. Resolved and cancelled threads are immutable and cannot be reopened.
+7. Close the watch on terminal/blocked state. Use `get_feedback_thread` for durable state/history and `export_feedback_thread` for a bounded Markdown evidence transcript.
+
+For an asynchronous packet, publish the chat-only preflight table, then use
+`create_review_run` with ordered steps and explicit prerequisites. Include only
+human-autonomous judgments or actions; keep agent-gated transitions and
+mechanical assertions out of the packet. The human may pass, fail, block, or
+skip a step and continue with unrelated ready steps. Responses and annotations
+persist without appending messages. `Finish Review` appends one immutable
+ordered summary and creates the single heartbeat wake. Acknowledge it once,
+call `collect_review_run`, then `export_review_run` for the evidence bundle.
+
+After collection, summarize the interpreted response in the originating Codex task before presenting another action. Stop on the exact first failure, ambiguity, human confusion, unmet precondition, or device/host state divergence. Do not change the visible session to hide or reconcile a divergence, and do not infer subjective judgments from protocol state.
 
 Keep the returned `owner_token`; only its hash is persisted. A human reply moves the active feedback thread to `awaiting-model`, retaining the device slot. A genuinely `blocked`, `resolved`, or `cancelled` thread releases the slot and advances the next queued scenario cleanly. Prefer one focused clarification before revising; ask another only when the answer exposes a materially different ambiguity.
 
 Screenshots are human-triggered. The model may request one in a message but cannot invoke capture or send. The human must preview, may annotate with the native PencilKit tool palette, then attach the result to the reply composer. The annotation remains an unsent draft until the human explicitly sends the reply, which may include text and the screenshot as one message. Canceling or removing the draft publishes nothing. History emphasizes the annotated preview while collection retains both clean and annotated PNG paths. Feedback-thread UI is excluded from the captured product viewport.
+
+Text, choice, and optional-comment drafts are owned by the feedback session and keyed by feedback-thread ID. They persist across focus loss, compact/full-screen transitions, and capture/annotation presentation. A draft clears only after its submission succeeds. Switching to another queued thread does not leak the draft into that thread. Resolved and cancelled threads cannot be reopened.
 
 ### Pen-fixture agent path
 
@@ -137,3 +156,23 @@ Documents/
 ```
 
 App ownership remains `DeveloperSupport`; MCP ownership remains `DeveloperTools/PencilFixtureMCP`. The human should not set environment variables or copy container files. Feedback-thread mirrors, attachments, event logs, and exports are gitignored and collected by the MCP.
+
+### Resetting stale Debug feedback state
+
+If obsolete questions remain visible after a failed or abandoned review, use the
+confirmation-gated host command below. It clears only this checkout's
+`.feedback-threads` mirror and the app's Debug feedback-thread store, then
+relaunches the installed app normally:
+
+```sh
+DeveloperTools/reset-feedback-state.sh \
+  --device 2DD98ECC-A26A-5730-943B-01DD63DC4117 \
+  --confirm
+```
+
+The physical device ID and `--confirm` are both required. The command validates
+that `com.tubernotes.app` is installed before deleting the host mirror. It does
+not uninstall TuberNotes or delete notebooks, imported documents, ink, Pins,
+Pencil fixtures, or other product data. Run it only between review journeys;
+all unresolved feedback threads, drafts, queue entries, watches, collected
+attachments, and host-side feedback exports are intentionally discarded.

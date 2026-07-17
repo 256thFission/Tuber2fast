@@ -2,7 +2,7 @@
 
 Development tooling only — not the in-product AI agent.
 
-Pushes agent interaction requests into the **Debug** TuberNotes app on a connected simulator or physical iPad. The human sees the agent prompt in an in-app banner, completes the request on device, and the app indexes the result under Documents. Agents collect durable JSON; the human does no Mac-side file copying.
+Runs two **Debug** protocols on a connected simulator or physical iPad: persistent conversational feedback threads with automatic Codex task resumption, and separate authentic Pencil fixtures. Agents collect durable JSON and attachments; the human does no Mac-side file copying.
 
 Canonical docs: `Docs/Development.md` § Human device loop, Skill `human-device-loop`, evidence fields in `Docs/templates/EvidencePacket.md`.
 
@@ -11,7 +11,7 @@ Canonical docs: `Docs/Development.md` § Human device loop, Skill `human-device-
 | Tool | Purpose |
 |---|---|
 | `request_pen_fixture(description, scenario?, prefer_device?, requester_id?, stale_after_seconds?)` | Enqueue a Pencil capture request; launch only when the queue was idle |
-| `request_human_review(prompt, title?, scenario?, prefer_device?, requester_id?, stale_after_seconds?)` | Enqueue a review request for looks-good / needs-work / blocked |
+| `request_human_review(prompt, title?, scenario?, prefer_device?, requester_id?, stale_after_seconds?)` | Legacy one-shot verdict request; prefer `create_feedback_thread` for new UI review |
 | `await_interaction(request_id, timeout_seconds?, prefer_device?, owner_token?)` | Poll until the human finishes; return fixture/verdict/index |
 | `collect_interaction(request_id, prefer_device?, owner_token?)` | One-shot pull of completed artifacts |
 | `cancel_interaction(request_id, owner_token?, reason?, prefer_device?)` | Safely cancel an owned pending or stale request |
@@ -22,32 +22,89 @@ Canonical docs: `Docs/Development.md` § Human device loop, Skill `human-device-
 Feedback threads are a separate protocol and store. They do not replace Pencil
 fixture capture or change its corpus.
 
+Guided human review, asynchronous Review Runs, and harness conformance are different operating modes. One guided journey uses one visible feedback thread and presents one action plus, when needed, one short question at a time. A Review Run uses one visible checklist for independent human-autonomous steps and wakes the originating task only when the human taps `Finish Review`. Harness conformance may create multiple internal threads to test queues, ordering, lifecycle, ownership, and persistence, but those fixtures must not appear as a guided human journey.
+
+Human-facing feedback copy should be easy to scan on the iPad:
+
+- Keep titles and objectives brief.
+- Request only one action and, optionally, one question at a time.
+- Avoid dense paragraphs; use a single sentence when a list would add no clarity.
+- Keep IDs, tokens, sequence cursors, lifecycle/queue states, expected assertions, artifact paths, and test keys in host-side evidence only.
+- Do not request an exact answer and a PASS/FAIL verdict in the same step.
+
 | Feedback-thread tool | Purpose |
 |---|---|
-| `create_feedback_thread(...)` | Create an owned thread, pin its target, and enter the single-active FIFO |
-| `post_thread_message(...)` | Append an idempotent model message |
+| `create_feedback_thread(...)` | Create an owned queued thread and watch record, pin its target, and deliver it for device-owned activation; caller then arms a task heartbeat |
+| `post_thread_message(...)` | Append an idempotent informational model message; rejects new messages while `awaiting-model` |
 | `ask_thread_question(...)` | Append a free-text or single-choice question |
-| `await_thread_response(...)` | Wait from an exclusive message-sequence cursor for a human response |
+| `await_thread_response(...)` | Active-turn fast path: wait from an exclusive cursor for a human response |
 | `collect_thread_updates(...)` | Mirror new messages and sent screenshot files to durable Mac paths |
-| `set_feedback_thread_state(...)` | Optimistically transition lifecycle state and advance FIFO when appropriate |
+| `get_feedback_watch_state(...)` | Return unseen human/terminal wake eligibility without mutating the thread |
+| `acknowledge_feedback_wake(...)` | Idempotently acknowledge a scheduled/delivered wake and advance its cursor |
+| `close_feedback_watch(...)` | Stop host monitoring without resolving the thread or releasing its slot |
+| `set_feedback_thread_state(...)` | Optimistically transition lifecycle state; only the device advances FIFO |
+| `cancel_feedback_thread(...)` | Idempotently cancel and release a thread; normally owner-token authorized, with an explicitly confirmed audited system-cleanup mode for orphaned development sessions |
 | `get_feedback_thread(...)` | Read the durable snapshot and append-only history |
 | `export_feedback_thread(...)` | Write an evidence-oriented Markdown transcript and attachment path list |
+| `create_review_run(...)` | Create one durable asynchronous checklist containing only human-autonomous steps and explicit prerequisites |
+| `collect_review_run(...)` | Collect one submitted ordered result bundle; repeated collection is idempotent |
+| `cancel_review_run(...)` | Cancel an owned active Review Run |
+| `export_review_run(...)` | Export Review Run JSON/Markdown plus the underlying transcript and attachments |
 
 Every mutating model operation uses an `idempotency_key`. State changes also
 require `expected_last_sequence` and `last_consumed_sequence`; stale resolution
 is rejected so the model cannot resolve across an unseen human reply. Keep the
-`owner_token` returned by creation. Only its SHA-256 hash is persisted.
+`owner_token` returned by creation. Only its SHA-256 hash is persisted. Resolved
+and cancelled threads are immutable; only blocked threads may resume.
 
-A normal loop is:
+If an agent lost the token for an orphaned development session, cleanup must be
+deliberate: call `cancel_feedback_thread` with a specific `reason`,
+`system_cleanup=true`, and `confirm_system_cleanup=true`. This exceptional path
+does not mint or reveal an owner token. Cancelling the active thread reconciles
+the ledger against canonical snapshots and activates exactly one queued thread;
+duplicate queue sequence values are ordered deterministically by thread ID.
+
+Composer drafts are session-owned per feedback thread. Reply text, selected
+choices, and optional comments survive focus changes, compact/full-screen
+transitions, and capture/annotation presentation. They clear only after the
+corresponding submission succeeds.
+
+A normal guided asynchronous loop is:
 
 ```text
 create_feedback_thread
-collect_thread_updates / await_thread_response
+arm a task-attached Codex heartbeat
+get_feedback_watch_state
+acknowledge_feedback_wake and resume the originating task
+collect and record the current response
 ask_thread_question or post_thread_message
-collect_thread_updates / await_thread_response
+retain the heartbeat or close_feedback_watch
 set_feedback_thread_state
 export_feedback_thread
 ```
+
+A human-autonomous packet uses `create_review_run`, one task heartbeat, and no
+intermediate model messages. Step edits, choices, comments, and attached
+annotations persist in `thread.json` without producing a wake. `Finish Review`
+appends exactly one human summary message. The resumed task acknowledges that
+wake, calls `collect_review_run`, and may then call `export_review_run`.
+
+After a human reply moves the session to `awaiting-model`, present the next
+human step with `ask_thread_question`. It reopens the session and appends the
+actionable interaction atomically. `post_thread_message` deliberately rejects a
+new message in that state so visible instructions cannot leave reply controls
+read-only; an idempotent retry of an already-posted message remains valid.
+
+Every created feedback thread gets a gitignored watch record under
+`.feedback-threads/watches/`. The record contains requester identity, cursor,
+and acknowledged wake IDs, but never the raw owner token. MCP servers are
+passive and cannot start a Codex turn, so the initiating agent must arm a
+supported task heartbeat before ending its turn. If heartbeat registration
+fails, it must await in the current turn or report `feedback-created-but-not-armed`.
+Heartbeats are collection-only by default and must not post or activate the next
+human step. Advance only after the previous response is understood and recorded.
+Stop on ambiguity, the first failure, an unmet precondition, human confusion, or
+device/host state divergence; do not mutate the visible session to conceal it.
 
 ## Feedback model
 
@@ -97,9 +154,29 @@ Mac event log.
 
 Reviewed fixtures can be copied into `Fixtures/` for the repo.
 
-## Human path
+## Reset stale feedback state
 
-1. Agent calls `request_pen_fixture` or `request_human_review`.
+When abandoned Debug review questions are still visible, reset the feedback
+protocol from the repo root with an explicit physical-device target:
+
+```sh
+DeveloperTools/reset-feedback-state.sh \
+  --device 2DD98ECC-A26A-5730-943B-01DD63DC4117 \
+  --confirm
+```
+
+Both arguments are mandatory. The script first verifies that
+`com.tubernotes.app` is installed, clears only the repo-local
+`.feedback-threads` host mirror, launches the app once with
+`TUBER_RESET_FEEDBACK_STATE=1`, and immediately relaunches it normally. The app
+is not uninstalled and product data such as notebooks, PDFs, ink, Pins, and
+Pencil fixtures is not removed. Run this between guided journeys, because all
+feedback threads, drafts, queue entries, watches, collected feedback
+attachments, and exports are intentionally lost.
+
+## Legacy one-shot / Pencil human path
+
+1. Agent calls `request_pen_fixture`, or the compatibility-only `request_human_review`.
 2. App opens on the connected test device with the prompt at the top.
 3. Human draws once and/or chooses a verdict (optional note).
 4. Agent calls `await_interaction` / `collect_interaction` and records results in the evidence packet.

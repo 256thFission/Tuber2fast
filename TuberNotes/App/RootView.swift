@@ -44,6 +44,9 @@ struct RootView: View {
                 .onChange(of: feedbackSession.activeFeedbackThread?.id) { _, _ in
                     bindScenarioToActiveRequest()
                 }
+                .onChange(of: feedbackSession.activeFeedbackThread?.scenario) { _, _ in
+                    bindScenarioToActiveRequest()
+                }
                 .onChange(of: feedbackSession.resetGeneration) { _, _ in
                     resetScenarioSurface()
                 }

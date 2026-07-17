@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "title": "M0 v2 morning physical-iPad review",
+  "defaults": {
+    "device": "physical-ipad",
+    "orientation": "landscape",
+    "advance": "human-confirmed",
+    "failure_policy": "stop-on-first-failure"
+  },
+  "steps": [
+    {
+      "id": "C1",
+      "title": "Minimal bar",
+      "preconditions": ["The app is open on fake-pin with no active review", "A reference screenshot has been retained privately"],
+      "human_instruction": "Drag the small review bar to two positions, collapse and restore it, then interact with the Pin underneath.",
+      "human_question": "Did anything move unexpectedly, clip, reset, or prevent you from using the Pin?",
+      "agent_assertions": ["Product geometry does not resize or refit", "Review controls remain legible", "No scenario reset occurs"]
+    },
+    {
+      "id": "C2",
+      "title": "Full-screen round trip",
+      "preconditions": ["C1 completed", "The product is in an obvious non-default state"],
+      "human_instruction": "Open the full review, read the visible history, then return to the product.",
+      "human_question": "Was the history readable, and did the product return exactly as you left it?",
+      "agent_assertions": ["History is complete and ordered", "Product state and geometry are preserved", "The keyboard does not obstruct the view before composing"]
+    },
+    {
+      "id": "C3",
+      "title": "Send a reply",
+      "preconditions": ["The primary review is active", "A second review is privately registered and waiting"],
+      "human_instruction": "From the full review, send this reply: “Pin response is clear; ask me about the anchor.”",
+      "human_question": "Did anything prevent the reply from sending normally?",
+      "agent_assertions": ["Exactly one read-only reply is appended", "The composer clears", "The primary review retains the active slot", "The waiting review does not activate"]
+    },
+    {
+      "id": "C4",
+      "title": "Answer a follow-up",
+      "preconditions": ["The C3 reply has been collected", "One free-text follow-up is visible in the same review"],
+      "human_instruction": "Answer the visible follow-up with: “The drift begins when returning to fit.”",
+      "human_question": "Did the question and your answer appear in a clear, natural order?",
+      "agent_assertions": ["Question and answer are appended once in order", "The answer is read-only", "No second editable interaction appears", "The waiting review does not activate"]
+    },
+    {
+      "id": "C5",
+      "title": "Relaunch restoration",
+      "preconditions": ["The same review remains active after C4", "The product is in a recognizable state"],
+      "human_instruction": "Close TuberNotes completely, then launch it once and return to the review.",
+      "human_question": "Did the review and product return exactly where you left them, without duplicate or stale controls?",
+      "agent_assertions": ["Active review and waiting order restore", "History restores once and in order", "Surface metadata and product state restore"]
+    }
+  ]
+}

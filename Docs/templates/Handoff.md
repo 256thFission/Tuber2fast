@@ -30,7 +30,7 @@ Model-independent handoff for continuing TuberNotes work in another session or a
 - Scenario(s):
 - Artifact paths:
 - Mechanical results:
-- Human device interaction (request id / verdict / notes / fixture):
+- Human device interaction (feedback-thread/request ID, watch state/sequence, messages or verdict/notes, attachments/fixture):
 - Human-only items remaining:
 
 ## Unresolved questions and risks
@@ -42,4 +42,4 @@ Model-independent handoff for continuing TuberNotes work in another session or a
 - Single next step:
 - Acceptance evidence for that step:
 - When to stop and report:
-- If human input is needed next: `request_pen_fixture` / `request_human_review` via Skill `human-device-loop`
+- If human input is needed next: `create_feedback_thread` with an armed task heartbeat for review, or `request_pen_fixture` for authentic Pencil input, via Skill `human-device-loop`

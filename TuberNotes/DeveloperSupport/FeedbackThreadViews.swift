@@ -5,7 +5,6 @@ import SwiftUI
 struct FeedbackThreadBar: View {
     @ObservedObject var session: FeedbackThreadSession
     @State private var isCollapsed = false
-    @State private var quickReply = ""
     @State private var settledOffset: CGSize = .zero
     @GestureState private var dragOffset: CGSize = .zero
 
@@ -13,13 +12,12 @@ struct FeedbackThreadBar: View {
         if let feedbackThread = session.activeFeedbackThread {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 10) {
-                    contextBackButton
                     Label(feedbackThread.title, systemImage: "text.bubble")
                         .font(.subheadline.weight(.semibold))
                         .lineLimit(1)
                     Spacer()
-                    Text(feedbackThread.state.rawValue)
-                        .font(.caption.monospaced())
+                    Text(feedbackThread.state == .open ? "Your turn" : "Response sent")
+                        .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
                     contextForwardButton
                     Button {
@@ -54,34 +52,26 @@ struct FeedbackThreadBar: View {
             .fullScreenCover(isPresented: $session.isPresentingFullThread) {
                 FeedbackThreadView(session: session)
             }
-        } else if let candidate = session.reopenCandidate {
-            HStack(spacing: 10) {
-                Button { session.reopen(candidate) } label: {
-                    Image(systemName: "chevron.backward")
-                        .font(.headline.weight(.bold))
-                        .frame(width: 30, height: 30)
-                }
-                .buttonStyle(.borderedProminent)
-                .buttonBorderShape(.circle)
-                .tint(.indigo)
-                .accessibilityLabel("Reopen previous feedback thread with priority")
-                Label(candidate.title, systemImage: "arrow.uturn.backward.circle")
-                    .font(.subheadline.weight(.semibold))
-                    .lineLimit(1)
-                Text(candidate.state.rawValue)
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.secondary)
-            }
-            .padding(14)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
-            .overlay { RoundedRectangle(cornerRadius: 14).strokeBorder(.orange.opacity(0.65), lineWidth: 1) }
-            .accessibilityIdentifier("feedback-thread-reopen")
         }
     }
 
     @ViewBuilder
     private func quickContext(_ feedbackThread: FeedbackThread) -> some View {
-        if let turn = session.currentTurn {
+        if feedbackThread.reviewRun != nil {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Asynchronous review")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Text(session.selectedReviewStep?.title ?? "Review complete")
+                    .font(.body.weight(.semibold))
+                Text(session.reviewProgress)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Button("Open Review") { session.isPresentingFullThread = true }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.indigo)
+            }
+        } else if let turn = session.currentTurn {
             VStack(alignment: .leading, spacing: 8) {
                 Text(turn.body ?? "Current feedback turn")
                     .font(.body)
@@ -99,15 +89,14 @@ struct FeedbackThreadBar: View {
                     }
                 } else if feedbackThread.state == .open {
                     HStack(spacing: 8) {
-                        TextField("Reply to this turn", text: $quickReply)
+                        TextField("Reply to this turn", text: draftReply)
                             .textFieldStyle(.roundedBorder)
                         Button("Send") {
-                            session.sendReply(quickReply)
-                            quickReply = ""
+                            session.sendReply(session.draftReply)
                         }
                         .buttonStyle(.borderedProminent)
                         .tint(.indigo)
-                        .disabled(quickReply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .disabled(session.draftReply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
                 } else {
                     Text("Your response is read-only while the model is working.")
@@ -132,31 +121,19 @@ struct FeedbackThreadBar: View {
             }
         }
 
-        HStack(spacing: 8) {
-            Button("View Full Thread") { session.isPresentingFullThread = true }
-                .buttonStyle(.borderedProminent)
-                .tint(.indigo)
-            Spacer()
-            Button("Blocked") { session.setState(.blocked) }
-                .buttonStyle(.borderedProminent)
-                .tint(.orange)
-            Button("Resolve") { session.setState(.resolved) }
-                .buttonStyle(.borderedProminent)
-                .tint(.green)
-        }
-    }
-
-    @ViewBuilder
-    private var contextBackButton: some View {
-        if let candidate = session.reopenCandidate {
-            Button { session.reopen(candidate) } label: {
-                Image(systemName: "chevron.backward")
-                    .font(.caption.weight(.bold))
+        if feedbackThread.reviewRun == nil {
+            HStack(spacing: 8) {
+                Button("View Full Thread") { session.isPresentingFullThread = true }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.indigo)
+                Spacer()
+                Button("Blocked") { session.setState(.blocked) }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.orange)
+                Button("Resolve") { session.setState(.resolved) }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.green)
             }
-            .buttonStyle(.bordered)
-            .buttonBorderShape(.circle)
-            .tint(.indigo)
-            .accessibilityLabel("Reopen \(candidate.title) with priority")
         }
     }
 
@@ -180,21 +157,22 @@ struct FeedbackThreadBar: View {
             .tint(session.activeVariant == variant ? .accentColor : .secondary)
             .font(.caption.weight(.bold))
     }
+
+    private var draftReply: Binding<String> {
+        Binding(get: { session.draftReply }, set: { session.draftReply = $0 })
+    }
 }
 
 struct FeedbackThreadView: View {
     @ObservedObject var session: FeedbackThreadSession
     @Environment(\.dismiss) private var dismiss
-    @State private var reply = ""
-    @State private var selectedOptionID: String?
-    @State private var choiceComment = ""
-    @State private var preference = FeedbackThreadSession.Preference.none
-    @State private var preferenceComment = ""
 
     var body: some View {
         NavigationStack {
             Group {
-                if let feedbackThread = session.activeFeedbackThread {
+                if let feedbackThread = session.activeFeedbackThread, feedbackThread.reviewRun != nil {
+                    ReviewRunContent(session: session, feedbackThread: feedbackThread)
+                } else if let feedbackThread = session.activeFeedbackThread {
                     ScrollViewReader { proxy in
                         ScrollView {
                             LazyVStack(alignment: .leading, spacing: 14) {
@@ -215,15 +193,23 @@ struct FeedbackThreadView: View {
                     ContentUnavailableView("No active feedback", systemImage: "text.bubble")
                 }
             }
-            .navigationTitle("Feedback Thread")
+            .navigationTitle(session.activeReviewRun == nil ? "Feedback Thread" : "Review Run")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) { Button("Done") { dismiss() } }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Capture & Annotate", systemImage: "pencil.and.scribble") {
                         session.isPresentingFullThread = false
-                        session.requestCapture()
+                        if session.activeReviewRun == nil {
+                            session.requestCapture()
+                        } else {
+                            session.requestCapture(reviewStepID: session.selectedReviewStep?.id)
+                        }
                     }
-                    .disabled(session.activeFeedbackThread == nil)
+                    .disabled(
+                        session.activeFeedbackThread == nil
+                        || (session.activeReviewRun != nil && session.selectedReviewStep?.allowsAttachment != true)
+                        || session.selectedReviewStep?.isTerminal == true
+                    )
                 }
             }
         }
@@ -233,12 +219,12 @@ struct FeedbackThreadView: View {
     private func header(_ value: FeedbackThread) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(value.title).font(.title2.bold())
-            Text(value.objective).foregroundStyle(.secondary)
             HStack {
-                Text(value.state.rawValue).font(.caption.monospaced())
-                Text(value.scenario).font(.caption.monospaced()).foregroundStyle(.secondary)
+                Text(value.state == .open ? "Ready for your response" : "Your response was sent")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
                 Spacer()
-                Text("\(value.messages.count) messages").font(.caption)
+                Text("\(value.messages.count) messages").font(.caption).foregroundStyle(.secondary)
             }
         }
     }
@@ -246,21 +232,17 @@ struct FeedbackThreadView: View {
     private func messageView(_ message: FeedbackMessage, feedbackThreadID: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text(message.author.rawValue.capitalized).font(.caption.bold())
-                Text("#\(message.sequence)").font(.caption.monospaced()).foregroundStyle(.secondary)
+                Text(message.author == .human ? "You" : "TuberNotes Review").font(.caption.bold())
                 Spacer()
                 Text(message.createdAt, style: .time).font(.caption).foregroundStyle(.secondary)
             }
             if let body = message.body { Text(body).textSelection(.enabled) }
-            if let interaction = message.interaction {
-                Text(interaction.kind.rawValue).font(.caption.monospaced()).foregroundStyle(.secondary)
-            }
             ForEach(message.attachments) { attachment in
                 FeedbackAttachmentPreview(attachment: attachment, feedbackThreadID: feedbackThreadID)
             }
-            if message.selectedOptionID != nil || message.inReplyTo != nil {
-                Text([message.selectedOptionID, message.inReplyTo].compactMap { $0 }.joined(separator: " · "))
-                    .font(.caption.monospaced()).foregroundStyle(.secondary)
+            if let selectedOptionID = message.selectedOptionID {
+                Text("Selected: \(selectedOptionID)")
+                    .font(.caption).foregroundStyle(.secondary)
             }
         }
         .padding(14)
@@ -306,47 +288,43 @@ struct FeedbackThreadView: View {
                 Text("Choose one").font(.headline)
                 ForEach(question.interaction?.options ?? []) { option in
                     Button {
-                        selectedOptionID = option.id
+                        session.draftSelectedOptionID = option.id
                     } label: {
-                        Label(option.label, systemImage: selectedOptionID == option.id ? "largecircle.fill.circle" : "circle")
+                        Label(option.label, systemImage: session.draftSelectedOptionID == option.id ? "largecircle.fill.circle" : "circle")
                     }
                     .buttonStyle(.plain)
                 }
                 if question.interaction?.allowsComment != false {
-                    TextField("Optional comment", text: $choiceComment, axis: .vertical).textFieldStyle(.roundedBorder)
+                    TextField("Optional comment", text: draftChoiceComment, axis: .vertical).textFieldStyle(.roundedBorder)
                 }
                 Button("Send Answer") {
-                    guard let selectedOptionID else { return }
-                    session.answer(question, optionID: selectedOptionID, comment: choiceComment)
-                    self.selectedOptionID = nil
-                    choiceComment = ""
+                    guard let selectedOptionID = session.draftSelectedOptionID else { return }
+                    session.answer(question, optionID: selectedOptionID, comment: session.draftChoiceComment)
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(selectedOptionID == nil)
+                .disabled(session.draftSelectedOptionID == nil)
             }
             .padding(14).background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12))
         } else if session.isLiveComparison {
             VStack(alignment: .leading, spacing: 10) {
                 Text("A/B preference").font(.headline)
-                Picker("Preference", selection: $preference) {
+                Picker("Preference", selection: draftPreference) {
                     ForEach(FeedbackThreadSession.Preference.allCases) { Text($0.rawValue).tag($0) }
                 }.pickerStyle(.segmented)
-                TextField("Optional comment", text: $preferenceComment, axis: .vertical).textFieldStyle(.roundedBorder)
+                TextField("Optional comment", text: draftPreferenceComment, axis: .vertical).textFieldStyle(.roundedBorder)
                 Button("Send Preference") {
-                    session.submitPreference(preference, comment: preferenceComment)
-                    preferenceComment = ""
+                    session.submitPreference(session.draftPreference, comment: session.draftPreferenceComment)
                 }.buttonStyle(.borderedProminent)
             }
             .padding(14).background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12))
         } else if session.activeQuestion?.interaction?.kind == .freeText || session.activeFeedbackThread?.state == .open {
             VStack(alignment: .leading, spacing: 10) {
-                TextField("Reply", text: $reply, axis: .vertical).textFieldStyle(.roundedBorder).lineLimit(2...6)
+                TextField("Reply", text: draftReply, axis: .vertical).textFieldStyle(.roundedBorder).lineLimit(2...6)
                 Button("Send Reply") {
-                    session.sendReply(reply)
-                    reply = ""
+                    session.sendReply(session.draftReply)
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(reply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && session.pendingCapture == nil)
+                .disabled(session.draftReply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && session.pendingCapture == nil)
                 .accessibilityIdentifier(session.pendingCapture == nil ? "send-feedback-reply" : "send-reply-with-attachment")
             }
         } else {
@@ -359,6 +337,207 @@ struct FeedbackThreadView: View {
         HStack {
             Button("Blocked") { session.setState(.blocked) }.buttonStyle(.bordered)
             Button("Resolve") { session.setState(.resolved) }.buttonStyle(.borderedProminent)
+        }
+    }
+
+    private var draftReply: Binding<String> {
+        Binding(get: { session.draftReply }, set: { session.draftReply = $0 })
+    }
+
+    private var draftChoiceComment: Binding<String> {
+        Binding(get: { session.draftChoiceComment }, set: { session.draftChoiceComment = $0 })
+    }
+
+    private var draftPreference: Binding<FeedbackThreadSession.Preference> {
+        Binding(get: { session.draftPreference }, set: { session.draftPreference = $0 })
+    }
+
+    private var draftPreferenceComment: Binding<String> {
+        Binding(get: { session.draftPreferenceComment }, set: { session.draftPreferenceComment = $0 })
+    }
+}
+
+private struct ReviewRunContent: View {
+    @ObservedObject var session: FeedbackThreadSession
+    let feedbackThread: FeedbackThread
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 8) {
+                    Text(feedbackThread.title).font(.title2.bold()).padding(.bottom, 4)
+                    Text(session.reviewProgress).font(.caption).foregroundStyle(.secondary)
+                    ForEach(session.activeReviewRun?.steps ?? []) { step in
+                        Button { session.selectReviewStep(step.id) } label: {
+                            HStack(alignment: .top, spacing: 10) {
+                                Image(systemName: icon(for: step.state))
+                                    .foregroundStyle(color(for: step.state))
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(step.title).font(.subheadline.weight(.semibold))
+                                    Text(label(for: step.state)).font(.caption).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                            }
+                            .padding(10)
+                            .background(
+                                session.selectedReviewStep?.id == step.id ? Color.accentColor.opacity(0.12) : Color.secondary.opacity(0.06),
+                                in: RoundedRectangle(cornerRadius: 10)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(20)
+            }
+            .frame(width: 300)
+
+            Divider()
+
+            ScrollView {
+                if let step = session.selectedReviewStep {
+                    VStack(alignment: .leading, spacing: 16) {
+                        Picker("Review point", selection: reviewPointSelection) {
+                            ForEach(session.activeReviewRun?.steps ?? []) { point in
+                                Label(point.title, systemImage: icon(for: point.state))
+                                    .tag(point.id)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .disabled(session.activeReviewRun?.state != .active)
+                        .accessibilityIdentifier("review-point-picker")
+
+                        Text(step.title).font(.title.bold())
+                        Text(step.humanInstruction).font(.title3)
+
+                        if step.state == .locked {
+                            Label("Complete the prerequisite checks first.", systemImage: "lock")
+                                .foregroundStyle(.secondary)
+                        } else if step.state == .blocked, let reason = step.blockedReason {
+                            Label(reason, systemImage: "exclamationmark.octagon")
+                                .foregroundStyle(.orange)
+                        } else if step.isTerminal {
+                            Label("Recorded as \(label(for: step.state)).", systemImage: icon(for: step.state))
+                                .foregroundStyle(color(for: step.state))
+                        } else {
+                            responseControls(step)
+                        }
+
+                        ForEach(step.attachments) { attachment in
+                            VStack(alignment: .leading, spacing: 6) {
+                                FeedbackAttachmentPreview(attachment: attachment, feedbackThreadID: feedbackThread.id)
+                                if !step.isTerminal {
+                                    Button("Remove Annotation", role: .destructive) {
+                                        session.removeReviewAttachment(attachment.id)
+                                    }
+                                    .font(.caption.weight(.semibold))
+                                }
+                            }
+                        }
+
+                        if session.activeReviewRun?.state == .active {
+                            Divider().padding(.top, 8)
+                            Button("Finish Review") { session.submitReviewRun() }
+                                .buttonStyle(.borderedProminent)
+                                .controlSize(.large)
+                                .disabled(!session.canFinishReview)
+                                .accessibilityIdentifier("finish-review-run")
+                            if !session.canFinishReview {
+                                Text("Finish becomes available when every check has a recorded outcome.")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                        } else {
+                            Label("Review submitted", systemImage: "checkmark.seal.fill")
+                                .font(.headline).foregroundStyle(.green)
+                        }
+                    }
+                    .frame(maxWidth: 720, alignment: .leading)
+                    .padding(28)
+                }
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .accessibilityIdentifier("review-run-view")
+    }
+
+    @ViewBuilder
+    private func responseControls(_ step: ReviewStep) -> some View {
+        if step.responseKind == "choice" {
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(step.options) { option in
+                    Button { session.selectReviewOption(option.id) } label: {
+                        Label(option.label, systemImage: step.selectedOptionID == option.id ? "largecircle.fill.circle" : "circle")
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+
+        if step.allowsComment {
+            TextField("Comment", text: reviewComment, axis: .vertical)
+                .textFieldStyle(.roundedBorder)
+                .lineLimit(2...6)
+        }
+
+        if step.allowsAttachment {
+            Button("Capture & Annotate", systemImage: "pencil.and.scribble") {
+                session.isPresentingFullThread = false
+                session.requestCapture(reviewStepID: step.id)
+            }
+            .buttonStyle(.bordered)
+        }
+
+        HStack(spacing: 10) {
+            Button("Pass") { session.completeReviewStep(.passed) }
+                .buttonStyle(.borderedProminent).tint(.green)
+                .disabled(step.responseKind == "choice" && step.selectedOptionID == nil)
+            Button("Fail") { session.completeReviewStep(.failed) }
+                .buttonStyle(.borderedProminent).tint(.red)
+            Button("Blocked") { session.completeReviewStep(.blocked) }
+                .buttonStyle(.bordered).tint(.orange)
+            Button("Skip") { session.completeReviewStep(.skipped) }
+                .buttonStyle(.bordered)
+        }
+    }
+
+    private var reviewComment: Binding<String> {
+        Binding(
+            get: { session.selectedReviewStep?.comment ?? "" },
+            set: { session.updateReviewComment($0) }
+        )
+    }
+
+    private var reviewPointSelection: Binding<String> {
+        Binding(
+            get: { session.selectedReviewStep?.id ?? "" },
+            set: { session.selectReviewStep($0) }
+        )
+    }
+
+    private func icon(for state: ReviewStepState) -> String {
+        switch state {
+        case .locked: "lock.fill"
+        case .ready: "circle"
+        case .inProgress: "circle.dotted"
+        case .passed: "checkmark.circle.fill"
+        case .failed: "xmark.circle.fill"
+        case .skipped: "forward.circle.fill"
+        case .blocked: "exclamationmark.octagon.fill"
+        }
+    }
+
+    private func color(for state: ReviewStepState) -> Color {
+        switch state {
+        case .passed: .green
+        case .failed: .red
+        case .blocked: .orange
+        default: .secondary
+        }
+    }
+
+    private func label(for state: ReviewStepState) -> String {
+        switch state {
+        case .inProgress: "In progress"
+        default: state.rawValue.capitalized
         }
     }
 }

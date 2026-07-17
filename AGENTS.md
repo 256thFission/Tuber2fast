@@ -15,7 +15,15 @@ Codex, Skills, MCPs, Xcode, simulators, and fixtures are **development tooling**
 
 Canonical workflow: `TuberNotes.xcodeproj`, scheme `TuberNotes`, simulator `iPad Pro 13-inch (M5)`. See `Docs/Development.md` and the repo Skills under `.codex/skills/`.
 
-Human Pencil capture and in-app review feedback go through Debug `DeveloperSupport` + `DeveloperTools/PencilFixtureMCP` (Skill: `human-device-loop`). The connected test device shows the agent prompt in a banner. The human draws and/or taps a verdict (`looks-good` / `needs-work` / `blocked`); an optional note is stored as `humanNotes`. No Mac-side file work. Details: `Docs/Development.md` § Human device loop.
+Human Pencil capture and in-app review feedback go through Debug `DeveloperSupport` + `DeveloperTools/PencilFixtureMCP` (Skill: `human-device-loop`). Conversational review uses a persistent feedback thread plus a task heartbeat so a later human reply resumes the originating Codex task; authentic Pencil capture remains a separate one-stroke fixture protocol. The human works only in TuberNotes—no Mac-side file work. Details: `Docs/Development.md` § Human device loop.
+
+### Human review session contract
+
+- One guided review journey maps to one visible feedback session unless the human explicitly requests separate conversations. Queue, ownership, and protocol-conformance work stays out of that session.
+- Show the human only the current action and, when needed, one short question. Keep thread/request IDs, owner tokens, sequence cursors, lifecycle states, queue details, expected assertions, artifact paths, and test keys agent-side.
+- Ask for either an exact response needed to exercise behavior or a subjective verdict, never both in one step. Do not ask the human to judge mechanical facts the tooling can verify.
+- A task heartbeat is collection-only by default: it may collect, acknowledge, record, and notify, but must not post or activate the next human step. Advance only after the prior response is understood and recorded.
+- Stop the guided journey on an unmet precondition, ambiguous response, first failure, device/host state divergence, or human confusion. Explain the issue before asking for another action; never invent Pencil feel, visual taste, intent, or interaction judgments.
 
 ## Operating contract
 
@@ -37,7 +45,7 @@ For substantial work, follow this loop and stop when the named condition is met:
 3. **Build** — canonical project/scheme/simulator; retain failure tails, not full logs in context.
 4. **Launch scenario** — pick scenarios from the change-type map in `Docs/Development.md`.
 5. **Mechanical visual verification** — clipping, overlap, crashes, missing state, Pin drift.
-6. **Identify human review** — Pencil feel, taste, architecture, or anything the scenario cannot prove. Prefer `human-device-loop` so the verdict/notes land as durable JSON.
+6. **Identify human review** — Pencil feel, taste, architecture, or anything the scenario cannot prove. Prefer `human-device-loop` so feedback messages, attachments, watch state, or Pencil fixtures land as durable evidence.
 7. **Final diff inspection** — reject unrelated churn, ownership violations, and speculative abstractions.
 8. **Stop** — report the evidence packet, artifact paths, and unresolved issues.
 
@@ -54,7 +62,7 @@ For user-visible changes, end with this compact packet (template: `Docs/template
 - screenshot / artifact paths
 - console or crash status
 - mechanical checks performed
-- human-only checks still required (or collected via `human-device-loop`: request id, verdict, `humanNotes`, fixture path)
+- human-only checks still required (or collected via `human-device-loop`: feedback-thread/request ID, watch state and sequence, messages/attachments or verdict/notes, fixture path)
 - stop reason or unresolved issue
 
 Handoffs between sessions or models use `Docs/templates/Handoff.md`.

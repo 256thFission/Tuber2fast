@@ -1,4 +1,4 @@
 interface:
   display_name: "Human Device Loop"
-  short_description: "Request and collect in-app human Pencil/review feedback."
-  default_prompt: "Use PencilFixtureMCP to push an in-app agent request to the connected TuberNotes test device, wait for the human to complete it, and return the indexed fixture or verdict."
+  short_description: "Facilitate one clear in-app human review journey."
+  default_prompt: "Use $human-device-loop in guided-review or harness-conformance mode. Keep one guided journey in one visible session, present one action and optional question at a time, keep protocol internals agent-side, and collect durable evidence without auto-advancing from a heartbeat."

@@ -17,8 +17,9 @@ This is development tooling, not product chat or project-management software. It
 - Exactly one feedback thread owns the iPad review slot. Other feedback threads wait FIFO.
 - A human reply does not resolve the thread. It moves the thread to `awaiting-model`, which retains the device slot.
 - Both human and model may resolve, subject to optimistic concurrency.
-- Resolved threads are terminal and immutable until explicitly reopened.
+- Resolved threads are terminal and immutable; they cannot be reopened.
 - The floating harness preserves the prior quick context interaction: collapsed bar, bounded expanded current-turn card, and a full-screen thread view for complete history.
+- Human composer drafts are session-owned per feedback thread and persist across focus or presentation changes until successful submission.
 - The model may ask for a screenshot but cannot trigger one. Capture, attachment drafting, and final message send are separate, explicit human actions.
 - The initial structured interaction is single-choice only. Multi-choice and Pencil capture as feedback-thread interactions are deferred.
 - A/B review is one compiled, Debug-only comparison seam with synchronized reset, not a generalized variant platform.
@@ -41,6 +42,11 @@ cancelled
 
 Only one feedback thread may be `open` or `awaiting-model`. That thread owns the active device slot. All other nonterminal threads are `queued`.
 
+The iPad is the sole queue-activation authority. Host tools create and requeue
+threads as `queued`, mirror device snapshots, and may request terminal state
+changes, but they never promote a thread to `open`. This prevents host and
+device queue coordinators from independently claiming the same slot.
+
 ```mermaid
 stateDiagram-v2
     [*] --> Queued
@@ -55,10 +61,9 @@ stateDiagram-v2
     Open --> Cancelled: abandoned
     AwaitingModel --> Cancelled: abandoned
     Blocked --> Queued: explicitly resumed
-    Resolved --> Queued: explicitly reopened
 ```
 
-When the active feedback thread becomes `blocked`, `resolved`, or `cancelled`, the next queued thread advances and loads its pinned scenario cleanly. A blocked thread does not retain the device slot. Reopening or resuming joins the queue unless the slot is idle, in which case it opens immediately. A human-requested reopen receives priority ahead of ordinary waiters without stealing the currently active slot; model/system requeues remain FIFO. Message history and per-thread sequences are preserved.
+When the active feedback thread becomes `blocked`, `resolved`, or `cancelled`, the device advances the next queued thread and loads its pinned scenario cleanly. A blocked thread does not retain the device slot. Resuming a blocked thread joins the queue and the device opens it only when the slot is idle. Resolved and cancelled threads never re-enter the queue. Message history and per-thread sequences are preserved.
 
 ### Optimistic concurrency
 
@@ -104,7 +109,7 @@ Text follow-ups preserve the current product surface unless their normal message
 
 ### 6.1 Minimal product-facing bar
 
-The floating bar starts at the top-trailing safe-area edge every time, and remains draggable and collapsible. Collapsed, it shows compact session information. Expanded, it preserves the quick context UI: the exact current model turn, its immediate reply or single-choice control, high-contrast state actions, and `View Full Thread`. Compact context arrows occupy the header corners when navigation is available: back priority-reopens the most recent blocked/resolved thread, while forward yields the current thread to the next queued review without resolving it. It does not browse older history and does not participate in product layout.
+The floating bar starts at the top-trailing safe-area edge every time, and remains draggable and collapsible. Collapsed, it shows compact session information. Expanded, it preserves the quick context UI: the exact current model turn, its immediate reply or single-choice control, high-contrast state actions, and `View Full Thread`. A compact forward arrow yields the current thread to the next queued review without resolving it. The UI does not browse or reopen older history and does not participate in product layout.
 
 During the registered live A/B comparison only, it additionally exposes:
 
@@ -126,6 +131,15 @@ The full-screen view contains:
 - live A/B preference controls when the registered comparison is active.
 
 Leaving the view returns to the same product surface without resetting it. Submitted replies and completed questions become read-only. Only the newest unanswered interaction is editable. No duplicate composer or stale Reset-only prompt may remain after submission or queue advancement.
+
+Reply text, selected choices, and optional comments are keyed by feedback-thread ID in the long-lived feedback session. Opening or dismissing the full-screen view, moving focus, or presenting capture/annotation does not clear them. Successful submission clears only the submitted thread's draft; a failed submission preserves it. Draft state never transfers to another queued thread.
+
+Human-facing model copy is optimized for quick review on the iPad:
+
+- Keep titles and objectives brief.
+- Use short `-` bullets when a prompt or follow-up contains multiple checks.
+- Put one requested check or action in each bullet.
+- Avoid dense paragraphs and repeated context.
 
 ## 7. Questions
 
@@ -240,25 +254,29 @@ struct FeedbackThreadMessage {
 }
 ```
 
-Authors are `model`, `human`, and `system`. Messages, answers, attachments, and state events are append-only. A resolved record is immutable until an explicit, authorized reopen transition.
+Authors are `model`, `human`, and `system`. Messages, answers, attachments, and state events are append-only. A resolved record is immutable and cannot be reopened.
 
 ## 12. MCP surface
 
-The initial surface has exactly seven feedback-thread operations:
+The conversational core has seven feedback-thread operations:
 
-1. `create_feedback_thread` — create idempotently, pin target/scenario, and enqueue or activate.
+1. `create_feedback_thread` — create idempotently, pin target/scenario, and enqueue for device activation.
 2. `post_thread_message` — append a normal model message, optionally carrying bounded revision/surface metadata.
 3. `ask_thread_question` — append a free-text or single-choice question.
 4. `await_thread_response` — bounded poll for a newer human response without changing delivery target.
 5. `collect_thread_updates` — return messages and attachment paths after a sequence cursor.
-6. `set_feedback_thread_state` — perform authorized optimistic transitions, including block, resolve, cancel, resume, and reopen.
+6. `set_feedback_thread_state` — perform authorized optimistic transitions, including block, resolve, cancel, and blocked-thread resume.
 7. `get_feedback_thread` — retrieve the durable record, ordered history, active state, and queue position.
 
-M5 adds one bounded operation:
+Operational recovery, evidence, and automatic wake add five bounded operations:
 
-8. `export_feedback_thread` — write one thread's readable Markdown history and paths for attachments already collected to the Mac mirror into an evidence directory, then return those paths.
+8. `cancel_feedback_thread` — idempotently cancel an owned or explicitly confirmed orphaned development session.
+9. `export_feedback_thread` — write one thread's readable Markdown history and paths for attachments already collected to the Mac mirror into an evidence directory, then return those paths.
+10. `get_feedback_watch_state` — return unseen human/terminal wake eligibility for a task heartbeat.
+11. `acknowledge_feedback_wake` — idempotently record a delivered wake and monotonically advance its cursor.
+12. `close_feedback_watch` — stop host monitoring without mutating thread lifecycle or queue state.
 
-No separate list, queue-advance, attachment-delete, attachment-collection, comparison-post, resolve, reopen, or cancel operation is part of v0.2. Attachments arrive through messages and are returned by cursor collection. Queue advancement is state-machine behavior. Comparison and revision directives travel on normal messages.
+No separate list, queue-advance, attachment-delete, attachment-collection, comparison-post, resolve, or reopen operation is part of v0.2. Attachments arrive through messages and are returned by cursor collection. Queue advancement is state-machine behavior. Comparison and revision directives travel on normal messages.
 
 Collection uses an exclusive `afterSequence` cursor so polling never duplicates messages. Await has a finite caller-selected timeout and is safe to repeat. All mutating operations accept idempotency keys; owned calls enforce `owner_token`.
 
@@ -294,11 +312,12 @@ Gitignored Mac mirror:
     device/...
     evidence/feedback-thread.md
   attachments/<feedback-thread-id>/*.png
+  watches/<feedback-thread-id>.json
 ```
 
 Collected attachment paths are added to the owning message's attachment metadata as `collectedPaths`; they are not maintained in a separate attachment index. The per-thread `collected/.../device` directory is the raw pull, while durable PNG copies live under `attachments/<feedback-thread-id>/`.
 
-Every meaningful event is appended to a mergeable JSONL schema with a globally unique event ID, source (`backend` or `device`), per-source sequence, feedback-thread ID, timestamp, requester ID, pinned target, scenario, surface revision, and relevant message/attachment/comparison fields. Collection deduplicates device events by event ID into the canonical Mac event log while preserving the pulled device log as an evidence artifact. Required events cover creation, queueing, activation, message/question/answer, state transition, capture cancellation/send/collection, surface revision, variant exposure/switch/reset/preference, reopen, and export.
+Every meaningful event is appended to a mergeable JSONL schema with a globally unique event ID, source (`backend` or `device`), per-source sequence, feedback-thread ID, timestamp, requester ID, pinned target, scenario, surface revision, and relevant message/attachment/comparison fields. Collection deduplicates device events by event ID into the canonical Mac event log while preserving the pulled device log as an evidence artifact. Required events cover creation, queueing, activation, message/question/answer, state transition, capture cancellation/send/collection, surface revision, variant exposure/switch/reset/preference, blocked-thread resume, and export.
 
 `export_feedback_thread` writes a bounded Markdown transcript plus references only to durable attachments already collected into the Mac mirror. Export does not pull uncollected device attachments implicitly. It does not add a general export UI, archive browser, search index, or storage dashboard.
 
@@ -318,6 +337,41 @@ Every meaningful event is appended to a mergeable JSONL schema with a globally u
 - Owner tokens are never persisted or exported in plaintext.
 - Pen fixtures remain a separate protocol and corpus.
 
+### 14.1 Automatic model wake
+
+Creating a feedback thread also creates a gitignored watch record containing
+the requester ID, monotonic acknowledgement cursor, and bounded acknowledged
+wake-ID history. It does not contain the plaintext owner token.
+
+The initiating Codex task arms a supported task heartbeat before ending its
+turn. The heartbeat calls `get_feedback_watch_state`; human messages and
+human terminal/blocked transitions produce a wake ID derived from feedback
+thread identity, sequence, state, and revision. After the originating task is
+resumed, `acknowledge_feedback_wake` records that ID and advances the cursor.
+Repeated polls or acknowledgements are harmless. `close_feedback_watch` stops
+monitoring without mutating the transcript or advancing the device queue.
+
+PencilFixtureMCP remains passive and does not invoke undocumented Codex APIs.
+If heartbeat registration fails, the initiating task must await immediately or
+report `feedback-created-but-not-armed`.
+
+### 14.2 Asynchronous Review Runs
+
+A Review Run is an optional object embedded in one feedback thread. It contains
+ordered human-autonomous steps with explicit prerequisite IDs and durable
+states: `locked`, `ready`, `in-progress`, `passed`, `failed`, `skipped`, or
+`blocked`. Failed, skipped, and blocked prerequisites block their dependents,
+while unrelated ready steps remain actionable.
+
+The device persists each explicit verdict, choice, comment, and annotation in
+the run snapshot. These edits do not append transcript messages and therefore
+do not wake the originating task. Once every step is terminal, `Finish Review`
+atomically marks the run submitted and appends exactly one ordered human
+summary message containing all attachment metadata. Submission is immutable
+and produces the run's single feedback-watch wake. Collection advances the run
+from `submitted` to `collected` idempotently without changing thread queue
+ownership.
+
 ## 15. Milestones and acceptance
 
 ### M1 — Conversational durable feedback threads
@@ -327,6 +381,7 @@ Every meaningful event is appended to a mergeable JSONL schema with a globally u
 - ownership, target pinning, idempotency, and optimistic transitions;
 - minimal floating bar and full-screen free-text conversation;
 - seven MCP operations;
+- durable automatic-wake cursor operations and task-heartbeat workflow;
 - device persistence, Mac mirror, cursor collection, JSONL events, and relaunch restoration;
 - correct clean scenario load on queue advancement;
 - existing pen-fixture behavior remains functional and separate.

@@ -52,6 +52,14 @@ Use Skill `human-device-loop` / PencilFixtureMCP when Pencil feel, authentic str
 - Fixture path (if any):
 - Collected artifact dir (`.pencil-fixtures/collected/…`):
 
+## Automatic feedback wake (if used)
+
+- Feedback thread ID:
+- Watch status: `watching` / `closed` / `feedback-created-but-not-armed`
+- Last acknowledged sequence:
+- Wake ID:
+- Originating Codex task resumed automatically: yes / no
+
 ## Human-only checks still required
 
 - [ ] Apple Pencil feel / latency (real iPad) — or collected above

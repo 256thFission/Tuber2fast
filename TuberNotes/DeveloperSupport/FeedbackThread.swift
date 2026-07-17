@@ -65,6 +65,39 @@ struct FeedbackMessage: Codable, Equatable, Identifiable {
     var selectedOptionID: String?
 }
 
+enum ReviewRunState: String, Codable { case draft, active, submitted, collected, cancelled }
+enum ReviewStepState: String, Codable { case locked, ready, inProgress = "in-progress", passed, failed, skipped, blocked }
+
+struct ReviewStep: Codable, Equatable, Identifiable {
+    var id: String
+    var title: String
+    var humanInstruction: String
+    var responseKind: String
+    var scenario: String
+    var prerequisiteIDs: [String]
+    var state: ReviewStepState
+    var options: [FeedbackChoice]
+    var allowsComment: Bool
+    var allowsAttachment: Bool
+    var verdict: String?
+    var selectedOptionID: String?
+    var comment: String
+    var attachments: [FeedbackAttachment]
+    var completedAt: Date?
+    var blockedReason: String?
+
+    var isTerminal: Bool { [.passed, .failed, .skipped, .blocked].contains(state) }
+}
+
+struct ReviewRun: Codable, Equatable, Identifiable {
+    var schemaVersion: Int
+    var id: String
+    var state: ReviewRunState
+    var steps: [ReviewStep]
+    var createdAt: Date
+    var submittedAt: Date?
+}
+
 struct FeedbackThread: Codable, Equatable, Identifiable {
     struct Requester: Codable, Equatable { var id: String }
     struct Owner: Codable, Equatable { var tokenHash: String; var tokenRequired: Bool }
@@ -93,6 +126,7 @@ struct FeedbackThread: Codable, Equatable, Identifiable {
     var delivery: Delivery
     var activeComparisonID: String?
     var activeVariantID: String?
+    var reviewRun: ReviewRun?
 
     // Messages have their own append-only files and are never encoded into thread.json.
     var messages: [FeedbackMessage] = []
@@ -101,12 +135,22 @@ struct FeedbackThread: Codable, Equatable, Identifiable {
         case schemaVersion, id, title, objective, state, createdAt, updatedAt, requester, owner
         case scenario, surfaceRevision, queueSequence, lastSequence, lastHumanSequence
         case lastConsumedSequence, revision, eventSequence, messageIDs, messageIdempotency, delivery
-        case activeComparisonID, activeVariantID
+        case activeComparisonID, activeVariantID, reviewRun
     }
 }
 
 enum FeedbackThreadStore {
     static let rootName = "feedback-threads"
+    static let deviceEventSequenceKey = "feedback-thread-device-event-sequence"
+
+    /// Removes only the Debug feedback-review state when explicitly requested at launch.
+    /// This intentionally leaves product documents and Pencil fixtures untouched.
+    static func resetIfRequested(environment: [String: String] = ProcessInfo.processInfo.environment) {
+        guard environment["TUBER_RESET_FEEDBACK_STATE"] == "1" else { return }
+        let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        try? FileManager.default.removeItem(at: documents.appendingPathComponent(rootName, isDirectory: true))
+        UserDefaults.standard.removeObject(forKey: deviceEventSequenceKey)
+    }
 
     static var rootURL: URL {
         ensureDirectory(FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -169,10 +213,9 @@ enum FeedbackThreadStore {
     }
 
     static func appendEvent(_ name: String, feedbackThreadID: String, values: [String: String] = [:]) {
-        let sequenceKey = "feedback-thread-device-event-sequence"
         let defaults = UserDefaults.standard
-        let sourceSequence = defaults.integer(forKey: sequenceKey) + 1
-        defaults.set(sourceSequence, forKey: sequenceKey)
+        let sourceSequence = defaults.integer(forKey: deviceEventSequenceKey) + 1
+        defaults.set(sourceSequence, forKey: deviceEventSequenceKey)
         var event: [String: Any] = values
         event["eventID"] = "device-event-\(UUID().uuidString.lowercased())"
         event["event"] = name
