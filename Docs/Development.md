@@ -39,7 +39,7 @@ FORCE_MECHANICAL_FAILURE=1 SKIP_BUILD=1 DeveloperTools/verify-scenario.sh blank-
 
 This command is expected to exit nonzero. Its bundle includes `intentional-failure.txt`; later verifier runs remain normal because the failure is opt-in for that process only.
 
-End user-visible tasks with the evidence packet in `Docs/templates/EvidencePacket.md`. Use `Docs/templates/Handoff.md` when transferring work between sessions or models.
+End user-visible tasks with the evidence packet in `Docs/templates/EvidencePacket.md`. Use `Docs/templates/Handoff.md` when transferring work between sessions or models. When preparing a new device-review journey, start with the owning major-group guide in `Docs/ReviewGuides/README.md`.
 
 ## Scenario-to-change map
 
