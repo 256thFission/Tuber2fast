@@ -46,17 +46,17 @@ End user-visible tasks with the evidence packet in `Docs/templates/EvidencePacke
 | Change type | Required scenarios | Notes |
 |---|---|---|
 | Canvas / PencilKit drawing surface | `blank-canvas`; reviewed pen fixture when applicable | Confirm ink and paper without Pin clutter; use `human-device-loop` for authentic Pencil |
-| PDF page surface | `pdf-pages` and `ink-pages` | Fixture selection is callable; expected UI requires coordinator App wiring |
-| Blank notebook surface | `blank-notebook` and `notebook-pages` | Fixture selection is callable; expected UI requires coordinator App wiring |
+| PDF page surface | `pdf-pages` and `ink-pages` | Both scenarios are App-wired with stable page identity and page-local canned ink |
+| Blank notebook surface | `blank-notebook` and `notebook-pages` | Both scenarios are App-wired with stable navigation; verify App-owned page addition in `blank-notebook` |
 | Pin layout | `fake-pin`, `multi-pin`, and `edge-pins` | Check deterministic positions, overlap, and edge clipping |
 | App composition / root chrome | `blank-canvas`, `fake-pin`, and `multi-pin` | All three DEBUG states |
-| Coordinate / transform work | `pin-drift` before and after viewport change | Fixture selection is callable; viewport assertion requires coordinator App wiring; use `spatial-debugging` Skill |
+| Coordinate / transform work | `pin-drift` before and after viewport change | Use the deterministic `Change viewport` control and the `spatial-debugging` Skill |
 | Human feel / taste / interaction quality | scenario that exposes the change | Mechanical verify first, then create a feedback thread; use the morning queue for human-only checks |
 | Non-UI / pure contract text | none required | Still avoid product/runtime vs tooling confusion |
 
-M0 verifier values are `blank-canvas`, `fake-pin`, `multi-pin`, `pdf-pages`, `blank-notebook`, `notebook-pages`, `ink-pages`, `pin-drift`, and `edge-pins`. Default is `blank-canvas`.
+M0 verifier values are `blank-canvas`, `fake-pin`, `multi-pin`, `pdf-pages`, `blank-notebook`, `notebook-pages`, `ink-pages`, `pin-drift`, `edge-pins`, and the explicitly partial `hero-recorded` stub. Default is `blank-canvas`.
 
-`DevelopmentScenario.fixture` owns stable documents, page IDs, page-specific `PenFixture` values, canned `PageAnnotation` values, expected state, and integration readiness. `blank-canvas`, `fake-pin`, and `multi-pin` are rendered by the current scaffold. The other M0 selections, fixture inputs, expected-state reporting, and evidence capture are runnable, but their full expected UI states remain **ready for coordinator App wiring**. A verifier PASS for those scenarios proves the automation path, launch, screenshot integrity, console scan, and crash scan; it does not accept the pending UI state.
+`DevelopmentScenario.fixture` owns stable documents, page IDs, page-specific `PenFixture` values, canned `PageAnnotation` values, expected state, and integration readiness. `blank-canvas`, `fake-pin`, and `multi-pin` are rendered by the current scaffold. `pdf-pages`, `blank-notebook`, `notebook-pages`, `ink-pages`, `pin-drift`, and `edge-pins` are rendered through the coordinator App integration seam. `hero-recorded` is only a bounded offline recorded agent-to-Pin **stub**; genuine SpatialCanvas lasso capture and crop remain pending, so it is not App-wired acceptance evidence. Other selections remain **ready for coordinator App wiring** or later milestones; a verifier PASS for those states does not accept pending UI behavior.
 
 ## Manual loop
 
