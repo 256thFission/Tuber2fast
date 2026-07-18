@@ -62,20 +62,92 @@ enum DevelopmentScenario: String, CaseIterable {
 #if DEBUG
     private static func recordSelection(_ scenario: Self, source: String) {
         let fileManager = FileManager.default
+        let verificationNonce = ProcessInfo.processInfo.environment["TUBER_VERIFY_NONCE"]
         guard let documents = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first else { return }
         let directory = documents.appendingPathComponent("developer-evidence", isDirectory: true)
         let url = directory.appendingPathComponent("scenario-selection.json")
+        let runtimeURL = directory.appendingPathComponent("runtime-rendered.json")
+        let fixture = scenario.fixture
+        let currentPageIndex = fixture.currentPageID.flatMap { currentPageID in
+            fixture.document?.pages.firstIndex(where: { $0.id == currentPageID })
+        }
         let value: [String: Any] = [
             "scenario": scenario.rawValue,
-            "source": source
+            "source": source,
+            "verificationNonce": (verificationNonce as Any?) ?? NSNull(),
+            "fixtureFamily": fixture.family.rawValue,
+            "integrationReadiness": fixture.integrationReadiness.rawValue,
+            "expectedState": fixture.expectedState,
+            "pageCount": fixture.document?.pages.count ?? 0,
+            "currentPageID": (fixture.currentPageID?.uuidString as Any?) ?? NSNull(),
+            "currentPageIndex": (currentPageIndex as Any?) ?? NSNull(),
+            "penFixturePageIDs": fixture.penFixturesByPageID.keys.map(\.uuidString).sorted(),
+            "annotationIDs": fixture.annotations.map(\.id.uuidString).sorted(),
+            "expectsViewportTransition": fixture.expectsViewportTransition
         ]
         guard JSONSerialization.isValidJSONObject(value),
               let data = try? JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted, .sortedKeys]) else { return }
         try? fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        // A launch must produce fresh runtime evidence. Never let a prior launch's
+        // rendered-state snapshot satisfy the verifier for a newly selected scenario.
+        try? fileManager.removeItem(at: runtimeURL)
         try? data.write(to: url, options: .atomic)
     }
 #endif
 }
+
+#if DEBUG
+/// Writes what App actually supplied to the selected rendering branch after that
+/// branch settled. This is deliberately separate from `scenario-selection.json`,
+/// which describes fixture declarations and cannot prove App wiring.
+enum DevelopmentRuntimeEvidence {
+    enum SurfaceKind: String {
+        case spatialCanvas = "spatial-canvas"
+        case standalonePins = "standalone-pin-surface"
+        /// The current recorded hero bypasses genuine SpatialCanvas lasso/crop work.
+        case recordedHeroStub = "recorded-hero-stub"
+    }
+
+    static func record(
+        scenario: DevelopmentScenario,
+        surfaceKind: SurfaceKind,
+        pageCount: Int,
+        currentPageID: UUID?,
+        currentPageIndex: Int?,
+        renderedPenFixtureName: String?,
+        renderedAnnotationIDs: [UUID],
+        heroStatus: String? = nil
+    ) {
+        let verificationNonce = ProcessInfo.processInfo.environment["TUBER_VERIFY_NONCE"]
+        let value: [String: Any] = [
+            "schemaVersion": 1,
+            "scenario": scenario.rawValue,
+            "verificationNonce": (verificationNonce as Any?) ?? NSNull(),
+            "surfaceKind": surfaceKind.rawValue,
+            "pageCount": pageCount,
+            "currentPageID": (currentPageID?.uuidString as Any?) ?? NSNull(),
+            "currentPageIndex": (currentPageIndex as Any?) ?? NSNull(),
+            "renderedPenFixtureName": (renderedPenFixtureName as Any?) ?? NSNull(),
+            "renderedAnnotationIDs": renderedAnnotationIDs.map(\.uuidString).sorted(),
+            "heroStatus": (heroStatus as Any?) ?? NSNull(),
+            "recordedAt": ISO8601DateFormatter().string(from: Date())
+        ]
+        guard JSONSerialization.isValidJSONObject(value),
+              let data = try? JSONSerialization.data(
+                withJSONObject: value,
+                options: [.prettyPrinted, .sortedKeys]
+              ),
+              let documents = FileManager.default.urls(
+                for: .documentDirectory,
+                in: .userDomainMask
+              ).first else { return }
+        let directory = documents.appendingPathComponent("developer-evidence", isDirectory: true)
+        let url = directory.appendingPathComponent("runtime-rendered.json")
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try? data.write(to: url, options: .atomic)
+    }
+}
+#endif
 
 struct DevelopmentScenarioFixture {
     enum Family: String {
@@ -95,6 +167,10 @@ struct DevelopmentScenarioFixture {
         case scaffoldRendered = "scaffold-rendered"
         /// Deterministic inputs are complete; coordinator App composition must wire them.
         case readyForAppWiring = "ready-for-app-wiring"
+        /// A narrow demonstrator exists, but named product behavior is still missing.
+        case partialStub = "partial-stub"
+        /// The coordinator App renders the fixture through the owning product subsystem.
+        case appWired = "app-wired"
         /// Frozen identifier belongs to a later milestone and has no fixture in this package.
         case laterMilestone = "later-milestone"
     }
@@ -173,15 +249,15 @@ private enum DevelopmentScenarioFixtures {
         case .pdfPages:
             return make(
                 family: .pdf,
-                expectedState: "clean M0Demo PDF with three stable pages, showing page 1 of 3",
-                readiness: .readyForAppWiring,
-                document: pdfDocument(currentPageID: ID.pdfPage1)
+                expectedState: "clean M0Demo PDF with three stable pages, showing page 2 of 3",
+                readiness: .appWired,
+                document: pdfDocument(currentPageID: ID.pdfPage2)
             )
         case .blankNotebook:
             return make(
                 family: .notebook,
                 expectedState: "new notebook with one branded TuberNotes dot-grid page and no ink",
-                readiness: .readyForAppWiring,
+                readiness: .appWired,
                 document: notebookDocument(pageCount: 1, currentPageID: ID.notebookPage1)
             )
         case .notebookPages:
@@ -189,7 +265,7 @@ private enum DevelopmentScenarioFixtures {
             return make(
                 family: .notebook,
                 expectedState: "three dot-grid pages, with distinct canned drawings on appended pages 2 and 3, showing page 3",
-                readiness: .readyForAppWiring,
+                readiness: .appWired,
                 document: document,
                 penFixtures: [
                     ID.notebookPage2: diagonalFixture(name: "notebook-page-2", descending: false),
@@ -201,7 +277,7 @@ private enum DevelopmentScenarioFixtures {
             return make(
                 family: .ink,
                 expectedState: "M0Demo PDF with distinct canned drawings on pages 1 and 3, showing page 3",
-                readiness: .readyForAppWiring,
+                readiness: .appWired,
                 document: document,
                 penFixtures: [
                     ID.pdfPage1: diagonalFixture(name: "pdf-page-1-ink", descending: false),
@@ -212,7 +288,7 @@ private enum DevelopmentScenarioFixtures {
             return make(
                 family: .spatial,
                 expectedState: "one stable Pin target at (0.58, 0.42), checked before and after a deterministic viewport transition",
-                readiness: .readyForAppWiring,
+                readiness: .appWired,
                 document: pdfDocument(currentPageID: ID.pdfPage2),
                 annotations: [annotation(id: ID.driftPin, pageID: ID.pdfPage2, x: 0.58, y: 0.42, teaser: "Stable anchor", body: "The target must not drift through zoom, pan, page turn, and return.")],
                 expectsViewportTransition: true
@@ -221,7 +297,7 @@ private enum DevelopmentScenarioFixtures {
             return make(
                 family: .pins,
                 expectedState: "four deterministic Pins near the top, right, bottom, and left edges with unclipped labels",
-                readiness: .readyForAppWiring,
+                readiness: .appWired,
                 document: blankDocument(),
                 annotations: [
                     annotation(id: ID.edgeTop, pageID: ID.blankPage, x: 0.50, y: 0.03, teaser: "Top", body: "Top-edge fixture."),
@@ -239,7 +315,12 @@ private enum DevelopmentScenarioFixtures {
         case .agentRecordedFailure:
             return later(family: .agent, expectedState: "recoverable recorded provider failure")
         case .heroRecorded:
-            return later(family: .hero, expectedState: "deterministic end-to-end recorded Check interaction")
+            return make(
+                family: .hero,
+                expectedState: "recorded agent-to-Pin stub; genuine lasso capture and crop remain pending",
+                readiness: .partialStub,
+                document: blankDocument()
+            )
         }
     }
 

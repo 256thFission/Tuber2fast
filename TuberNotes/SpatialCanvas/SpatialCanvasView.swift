@@ -171,9 +171,11 @@ struct SpatialCanvasView: View {
     let onDrawingChanged: (UUID, Data) -> Void
     let onDrawingSnapshot: (UUID, PKDrawing, CGSize) -> Void
     let onViewportChanged: (PageViewportState) -> Void
+    let allowsDeterministicViewportTransition: Bool
 
     @StateObject private var drawingStore: SpatialDrawingStore
     @State private var selectedPageID: UUID?
+    @State private var viewportTransitionGenerationByPageID: [UUID: Int] = [:]
 
     init(
         document: NotebookDocument,
@@ -186,7 +188,8 @@ struct SpatialCanvasView: View {
         pageOverlay: @escaping (PageRecord, PageAnchorProjection) -> AnyView = { _, _ in AnyView(EmptyView()) },
         onDrawingChanged: @escaping (UUID, Data) -> Void = { _, _ in },
         onDrawingSnapshot: @escaping (UUID, PKDrawing, CGSize) -> Void = { _, _, _ in },
-        onViewportChanged: @escaping (PageViewportState) -> Void = { _ in }
+        onViewportChanged: @escaping (PageViewportState) -> Void = { _ in },
+        allowsDeterministicViewportTransition: Bool = false
     ) {
         self.document = document
         _currentPageID = currentPageID
@@ -198,6 +201,7 @@ struct SpatialCanvasView: View {
         self.onDrawingChanged = onDrawingChanged
         self.onDrawingSnapshot = onDrawingSnapshot
         self.onViewportChanged = onViewportChanged
+        self.allowsDeterministicViewportTransition = allowsDeterministicViewportTransition
         _drawingStore = StateObject(wrappedValue: SpatialDrawingStore(initialDrawingData: initialDrawingData))
 
         let initialID = currentPageID.wrappedValue
@@ -237,6 +241,7 @@ struct SpatialCanvasView: View {
         onDrawingChanged = { _, _ in }
         onDrawingSnapshot = { _, _, _ in }
         onViewportChanged = { _ in }
+        allowsDeterministicViewportTransition = false
         _drawingStore = StateObject(wrappedValue: SpatialDrawingStore())
         _selectedPageID = State(initialValue: pageID)
     }
@@ -264,7 +269,8 @@ struct SpatialCanvasView: View {
                             pageOverlay: pageOverlay,
                             onDrawingChanged: handleDrawingChanged,
                             onDrawingSnapshot: onDrawingSnapshot,
-                            onViewportChanged: onViewportChanged
+                            onViewportChanged: onViewportChanged,
+                            viewportTransitionGeneration: viewportTransitionGenerationByPageID[page.id] ?? 0
                         )
                         .padding(.horizontal, 14)
                         .padding(.bottom, 12)
@@ -323,6 +329,16 @@ struct SpatialCanvasView: View {
             .disabled(currentPageIndex < 0 || currentPageIndex >= document.pages.count - 1)
             .accessibilityLabel("Next page")
             .accessibilityIdentifier("next-page")
+
+            if allowsDeterministicViewportTransition {
+                Button(action: changeViewportDeterministically) {
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
+                        .frame(width: 34, height: 34)
+                }
+                .accessibilityLabel("Change viewport")
+                .accessibilityValue(currentViewportTransitionGeneration.isMultiple(of: 2) ? "Fit to page" : "Zoomed and panned")
+                .accessibilityIdentifier("change-viewport")
+            }
         }
         .padding(.horizontal, 18)
         .frame(height: 42)
@@ -352,6 +368,16 @@ struct SpatialCanvasView: View {
         withAnimation(.easeOut(duration: 0.2)) {
             selectedPageID = document.pages[target].id
         }
+    }
+
+    private func changeViewportDeterministically() {
+        guard let selectedPageID else { return }
+        viewportTransitionGenerationByPageID[selectedPageID, default: 0] += 1
+    }
+
+    private var currentViewportTransitionGeneration: Int {
+        guard let selectedPageID else { return 0 }
+        return viewportTransitionGenerationByPageID[selectedPageID] ?? 0
     }
 
     private func normalizeSelection() {
@@ -387,6 +413,7 @@ private struct ZoomableSpatialPage: UIViewRepresentable {
     let onDrawingChanged: (UUID, Data) -> Void
     let onDrawingSnapshot: (UUID, PKDrawing, CGSize) -> Void
     let onViewportChanged: (PageViewportState) -> Void
+    let viewportTransitionGeneration: Int
 
     func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
@@ -426,6 +453,7 @@ private struct ZoomableSpatialPage: UIViewRepresentable {
         context.coordinator.parent = self
         context.coordinator.host?.rootView = content
         scrollView.setNeedsLayout()
+        context.coordinator.applyViewportTransitionIfNeeded()
     }
 
     static func dismantleUIView(_ scrollView: FittedPageScrollView, coordinator: Coordinator) {
@@ -452,6 +480,7 @@ private struct ZoomableSpatialPage: UIViewRepresentable {
         weak var scrollView: FittedPageScrollView?
         var host: UIHostingController<SpatialPageContent>?
         private var lastViewportSize = CGSize.zero
+        private var appliedViewportTransitionGeneration = 0
 
         init(parent: ZoomableSpatialPage) {
             self.parent = parent
@@ -518,6 +547,36 @@ private struct ZoomableSpatialPage: UIViewRepresentable {
             scrollView.contentSize = fittedSize
             centerPage()
             scrollView.panGestureRecognizer.isEnabled = false
+            emitViewport()
+            // A geometry change refits UIKit's scroll view. Reapply the selected
+            // page's deterministic state so the control and rendered viewport agree.
+            appliedViewportTransitionGeneration = 0
+            applyViewportTransitionIfNeeded()
+        }
+
+        func applyViewportTransitionIfNeeded() {
+            guard let scrollView,
+                  parent.viewportTransitionGeneration != appliedViewportTransitionGeneration,
+                  scrollView.bounds.size != .zero,
+                  host?.view.bounds.size != .zero else { return }
+
+            appliedViewportTransitionGeneration = parent.viewportTransitionGeneration
+            if parent.viewportTransitionGeneration.isMultiple(of: 2) {
+                scrollView.setZoomScale(scrollView.minimumZoomScale, animated: false)
+                scrollView.contentOffset = .zero
+            } else {
+                scrollView.setZoomScale(1.75, animated: false)
+                let maximumOffset = CGPoint(
+                    x: max(0, scrollView.contentSize.width - scrollView.bounds.width),
+                    y: max(0, scrollView.contentSize.height - scrollView.bounds.height)
+                )
+                scrollView.contentOffset = CGPoint(
+                    x: maximumOffset.x * 0.37,
+                    y: maximumOffset.y * 0.29
+                )
+            }
+            centerPage()
+            scrollView.panGestureRecognizer.isEnabled = scrollView.zoomScale > 1.0001
             emitViewport()
         }
 
