@@ -2,13 +2,12 @@ import PencilKit
 import SwiftUI
 import UIKit
 
-/// GoodNotes-style page with pinch/button zoom. The PencilKit canvas and the
-/// ruled paper live inside a shared zooming content view so they scale together
-/// and stay aligned. Pencil draws; a finger pans/zooms (unless finger-drawing is
-/// on, in which case a finger draws and two fingers pan).
+/// GoodNotes-style page with pinch/button zoom. The PencilKit canvas, ruled
+/// paper, and lasso overlay share one zooming content view so they scale
+/// together. Pencil draws; a finger pans/zooms (unless finger-drawing is on).
 ///
-/// Lasso mode overlays a selection tool: drawing a loop marks a region that the
-/// assistant analyzes in isolation.
+/// Hold-to-straighten: draw a stroke, pause ~0.5s before lifting, and it snaps
+/// to a straight line from where it began to where you held.
 struct NotebookCanvas: UIViewRepresentable {
     let pageID: UUID
     let drawingData: Data
@@ -20,6 +19,7 @@ struct NotebookCanvas: UIViewRepresentable {
     let fingerDrawing: Bool
     let isLassoActive: Bool
     let lassoRect: CGRect?
+    let snapStraight: Bool
     var onChange: (Data) -> Void
     var onLongPress: () -> Void
     var onZoomChanged: (CGFloat) -> Void
@@ -40,6 +40,11 @@ struct NotebookCanvas: UIViewRepresentable {
             let page = NotebookPageLayout.size
             onLasso(CGRect(x: r.minX / page.width, y: r.minY / page.height,
                            width: r.width / page.width, height: r.height / page.height))
+        }
+
+        view.straightenRecognizer.delegate = context.coordinator
+        view.straightenRecognizer.onHoldStraighten = { [weak coordinator = context.coordinator, weak view] start, end in
+            coordinator?.straighten(from: start, to: end, in: view)
         }
 
         let longPress = UILongPressGestureRecognizer(
@@ -81,6 +86,9 @@ struct NotebookCanvas: UIViewRepresentable {
         view.lassoView.isUserInteractionEnabled = isLassoActive
         view.canvasView.isUserInteractionEnabled = !isLassoActive
         view.scrollView.isScrollEnabled = !isLassoActive
+
+        view.straightenRecognizer.acceptsFinger = fingerDrawing
+        view.straightenRecognizer.isEnabled = snapStraight && !isLassoActive && tool != .eraser
     }
 
     final class Coordinator: NSObject, PKCanvasViewDelegate, UIScrollViewDelegate, UIGestureRecognizerDelegate {
@@ -88,6 +96,7 @@ struct NotebookCanvas: UIViewRepresentable {
         weak var view: ZoomablePageView?
         private(set) var loadedPageID: UUID?
         private var isLoading = false
+        private var isProgrammatic = false
 
         init(_ parent: NotebookCanvas) { self.parent = parent }
 
@@ -100,8 +109,41 @@ struct NotebookCanvas: UIViewRepresentable {
         }
 
         func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
-            guard !isLoading else { return }
+            guard !isLoading, !isProgrammatic else { return }
             parent.onChange(canvasView.drawing.dataRepresentation())
+        }
+
+        /// Replace the just-drawn freehand stroke with a straight line.
+        func straighten(from start: CGPoint, to end: CGPoint, in view: ZoomablePageView?) {
+            guard let view else { return }
+            let p = parent
+            guard !p.isLassoActive, p.tool != .eraser else { return }
+            guard hypot(end.x - start.x, end.y - start.y) > 12 else { return }
+
+            DispatchQueue.main.async {
+                var drawing = view.canvasView.drawing
+                guard !drawing.strokes.isEmpty else { return }
+                drawing.strokes.removeLast()
+
+                let inkType: PKInk.InkType = p.tool == .pencil ? .pencil : (p.tool == .marker ? .marker : .pen)
+                var color = p.color
+                if p.tool == .marker { color = color.withAlphaComponent(0.4) }
+                let ink = PKInk(inkType, color: color)
+                let w = p.width
+
+                func point(_ location: CGPoint, _ t: TimeInterval) -> PKStrokePoint {
+                    PKStrokePoint(location: location, timeOffset: t,
+                                  size: CGSize(width: w, height: w),
+                                  opacity: 1, force: 1, azimuth: 0, altitude: .pi / 2)
+                }
+                let path = PKStrokePath(controlPoints: [point(start, 0), point(end, 0.05)], creationDate: Date())
+                drawing.strokes.append(PKStroke(ink: ink, path: path))
+
+                self.isProgrammatic = true
+                view.canvasView.drawing = drawing
+                self.isProgrammatic = false
+                p.onChange(drawing.dataRepresentation())
+            }
         }
 
         // Zoom
@@ -119,16 +161,74 @@ struct NotebookCanvas: UIViewRepresentable {
     }
 }
 
+// MARK: - Hold-to-straighten recognizer
+
+/// Passive recognizer: tracks the active drawing touch, and if it goes
+/// stationary for `holdDuration` before lifting, reports a straight segment
+/// from the stroke's start to the hold point. Never "recognizes", so it doesn't
+/// interfere with PencilKit.
+final class HoldStraightenRecognizer: UIGestureRecognizer {
+    var holdDuration: CFTimeInterval = 0.5
+    var moveTolerance: CGFloat = 8
+    var acceptsFinger = false
+    var onHoldStraighten: ((CGPoint, CGPoint) -> Void)?
+
+    private var startPoint: CGPoint = .zero
+    private var anchorPoint: CGPoint = .zero
+    private var anchorTime: CFTimeInterval = 0
+    private var didHold = false
+    private var tracking = false
+    private var timer: Timer?
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        guard let t = touches.first else { return }
+        if !acceptsFinger && t.type != .pencil { tracking = false; return }
+        let p = t.location(in: view)
+        startPoint = p; anchorPoint = p; anchorTime = CACurrentMediaTime()
+        didHold = false; tracking = true
+        timer?.invalidate()
+        timer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+            guard let self, self.tracking, !self.didHold else { return }
+            if CACurrentMediaTime() - self.anchorTime >= self.holdDuration { self.didHold = true }
+        }
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
+        guard tracking, let t = touches.first else { return }
+        let p = t.location(in: view)
+        if hypot(p.x - anchorPoint.x, p.y - anchorPoint.y) > moveTolerance {
+            anchorPoint = p
+            anchorTime = CACurrentMediaTime()
+            didHold = false
+        }
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
+        timer?.invalidate()
+        if tracking && didHold { onHoldStraighten?(startPoint, anchorPoint) }
+        tracking = false
+        state = .failed
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
+        timer?.invalidate(); tracking = false; state = .failed
+    }
+
+    override func reset() {
+        super.reset()
+        timer?.invalidate(); didHold = false; tracking = false
+    }
+}
+
 // MARK: - Zooming container
 
-/// Hosts a scroll view whose zooming content holds the paper, the PencilKit
-/// canvas, and the lasso overlay.
 final class ZoomablePageView: UIView {
     let scrollView = UIScrollView()
     let contentView = UIView()
     let paperView = PaperSheetView()
     let canvasView = PKCanvasView()
     let lassoView = LassoOverlayView()
+    let straightenRecognizer = HoldStraightenRecognizer()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -148,7 +248,6 @@ final class ZoomablePageView: UIView {
         scrollView.contentSize = page
         scrollView.addSubview(contentView)
 
-        // Soft shadow so the white page floats on the dark backdrop.
         contentView.layer.shadowColor = UIColor.black.cgColor
         contentView.layer.shadowOpacity = 0.45
         contentView.layer.shadowRadius = 22
@@ -165,9 +264,14 @@ final class ZoomablePageView: UIView {
         canvasView.backgroundColor = .clear
         canvasView.isOpaque = false
         canvasView.isScrollEnabled = false
-        // Keep ink colors exactly as chosen (no dark-mode remap on the white page).
         canvasView.overrideUserInterfaceStyle = .light
         contentView.addSubview(canvasView)
+
+        // Passive hold-to-straighten tracking on the drawing surface.
+        straightenRecognizer.cancelsTouchesInView = false
+        straightenRecognizer.delaysTouchesBegan = false
+        straightenRecognizer.delaysTouchesEnded = false
+        canvasView.addGestureRecognizer(straightenRecognizer)
 
         lassoView.frame = contentView.bounds
         lassoView.isHidden = true
@@ -193,8 +297,6 @@ final class ZoomablePageView: UIView {
 
 // MARK: - Lasso overlay
 
-/// Transparent overlay (in page space) that captures a freeform loop and reports
-/// its bounding rect. Draws animated "marching ants" while a region is selected.
 final class LassoOverlayView: UIView {
     private let shapeLayer = CAShapeLayer()
     private var points: [CGPoint] = []
@@ -275,8 +377,6 @@ final class LassoOverlayView: UIView {
 
 // MARK: - Ruled paper
 
-/// White sheet drawn per `PageTemplate`. Lives inside the zooming content, so it
-/// scales with the ink.
 final class PaperSheetView: UIView {
     var template: PageTemplate = .linedMedium { didSet { setNeedsDisplay() } }
 

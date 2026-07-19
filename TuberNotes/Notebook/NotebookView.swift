@@ -7,10 +7,12 @@ struct NotebookView: View {
     @StateObject private var vm: NotebookViewModel
     @Environment(\.dismiss) private var dismiss
     @AppStorage("tuber.fingerDrawing") private var fingerDrawing = false
+    @AppStorage("tuber.snapStraight") private var snapStraight = true
 
     @State private var showPages = false      // bottom long-press navigator
     @State private var showStrip = false       // top page strip
     @State private var showSidebar = false     // assistant
+    @State private var showKeyPopup = false     // centered API-key entry
 
     init(notebook: Notebook, store: NotebookStore) {
         _vm = StateObject(wrappedValue: NotebookViewModel(notebook: notebook, store: store))
@@ -30,13 +32,13 @@ struct NotebookView: View {
                 }
 
                 if showSidebar {
-                    AgentSidebarView(vm: vm) { withAnimation { showSidebar = false } }
-                        .transition(.move(edge: .trailing))
+                    AgentSidebarView(
+                        vm: vm,
+                        onClose: { withAnimation { showSidebar = false } },
+                        onEditKey: { withAnimation { showKeyPopup = true } }
+                    )
+                    .transition(.move(edge: .trailing))
                 }
-            }
-
-            if vm.isLassoActive {
-                lassoHint
             }
 
             VStack {
@@ -53,6 +55,12 @@ struct NotebookView: View {
             if showPages {
                 PageFlipOverlay(vm: vm) { withAnimation { showPages = false } }
                     .transition(.opacity)
+            }
+
+            if showKeyPopup {
+                APIKeyPopup { withAnimation { showKeyPopup = false } }
+                    .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                    .zIndex(10)
             }
         }
         .navigationTitle(vm.notebook.title)
@@ -88,26 +96,12 @@ struct NotebookView: View {
                 ForEach(PageTemplate.allCases) { Text($0.label).tag($0) }
             }
             Divider()
+            Toggle("Snap to straight line", isOn: $snapStraight)
             Toggle("Finger drawing", isOn: $fingerDrawing)
         } label: {
             Image(systemName: "square.grid.2x2")
         }
         .accessibilityIdentifier("nav-template")
-    }
-
-    private var lassoHint: some View {
-        VStack {
-            Text("Loop around something, then open the assistant to ask about it")
-                .font(.footnote.weight(.medium))
-                .foregroundStyle(.white)
-                .padding(.horizontal, 14).padding(.vertical, 9)
-                .glassCapsule()
-                .environment(\.colorScheme, .dark)
-                .padding(.top, 12)
-            Spacer()
-        }
-        .transition(.move(edge: .top).combined(with: .opacity))
-        .allowsHitTesting(false)
     }
 
     private var pageArea: some View {
@@ -122,6 +116,7 @@ struct NotebookView: View {
             fingerDrawing: fingerDrawing,
             isLassoActive: vm.isLassoActive,
             lassoRect: vm.lassoRect,
+            snapStraight: snapStraight,
             onChange: { vm.updateCurrentDrawing($0) },
             onLongPress: { withAnimation { showPages = true } },
             onZoomChanged: { vm.zoomScale = $0 },

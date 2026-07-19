@@ -1,3 +1,24 @@
+# This round — frosted polish, straighten, centered key popup
+
+- **Removed** the constant on-canvas lasso banner.
+- **Frosted assistant sidebar.** Now a matte frosted-glass panel (material +
+  top-lit sheen + fine noise grain) via the new `FrostSurface`, instead of the
+  thinner translucent look. Same treatment powers the key popup and page navigator.
+- **Hold-to-straighten.** Draw a stroke and pause ~0.5s before lifting — it snaps
+  to a straight line from where the stroke began to where you held. Works for pen,
+  pencil, and highlighter (not eraser). Toggle it under the ▦ menu → "Snap to
+  straight line" (on by default). Tunables live in `HoldStraightenRecognizer`
+  (`holdDuration`, `moveTolerance`).
+- **Centered API-key popup.** The 🔑 icon (and the "Demo mode" note) now opens a
+  frosted card in the middle of the screen (`APIKeyPopup`) with Save / Remove /
+  Cancel — no more inline field in the sidebar.
+
+Note: hold-to-straighten uses a passive gesture recognizer on the PencilKit
+surface; it shouldn't interfere with drawing, but the 0.5s / 8pt thresholds may
+want a little tuning once you try it on-device.
+
+---
+
 # Latest round — lasso AI + liquid-glass UI
 
 ## Lasso for the assistant

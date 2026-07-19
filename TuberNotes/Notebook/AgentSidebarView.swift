@@ -5,11 +5,14 @@ import SwiftUI
 struct AgentSidebarView: View {
     @ObservedObject var vm: NotebookViewModel
     @AppStorage("tuber.openaiKey") private var apiKey = ""
-    @State private var showKeyField = false
     @State private var prompt = ""
     var onClose: () -> Void
+    var onEditKey: () -> Void
 
     private var hasSelection: Bool { vm.lassoRect != nil }
+    private var sidebarShape: UnevenRoundedRectangle {
+        UnevenRoundedRectangle(topLeadingRadius: 24, bottomLeadingRadius: 24, style: .continuous)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -19,15 +22,13 @@ struct AgentSidebarView: View {
         }
         .frame(width: 340)
         .frame(maxHeight: .infinity)
-        .background(.ultraThinMaterial)
-        .clipShape(UnevenRoundedRectangle(topLeadingRadius: 24, bottomLeadingRadius: 24, style: .continuous))
+        .background { FrostSurface().clipShape(sidebarShape) }
         .overlay(
-            UnevenRoundedRectangle(topLeadingRadius: 24, bottomLeadingRadius: 24, style: .continuous)
-                .strokeBorder(
-                    LinearGradient(colors: [.white.opacity(0.28), .white.opacity(0.04)],
-                                   startPoint: .top, endPoint: .bottom),
-                    lineWidth: 1
-                )
+            sidebarShape.strokeBorder(
+                LinearGradient(colors: [.white.opacity(0.28), .white.opacity(0.04)],
+                               startPoint: .top, endPoint: .bottom),
+                lineWidth: 1
+            )
         )
         .shadow(color: .black.opacity(0.45), radius: 26, x: -8, y: 0)
         .padding(.vertical, 8)
@@ -40,7 +41,7 @@ struct AgentSidebarView: View {
         HStack {
             Label("Assistant", systemImage: "sparkles").font(.headline)
             Spacer()
-            Button { showKeyField.toggle() } label: { Image(systemName: "key") }
+            Button { onEditKey() } label: { Image(systemName: "key") }
                 .accessibilityLabel("API key")
             Button { onClose() } label: { Image(systemName: "xmark") }
                 .accessibilityLabel("Close assistant")
@@ -70,18 +71,12 @@ struct AgentSidebarView: View {
         .padding(.top, 4)
 
         if apiKey.trimmingCharacters(in: .whitespaces).isEmpty {
-            Text("Demo mode — add an OpenAI key for real analysis.")
-                .font(.caption).foregroundStyle(.secondary).padding(.top, 4)
-        }
-
-        if showKeyField {
-            VStack(alignment: .leading, spacing: 6) {
-                SecureField("OpenAI API key", text: $apiKey)
-                    .textFieldStyle(.roundedBorder)
-                Text("Stored on-device only. For a shipped app, proxy through your own server.")
-                    .font(.caption2).foregroundStyle(.secondary)
+            Button { onEditKey() } label: {
+                Text("Demo mode — tap to add an OpenAI key")
+                    .font(.caption)
             }
-            .padding(.top, 8)
+            .foregroundStyle(.secondary)
+            .padding(.top, 4)
         }
 
         if vm.isAnalyzing {
@@ -172,5 +167,64 @@ private struct ObservationCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.white.opacity(0.1)))
+    }
+}
+
+/// Centered frosted popup for entering the OpenAI key. Rendered over the whole
+/// editor so it sits in the middle of the screen.
+struct APIKeyPopup: View {
+    @AppStorage("tuber.openaiKey") private var apiKey = ""
+    @State private var draft = ""
+    var onClose: () -> Void
+
+    private var trimmedDraft: String { draft.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.45)
+                .ignoresSafeArea()
+                .onTapGesture { onClose() }
+
+            VStack(alignment: .leading, spacing: 16) {
+                HStack {
+                    Label("OpenAI API key", systemImage: "key.fill").font(.headline)
+                    Spacer()
+                    Button { onClose() } label: { Image(systemName: "xmark") }
+                        .accessibilityLabel("Close")
+                }
+
+                Text("Paste a key to enable real analysis. It's stored on-device only — for a shipped app, proxy requests through your own server instead.")
+                    .font(.footnote).foregroundStyle(.secondary)
+
+                SecureField("sk-…", text: $draft)
+                    .textFieldStyle(.plain)
+                    .padding(12)
+                    .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+                    .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.white.opacity(0.14)))
+
+                HStack {
+                    if !apiKey.isEmpty {
+                        Button("Remove key", role: .destructive) {
+                            apiKey = ""; draft = ""; onClose()
+                        }
+                    }
+                    Spacer()
+                    Button("Cancel") { onClose() }
+                        .keyboardShortcut(.cancelAction)
+                    Button("Save") {
+                        apiKey = trimmedDraft; onClose()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(trimmedDraft.isEmpty)
+                }
+            }
+            .padding(22)
+            .frame(maxWidth: 440)
+            .frostedGlass(cornerRadius: 26)
+            .padding(40)
+            .environment(\.colorScheme, .dark)
+        }
+        .onAppear { draft = apiKey }
+        .accessibilityIdentifier("api-key-popup")
     }
 }
