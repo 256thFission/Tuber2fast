@@ -1,9 +1,9 @@
 import SwiftUI
 import UIKit
 
-/// Thin floating menu bar: home · page back/forward · tools · color · size ·
-/// zoom out / % / zoom in · add page · page indicator. Scrolls horizontally if
-/// it can't fit (small iPads / portrait).
+/// Frosted floating menu bar (dark glass): home · page back/forward · tools ·
+/// lasso · color · size · zoom · add page · page indicator. Scrolls horizontally
+/// if it can't fit.
 struct NotebookToolbar: View {
     @ObservedObject var vm: NotebookViewModel
     var onHome: () -> Void
@@ -32,6 +32,7 @@ struct NotebookToolbar: View {
                 divider
 
                 ForEach(WritingTool.allCases) { toolButton($0) }
+                lassoButton
 
                 colorButton
                 sizeButton
@@ -63,28 +64,26 @@ struct NotebookToolbar: View {
                 }
                 .accessibilityIdentifier("toolbar-page-indicator")
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 9)
         }
         .scrollBounceBehavior(.basedOnSize)
-        .frame(maxWidth: 760)
-        .background(.ultraThinMaterial, in: Capsule())
-        .overlay(Capsule().strokeBorder(.primary.opacity(0.08), lineWidth: 1))
-        .clipShape(Capsule())
-        .shadow(color: .black.opacity(0.12), radius: 10, y: 4)
+        .frame(maxWidth: 780)
+        .glassCapsule()
+        .environment(\.colorScheme, .dark)
         .accessibilityIdentifier("notebook-toolbar")
     }
 
     // MARK: Pieces
 
     private var divider: some View {
-        Rectangle().fill(.primary.opacity(0.12)).frame(width: 1, height: 22)
+        Rectangle().fill(.white.opacity(0.14)).frame(width: 1, height: 22)
     }
 
     private func toolButton(_ tool: WritingTool) -> some View {
-        let selected = vm.tool == tool
+        let selected = vm.tool == tool && !vm.isLassoActive
         let fill: Color = tool == .eraser ? .secondary : vm.inkColor
-        return Button { vm.tool = tool } label: {
+        return Button { vm.selectTool(tool) } label: {
             Image(systemName: tool.symbol)
                 .font(.system(size: 17, weight: .medium))
                 .frame(width: 34, height: 34)
@@ -96,18 +95,35 @@ struct NotebookToolbar: View {
         .accessibilityAddTraits(selected ? [.isSelected] : [])
     }
 
+    private var lassoButton: some View {
+        let selected = vm.isLassoActive
+        return Button { vm.toggleLasso() } label: {
+            Image(systemName: "lasso")
+                .font(.system(size: 17, weight: .medium))
+                .frame(width: 34, height: 34)
+                .foregroundStyle(selected ? Color.white : Color.primary)
+                .background { if selected { Circle().fill(Color.accentColor) } }
+        }
+        .accessibilityIdentifier("tool-lasso")
+        .accessibilityLabel("Lasso select for assistant")
+        .accessibilityAddTraits(selected ? [.isSelected] : [])
+    }
+
     private var colorButton: some View {
         Button { showColors = true } label: {
             Circle()
                 .fill(vm.inkColor)
                 .frame(width: 24, height: 24)
                 .overlay(Circle().strokeBorder(.white.opacity(0.85), lineWidth: 2))
-                .overlay(Circle().strokeBorder(.primary.opacity(0.18), lineWidth: 1))
+                .overlay(Circle().strokeBorder(.black.opacity(0.15), lineWidth: 1))
         }
         .accessibilityIdentifier("toolbar-color")
         .accessibilityLabel("Ink color")
         .popover(isPresented: $showColors) {
-            ColorPalettePopover(vm: vm).presentationCompactAdaptation(.popover)
+            ColorPalettePopover(vm: vm)
+                .presentationCompactAdaptation(.popover)
+                .presentationBackground(.ultraThinMaterial)
+                .environment(\.colorScheme, .dark)
         }
     }
 
@@ -121,7 +137,10 @@ struct NotebookToolbar: View {
         .accessibilityIdentifier("toolbar-size")
         .accessibilityLabel("Stroke size")
         .popover(isPresented: $showSize) {
-            ToolSizePopover(vm: vm).presentationCompactAdaptation(.popover)
+            ToolSizePopover(vm: vm)
+                .presentationCompactAdaptation(.popover)
+                .presentationBackground(.ultraThinMaterial)
+                .environment(\.colorScheme, .dark)
         }
     }
 
@@ -130,7 +149,7 @@ struct NotebookToolbar: View {
             Image(systemName: symbol)
                 .font(.system(size: 17, weight: .medium))
                 .frame(width: 34, height: 34)
-                .foregroundStyle(enabled ? Color.primary : Color.primary.opacity(0.25))
+                .foregroundStyle(enabled ? Color.primary : Color.primary.opacity(0.28))
         }
         .disabled(!enabled)
     }
@@ -167,7 +186,7 @@ private struct ColorPalettePopover: View {
             Circle()
                 .fill(Color(ui))
                 .frame(width: 30, height: 30)
-                .overlay(Circle().strokeBorder(.primary.opacity(0.15), lineWidth: 1))
+                .overlay(Circle().strokeBorder(.white.opacity(0.18), lineWidth: 1))
                 .overlay {
                     if isSelected {
                         Image(systemName: "checkmark")
@@ -191,13 +210,13 @@ private struct ToolSizePopover: View {
             Text("\(vm.tool.label) size").font(.subheadline.weight(.semibold))
 
             ZStack {
-                RoundedRectangle(cornerRadius: 6).fill(.white)
+                RoundedRectangle(cornerRadius: 6).fill(.white.opacity(0.9))
                 Capsule()
                     .fill(previewColor)
                     .frame(width: 170, height: max(2, min(vm.activeWidth, 44)))
             }
             .frame(width: 200, height: 52)
-            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.primary.opacity(0.1)))
+            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.white.opacity(0.12)))
 
             Slider(value: Binding(get: { vm.activeWidth }, set: { vm.activeWidth = $0 }), in: vm.widthRange)
 

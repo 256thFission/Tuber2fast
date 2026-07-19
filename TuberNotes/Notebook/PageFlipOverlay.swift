@@ -54,7 +54,8 @@ struct PageFlipOverlay: View {
             }
             .padding(24)
             .frame(maxWidth: 540)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 22))
+            .glassPanel(cornerRadius: 24)
+            .environment(\.colorScheme, .dark)
             .padding(24)
             .gesture(
                 DragGesture(minimumDistance: 40)

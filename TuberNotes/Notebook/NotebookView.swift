@@ -1,7 +1,8 @@
 import SwiftUI
 
-/// Editor for one notebook: the zoomable vertical page, the floating tool bar,
-/// a toggleable top page strip, a template menu, and the assistant sidebar.
+/// Editor for one notebook: the zoomable page floating on a dark backdrop, a
+/// frosted floating tool bar, a toggleable top page strip, a template menu, and
+/// the frosted assistant sidebar (with lasso selection).
 struct NotebookView: View {
     @StateObject private var vm: NotebookViewModel
     @Environment(\.dismiss) private var dismiss
@@ -17,7 +18,7 @@ struct NotebookView: View {
 
     var body: some View {
         ZStack {
-            Color(uiColor: .systemGroupedBackground).ignoresSafeArea()
+            EditorBackdrop()
 
             HStack(spacing: 0) {
                 VStack(spacing: 0) {
@@ -34,6 +35,10 @@ struct NotebookView: View {
                 }
             }
 
+            if vm.isLassoActive {
+                lassoHint
+            }
+
             VStack {
                 Spacer()
                 NotebookToolbar(
@@ -41,8 +46,8 @@ struct NotebookView: View {
                     onHome: { vm.persistNow(); dismiss() },
                     onShowPages: { withAnimation { showPages = true } }
                 )
-                .padding(.bottom, 14)
-                .padding(.trailing, showSidebar ? 330 : 0)
+                .padding(.bottom, 16)
+                .padding(.trailing, showSidebar ? 348 : 0)
             }
 
             if showPages {
@@ -53,6 +58,8 @@ struct NotebookView: View {
         .navigationTitle(vm.notebook.title)
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(true)
+        .toolbarColorScheme(.dark, for: .navigationBar)
+        .toolbarBackground(.hidden, for: .navigationBar)
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 Button { vm.persistNow(); dismiss() } label: { Image(systemName: "chevron.left") }
@@ -88,6 +95,21 @@ struct NotebookView: View {
         .accessibilityIdentifier("nav-template")
     }
 
+    private var lassoHint: some View {
+        VStack {
+            Text("Loop around something, then open the assistant to ask about it")
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 14).padding(.vertical, 9)
+                .glassCapsule()
+                .environment(\.colorScheme, .dark)
+                .padding(.top, 12)
+            Spacer()
+        }
+        .transition(.move(edge: .top).combined(with: .opacity))
+        .allowsHitTesting(false)
+    }
+
     private var pageArea: some View {
         NotebookCanvas(
             pageID: vm.currentPageID,
@@ -98,15 +120,17 @@ struct NotebookView: View {
             template: vm.currentTemplate,
             zoomScale: vm.zoomScale,
             fingerDrawing: fingerDrawing,
+            isLassoActive: vm.isLassoActive,
+            lassoRect: vm.lassoRect,
             onChange: { vm.updateCurrentDrawing($0) },
             onLongPress: { withAnimation { showPages = true } },
-            onZoomChanged: { vm.zoomScale = $0 }
+            onZoomChanged: { vm.zoomScale = $0 },
+            onLassoChanged: { vm.lassoRect = $0 }
         )
         .padding(.horizontal, 12)
         .padding(.top, 8)
         .padding(.bottom, 74)
         .id(vm.currentPageID)
-        .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading)))
         .accessibilityIdentifier("notebook-page-area")
     }
 }

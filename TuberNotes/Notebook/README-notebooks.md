@@ -1,3 +1,28 @@
+# Latest round — lasso AI + liquid-glass UI
+
+## Lasso for the assistant
+- New **lasso** tool in the floating bar (the ⟳ loop icon). Tap it, then draw a
+  loop around anything (a molecule, a diagram). While active, the page is frozen
+  and one stroke marks a region with animated marching-ants.
+- Open the assistant (✨). It shows a **Region selected** chip, an optional prompt
+  field ("talk about this molecule"), and the button becomes **Analyze selection**.
+  The snapshot is cropped to your loop before it goes to the model, so the AI
+  focuses only on what you circled. Clear the chip to go back to whole-page.
+- No lasso = whole page, exactly as before.
+
+## Liquid-glass look
+- The editor now sits on a near-black backdrop; the white page floats with a soft
+  neutral shadow.
+- Tool bar, assistant sidebar, page strip, page navigator, and popovers are all
+  frosted glass (dark scheme) with a subtle top-lit edge highlight — no colored
+  glows or neon shadows. The nav bar is transparent with light glyphs.
+- New file `GlassStyle.swift` holds the shared `glassCapsule()` / `glassPanel()`
+  helpers and the `EditorBackdrop` — restyle everything from one place.
+
+New file this round: `GlassStyle.swift` (put it in the `Notebook/` group).
+
+---
+
 # Notebook feature set
 
 Drop the `Notebook*` / `Library*` / `Page*` / `Agent*` files into your `Notebook/`

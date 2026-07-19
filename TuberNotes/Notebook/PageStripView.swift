@@ -36,9 +36,15 @@ struct PageStripView: View {
             .onAppear { proxy.scrollTo(vm.currentIndex, anchor: .center) }
         }
         .background(.ultraThinMaterial)
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(.primary.opacity(0.08)).frame(height: 1)
-        }
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(.white.opacity(0.14), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.3), radius: 16, y: 6)
+        .padding(.horizontal, 10)
+        .padding(.top, 8)
+        .environment(\.colorScheme, .dark)
         .accessibilityIdentifier("page-strip")
     }
 }
@@ -63,7 +69,7 @@ private struct StripCell: View {
             .clipShape(RoundedRectangle(cornerRadius: 5))
             .overlay(
                 RoundedRectangle(cornerRadius: 5)
-                    .strokeBorder(isCurrent ? Color.accentColor : Color.black.opacity(0.12),
+                    .strokeBorder(isCurrent ? Color.accentColor : Color.white.opacity(0.18),
                                   lineWidth: isCurrent ? 2.5 : 1)
             )
             Text("\(number)")

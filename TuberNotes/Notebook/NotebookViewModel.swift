@@ -26,6 +26,10 @@ final class NotebookViewModel: ObservableObject {
     @Published var markerWidth: CGFloat = WritingTool.marker.defaultWidth
     @Published var eraserWidth: CGFloat = WritingTool.eraser.defaultWidth
 
+    // Lasso selection for the assistant
+    @Published var isLassoActive = false
+    @Published var lassoRect: CGRect?   // normalized (0...1) page-space rect
+
     // Zoom + template
     @Published var zoomScale: CGFloat = 1
     @Published var lastTemplate: PageTemplate = .linedMedium
@@ -62,7 +66,16 @@ final class NotebookViewModel: ObservableObject {
     func selectColor(_ hex: String) {
         inkColorHex = hex
         if tool == .eraser { tool = .pen }
+        isLassoActive = false
     }
+
+    func selectTool(_ newTool: WritingTool) {
+        tool = newTool
+        isLassoActive = false
+    }
+
+    func toggleLasso() { isLassoActive.toggle() }
+    func clearLasso() { lassoRect = nil }
 
     var activeWidth: CGFloat {
         get {
@@ -142,26 +155,39 @@ final class NotebookViewModel: ObservableObject {
     // MARK: Assistant
 
     /// Render the current page (white paper + ink) as JPEG for the vision model.
+    /// If a lasso region is selected, crop to it so the model focuses there.
     func makeSelectionSnapshot() -> SpatialSelection? {
         let drawing = currentPage.drawing
         guard !drawing.bounds.isNull else { return nil }
 
         let pageRect = CGRect(origin: .zero, size: NotebookPageLayout.size)
-        let renderer = UIGraphicsImageRenderer(size: pageRect.size)
-        let image = renderer.image { ctx in
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = 1   // points == pixels, so cropping is straightforward
+        let renderer = UIGraphicsImageRenderer(size: pageRect.size, format: format)
+        let full = renderer.image { ctx in
             UIColor.white.setFill()
             ctx.fill(pageRect)
             drawing.image(from: pageRect, scale: 1).draw(in: pageRect)
         }
-        guard let data = image.jpegData(compressionQuality: 0.7) else { return nil }
 
-        let b = drawing.bounds
-        let normalized = CGRect(
-            x: b.minX / pageRect.width,
-            y: b.minY / pageRect.height,
-            width: b.width / pageRect.width,
-            height: b.height / pageRect.height
-        )
+        var normalized = CGRect(x: 0, y: 0, width: 1, height: 1)
+        var output = full
+
+        if let lasso = lassoRect {
+            let denorm = CGRect(
+                x: lasso.minX * pageRect.width,
+                y: lasso.minY * pageRect.height,
+                width: lasso.width * pageRect.width,
+                height: lasso.height * pageRect.height
+            ).insetBy(dx: -14, dy: -14).intersection(pageRect).integral
+
+            if denorm.width > 10, denorm.height > 10, let cg = full.cgImage?.cropping(to: denorm) {
+                output = UIImage(cgImage: cg)
+                normalized = lasso
+            }
+        }
+
+        guard let data = output.jpegData(compressionQuality: 0.8) else { return nil }
         return SpatialSelection(pageID: currentPageID, normalizedBounds: normalized, imageData: data)
     }
 
