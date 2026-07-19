@@ -109,3 +109,7 @@ Append one line per meaningful state change: date, line, what changed.
   notebook acceptance. The implementation was reconciled with WL-A/WL-B and
   merged without upgrading WL-C to mechanically accepted; the device blocker
   remains open.
+- 2026-07-19 — A focused merged-main WL-C retry exhausted its two allowed
+  attempts before build/install: exact wired preflight passed, but Xcode kept
+  the pinned iPad in `Device is busy (Connecting to Phillip’s iPad)`. WL-C
+  remains in-progress and no new human-review session was started.

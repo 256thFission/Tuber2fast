@@ -91,3 +91,11 @@ Creation and import flow feel; add-page discoverability (see
 - 2026-07-19 — Phillip explicitly directed the coordinator to merge the
   implementation despite the incomplete notebook evidence. The blocker remains
   open and this status is not upgraded to mechanically accepted.
+- 2026-07-19 — Phillip stayed available for one focused WL-C retry on merged
+  `main`. Exact-device preflight passed wired twice, but both allowed
+  `persistence-relaunch` verification attempts stopped before build/install
+  because Xcode reported the pinned iPad as `Device is busy (Connecting to
+  Phillip’s iPad)`. Artifacts:
+  `tmp/verify/20260719-160154-persistence-relaunch/` and
+  `tmp/verify/20260719-160331-persistence-relaunch/`. No fresh feedback session
+  or product mutation was created; the two-attempt stop condition was reached.
