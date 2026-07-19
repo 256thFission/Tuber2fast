@@ -31,40 +31,60 @@ struct Notebook: Identifiable, Codable, Equatable {
 
 // MARK: - Page
 
+/// An image placed on a page. `rect` is normalized (0...1) in page space and
+/// images render *under* the ink so you can annotate on top of them.
+struct PlacedImage: Identifiable, Codable, Equatable {
+    let id: UUID
+    var imageData: Data
+    var rect: CGRect
+
+    init(id: UUID = UUID(), imageData: Data, rect: CGRect) {
+        self.id = id
+        self.imageData = imageData
+        self.rect = rect
+    }
+
+    var image: UIImage? { UIImage(data: imageData) }
+}
+
 struct NotebookPage: Identifiable, Codable, Equatable {
     let id: UUID
     /// Serialized `PKDrawing` in fixed page-space (`NotebookPageLayout.size`).
     var drawingData: Data
     var createdAt: Date
     var template: PageTemplate
+    var images: [PlacedImage]
 
     init(
         id: UUID = UUID(),
         drawingData: Data = PKDrawing().dataRepresentation(),
         createdAt: Date = Date(),
-        template: PageTemplate = .linedMedium
+        template: PageTemplate = .linedMedium,
+        images: [PlacedImage] = []
     ) {
         self.id = id
         self.drawingData = drawingData
         self.createdAt = createdAt
         self.template = template
+        self.images = images
     }
 
-    // Tolerant decoding so older saved notebooks (without `template`) still load.
-    enum CodingKeys: String, CodingKey { case id, drawingData, createdAt, template }
+    // Tolerant decoding so older saved notebooks (without newer fields) still load.
+    enum CodingKeys: String, CodingKey { case id, drawingData, createdAt, template, images }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(UUID.self, forKey: .id)
         drawingData = try c.decode(Data.self, forKey: .drawingData)
         createdAt = try c.decode(Date.self, forKey: .createdAt)
         template = try c.decodeIfPresent(PageTemplate.self, forKey: .template) ?? .linedMedium
+        images = try c.decodeIfPresent([PlacedImage].self, forKey: .images) ?? []
     }
 
     var drawing: PKDrawing {
         (try? PKDrawing(data: drawingData)) ?? PKDrawing()
     }
 
-    /// Small white-backed render of the page's ink, for strips and thumbnails.
+    /// Small white-backed render (images under ink), for strips and thumbnails.
     func renderThumbnail(maxWidth: CGFloat = 120) -> UIImage? {
         let page = NotebookPageLayout.size
         let scale = maxWidth / page.width
@@ -73,6 +93,12 @@ struct NotebookPage: Identifiable, Codable, Equatable {
         return renderer.image { ctx in
             UIColor.white.setFill()
             ctx.fill(CGRect(origin: .zero, size: size))
+            for placed in images {
+                guard let ui = placed.image else { continue }
+                let r = CGRect(x: placed.rect.minX * size.width, y: placed.rect.minY * size.height,
+                               width: placed.rect.width * size.width, height: placed.rect.height * size.height)
+                ui.draw(in: r)
+            }
             let d = drawing
             if !d.bounds.isNull {
                 d.image(from: CGRect(origin: .zero, size: page), scale: 1)

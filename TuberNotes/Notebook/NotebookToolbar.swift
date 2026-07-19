@@ -1,9 +1,11 @@
+import PhotosUI
 import SwiftUI
 import UIKit
 
-/// Frosted floating menu bar (dark glass): home · page back/forward · tools ·
-/// lasso · color · size · zoom · add page · page indicator. Scrolls horizontally
-/// if it can't fit.
+/// Frosted floating menu bar (dark glass): home · page nav · tools · lasso ·
+/// add/arrange image · color · size · zoom · add page · page indicator.
+/// Selected tool is shown by a filled highlight (not by color), so the eraser
+/// reads as selected too. Ink color shows as a small chip on the ink tools.
 struct NotebookToolbar: View {
     @ObservedObject var vm: NotebookViewModel
     var onHome: () -> Void
@@ -11,6 +13,7 @@ struct NotebookToolbar: View {
 
     @State private var showColors = false
     @State private var showSize = false
+    @State private var pickerItem: PhotosPickerItem?
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -33,6 +36,11 @@ struct NotebookToolbar: View {
 
                 ForEach(WritingTool.allCases) { toolButton($0) }
                 lassoButton
+
+                divider
+
+                addImageButton
+                if !vm.currentPage.images.isEmpty { arrangeButton }
 
                 colorButton
                 sizeButton
@@ -68,9 +76,20 @@ struct NotebookToolbar: View {
             .padding(.vertical, 9)
         }
         .scrollBounceBehavior(.basedOnSize)
-        .frame(maxWidth: 780)
+        .frame(maxWidth: 820)
         .glassCapsule()
         .environment(\.colorScheme, .dark)
+        .onChange(of: pickerItem) { _, item in
+            guard let item else { return }
+            Task {
+                if let data = try? await item.loadTransferable(type: Data.self),
+                   let ui = UIImage(data: data) {
+                    let aspect = ui.size.width / max(ui.size.height, 1)
+                    vm.addImage(data: data, aspect: aspect)
+                }
+                pickerItem = nil
+            }
+        }
         .accessibilityIdentifier("notebook-toolbar")
     }
 
@@ -80,33 +99,75 @@ struct NotebookToolbar: View {
         Rectangle().fill(.white.opacity(0.14)).frame(width: 1, height: 22)
     }
 
+    /// Selection = filled highlight behind the glyph. Ink color = tiny corner chip.
     private func toolButton(_ tool: WritingTool) -> some View {
-        let selected = vm.tool == tool && !vm.isLassoActive
-        let fill: Color = tool == .eraser ? .secondary : vm.inkColor
+        let selected = vm.tool == tool && !vm.isLassoActive && !vm.isArrangingImages
         return Button { vm.selectTool(tool) } label: {
-            Image(systemName: tool.symbol)
-                .font(.system(size: 17, weight: .medium))
-                .frame(width: 34, height: 34)
-                .foregroundStyle(selected ? Color.white : Color.primary)
-                .background { if selected { Circle().fill(fill) } }
+            ZStack {
+                if selected {
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .fill(Color.accentColor)
+                        .frame(width: 34, height: 34)
+                }
+                Image(systemName: tool.symbol)
+                    .font(.system(size: 17, weight: .medium))
+                    .foregroundStyle(selected ? Color.white : Color.primary)
+                if tool.usesColor {
+                    Circle()
+                        .fill(vm.inkColor)
+                        .frame(width: 8, height: 8)
+                        .overlay(Circle().strokeBorder(.white.opacity(0.85), lineWidth: 0.75))
+                        .offset(x: 11, y: 11)
+                }
+            }
+            .frame(width: 34, height: 34)
         }
         .accessibilityIdentifier("tool-\(tool.rawValue)")
         .accessibilityLabel(tool.label)
         .accessibilityAddTraits(selected ? [.isSelected] : [])
     }
 
-    private var lassoButton: some View {
-        let selected = vm.isLassoActive
-        return Button { vm.toggleLasso() } label: {
-            Image(systemName: "lasso")
-                .font(.system(size: 17, weight: .medium))
-                .frame(width: 34, height: 34)
-                .foregroundStyle(selected ? Color.white : Color.primary)
-                .background { if selected { Circle().fill(Color.accentColor) } }
+    private func modeButton(_ symbol: String, selected: Bool, id: String, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            ZStack {
+                if selected {
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .fill(Color.accentColor)
+                        .frame(width: 34, height: 34)
+                }
+                Image(systemName: symbol)
+                    .font(.system(size: 17, weight: .medium))
+                    .foregroundStyle(selected ? Color.white : Color.primary)
+            }
+            .frame(width: 34, height: 34)
         }
-        .accessibilityIdentifier("tool-lasso")
-        .accessibilityLabel("Lasso select for assistant")
+        .accessibilityIdentifier(id)
+        .accessibilityLabel(label)
         .accessibilityAddTraits(selected ? [.isSelected] : [])
+    }
+
+    private var lassoButton: some View {
+        modeButton("lasso", selected: vm.isLassoActive, id: "tool-lasso", label: "Lasso select for assistant") {
+            vm.toggleLasso()
+        }
+    }
+
+    private var addImageButton: some View {
+        PhotosPicker(selection: $pickerItem, matching: .images, photoLibrary: .shared()) {
+            Image(systemName: "photo.badge.plus")
+                .font(.system(size: 17, weight: .medium))
+                .foregroundStyle(.primary)
+                .frame(width: 34, height: 34)
+        }
+        .accessibilityIdentifier("toolbar-add-image")
+        .accessibilityLabel("Add image")
+    }
+
+    private var arrangeButton: some View {
+        modeButton("arrow.up.and.down.and.arrow.left.and.right",
+                   selected: vm.isArrangingImages, id: "toolbar-arrange-images", label: "Arrange images") {
+            withAnimation { vm.toggleArrangeImages() }
+        }
     }
 
     private var colorButton: some View {

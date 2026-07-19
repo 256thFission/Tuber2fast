@@ -2,12 +2,9 @@ import PencilKit
 import SwiftUI
 import UIKit
 
-/// GoodNotes-style page with pinch/button zoom. The PencilKit canvas, ruled
-/// paper, and lasso overlay share one zooming content view so they scale
-/// together. Pencil draws; a finger pans/zooms (unless finger-drawing is on).
-///
-/// Hold-to-straighten: draw a stroke, pause ~0.5s before lifting, and it snaps
-/// to a straight line from where it began to where you held.
+/// GoodNotes-style page with pinch/button zoom. Ruled paper, placed images, the
+/// PencilKit canvas, and the lasso overlay share one zooming content view.
+/// Images render under the ink so you can annotate on top of them.
 struct NotebookCanvas: UIViewRepresentable {
     let pageID: UUID
     let drawingData: Data
@@ -20,10 +17,15 @@ struct NotebookCanvas: UIViewRepresentable {
     let isLassoActive: Bool
     let lassoRect: CGRect?
     let snapStraight: Bool
+    let images: [PlacedImage]
+    let isArrangingImages: Bool
+    let selectedImageID: UUID?
     var onChange: (Data) -> Void
     var onLongPress: () -> Void
     var onZoomChanged: (CGFloat) -> Void
     var onLassoChanged: (CGRect?) -> Void
+    var onImagesChanged: ([PlacedImage]) -> Void
+    var onSelectImage: (UUID?) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -41,6 +43,10 @@ struct NotebookCanvas: UIViewRepresentable {
             onLasso(CGRect(x: r.minX / page.width, y: r.minY / page.height,
                            width: r.width / page.width, height: r.height / page.height))
         }
+
+        view.imageLayer.onChange = onImagesChanged
+        view.imageLayer.onSelect = onSelectImage
+        view.imageLayer.setImages(images)
 
         view.straightenRecognizer.delegate = context.coordinator
         view.straightenRecognizer.onHoldStraighten = { [weak coordinator = context.coordinator, weak view] start, end in
@@ -68,6 +74,7 @@ struct NotebookCanvas: UIViewRepresentable {
             view.paperView.template = template
             view.paperView.setNeedsDisplay()
         }
+        view.imageLayer.setImages(images)
         applyMode(to: view)
         if lassoRect == nil { view.lassoView.clear() }
         if context.coordinator.loadedPageID != pageID {
@@ -84,11 +91,16 @@ struct NotebookCanvas: UIViewRepresentable {
 
         view.lassoView.isHidden = !isLassoActive
         view.lassoView.isUserInteractionEnabled = isLassoActive
-        view.canvasView.isUserInteractionEnabled = !isLassoActive
-        view.scrollView.isScrollEnabled = !isLassoActive
+
+        view.imageLayer.isEditing = isArrangingImages
+        view.imageLayer.selectedID = selectedImageID
+
+        let interacting = isLassoActive || isArrangingImages
+        view.canvasView.isUserInteractionEnabled = !interacting
+        view.scrollView.isScrollEnabled = !interacting
 
         view.straightenRecognizer.acceptsFinger = fingerDrawing
-        view.straightenRecognizer.isEnabled = snapStraight && !isLassoActive && tool != .eraser
+        view.straightenRecognizer.isEnabled = snapStraight && !interacting && tool != .eraser
     }
 
     final class Coordinator: NSObject, PKCanvasViewDelegate, UIScrollViewDelegate, UIGestureRecognizerDelegate {
@@ -113,11 +125,10 @@ struct NotebookCanvas: UIViewRepresentable {
             parent.onChange(canvasView.drawing.dataRepresentation())
         }
 
-        /// Replace the just-drawn freehand stroke with a straight line.
         func straighten(from start: CGPoint, to end: CGPoint, in view: ZoomablePageView?) {
             guard let view else { return }
             let p = parent
-            guard !p.isLassoActive, p.tool != .eraser else { return }
+            guard !p.isLassoActive, !p.isArrangingImages, p.tool != .eraser else { return }
             guard hypot(end.x - start.x, end.y - start.y) > 12 else { return }
 
             DispatchQueue.main.async {
@@ -163,10 +174,6 @@ struct NotebookCanvas: UIViewRepresentable {
 
 // MARK: - Hold-to-straighten recognizer
 
-/// Passive recognizer: tracks the active drawing touch, and if it goes
-/// stationary for `holdDuration` before lifting, reports a straight segment
-/// from the stroke's start to the hold point. Never "recognizes", so it doesn't
-/// interfere with PencilKit.
 final class HoldStraightenRecognizer: UIGestureRecognizer {
     var holdDuration: CFTimeInterval = 0.5
     var moveTolerance: CGFloat = 8
@@ -220,12 +227,124 @@ final class HoldStraightenRecognizer: UIGestureRecognizer {
     }
 }
 
+// MARK: - Image layer
+
+/// Renders placed images (under the ink). When editing, tap to select, drag to
+/// move, pinch to resize the selected image.
+final class ImageLayerView: UIView {
+    private(set) var images: [PlacedImage] = []
+    private var views: [UUID: UIImageView] = [:]
+    var onChange: (([PlacedImage]) -> Void)?
+    var onSelect: ((UUID?) -> Void)?
+
+    var isEditing = false {
+        didSet { isUserInteractionEnabled = isEditing; refreshSelection() }
+    }
+    var selectedID: UUID? { didSet { refreshSelection() } }
+
+    private var interacting = false
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isUserInteractionEnabled = false
+
+        let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
+        let pinch = UIPinchGestureRecognizer(target: self, action: #selector(handlePinch(_:)))
+        let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
+        pan.delegate = self; pinch.delegate = self
+        addGestureRecognizer(pan); addGestureRecognizer(pinch); addGestureRecognizer(tap)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not used") }
+
+    func setImages(_ newImages: [PlacedImage]) {
+        guard !interacting else { return }
+        images = newImages
+        // Remove stale views
+        for (id, v) in views where !newImages.contains(where: { $0.id == id }) {
+            v.removeFromSuperview(); views[id] = nil
+        }
+        // Add / update
+        for placed in newImages {
+            let v = views[placed.id] ?? {
+                let iv = UIImageView()
+                iv.contentMode = .scaleAspectFill
+                iv.clipsToBounds = true
+                iv.layer.cornerRadius = 4
+                insertSubview(iv, at: 0)
+                views[placed.id] = iv
+                return iv
+            }()
+            if v.image == nil { v.image = placed.image }
+            v.frame = denormalize(placed.rect)
+        }
+        refreshSelection()
+    }
+
+    private func denormalize(_ r: CGRect) -> CGRect {
+        CGRect(x: r.minX * bounds.width, y: r.minY * bounds.height,
+               width: r.width * bounds.width, height: r.height * bounds.height)
+    }
+    private func normalize(_ f: CGRect) -> CGRect {
+        guard bounds.width > 0, bounds.height > 0 else { return .zero }
+        return CGRect(x: f.minX / bounds.width, y: f.minY / bounds.height,
+                      width: f.width / bounds.width, height: f.height / bounds.height)
+    }
+
+    private func refreshSelection() {
+        for (id, v) in views {
+            let on = isEditing && id == selectedID
+            v.layer.borderWidth = on ? 2 : 0
+            v.layer.borderColor = on ? UIColor.systemBlue.cgColor : UIColor.clear.cgColor
+        }
+    }
+
+    private func commit(_ id: UUID) {
+        guard let v = views[id], let idx = images.firstIndex(where: { $0.id == id }) else { return }
+        images[idx].rect = normalize(v.frame)
+        onChange?(images)
+    }
+
+    @objc private func handleTap(_ gr: UITapGestureRecognizer) {
+        guard isEditing else { return }
+        let p = gr.location(in: self)
+        let hit = images.reversed().first { denormalize($0.rect).contains(p) }
+        selectedID = hit?.id
+        onSelect?(hit?.id)
+    }
+
+    @objc private func handlePan(_ gr: UIPanGestureRecognizer) {
+        guard isEditing, let id = selectedID, let v = views[id] else { return }
+        let t = gr.translation(in: self)
+        v.center = CGPoint(x: v.center.x + t.x, y: v.center.y + t.y)
+        gr.setTranslation(.zero, in: self)
+        interacting = gr.state == .began || gr.state == .changed
+        if gr.state == .ended || gr.state == .cancelled { interacting = false; commit(id) }
+    }
+
+    @objc private func handlePinch(_ gr: UIPinchGestureRecognizer) {
+        guard isEditing, let id = selectedID, let v = views[id] else { return }
+        var b = v.bounds
+        b.size.width = max(40, min(b.width * gr.scale, bounds.width * 2))
+        b.size.height = max(40, min(b.height * gr.scale, bounds.height * 2))
+        v.bounds = b
+        gr.scale = 1
+        interacting = gr.state == .began || gr.state == .changed
+        if gr.state == .ended || gr.state == .cancelled { interacting = false; commit(id) }
+    }
+}
+
+extension ImageLayerView: UIGestureRecognizerDelegate {
+    func gestureRecognizer(_ g: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
+}
+
 // MARK: - Zooming container
 
 final class ZoomablePageView: UIView {
     let scrollView = UIScrollView()
     let contentView = UIView()
     let paperView = PaperSheetView()
+    let imageLayer = ImageLayerView()
     let canvasView = PKCanvasView()
     let lassoView = LassoOverlayView()
     let straightenRecognizer = HoldStraightenRecognizer()
@@ -260,6 +379,9 @@ final class ZoomablePageView: UIView {
         paperView.layer.masksToBounds = true
         contentView.addSubview(paperView)
 
+        imageLayer.frame = contentView.bounds
+        contentView.addSubview(imageLayer)
+
         canvasView.frame = contentView.bounds
         canvasView.backgroundColor = .clear
         canvasView.isOpaque = false
@@ -267,7 +389,6 @@ final class ZoomablePageView: UIView {
         canvasView.overrideUserInterfaceStyle = .light
         contentView.addSubview(canvasView)
 
-        // Passive hold-to-straighten tracking on the drawing surface.
         straightenRecognizer.cancelsTouchesInView = false
         straightenRecognizer.delaysTouchesBegan = false
         straightenRecognizer.delaysTouchesEnded = false

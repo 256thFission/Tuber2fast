@@ -1,3 +1,34 @@
+# This round — selection clarity, clean frost, add-image
+
+## Clearer selected tool
+Selection is now shown by a filled highlight behind the tool glyph (not by
+color), so the **eraser** and **lasso** read as selected just like the pens. The
+current ink color shows as a small chip on the pen/pencil/highlighter icons and
+in the color button — color no longer doubles as the selection signal.
+
+## Cleaner frost, floating over the page
+- Dropped the grainy/dark frost. Panels now use a clean bright frosted glass
+  (`.ultraThinMaterial` + a bright hairline edge + soft shadow) — see the
+  simplified `GlassStyle.swift`.
+- The assistant sidebar now **floats over the page** instead of sitting in a
+  black block that shrank the canvas. Toggling it slides the frosted panel in
+  over the right side; the page stays full-size behind it.
+
+## Add image
+- New **Add image** button in the tool bar (photo+). Pick from Photos and it
+  drops onto the page.
+- It lands in **arrange mode**: drag to move, pinch to resize, with a floating
+  Done / Delete bar. An **Arrange** button appears in the tool bar (when the page
+  has images) to re-enter and adjust or delete them later.
+- Images render *under* the ink, so you draw/annotate on top of them, and they're
+  included in the AI snapshot — lasso an imported diagram and the assistant sees
+  it. Stored per page (`PlacedImage`), tolerant-decoded so older notebooks load.
+
+No new files this round — `GlassStyle` lost its noise helpers, everything else is
+in the existing `Notebook/` group. (`NotebookToolbar` now imports PhotosUI.)
+
+---
+
 # This round — frosted polish, straighten, centered key popup
 
 - **Removed** the constant on-canvas lasso banner.

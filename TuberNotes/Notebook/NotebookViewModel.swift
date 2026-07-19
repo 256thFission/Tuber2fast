@@ -30,6 +30,10 @@ final class NotebookViewModel: ObservableObject {
     @Published var isLassoActive = false
     @Published var lassoRect: CGRect?   // normalized (0...1) page-space rect
 
+    // Image placement
+    @Published var isArrangingImages = false
+    @Published var selectedImageID: UUID?
+
     // Zoom + template
     @Published var zoomScale: CGFloat = 1
     @Published var lastTemplate: PageTemplate = .linedMedium
@@ -67,15 +71,64 @@ final class NotebookViewModel: ObservableObject {
         inkColorHex = hex
         if tool == .eraser { tool = .pen }
         isLassoActive = false
+        isArrangingImages = false
     }
 
     func selectTool(_ newTool: WritingTool) {
         tool = newTool
         isLassoActive = false
+        isArrangingImages = false
     }
 
-    func toggleLasso() { isLassoActive.toggle() }
+    func toggleLasso() {
+        isLassoActive.toggle()
+        if isLassoActive { isArrangingImages = false }
+    }
     func clearLasso() { lassoRect = nil }
+
+    // MARK: Images
+
+    func addImage(data: Data, aspect: CGFloat) {
+        guard notebook.pages.indices.contains(currentIndex) else { return }
+        let normWidth: CGFloat = 0.6
+        let page = NotebookPageLayout.size
+        let pxWidth = normWidth * page.width
+        let pxHeight = pxWidth / max(aspect, 0.05)
+        let normHeight = min(pxHeight / page.height, 0.85)
+        let rect = CGRect(x: (1 - normWidth) / 2, y: max(0.05, (1 - normHeight) / 2),
+                          width: normWidth, height: normHeight)
+        let placed = PlacedImage(imageData: data, rect: rect)
+        notebook.pages[currentIndex].images.append(placed)
+        selectedImageID = placed.id
+        isArrangingImages = true
+        isLassoActive = false
+        persistNow()
+    }
+
+    func updateImages(_ images: [PlacedImage]) {
+        guard notebook.pages.indices.contains(currentIndex) else { return }
+        notebook.pages[currentIndex].images = images
+        scheduleSave()
+    }
+
+    func selectImage(_ id: UUID?) { selectedImageID = id }
+
+    func deleteSelectedImage() {
+        guard notebook.pages.indices.contains(currentIndex), let id = selectedImageID else { return }
+        notebook.pages[currentIndex].images.removeAll { $0.id == id }
+        selectedImageID = nil
+        persistNow()
+    }
+
+    func toggleArrangeImages() {
+        isArrangingImages.toggle()
+        if isArrangingImages { isLassoActive = false } else { selectedImageID = nil }
+    }
+
+    func finishArrangingImages() {
+        isArrangingImages = false
+        selectedImageID = nil
+    }
 
     var activeWidth: CGFloat {
         get {
@@ -158,7 +211,8 @@ final class NotebookViewModel: ObservableObject {
     /// If a lasso region is selected, crop to it so the model focuses there.
     func makeSelectionSnapshot() -> SpatialSelection? {
         let drawing = currentPage.drawing
-        guard !drawing.bounds.isNull else { return nil }
+        let images = currentPage.images
+        guard !drawing.bounds.isNull || !images.isEmpty else { return nil }
 
         let pageRect = CGRect(origin: .zero, size: NotebookPageLayout.size)
         let format = UIGraphicsImageRendererFormat.default()
@@ -167,6 +221,12 @@ final class NotebookViewModel: ObservableObject {
         let full = renderer.image { ctx in
             UIColor.white.setFill()
             ctx.fill(pageRect)
+            for placed in images {
+                guard let ui = placed.image else { continue }
+                let r = CGRect(x: placed.rect.minX * pageRect.width, y: placed.rect.minY * pageRect.height,
+                               width: placed.rect.width * pageRect.width, height: placed.rect.height * pageRect.height)
+                ui.draw(in: r)
+            }
             drawing.image(from: pageRect, scale: 1).draw(in: pageRect)
         }
 

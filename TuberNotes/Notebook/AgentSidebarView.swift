@@ -22,15 +22,15 @@ struct AgentSidebarView: View {
         }
         .frame(width: 340)
         .frame(maxHeight: .infinity)
-        .background { FrostSurface().clipShape(sidebarShape) }
+        .background(.ultraThinMaterial, in: sidebarShape)
         .overlay(
             sidebarShape.strokeBorder(
-                LinearGradient(colors: [.white.opacity(0.28), .white.opacity(0.04)],
+                LinearGradient(colors: [.white.opacity(0.5), .white.opacity(0.12)],
                                startPoint: .top, endPoint: .bottom),
                 lineWidth: 1
             )
         )
-        .shadow(color: .black.opacity(0.45), radius: 26, x: -8, y: 0)
+        .shadow(color: .black.opacity(0.4), radius: 26, x: -8, y: 0)
         .padding(.vertical, 8)
         .padding(.trailing, 8)
         .environment(\.colorScheme, .dark)
