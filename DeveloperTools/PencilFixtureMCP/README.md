@@ -2,19 +2,21 @@
 
 Development tooling only — not the in-product AI agent.
 
-Runs two **Debug** protocols on a connected simulator or physical iPad: persistent conversational feedback threads with automatic Codex task resumption, and separate authentic Pencil fixtures. Agents collect durable JSON and attachments; the human does no Mac-side file copying.
+Runs two **Debug** protocols on an explicitly named connected physical iPad: persistent conversational feedback threads with event-driven Codex task resumption, and separate authentic Pencil fixtures. Agents collect durable JSON and attachments; the human does no Mac-side file copying. The server stops when no physical iPad is available and never falls back to a simulator.
 
-Canonical docs: `Docs/Development.md` § Human device loop, Skill `human-device-loop`, evidence fields in `Docs/templates/EvidencePacket.md`.
+Canonical lifecycle: `Docs/DeviceWorkflow.md`. Protocol detail:
+`Docs/Development.md` § Human device loop, Skill `human-device-loop`, and
+evidence fields in `Docs/templates/EvidencePacket.md`.
 
 ## Tools
 
 | Tool | Purpose |
 |---|---|
-| `request_pen_fixture(description, scenario?, prefer_device?, requester_id?, stale_after_seconds?)` | Enqueue a Pencil capture request; launch only when the queue was idle |
-| `request_human_review(prompt, title?, scenario?, prefer_device?, requester_id?, stale_after_seconds?)` | Legacy one-shot verdict request; prefer `create_feedback_thread` for new UI review |
-| `await_interaction(request_id, timeout_seconds?, prefer_device?, owner_token?)` | Poll until the human finishes; return fixture/verdict/index |
-| `collect_interaction(request_id, prefer_device?, owner_token?)` | One-shot pull of completed artifacts |
-| `cancel_interaction(request_id, owner_token?, reason?, prefer_device?)` | Safely cancel an owned pending or stale request |
+| `request_pen_fixture(description, scenario?, requester_id?, stale_after_seconds?)` | Enqueue a physical-iPad Pencil capture request; launch only when the queue was idle |
+| `request_human_review(prompt, title?, scenario?, requester_id?, stale_after_seconds?)` | Legacy physical-iPad one-shot verdict request; prefer `create_feedback_thread` for new UI review |
+| `await_interaction(request_id, timeout_seconds?, owner_token?)` | Poll the pinned iPad until the human finishes; return fixture/verdict/index |
+| `collect_interaction(request_id, owner_token?)` | One-shot pull of completed physical-device artifacts |
+| `cancel_interaction(request_id, owner_token?, reason?)` | Safely cancel an owned pending or stale request |
 | `list_interactions()` | On-device index + local request catalog |
 | `list_pen_fixtures()` / `get_pen_fixture(name)` | Read fixtures |
 | `replay_pen_fixture(name)` | Install fixture and relaunch replay seam |
@@ -34,12 +36,13 @@ Human-facing feedback copy should be easy to scan on the iPad:
 
 | Feedback-thread tool | Purpose |
 |---|---|
-| `create_feedback_thread(...)` | Create an owned queued thread and watch record, pin its target, and deliver it for device-owned activation; caller then arms a task heartbeat |
+| `create_feedback_thread(...)` | Create an owned queued thread and watch record, pin its target, and deliver it for device-owned activation |
 | `post_thread_message(...)` | Append an idempotent informational model message; rejects new messages while `awaiting-model` |
 | `ask_thread_question(...)` | Append a free-text or single-choice question |
 | `await_thread_response(...)` | Active-turn fast path: wait from an exclusive cursor for a human response |
 | `collect_thread_updates(...)` | Mirror new messages and sent screenshot files to durable Mac paths |
 | `get_feedback_watch_state(...)` | Return unseen human/terminal wake eligibility without mutating the thread |
+| `arm_codex_feedback_wake(...)` | Hand the next reply to the originating Codex CLI thread through the local app-server bridge |
 | `acknowledge_feedback_wake(...)` | Idempotently acknowledge a scheduled/delivered wake and advance its cursor |
 | `close_feedback_watch(...)` | Stop host monitoring without resolving the thread or releasing its slot |
 | `set_feedback_thread_state(...)` | Optimistically transition lifecycle state; only the device advances FIFO |
@@ -69,22 +72,22 @@ choices, and optional comments survive focus changes, compact/full-screen
 transitions, and capture/annotation presentation. They clear only after the
 corresponding submission succeeds.
 
-A normal guided asynchronous loop is:
+A normal guided loop is:
 
 ```text
 create_feedback_thread
-arm a task-attached Codex heartbeat
-get_feedback_watch_state
-acknowledge_feedback_wake and resume the originating task
+await_thread_response while the initiating Codex turn remains active
+arm_codex_feedback_wake before yielding when no response has arrived
+the bridge resumes the originating Codex CLI thread on the next eligible wake
 collect and record the current response
 ask_thread_question or post_thread_message
-retain the heartbeat or close_feedback_watch
+repeat active wait or bridge handoff
 set_feedback_thread_state
 export_feedback_thread
 ```
 
-A human-autonomous packet uses `create_review_run`, one task heartbeat, and no
-intermediate model messages. Step edits, choices, comments, and attached
+A human-autonomous packet uses `create_review_run`, one active wait or bridge
+handoff, and no intermediate model messages. Step edits, choices, comments, and attached
 annotations persist in `thread.json` without producing a wake. `Finish Review`
 appends exactly one human summary message. The resumed task acknowledges that
 wake, calls `collect_review_run`, and may then call `export_review_run`.
@@ -97,12 +100,20 @@ read-only; an idempotent retry of an already-posted message remains valid.
 
 Every created feedback thread gets a gitignored watch record under
 `.feedback-threads/watches/`. The record contains requester identity, cursor,
-and acknowledged wake IDs, but never the raw owner token. MCP servers are
-passive and cannot start a Codex turn, so the initiating agent must arm a
-supported task heartbeat before ending its turn. If heartbeat registration
-fails, it must await in the current turn or report `feedback-created-but-not-armed`.
-Heartbeats are collection-only by default and must not post or activate the next
-human step. Advance only after the previous response is understood and recorded.
+acknowledged wake IDs, and accepted bridge dispatch metadata, but never the raw
+owner token. `arm_codex_feedback_wake` passes that capability to a detached
+one-response bridge over an anonymous pipe, then polls the pinned device locally.
+An eligible reply resumes the exact `requester_id` through a repo-local Codex
+app-server Unix socket. The bridge records dispatch without acknowledging the
+wake; the resumed agent acknowledges only after collection succeeds. Use
+`DeveloperTools/connect-feedback-codex.sh <thread-id>` to attach the CLI when the
+desktop app does not reflect externally resumed turns.
+
+The bridge must be armed only at the yield boundary, after active waiting ends.
+Do not arm it at thread creation: the standalone CLI app-server cannot observe a
+desktop-owned in-progress turn and could otherwise race it. A scheduled task
+heartbeat is now an emergency fallback only when bridge arming fails.
+Advance only after the previous response is understood and recorded.
 Stop on ambiguity, the first failure, an unmet precondition, human confusion, or
 device/host state divergence; do not mutate the visible session to conceal it.
 
@@ -127,8 +138,12 @@ different agent's token is rejected. Records created by the pre-queue tools have
 no owner and remain collectable by request ID alone. `requester_id` is retained
 in the completed request and index so results can be routed to the correct agent.
 
-The delivery target is selected once and stored with the request. Polling never
-switches a request from its original iPad or simulator to another target.
+Run `DeveloperTools/device-preflight.sh --device <device-id>` before using the
+server. It writes the repo-local gitignored physical-device session consumed by
+the verifier, reset command, and every MCP device operation. The delivery target
+is copied from that session and stored with each request. Polling never switches
+targets. A record pinned to any other target is reported as device/host
+divergence and must not be reconciled by changing its visible session.
 
 ## On-device layout
 
@@ -160,12 +175,11 @@ When abandoned Debug review questions are still visible, reset the feedback
 protocol from the repo root with an explicit physical-device target:
 
 ```sh
-DeveloperTools/reset-feedback-state.sh \
-  --device 2DD98ECC-A26A-5730-943B-01DD63DC4117 \
-  --confirm
+DeveloperTools/reset-feedback-state.sh --confirm
 ```
 
-Both arguments are mandatory. The script first verifies that
+The confirmation is mandatory. The script resolves the pinned device session,
+then verifies that
 `com.tubernotes.app` is installed, clears only the repo-local
 `.feedback-threads` host mirror, launches the app once with
 `TUBER_RESET_FEEDBACK_STATE=1`, and immediately relaunches it normally. The app
@@ -192,4 +206,6 @@ source .venv/bin/activate
 pip install -e .
 ```
 
-Register `pencil-fixture-mcp` as a stdio MCP server. Prefer a physical iPad when available; the tools fall back to the booted simulator.
+Register `pencil-fixture-mcp` as a stdio MCP server. Connect, unlock, trust, and
+enable the target physical iPad before invoking a device tool. Device tools fail
+closed when it is unavailable; there is no simulator fallback.

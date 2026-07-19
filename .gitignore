@@ -1,10 +1,13 @@
 .DS_Store
+.cursor/
 DerivedData*/
 build/
 *.xcuserstate
 xcuserdata/
 .pencil-fixtures/
 .feedback-threads/
+.tubernotes-device-session.json
 DeveloperTools/PencilFixtureMCP/.venv/
 DeveloperTools/PencilFixtureMCP/__pycache__/
+__pycache__/
 tmp/

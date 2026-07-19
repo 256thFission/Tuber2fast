@@ -1,4 +1,4 @@
 interface:
   display_name: "Human Device Loop"
   short_description: "Facilitate one clear in-app human review journey."
-  default_prompt: "Use $human-device-loop in guided-review or harness-conformance mode. Keep one guided journey in one visible session, present one action and optional question at a time, keep protocol internals agent-side, and collect durable evidence without auto-advancing from a heartbeat."
+  default_prompt: "Use $human-device-loop on the explicitly named physical iPad. Keep one guided journey in one visible session, present one action and optional question at a time, keep protocol internals agent-side, actively wait, then arm the one-response event bridge before yielding; use a heartbeat only if bridge arming fails."

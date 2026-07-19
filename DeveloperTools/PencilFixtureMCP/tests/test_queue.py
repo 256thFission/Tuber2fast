@@ -15,7 +15,7 @@ import server
 def _enqueue_in_process(request, owner_token, start, results):
     start.wait()
     try:
-        response = server._enqueue_request(request, owner_token, prefer_device=True)
+        response = server._enqueue_request(request, owner_token)
         results.put(("ok", response["id"], response["delivery"]["sequence"]))
     except Exception as exc:  # pragma: no cover - reported to the parent
         results.put(("error", request["id"], repr(exc)))
@@ -49,6 +49,7 @@ class QueueTests(unittest.TestCase):
 
         self.patchers = [
             mock.patch.object(server, "_select_target", side_effect=self._select_target),
+            mock.patch.object(server, "_session_device_id", return_value="ipad-a"),
             mock.patch.object(server, "_push_to_target", side_effect=self._push_to_target),
             mock.patch.object(server, "_pull_from_target", side_effect=self._pull_from_target),
             mock.patch.object(server, "_launch_target", side_effect=self._launch_target),
@@ -63,7 +64,7 @@ class QueueTests(unittest.TestCase):
             setattr(server, name, value)
         self.temporary.cleanup()
 
-    def _select_target(self, *, prefer_device=True):
+    def _select_target(self):
         return dict(self.selected_target)
 
     def _target_root(self, target):
@@ -109,7 +110,7 @@ class QueueTests(unittest.TestCase):
 
     def _enqueue(self, label, *, kind="review"):
         request, token = self._request(label, kind=kind)
-        response = server._enqueue_request(request, token, prefer_device=True)
+        response = server._enqueue_request(request, token)
         return request, token, response
 
     def _complete_remotely(self, request, *, status="answered", verdict="looks-good", notes="done"):
@@ -155,8 +156,8 @@ class QueueTests(unittest.TestCase):
     def test_queued_requests_preserve_distinct_scenarios_during_advance(self):
         first, first_token = self._request("first-scenario", scenario="blank-canvas")
         second, _ = self._request("second-scenario", scenario="pin-drift")
-        server._enqueue_request(first, first_token, prefer_device=True)
-        server._enqueue_request(second, "second-token", prefer_device=True)
+        server._enqueue_request(first, first_token)
+        server._enqueue_request(second, "second-token")
 
         self.assertEqual(json.loads(server._request_paths(first["id"])["local"].read_text())["scenario"], "blank-canvas")
         self.assertEqual(json.loads(server._request_paths(second["id"])["local"].read_text())["scenario"], "pin-drift")
@@ -192,8 +193,8 @@ class QueueTests(unittest.TestCase):
 
     def test_duplicate_enqueue_and_delivery_are_idempotent_and_owner_isolated(self):
         request, token = self._request("owner")
-        first = server._enqueue_request(request, token, prefer_device=True)
-        duplicate = server._enqueue_request(request, token, prefer_device=True)
+        first = server._enqueue_request(request, token)
+        duplicate = server._enqueue_request(request, token)
         delivered_again = server._deliver_request(request["id"], token)
 
         self.assertFalse(first["idempotent"])
@@ -209,7 +210,7 @@ class QueueTests(unittest.TestCase):
             server._collect_request(request["id"], owner_token="wrong-token")
         with self.assertRaises(PermissionError):
             server._cancel_request(
-                request["id"], owner_token="wrong-token", reason="not mine", prefer_device=True
+                request["id"], owner_token="wrong-token", reason="not mine"
             )
 
     def test_queued_launch_does_not_seed_the_legacy_capture_fallback(self):
@@ -265,7 +266,7 @@ class QueueTests(unittest.TestCase):
     def test_owned_cancel_and_stale_reconciliation_are_terminal(self):
         request, token, _ = self._enqueue("cancel")
         cancelled = server._cancel_request(
-            request["id"], owner_token=token, reason="superseded", prefer_device=True
+            request["id"], owner_token=token, reason="superseded"
         )
         self.assertEqual(cancelled["status"], "cancelled")
         stored = json.loads(server._request_paths(request["id"])["local"].read_text())
@@ -273,7 +274,7 @@ class QueueTests(unittest.TestCase):
 
         stale, stale_token = self._request("stale")
         stale["expiresAt"] = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
-        server._enqueue_request(stale, stale_token, prefer_device=True)
+        server._enqueue_request(stale, stale_token)
         fresh, _, _ = self._enqueue("fresh")
         stale_stored = json.loads(server._request_paths(stale["id"])["local"].read_text())
         self.assertEqual(stale_stored["status"], "cancelled")

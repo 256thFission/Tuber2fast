@@ -14,9 +14,12 @@ class VerifyScenarioTruthfulnessTests(unittest.TestCase):
     def setUpClass(cls):
         cls.source = VERIFIER.read_text()
 
-    def test_console_capture_failure_fails_the_run(self):
-        capture_failure = self.source.split('console_status="capture-failed"', 1)[1]
-        self.assertTrue(capture_failure.lstrip().startswith("pass=0"))
+    def test_pinned_physical_device_session_is_required_and_simulator_fallback_is_absent(self):
+        self.assertIn('python3 "$DEVICE_SESSION_TOOL" resolve', self.source)
+        self.assertIn('FAIL: no valid physical-iPad session', self.source)
+        self.assertIn('-destination "platform=iOS,id=$DEVICE_ID"', self.source)
+        self.assertIn('xcrun devicectl device install app', self.source)
+        self.assertNotIn('xcrun simctl', self.source)
 
     def test_mechanical_pass_is_guarded_by_accumulated_pass(self):
         final_assertion = self.source.split(
@@ -70,7 +73,8 @@ class VerifyScenarioTruthfulnessTests(unittest.TestCase):
         self.assertIn('appendingPathComponent("runtime-rendered.json")', source)
         self.assertIn("removeItem(at: runtimeURL)", source)
         self.assertIn('environment["TUBER_VERIFY_NONCE"]', source)
-        self.assertIn('SIMCTL_CHILD_TUBER_VERIFY_NONCE="$VERIFY_NONCE"', self.source)
+        self.assertIn('TUBER_VERIFY_NONCE', self.source)
+        self.assertIn('--environment-variables "$launch_environment"', self.source)
         self.assertIn('"verificationNonce": verification_nonce', self.source)
 
     def _write_evidence(self, value):

@@ -18,6 +18,7 @@ import re
 import secrets
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -48,6 +49,7 @@ FEEDBACK_WATCHES = FEEDBACK_STORE / "watches"
 FEEDBACK_LEDGER = FEEDBACK_STORE / "queue.json"
 FEEDBACK_LOCK = FEEDBACK_STORE / "store.lock"
 FEEDBACK_EVENT_LOG = FEEDBACK_STORE / "event-log.jsonl"
+DEVICE_SESSION_FILE = ROOT / ".tubernotes-device-session.json"
 FEEDBACK_SCHEMA_VERSION = 1
 FEEDBACK_STATES = {"queued", "open", "awaiting-model", "blocked", "resolved", "cancelled"}
 FEEDBACK_SLOT_STATES = {"open", "awaiting-model"}
@@ -94,6 +96,32 @@ def _new_feedback_watch(thread: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _record_feedback_wake_dispatch(
+    feedback_thread_id: str,
+    owner_token: str,
+    wake_id: str,
+    turn_id: str | None,
+    mode: str,
+) -> dict[str, Any]:
+    """Persist accepted Codex delivery without consuming the human response."""
+    with _locked_feedback_store():
+        thread = _read_feedback_thread(feedback_thread_id)
+        _validate_feedback_owner(thread, owner_token)
+        watch = _read_feedback_watch(feedback_thread_id)
+        if watch.get("pendingWakeID") != wake_id:
+            raise RuntimeError(f"wake_id is not pending for feedback thread {feedback_thread_id}")
+        existing = watch.get("dispatchedWakeID")
+        if existing and existing != wake_id:
+            raise RuntimeError(f"another wake is already dispatched for feedback thread {feedback_thread_id}")
+        watch["dispatchedWakeID"] = wake_id
+        watch["dispatchedTurnID"] = turn_id
+        watch["dispatchMode"] = mode
+        watch["dispatchedAt"] = watch.get("dispatchedAt") or _utc_now()
+        watch["updatedAt"] = _utc_now()
+        _write_feedback_watch(watch)
+        return {"status": "dispatched", **watch}
+
+
 def _safe_name(name: str) -> str:
     value = re.sub(r"[^a-z0-9-]+", "-", name.lower()).strip("-")
     if not value:
@@ -112,56 +140,26 @@ def _run(
     return subprocess.run(cmd, check=check, capture_output=True, text=True, env=env, timeout=timeout)
 
 
-def _simulator_data_dir(simulator_id: str = "booted") -> Path:
-    result = _run(["xcrun", "simctl", "get_app_container", simulator_id, APP_ID, "data"])
-    return Path(result.stdout.strip())
-
-
-def _booted_simulator_udid() -> str | None:
-    result = _run(["xcrun", "simctl", "list", "devices", "booted"], check=False)
-    if result.returncode != 0:
-        return None
-    match = re.search(r"\(([0-9A-F-]{36})\)\s+\(Booted\)", result.stdout)
-    return match.group(1) if match else None
-
-
-def _available_device_id() -> str | None:
-    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as handle:
-        json_path = Path(handle.name)
+def _session_device_id() -> str:
+    if not DEVICE_SESSION_FILE.exists():
+        raise RuntimeError(
+            "No physical-iPad session is configured. Run "
+            "DeveloperTools/device-preflight.sh --device <device-id>."
+        )
     try:
-        result = _run(
-            ["xcrun", "devicectl", "list", "devices", "--json-output", str(json_path)],
-            check=False,
-        )
-        if result.returncode != 0 or not json_path.exists():
-            return None
-        payload = json.loads(json_path.read_text())
-    finally:
-        json_path.unlink(missing_ok=True)
-
-    devices = (
-        payload.get("result", {}).get("devices")
-        or payload.get("devices")
-        or []
-    )
-    for device in devices:
-        state = str(device.get("connectionProperties", {}).get("tunnelState")
-                    or device.get("state")
-                    or "").lower()
-        availability = str(device.get("availabilityError") or "")
-        identifier = (
-            device.get("identifier")
-            or device.get("hardwareProperties", {}).get("udid")
-            or device.get("udid")
-        )
-        # Prefer connected/available physical devices.
-        if identifier and not availability and ("connected" in state or "available" in state or state == ""):
-            # Skip if explicitly unavailable.
-            info = str(device).lower()
-            if "unavailable" in info:
-                continue
-            return str(identifier)
-    return None
+        session = json.loads(DEVICE_SESSION_FILE.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"Invalid physical-iPad session: {exc}") from exc
+    device_id = session.get("deviceID")
+    if (
+        session.get("schemaVersion") != 1
+        or session.get("reality") != "physical"
+        or session.get("deviceType") != "iPad"
+        or not isinstance(device_id, str)
+        or not device_id
+    ):
+        raise RuntimeError("Invalid physical-iPad session; rerun device-preflight.sh")
+    return device_id
 
 
 def _ensure_local_dirs() -> None:
@@ -548,32 +546,6 @@ def _write_request(request: dict[str, Any]) -> Path:
     return path
 
 
-def _push_to_simulator(local_file: Path, relative_destination: Path, simulator_id: str = "booted") -> dict[str, str]:
-    data_dir = _simulator_data_dir(simulator_id)
-    destination = data_dir / relative_destination
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(local_file, destination)
-    return {"target": "simulator", "id": simulator_id, "path": str(destination)}
-
-
-def _pull_from_simulator(
-    relative_source: Path,
-    local_destination: Path,
-    simulator_id: str = "booted",
-) -> Path | None:
-    source = _simulator_data_dir(simulator_id) / relative_source
-    if not source.exists():
-        return None
-    local_destination.parent.mkdir(parents=True, exist_ok=True)
-    if source.is_dir():
-        if local_destination.exists():
-            shutil.rmtree(local_destination)
-        shutil.copytree(source, local_destination)
-    else:
-        shutil.copy2(source, local_destination)
-    return local_destination
-
-
 def _push_to_device(device_id: str, local_file: Path, relative_destination: Path) -> dict[str, str]:
     # Copy into app data container; destination is relative to the container root.
     _run(
@@ -625,17 +597,6 @@ def _pull_from_device(device_id: str, relative_source: Path, local_destination: 
     return local_destination if local_destination.exists() else None
 
 
-def _launch_simulator(env: dict[str, str], simulator_id: str = "booted") -> dict[str, str]:
-    merged = os.environ.copy()
-    for key, value in env.items():
-        merged[f"SIMCTL_CHILD_{key}"] = value
-    result = _run(
-        ["xcrun", "simctl", "launch", "--terminate-running-process", simulator_id, APP_ID],
-        env=merged,
-    )
-    return {"target": "simulator", "id": simulator_id, "process": result.stdout.strip()}
-
-
 def _launch_device(device_id: str, env: dict[str, str]) -> dict[str, str]:
     result = _run(
         [
@@ -658,23 +619,32 @@ def _launch_device(device_id: str, env: dict[str, str]) -> dict[str, str]:
     return {"target": "device", "device": device_id, "process": result.stdout.strip()}
 
 
-def _select_target(prefer_device: bool = True) -> dict[str, str]:
-    if prefer_device:
-        device_id = _available_device_id()
-        if device_id:
-            return {"kind": "device", "id": device_id}
-    simulator_id = _booted_simulator_udid()
-    if simulator_id:
-        return {"kind": "simulator", "id": simulator_id}
-    device_id = _available_device_id()
-    if device_id:
-        return {"kind": "device", "id": device_id}
-    raise RuntimeError("No booted simulator or available connected device found")
+def _select_target() -> dict[str, str]:
+    return {"kind": "device", "id": _session_device_id()}
+
+
+def _require_physical_target(target: dict[str, str]) -> dict[str, str]:
+    if target.get("kind") != "device" or not target.get("id"):
+        raise RuntimeError(
+            "This request is pinned to a non-device target. Clear stale development state "
+            "and recreate it on the connected physical iPad."
+        )
+    return target
+
+
+def _require_session_target(target: dict[str, str]) -> dict[str, str]:
+    target = _require_physical_target(target)
+    session_device_id = _session_device_id()
+    if target["id"] != session_device_id:
+        raise RuntimeError(
+            f"Device/host divergence: request is pinned to {target['id']}, "
+            f"but the current physical-iPad session is {session_device_id}."
+        )
+    return target
 
 
 def _push_to_target(target: dict[str, str], local_file: Path, relative_destination: Path) -> dict[str, str]:
-    if target["kind"] == "simulator":
-        return _push_to_simulator(local_file, relative_destination, target["id"])
+    target = _require_session_target(target)
     return _push_to_device(target["id"], local_file, relative_destination)
 
 
@@ -683,14 +653,12 @@ def _pull_from_target(
     relative_source: Path,
     local_destination: Path,
 ) -> Path | None:
-    if target["kind"] == "simulator":
-        return _pull_from_simulator(relative_source, local_destination, target["id"])
+    target = _require_session_target(target)
     return _pull_from_device(target["id"], relative_source, local_destination)
 
 
 def _launch_target(target: dict[str, str], env: dict[str, str]) -> dict[str, str]:
-    if target["kind"] == "simulator":
-        return _launch_simulator(env, target["id"])
+    target = _require_session_target(target)
     return _launch_device(target["id"], env)
 
 
@@ -774,8 +742,6 @@ def _deliver_request_locked(
 def _enqueue_request(
     request: dict[str, Any],
     owner_token: str,
-    *,
-    prefer_device: bool,
 ) -> dict[str, Any]:
     with _locked_ledger():
         ledger = _load_ledger()
@@ -785,7 +751,7 @@ def _enqueue_request(
             _validate_owner(existing, owner_token)
             return _delivery_response(existing, owner_token, idempotent=True)
         active = _active_ledger_entries(ledger)
-        target = dict(active[0]["target"]) if active else _select_target(prefer_device=prefer_device)
+        target = _require_session_target(dict(active[0]["target"])) if active else _select_target()
         sequence = int(ledger.get("nextSequence", 1))
         ledger["nextSequence"] = sequence + 1
         request["delivery"] = {
@@ -832,16 +798,12 @@ def _deliver_request(request_id: str, owner_token: str) -> dict[str, Any]:
         )
 
 
-def _request_target(
-    request: dict[str, Any],
-    *,
-    prefer_device: bool,
-) -> tuple[dict[str, str], bool]:
+def _request_target(request: dict[str, Any]) -> tuple[dict[str, str], bool]:
     target = request.get("delivery", {}).get("target")
     if target:
-        return dict(target), False
+        return _require_session_target(dict(target)), False
     # Pre-v2 compatibility: select once, persist, and never switch on later polls.
-    target = _select_target(prefer_device=prefer_device)
+    target = _select_target()
     request["delivery"] = {
         "sequence": None,
         "state": "legacy-pinned",
@@ -883,14 +845,13 @@ def _collect_request(
     request_id: str,
     *,
     owner_token: str | None,
-    prefer_device: bool = True,
 ) -> dict[str, Any]:
     _ensure_local_dirs()
     paths = _request_paths(request_id)
     with _locked_ledger():
         local_request = _read_local_request(request_id)
         owner_validation = _validate_owner(local_request, owner_token)
-        target, legacy_target_selected = _request_target(local_request, prefer_device=prefer_device)
+        target, legacy_target_selected = _request_target(local_request)
     stamp = request_id
     out_dir = COLLECTED / stamp
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -1002,7 +963,6 @@ def _cancel_request(
     *,
     owner_token: str | None,
     reason: str,
-    prefer_device: bool,
 ) -> dict[str, Any]:
     normalized_reason = reason.strip() or "cancelled-by-requester"
     with _locked_ledger():
@@ -1016,7 +976,7 @@ def _cancel_request(
                 "owner_validation": owner_validation,
                 "target": request.get("delivery", {}).get("target"),
             }
-        target, legacy_target_selected = _request_target(request, prefer_device=prefer_device)
+        target, legacy_target_selected = _request_target(request)
         request["status"] = "cancelled"
         request["completedAt"] = _utc_now()
         request["cancellationReason"] = normalized_reason
@@ -1044,7 +1004,6 @@ def _cancel_request(
 def request_pen_fixture(
     description: str,
     scenario: str = "blank-canvas",
-    prefer_device: bool = True,
     requester_id: str = "anonymous-agent",
     stale_after_seconds: float = DEFAULT_STALE_AFTER_SECONDS,
 ) -> dict:
@@ -1064,7 +1023,7 @@ def request_pen_fixture(
         fixture_name=fixture_name,
         stale_after_seconds=stale_after_seconds,
     )
-    return _enqueue_request(request, owner_token, prefer_device=prefer_device)
+    return _enqueue_request(request, owner_token)
 
 
 @mcp.tool()
@@ -1072,7 +1031,6 @@ def request_human_review(
     prompt: str,
     title: str = "Human review",
     scenario: str = "blank-canvas",
-    prefer_device: bool = True,
     requester_id: str = "anonymous-agent",
     stale_after_seconds: float = DEFAULT_STALE_AFTER_SECONDS,
 ) -> dict:
@@ -1090,24 +1048,22 @@ def request_human_review(
         fixture_name=None,
         stale_after_seconds=stale_after_seconds,
     )
-    return _enqueue_request(request, owner_token, prefer_device=prefer_device)
+    return _enqueue_request(request, owner_token)
 
 
 @mcp.tool()
 def collect_interaction(
     request_id: str,
-    prefer_device: bool = True,
     owner_token: str | None = None,
 ) -> dict:
     """Pull a completed interaction (fixture, verdict, notes, index) from the connected device."""
-    return _collect_request(request_id, owner_token=owner_token, prefer_device=prefer_device)
+    return _collect_request(request_id, owner_token=owner_token)
 
 
 @mcp.tool()
 async def await_interaction(
     request_id: str,
     timeout_seconds: float = 180.0,
-    prefer_device: bool = True,
     owner_token: str | None = None,
 ) -> dict:
     """Poll until the human completes the in-app request, then return the collected artifacts."""
@@ -1118,7 +1074,6 @@ async def await_interaction(
             _collect_request,
             request_id,
             owner_token=owner_token,
-            prefer_device=prefer_device,
         )
         status = last.get("status")
         if status in {"recorded", "answered", "cancelled"}:
@@ -1134,27 +1089,22 @@ def cancel_interaction(
     request_id: str,
     owner_token: str | None = None,
     reason: str = "cancelled-by-requester",
-    prefer_device: bool = True,
 ) -> dict:
     """Cancel one owned pending request without changing its pinned delivery target."""
     return _cancel_request(
         request_id,
         owner_token=owner_token,
         reason=reason,
-        prefer_device=prefer_device,
     )
 
 
 @mcp.tool()
-def list_interactions(prefer_device: bool = True) -> dict:
+def list_interactions() -> dict:
     """Return the on-device interaction index plus locally collected entries."""
     _ensure_local_dirs()
-    target = _select_target(prefer_device=prefer_device)
+    target = _select_target()
     index_local = COLLECTED / "_index.json"
-    if target["kind"] == "simulator":
-        pulled = _pull_from_simulator(Path("Documents") / "pen-fixtures" / "index.json", index_local)
-    else:
-        pulled = _pull_from_device(target["id"], Path("Documents") / "pen-fixtures" / "index.json", index_local)
+    pulled = _pull_from_device(target["id"], Path("Documents") / "pen-fixtures" / "index.json", index_local)
 
     index = json.loads(index_local.read_text()) if pulled and index_local.exists() else {"entries": []}
     local_requests = sorted(REQUESTS.glob("*.json"))
@@ -1168,18 +1118,13 @@ def list_interactions(prefer_device: bool = True) -> dict:
 
 @mcp.tool()
 def list_pen_fixtures() -> list[dict]:
-    """List committed fixtures and any currently installed simulator fixtures."""
+    """List committed replay fixtures. Captured device fixtures appear after collection."""
     paths = {path.stem: path for path in FIXTURES.glob("*.json")}
-    try:
-        sim_dir = _simulator_data_dir() / "Documents" / "pen-fixtures"
-        paths.update({path.stem: path for path in sim_dir.glob("*.json") if path.name != "index.json"})
-    except Exception:
-        pass
     return [
         {
             "name": name,
             "path": str(path),
-            "source": "repo" if FIXTURES in path.parents else "device-or-simulator",
+            "source": "repo",
         }
         for name, path in sorted(paths.items())
     ]
@@ -1189,43 +1134,24 @@ def list_pen_fixtures() -> list[dict]:
 def get_pen_fixture(name: str) -> dict:
     """Return a normalized Pencil event fixture by name."""
     safe_name = _safe_name(name)
-    candidates = [
-        FIXTURES / f"{safe_name}.json",
-    ]
-    try:
-        candidates.append(_simulator_data_dir() / "Documents" / "pen-fixtures" / f"{safe_name}.json")
-    except Exception:
-        pass
-    for path in candidates:
-        if path.exists():
-            return json.loads(path.read_text())
+    path = FIXTURES / f"{safe_name}.json"
+    if path.exists():
+        return json.loads(path.read_text())
     raise FileNotFoundError(safe_name)
 
 
 @mcp.tool()
-def replay_pen_fixture(name: str, prefer_device: bool = False) -> dict:
-    """Install a fixture and relaunch through the app's controlled replay seam."""
+def replay_pen_fixture(name: str) -> dict:
+    """Install a committed fixture on the physical iPad and relaunch the replay seam."""
     safe_name = _safe_name(name)
     source = FIXTURES / f"{safe_name}.json"
     if not source.exists():
-        # Fall back to simulator copy if present.
-        try:
-            candidate = _simulator_data_dir() / "Documents" / "pen-fixtures" / f"{safe_name}.json"
-            if candidate.exists():
-                source = candidate
-        except Exception as exc:  # noqa: BLE001
-            raise FileNotFoundError(safe_name) from exc
-    if not source.exists():
         raise FileNotFoundError(safe_name)
 
-    target = _select_target(prefer_device=prefer_device)
+    target = _select_target()
     rel = Path("Documents") / "pen-fixtures" / f"{safe_name}.json"
-    if target["kind"] == "simulator":
-        _push_to_simulator(source, rel)
-        launch = _launch_simulator({"TUBER_PEN_FIXTURE": safe_name, "TUBER_SCENARIO": "blank-canvas"})
-    else:
-        _push_to_device(target["id"], source, rel)
-        launch = _launch_device(target["id"], {"TUBER_PEN_FIXTURE": safe_name, "TUBER_SCENARIO": "blank-canvas"})
+    _push_to_device(target["id"], source, rel)
+    launch = _launch_device(target["id"], {"TUBER_PEN_FIXTURE": safe_name, "TUBER_SCENARIO": "blank-canvas"})
     return {"name": safe_name, "status": "launched", **launch}
 
 
@@ -1367,7 +1293,6 @@ def _create_feedback_thread(
     scenario: str = "blank-canvas",
     requester_id: str = "anonymous-agent",
     idempotency_key: str | None = None,
-    prefer_device: bool = True,
     owner_token: str | None = None,
     *,
     review_run: dict[str, Any] | None = None,
@@ -1387,8 +1312,7 @@ def _create_feedback_thread(
     scoped_key = f"{requester}:{creation_key}"
     token = owner_token or secrets.token_urlsafe(32)
 
-    # Device discovery can invoke xcrun. Determine whether it is needed without
-    # keeping the cross-process store lock held during that external call.
+    # Resolve the pinned session outside the cross-process store lock.
     with _locked_feedback_store():
         ledger = _load_feedback_ledger()
         existing_id = ledger["creationKeys"].get(scoped_key)
@@ -1413,7 +1337,7 @@ def _create_feedback_thread(
                 None,
             )
 
-    discovered_target = target or _select_target(prefer_device=prefer_device)
+    discovered_target = _require_session_target(target) if target else _select_target()
 
     with _locked_feedback_store():
         # Another process may have created this idempotent thread while target
@@ -1566,7 +1490,6 @@ def _create_review_run(
     scenario: str = "blank-canvas",
     requester_id: str = "anonymous-agent",
     idempotency_key: str | None = None,
-    prefer_device: bool = True,
     owner_token: str | None = None,
 ) -> dict[str, Any]:
     review_run = _normalized_review_run(steps)
@@ -1577,7 +1500,6 @@ def _create_review_run(
         scenario=review_run["steps"][0]["scenario"] or scenario,
         requester_id=requester_id,
         idempotency_key=idempotency_key,
-        prefer_device=prefer_device,
         owner_token=owner_token,
         review_run=review_run,
     )
@@ -1596,7 +1518,6 @@ async def create_review_run(
     scenario: str = "blank-canvas",
     requester_id: str = "anonymous-agent",
     idempotency_key: str | None = None,
-    prefer_device: bool = True,
     owner_token: str | None = None,
 ) -> dict:
     """Create one asynchronous, human-autonomous review packet in one visible session."""
@@ -1608,7 +1529,6 @@ async def create_review_run(
         scenario,
         requester_id,
         idempotency_key,
-        prefer_device,
         owner_token,
     )
 
@@ -1621,10 +1541,9 @@ async def create_feedback_thread(
     scenario: str = "blank-canvas",
     requester_id: str = "anonymous-agent",
     idempotency_key: str | None = None,
-    prefer_device: bool = True,
     owner_token: str | None = None,
 ) -> dict:
-    """Create an owned thread and wake record; arm a task heartbeat before ending the turn."""
+    """Create an owned physical-device thread; actively wait, then arm the event bridge before yielding."""
     return await asyncio.to_thread(
         _create_feedback_thread,
         title,
@@ -1633,7 +1552,6 @@ async def create_feedback_thread(
         scenario,
         requester_id,
         idempotency_key,
-        prefer_device,
         owner_token,
     )
 
@@ -2028,7 +1946,7 @@ def _get_feedback_watch_state(
     owner_token: str,
     after_sequence: int | None = None,
 ) -> dict:
-    """Return one compact, idempotent wake decision for a task heartbeat."""
+    """Return one compact, idempotent wake decision for the bridge or heartbeat fallback."""
     with _locked_feedback_store():
         thread = _read_feedback_thread(feedback_thread_id)
         _validate_feedback_owner(thread, owner_token)
@@ -2047,6 +1965,7 @@ def _get_feedback_watch_state(
         acknowledged_ids = set(watch.get("acknowledgedWakeIDs", []))
         eligible = watch.get("state") == "watching" and (bool(human_messages) or terminal_or_blocked)
         eligible = eligible and wake_id not in acknowledged_ids
+        eligible = eligible and wake_id != watch.get("dispatchedWakeID")
         watch["lastCheckedAt"] = _utc_now()
         watch["updatedAt"] = watch["lastCheckedAt"]
         if eligible:
@@ -2079,6 +1998,109 @@ async def get_feedback_watch_state(
     )
 
 
+def _arm_codex_feedback_wake(
+    feedback_thread_id: str,
+    owner_token: str,
+    after_sequence: int,
+    poll_seconds: float,
+    timeout_seconds: float,
+) -> dict[str, Any]:
+    """Hand one feedback wait from the current turn to a detached Codex bridge."""
+    if after_sequence < 0:
+        raise ValueError("after_sequence must not be negative")
+    if poll_seconds < 0.25 or poll_seconds > 30:
+        raise ValueError("poll_seconds must be between 0.25 and 30")
+    if timeout_seconds <= 0 or timeout_seconds > 24 * 60 * 60:
+        raise ValueError("timeout_seconds must be within one day")
+    with _locked_feedback_store():
+        thread = _read_feedback_thread(feedback_thread_id)
+        _validate_feedback_owner(thread, owner_token)
+        watch = _read_feedback_watch(feedback_thread_id)
+        if watch.get("state") != "watching":
+            raise RuntimeError(f"feedback watch is {watch.get('state')}, not watching")
+        requester_id = thread["requester"]["id"]
+        if requester_id == "anonymous-agent":
+            raise RuntimeError("event-driven waking requires a Codex requester_id")
+        existing_pid = watch.get("bridgePID")
+        if isinstance(existing_pid, int):
+            try:
+                os.kill(existing_pid, 0)
+                return {
+                    "status": "armed",
+                    "idempotent": True,
+                    "feedback_thread_id": feedback_thread_id,
+                    "requester_id": requester_id,
+                    "bridge_pid": existing_pid,
+                }
+            except OSError:
+                pass
+
+    config = {
+        "feedback_thread_id": feedback_thread_id,
+        "owner_token": owner_token,
+        "requester_id": requester_id,
+        "after_sequence": after_sequence,
+        "poll_seconds": poll_seconds,
+        "timeout_seconds": timeout_seconds,
+    }
+    bridge = Path(__file__).resolve().with_name("codex_wake_bridge.py")
+    log_dir = FEEDBACK_STORE / "bridge-logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / f"{feedback_thread_id}.log"
+    log = log_path.open("a")
+    process = subprocess.Popen(
+        [sys.executable, str(bridge)],
+        stdin=subprocess.PIPE,
+        stdout=log,
+        stderr=log,
+        text=True,
+        start_new_session=True,
+        close_fds=True,
+        cwd=str(ROOT),
+    )
+    log.close()
+    if process.stdin is None:
+        process.terminate()
+        raise RuntimeError("feedback wake bridge did not expose its registration pipe")
+    process.stdin.write(json.dumps(config, separators=(",", ":")))
+    process.stdin.close()
+    with _locked_feedback_store():
+        watch = _read_feedback_watch(feedback_thread_id)
+        watch["bridgePID"] = process.pid
+        watch["bridgeArmedAt"] = _utc_now()
+        watch["bridgeAfterSequence"] = after_sequence
+        watch["updatedAt"] = _utc_now()
+        _write_feedback_watch(watch)
+    return {
+        "status": "armed",
+        "idempotent": False,
+        "feedback_thread_id": feedback_thread_id,
+        "requester_id": requester_id,
+        "bridge_pid": process.pid,
+        "log_path": str(log_path),
+        "poll_seconds": poll_seconds,
+    }
+
+
+@mcp.tool()
+async def arm_codex_feedback_wake(
+    feedback_thread_id: str,
+    owner_token: str,
+    after_sequence: int,
+    poll_seconds: float = 1.0,
+    timeout_seconds: float = 3600.0,
+) -> dict:
+    """Resume the originating Codex CLI task when the next human response arrives."""
+    return await asyncio.to_thread(
+        _arm_codex_feedback_wake,
+        feedback_thread_id,
+        owner_token,
+        after_sequence,
+        poll_seconds,
+        timeout_seconds,
+    )
+
+
 def _acknowledge_feedback_wake(
     feedback_thread_id: str,
     owner_token: str,
@@ -2091,6 +2113,10 @@ def _acknowledge_feedback_wake(
         watch = _read_feedback_watch(feedback_thread_id)
         acknowledged_ids = list(watch.get("acknowledgedWakeIDs", []))
         if wake_id in acknowledged_ids:
+            for key in ("dispatchedWakeID", "dispatchedTurnID", "dispatchMode", "bridgePID"):
+                watch.pop(key, None)
+            watch["updatedAt"] = _utc_now()
+            _write_feedback_watch(watch)
             return {"status": "acknowledged", "idempotent": True, **watch}
         if wake_id != watch.get("pendingWakeID"):
             raise RuntimeError(f"wake_id is not pending for feedback thread {feedback_thread_id}")
@@ -2104,6 +2130,10 @@ def _acknowledge_feedback_wake(
         watch["updatedAt"] = watch["lastAcknowledgedAt"]
         watch.pop("pendingWakeID", None)
         watch.pop("pendingThroughSequence", None)
+        watch.pop("dispatchedWakeID", None)
+        watch.pop("dispatchedTurnID", None)
+        watch.pop("dispatchMode", None)
+        watch.pop("bridgePID", None)
         _write_feedback_watch(watch)
         return {"status": "acknowledged", "idempotent": False, **watch}
 

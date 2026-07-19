@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Lightweight TuberNotes scenario verification.
-# Builds, launches a named DEBUG scenario, captures compact evidence, and reports
-# mechanical pass/fail. Visual taste and Apple Pencil feel remain human-only.
+# Lightweight physical-iPad TuberNotes scenario verification.
+# Builds, installs, launches a named DEBUG scenario, pulls compact runtime
+# evidence, and reports mechanical pass/fail. Visible inspection and Apple
+# Pencil feel remain human-only.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -9,13 +10,13 @@ cd "$ROOT"
 
 PROJECT="TuberNotes.xcodeproj"
 SCHEME="TuberNotes"
-SIMULATOR="iPad Pro 13-inch (M5)"
 BUNDLE_ID="com.tubernotes.app"
-DERIVED_DATA="${DERIVED_DATA:-$ROOT/DerivedData}"
-APP_PATH="$DERIVED_DATA/Build/Products/Debug-iphonesimulator/TuberNotes.app"
+DERIVED_DATA="${DERIVED_DATA:-$ROOT/DerivedDataDevice}"
+APP_PATH="$DERIVED_DATA/Build/Products/Debug-iphoneos/TuberNotes.app"
 SKIP_BUILD="${SKIP_BUILD:-0}"
 FORCE_MECHANICAL_FAILURE="${FORCE_MECHANICAL_FAILURE:-0}"
 VERIFY_NONCE="$(uuidgen)"
+DEVICE_SESSION_TOOL="$ROOT/DeveloperTools/device_session.py"
 
 print_help() {
     cat <<'EOF'
@@ -35,13 +36,16 @@ M0 scenarios:
 
 Environment:
   SKIP_BUILD=1                Reuse an existing DerivedData build
-  DERIVED_DATA=…              Override DerivedData path (default: ./DerivedData)
+  DERIVED_DATA=…              Override DerivedData path (default: ./DerivedDataDevice)
   FORCE_MECHANICAL_FAILURE=1  Intentionally fail one isolated assertion after capture
 
-The verifier checks build/install/launch, screenshot integrity, crash evidence,
-console capture/fatal patterns, the DEBUG fixture-declaration marker, and (for
-App-wired scenarios) a separate runtime-rendered state snapshot. It does not
-automate navigation, compare pixels, measure Pin drift, or judge visual quality.
+Run `DeveloperTools/device-preflight.sh --device <device-id>` first. The
+verifier consumes that explicit session and never discovers or falls back to
+another target. It checks build/install/launch, the DEBUG
+fixture-declaration marker, and (for App-wired scenarios) a separate
+runtime-rendered state snapshot. Physical-device screenshots, console logs,
+crash diagnostics, navigation, pixel comparison, Pin-drift measurement, and
+visual-quality judgments require separately reported evidence.
 EOF
 }
 
@@ -163,13 +167,37 @@ scenario_metadata() {
     EXPECTED_RUNTIME_PAGE_ID="${EXPECTED_RUNTIME_PAGE_ID:-$EXPECTED_PAGE_ID}"
 }
 
-SCENARIO="${1:-blank-canvas}"
-case "$SCENARIO" in
-    -h|--help)
-        print_help
-        exit 0
-        ;;
-esac
+SCENARIO="blank-canvas"
+scenario_set=0
+while (($#)); do
+    case "$1" in
+        -h|--help)
+            print_help
+            exit 0
+            ;;
+        --*)
+            echo "FAIL: unknown option '$1'" >&2
+            exit 2
+            ;;
+        *)
+            [[ $scenario_set -eq 0 ]] || { echo "FAIL: only one scenario may be supplied" >&2; exit 2; }
+            SCENARIO="$1"
+            scenario_set=1
+            shift
+            ;;
+    esac
+done
+
+mkdir -p "$ROOT/tmp"
+set +e
+DEVICE_ID="$(python3 "$DEVICE_SESSION_TOOL" resolve 2>"$ROOT/tmp/device-session-error.log")"
+session_exit=$?
+set -e
+if [[ $session_exit -ne 0 || -z "$DEVICE_ID" ]]; then
+    echo "FAIL: no valid physical-iPad session; run DeveloperTools/device-preflight.sh --device <device-id>" >&2
+    [[ ! -s "$ROOT/tmp/device-session-error.log" ]] || tail -n 5 "$ROOT/tmp/device-session-error.log" >&2
+    exit 2
+fi
 
 if ! scenario_metadata "$SCENARIO"; then
     echo "FAIL: unknown or not-yet-runnable scenario '$SCENARIO'" >&2
@@ -180,13 +208,13 @@ fi
 STAMP="$(date +%Y%m%d-%H%M%S)"
 ARTIFACT_DIR="$ROOT/tmp/verify/${STAMP}-${SCENARIO}"
 mkdir -p "$ARTIFACT_DIR"
+cp "$ROOT/.tubernotes-device-session.json" "$ARTIFACT_DIR/device-session.json"
 
 BUILD_LOG="$ARTIFACT_DIR/build.log"
 INSTALL_LOG="$ARTIFACT_DIR/install.log"
 LAUNCH_LOG="$ARTIFACT_DIR/launch.log"
 CONSOLE_LOG="$ARTIFACT_DIR/console.log"
 CONSOLE_ERRORS="$ARTIFACT_DIR/console-errors.txt"
-SCREENSHOT="$ARTIFACT_DIR/screenshot.png"
 SCREENSHOT_LOG="$ARTIFACT_DIR/screenshot.log"
 SCREENSHOT_INFO="$ARTIFACT_DIR/screenshot-info.txt"
 SCENARIO_SELECTION="$ARTIFACT_DIR/scenario-selection.json"
@@ -195,17 +223,15 @@ RUNTIME_EVIDENCE="$ARTIFACT_DIR/runtime-rendered.json"
 RUNTIME_ASSERTIONS="$ARTIFACT_DIR/runtime-assertions.txt"
 CRASH_HITS="$ARTIFACT_DIR/crash-hits.txt"
 SUMMARY="$ARTIFACT_DIR/summary.txt"
-LAUNCH_MARKER="$ARTIFACT_DIR/launch.started"
 
 pass=1
 build_status="skipped"
 launch_status="unknown"
-screenshot_status="missing"
+screenshot_status="not-captured-physical-device"
 scenario_marker_status="not-captured"
-crash_status="not-checked"
-console_status="not-captured"
+crash_status="not-collected-physical-device"
+console_status="not-collected-physical-device"
 runtime_evidence_status="not-captured"
-pid=""
 
 note() {
     printf '%s\n' "$*" | tee -a "$SUMMARY"
@@ -216,7 +242,7 @@ note "scenario: $SCENARIO"
 note "fixture_family: $FAMILY"
 note "expected_state: $EXPECTED_STATE"
 note "integration_readiness: $INTEGRATION_READINESS"
-note "simulator: $SIMULATOR"
+note "physical_device: $DEVICE_ID"
 note "artifacts: $ARTIFACT_DIR"
 note "started: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 note ""
@@ -226,7 +252,8 @@ if [[ "$SKIP_BUILD" != "1" ]]; then
     xcodebuild \
         -project "$PROJECT" \
         -scheme "$SCHEME" \
-        -destination "platform=iOS Simulator,name=$SIMULATOR" \
+        -configuration Debug \
+        -destination "platform=iOS,id=$DEVICE_ID" \
         -derivedDataPath "$DERIVED_DATA" \
         build >"$BUILD_LOG" 2>&1
     build_exit=$?
@@ -258,72 +285,83 @@ fi
 note "BUILD: $build_status"
 note "build_log: $BUILD_LOG"
 
-xcrun simctl boot "$SIMULATOR" 2>/dev/null || true
-open -a Simulator >/dev/null 2>&1 || true
-
-for _ in $(seq 1 30); do
-    if xcrun simctl list devices | grep -F "$SIMULATOR" | grep -q "(Booted)"; then
-        break
-    fi
-    sleep 1
-done
-
-xcrun simctl install booted "$APP_PATH" >"$INSTALL_LOG" 2>&1
-
-: >"$LAUNCH_MARKER"
 set +e
-SIMCTL_CHILD_TUBER_SCENARIO="$SCENARIO" \
-SIMCTL_CHILD_TUBER_VERIFY_NONCE="$VERIFY_NONCE" \
-    xcrun simctl launch --terminate-running-process booted "$BUNDLE_ID" \
+xcrun devicectl device install app --device "$DEVICE_ID" "$APP_PATH" >"$INSTALL_LOG" 2>&1
+install_exit=$?
+set -e
+if [[ $install_exit -ne 0 ]]; then
+    note "INSTALL: FAIL (exit $install_exit)"
+    note "install_log: $INSTALL_LOG"
+    tail -n 40 "$INSTALL_LOG" | tee -a "$SUMMARY"
+    note "RESULT: FAIL"
+    note "artifact_dir: $ARTIFACT_DIR"
+    exit 1
+fi
+note "INSTALL: pass"
+
+set +e
+launch_environment="{\"TUBER_SCENARIO\":\"$SCENARIO\",\"TUBER_VERIFY_NONCE\":\"$VERIFY_NONCE\"}"
+xcrun devicectl device process launch \
+    --device "$DEVICE_ID" \
+    --terminate-existing \
+    --environment-variables "$launch_environment" \
+    "$BUNDLE_ID" \
     >"$LAUNCH_LOG" 2>&1
 launch_exit=$?
 set -e
 
 if [[ $launch_exit -eq 0 ]]; then
-    pid="$(awk -F': ' '/:/{print $NF; exit}' "$LAUNCH_LOG" | tr -d '[:space:]')"
-    if [[ -n "$pid" && "$pid" =~ ^[0-9]+$ ]]; then
-        launch_status="pass"
-    else
-        launch_status="fail"
-        pass=0
-    fi
+    launch_status="pass"
 else
     launch_status="fail"
     pass=0
 fi
 
 note "INSTALL_LOG: $INSTALL_LOG"
-note "LAUNCH: $launch_status${pid:+ (pid=$pid)}"
+note "LAUNCH: $launch_status"
 note "launch_log: $LAUNCH_LOG"
 
-sleep 2
-set +e
-xcrun simctl io booted screenshot "$SCREENSHOT" >"$SCREENSHOT_LOG" 2>&1
-shot_exit=$?
-set -e
-if [[ $shot_exit -eq 0 && -s "$SCREENSHOT" ]] && sips -g pixelWidth -g pixelHeight "$SCREENSHOT" >"$SCREENSHOT_INFO" 2>&1; then
-    if grep -Eq 'pixelWidth: [1-9][0-9]*' "$SCREENSHOT_INFO" && grep -Eq 'pixelHeight: [1-9][0-9]*' "$SCREENSHOT_INFO"; then
-        shasum -a 256 "$SCREENSHOT" >>"$SCREENSHOT_INFO"
-        screenshot_status="pass"
-    else
-        screenshot_status="fail-invalid-dimensions"
-        pass=0
-    fi
-else
-    screenshot_status="fail"
-    pass=0
-fi
+sleep 3
+printf '%s\n' "Physical-device screenshot capture is outside this script; inspect in TuberNotes and record it separately." >"$SCREENSHOT_LOG"
+printf '%s\n' "not captured" >"$SCREENSHOT_INFO"
 
 note "SCREENSHOT: $screenshot_status"
-note "screenshot: $SCREENSHOT"
+note "screenshot: not collected"
 note "screenshot_info: $SCREENSHOT_INFO"
 
-set +e
-data_container="$(xcrun simctl get_app_container booted "$BUNDLE_ID" data 2>/dev/null)"
-container_exit=$?
-set -e
-if [[ $container_exit -eq 0 && -n "$data_container" ]] \
-    && cp "$data_container/Documents/developer-evidence/scenario-selection.json" "$SCENARIO_SELECTION" 2>/dev/null; then
+pull_device_file() {
+    local relative_source="$1"
+    local destination="$2"
+    local pull_log="$3"
+    local expected_nonce="$4"
+    local attempt
+    for attempt in $(seq 1 10); do
+        rm -f -- "$destination"
+        if xcrun devicectl device copy from \
+            --device "$DEVICE_ID" \
+            --domain-type appDataContainer \
+            --domain-identifier "$BUNDLE_ID" \
+            --source "$relative_source" \
+            --destination "$destination" >"$pull_log" 2>&1 \
+            && [[ -s "$destination" ]]; then
+            if python3 - "$destination" "$expected_nonce" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    payload = json.load(stream)
+raise SystemExit(0 if payload.get("verificationNonce") == sys.argv[2] else 1)
+PY
+            then
+                return 0
+            fi
+        fi
+        sleep 1
+    done
+    return 1
+}
+
+if pull_device_file "Documents/developer-evidence/scenario-selection.json" "$SCENARIO_SELECTION" "$ARTIFACT_DIR/scenario-pull.log" "$VERIFY_NONCE"; then
     set +e
     python3 - "$SCENARIO_SELECTION" "$SCENARIO" "$FAMILY" "$INTEGRATION_READINESS" \
         "$EXPECTED_STATE" "$EXPECTED_PAGE_COUNT" "$EXPECTED_PAGE_INDEX" "$EXPECTED_PAGE_ID" \
@@ -392,8 +430,7 @@ else
 fi
 
 if [[ "$REQUIRES_RUNTIME_EVIDENCE" == "true" ]]; then
-    if [[ $container_exit -eq 0 && -n "$data_container" ]] \
-        && cp "$data_container/Documents/developer-evidence/runtime-rendered.json" "$RUNTIME_EVIDENCE" 2>/dev/null; then
+    if pull_device_file "Documents/developer-evidence/runtime-rendered.json" "$RUNTIME_EVIDENCE" "$ARTIFACT_DIR/runtime-pull.log" "$VERIFY_NONCE"; then
         set +e
         python3 - "$RUNTIME_EVIDENCE" "$SCENARIO" "$EXPECTED_RUNTIME_SURFACE" \
             "$EXPECTED_RUNTIME_PAGE_COUNT" "$EXPECTED_RUNTIME_PAGE_INDEX" "$EXPECTED_RUNTIME_PAGE_ID" \
@@ -460,40 +497,9 @@ else
     printf '%s\n' "runtime-rendered evidence is not required for this scenario" >"$RUNTIME_ASSERTIONS"
 fi
 
-set +e
-xcrun simctl spawn booted log show \
-    --style compact \
-    --last 2m \
-    --predicate 'process == "TuberNotes"' >"$CONSOLE_LOG" 2>&1
-console_exit=$?
-set -e
-if [[ $console_exit -eq 0 ]]; then
-    console_status="captured"
-    grep -Ei 'Fatal error|Terminating app due to uncaught exception|abort trap' "$CONSOLE_LOG" >"$CONSOLE_ERRORS" || true
-    if [[ -s "$CONSOLE_ERRORS" ]]; then
-        console_status="fatal-patterns-present"
-        pass=0
-    fi
-else
-    printf '%s\n' "log capture failed with exit $console_exit" >"$CONSOLE_ERRORS"
-    console_status="capture-failed"
-    pass=0
-fi
-
-: >"$CRASH_HITS"
-for crash_root in "$HOME/Library/Logs/DiagnosticReports" "$HOME/Library/Logs/CoreSimulator"; do
-    if [[ -d "$crash_root" ]]; then
-        find "$crash_root" -type f \
-            \( -name '*TuberNotes*.crash' -o -name '*TuberNotes*.ips' \) \
-            -newer "$LAUNCH_MARKER" -print >>"$CRASH_HITS" 2>/dev/null || true
-    fi
-done
-if [[ -s "$CRASH_HITS" ]]; then
-    crash_status="fail-new-report"
-    pass=0
-else
-    crash_status="pass-no-new-report"
-fi
+printf '%s\n' "Not collected by the physical-device verifier; report a separate attached console session if used." >"$CONSOLE_LOG"
+: >"$CONSOLE_ERRORS"
+printf '%s\n' "Not collected by the physical-device verifier; report device diagnostics separately if inspected." >"$CRASH_HITS"
 
 note "CONSOLE: $console_status"
 note "console_log: $CONSOLE_LOG"
@@ -515,7 +521,7 @@ if [[ "$FORCE_MECHANICAL_FAILURE" == "1" ]]; then
 fi
 
 if [[ $pass -eq 1 ]]; then
-    note "MECHANICAL_ASSERTION: PASS (launch, fixture declaration, required runtime-rendered evidence, screenshot integrity, console capture/fatal scan, new-crash scan)"
+    note "MECHANICAL_ASSERTION: PASS (physical-device build/install/launch, fixture declaration, and required runtime-rendered evidence)"
 else
     note "MECHANICAL_ASSERTION: FAIL (one or more required mechanical checks failed or were incomplete)"
 fi
@@ -525,7 +531,7 @@ if [[ "$INTEGRATION_READINESS" == "partial-stub" ]]; then
 elif [[ "$INTEGRATION_READINESS" == "ready-for-app-wiring" ]]; then
     note "UI_EXPECTED_STATE: PENDING coordinator App wiring; this result does not accept the described UI state"
 else
-    note "UI_EXPECTED_STATE: requires screenshot inspection; verifier does not judge layout or taste"
+    note "UI_EXPECTED_STATE: requires inspection on the physical iPad; verifier does not capture or judge the visible frame"
 fi
 note "human_only: Apple Pencil feel/latency; visual taste; interaction quality"
 note ""

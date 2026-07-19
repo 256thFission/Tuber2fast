@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import shutil
 import tempfile
@@ -42,6 +43,7 @@ class FeedbackThreadTests(unittest.TestCase):
         server.FEEDBACK_EVENT_LOG = server.FEEDBACK_STORE / "event-log.jsonl"
         self.patchers = [
             mock.patch.object(server, "_select_target", return_value=self.target),
+            mock.patch.object(server, "_session_device_id", return_value="ipad-test"),
             mock.patch.object(server, "_push_to_target", side_effect=self._push),
             mock.patch.object(server, "_pull_from_target", side_effect=self._pull),
             mock.patch.object(server, "_launch_target", return_value={"process": "test"}),
@@ -483,6 +485,55 @@ class FeedbackThreadTests(unittest.TestCase):
         self.assertTrue(duplicate["idempotent"])
         self.assertEqual(duplicate["message"]["id"], presented["message"]["id"])
 
+    def test_codex_dispatch_suppresses_duplicate_wake_until_acknowledged(self):
+        created = self._create("codex-dispatch")
+        thread_id = created["feedback_thread_id"]
+        token = created["owner_token"]
+        sequence = self._append_remote_human(created, "Ready")
+
+        pending = server._get_feedback_watch_state(thread_id, token, after_sequence=1)
+        self.assertTrue(pending["wake_eligible"])
+        dispatched = server._record_feedback_wake_dispatch(
+            thread_id, token, pending["wake_id"], "turn-test", "start"
+        )
+        self.assertEqual(dispatched["dispatchedWakeID"], pending["wake_id"])
+
+        duplicate = server._get_feedback_watch_state(thread_id, token, after_sequence=1)
+        self.assertFalse(duplicate["wake_eligible"])
+        acknowledged = server._acknowledge_feedback_wake(
+            thread_id, token, pending["wake_id"], sequence
+        )
+        self.assertNotIn("dispatchedWakeID", acknowledged)
+        self.assertNotIn("bridgePID", acknowledged)
+
+    def test_arm_codex_bridge_passes_owner_capability_only_over_stdin(self):
+        created = self._create("codex-arm")
+
+        class CaptureInput(io.StringIO):
+            def close(self):
+                self.flushed_value = self.getvalue()
+                super().close()
+
+        class FakeProcess:
+            pid = 4242
+            stdin = CaptureInput()
+
+            def terminate(self):
+                raise AssertionError("bridge should not be terminated")
+
+        fake_process = FakeProcess()
+        with mock.patch.object(server.subprocess, "Popen", return_value=fake_process) as popen:
+            armed = server._arm_codex_feedback_wake(
+                created["feedback_thread_id"], created["owner_token"], 1, 1.0, 60.0
+            )
+
+        command = popen.call_args.args[0]
+        self.assertNotIn(created["owner_token"], " ".join(command))
+        registration = json.loads(fake_process.stdin.flushed_value)
+        self.assertEqual(registration["owner_token"], created["owner_token"])
+        self.assertEqual(registration["requester_id"], "terra-test")
+        self.assertEqual(armed["bridge_pid"], 4242)
+
     def test_plain_message_cannot_present_unactionable_step_while_awaiting_model(self):
         created = self._create("plain-message-rejected")
         thread_id = created["feedback_thread_id"]
@@ -669,6 +720,7 @@ class FeedbackThreadProtocolTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("await_thread_response", tool_names)
                 self.assertTrue({
                     "get_feedback_watch_state",
+                    "arm_codex_feedback_wake",
                     "acknowledge_feedback_wake",
                     "close_feedback_watch",
                     "create_review_run",

@@ -1,4 +1,4 @@
 interface:
   display_name: "Spatial Debugging"
   short_description: "Diagnose TuberNotes coordinate and Pin drift bugs."
-  default_prompt: "Trace this spatial bug across crop, page, canvas, and view coordinates; verify with fake-pin/multi-pin via DeveloperTools/verify-scenario.sh; report findings in the evidence packet."
+  default_prompt: "Use $spatial-debugging to trace this bug across crop, page, canvas, and view coordinates, verify it on the pinned physical iPad, and report findings in the evidence packet."

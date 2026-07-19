@@ -1,4 +1,4 @@
 interface:
   display_name: "Xcode Loop"
   short_description: "Build, launch, and visually verify TuberNotes."
-  default_prompt: "Use DeveloperTools/verify-scenario.sh (or the Docs/Development.md loop) to build and launch TuberNotes on its canonical iPad simulator, diagnose failures, and return an evidence packet for the user-visible change."
+  default_prompt: "Use $xcode-loop to pin the physical iPad, build, install, launch, and inspect the requested TuberNotes scenario, then return an evidence packet."

@@ -11,17 +11,16 @@ CONFIRMED=0
 
 usage() {
     cat <<'EOF'
-Usage: DeveloperTools/reset-feedback-state.sh --device <device-id> --confirm
+Usage: DeveloperTools/reset-feedback-state.sh --confirm
 
 Clears stale Debug feedback questions from both sides of the physical-device
 review loop:
-  1. validates that com.tubernotes.app is installed on the named device;
+  1. validates the pinned physical-iPad session and installed app;
   2. clears only this repo's gitignored .feedback-threads host mirror;
   3. launches TuberNotes once with TUBER_RESET_FEEDBACK_STATE=1;
   4. relaunches TuberNotes normally so the reset flag is not retained.
 
 Required:
-  --device <device-id>  Physical iPad identifier accepted by devicectl
   --confirm             Explicitly authorize deletion of Debug feedback state
 
 This command does not uninstall the app and does not delete notebooks, PDFs,
@@ -36,11 +35,6 @@ die() {
 
 while (($#)); do
     case "$1" in
-        --device)
-            (($# >= 2)) || die "--device requires a value"
-            DEVICE_ID="$2"
-            shift 2
-            ;;
         --confirm)
             CONFIRMED=1
             shift
@@ -55,9 +49,10 @@ while (($#)); do
     esac
 done
 
-[[ -n "$DEVICE_ID" ]] || die "--device is required"
 [[ "$CONFIRMED" == "1" ]] || die "refusing to clear feedback state without --confirm"
 command -v xcrun >/dev/null 2>&1 || die "xcrun is unavailable"
+DEVICE_ID="$(python3 "$ROOT/DeveloperTools/device_session.py" resolve)" \
+    || die "no valid physical-iPad session; run DeveloperTools/device-preflight.sh --device <device-id>"
 
 # Resolve and compare paths before any deletion. Refuse a symlink so the fixed
 # repo-local boundary cannot be redirected elsewhere.
