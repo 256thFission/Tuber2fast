@@ -47,13 +47,15 @@ class VerifyScenarioTruthfulnessTests(unittest.TestCase):
             "renderedPenFixtureName": None,
             "renderedAnnotationIDs": ["pin-a", "pin-b"],
             "heroStatus": None,
+            "renderedInkReference": None,
+            "restoredFromPersistence": False,
             "recordedAt": "2026-07-17T12:00:00Z",
         }
         evidence_path = self._write_evidence(evidence)
         args = [
             str(evidence_path), "edge-pins", "standalone-pin-surface", "1", "0",
             "10000000-0000-0000-0000-000000000002", "", "pin-a,pin-b", "",
-            "fresh-launch-nonce",
+            "", "false", "fresh-launch-nonce", "false",
         ]
         accepted = subprocess.run(
             ["python3", "-c", python_source, *args], capture_output=True, text=True
