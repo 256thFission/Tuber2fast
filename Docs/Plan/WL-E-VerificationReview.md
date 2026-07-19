@@ -11,6 +11,12 @@ scenario and expected evidence; review judgment stays with the coordinator.
 Keep the harness truthful as scenarios upgrade, and burn down the human-review
 debt using the existing packet guides so M4 can gate.
 
+Two-track note (July 19): duties split by track — **Track N (friend)** owns
+notebook-side verifier expectations and device reviews (Pencil feel, add-page,
+creation/import); **Track I (Phillip)** owns agent-scenario expectations and
+hero/conversation reviews. The M4 gate remains a single joint bar, run by the
+coordinator.
+
 ## Recurring duties
 
 1. **Verifier expectations track behavior.** As WL-A/B/C upgrade `lasso-crop`,

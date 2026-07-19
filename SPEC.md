@@ -32,6 +32,8 @@ This document is both a product specification and the coordination contract for 
 8. The hackathon build uses a DEBUG-only direct provider adapter with locally supplied configuration. The architecture must support a distributable app without embedding a provider secret.
 9. Selected pixels are the primary source of truth. OCR or extracted text may supplement but never replace an available image.
 10. Persistent spatial data is never stored in screen coordinates.
+11. (July 19, 2026) The long-press Pin conversation UI is promoted from deferred to critical-path scope. Follow-up turns reuse the retained selection and the `conversationID` hook on `InvestigationRequest`; no new contract surface is assumed.
+12. (July 19, 2026) Development splits into two human-owned tracks: the notebook substrate (SpatialCanvas, documents, ink, persistence) and the intelligence layer (AgentHarness, Knowledge, investigation/conversation UI). Phillip coordinates integration. The shared contracts in `TuberNotes/App/Contracts/` are the interface between tracks.
 
 ### Explicitly unresolved
 
@@ -39,7 +41,7 @@ This document is both a product specification and the coordination contract for 
 - Deployment location and authentication mechanism for the production agent gateway
 - Whether Ask voice input remains a reach goal or returns to the primary demo
 
-Changes to confirmed decisions or shared contracts require human review before implementation continues.
+Shared-contract changes no longer require review before implementation (Phillip, July 19, 2026): an agent may change a contract when the work requires it, but every contract-touching commit must carry a `CONTRACT:` prefix and a plan-log entry in `Docs/Plan/PLAN.md` naming the changed type and why, so either track can review and roll back cheaply. Changes to confirmed product decisions still require Phillip.
 
 ## 2. Product thesis
 
@@ -126,6 +128,7 @@ The blank notebook path proves that PDF support is a page background capability 
 - Truthful tool/progress events
 - Deterministic verification scenarios
 - Cancellation, retry, and safe failure behavior
+- Long-press Pin conversation UI with typed follow-ups (promoted July 19, 2026)
 
 ### Deferred until the hero path is reliable
 
@@ -139,7 +142,6 @@ The blank notebook path proves that PDF support is a page background capability 
 - Runtime DeepSeek-OCR preprocessing on iPad
 - Handwritten follow-up recognition
 - Voice Ask
-- Full long-press conversation UI
 - Agent-drawn connectors
 - Semantic Pin clustering
 - Visual correction overlays

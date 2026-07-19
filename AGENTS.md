@@ -7,7 +7,7 @@ TuberNotes is a one-week iPad hackathon. Prioritize: (1) hero interaction qualit
 - Prefer the smallest implementation that proves the current milestone. For a small change, make a small change.
 - Do not rewrite working systems unnecessarily or create large test suites for trivial changes.
 - Compilation alone does not verify user-visible work; run and inspect it.
-- Work autonomously inside established architectural contracts. Shared contracts or architecture changes require human review.
+- Work autonomously inside established architectural contracts. A shared-contract change may be implemented without prior review, but the commit must carry a `CONTRACT:` prefix and a `Docs/Plan/PLAN.md` log entry naming the changed type and why — Phillip reviews after the fact and may roll back. Architecture-ownership changes still require Phillip first.
 - Never bypass OS security or permission boundaries.
 - Keep collaborator ownership clear: `App` integrates; `SpatialCanvas` owns Pencil/coordinates; `Pins` owns spatial UI; `AgentHarness` owns the in-product AI boundary; `Knowledge` owns retrieval; `DeveloperSupport` and `DeveloperTools` own fixtures/tooling.
 
@@ -32,7 +32,7 @@ Human Pencil capture and in-app review feedback go through Debug `DeveloperSuppo
 3. Use subagents only when explicitly requested, and only for independent bounded outputs with a concrete return contract. Keep architecture, integration, and final judgment with the coordinating agent.
 4. Treat build success as necessary but insufficient. Launch a deterministic scenario and inspect the result (`DeveloperTools/verify-scenario.sh` or the loop in `Docs/Development.md`).
 5. Return a compact evidence packet and artifact paths; keep full logs outside model context.
-6. Escalate shared contracts, architecture, permissions, external writes, secrets, irreversible actions, and human-only interaction judgments.
+6. Escalate architecture ownership, permissions, external writes, secrets, irreversible actions, and human-only interaction judgments. Shared-contract changes proceed under the `CONTRACT:` flag-and-log rule instead of stopping.
 7. After repeated verification failure, stop and report evidence instead of expanding scope or inventing workarounds.
 8. Turn recurrent failures into the smallest durable repo improvement that would have prevented them (rule → Skill → fixture/scenario → narrow check).
 
@@ -49,7 +49,7 @@ For substantial work, follow this loop and stop when the named condition is met:
 7. **Final diff inspection** — reject unrelated churn, ownership violations, and speculative abstractions.
 8. **Stop** — report the evidence packet, artifact paths, and unresolved issues.
 
-Stop and report when: acceptance evidence is collected; a shared-contract or architecture change needs approval; verification fails twice without a narrower fix; or the next step would bypass a security/permission boundary.
+Stop and report when: acceptance evidence is collected; an architecture-ownership change needs approval; verification fails twice without a narrower fix; or the next step would bypass a security/permission boundary. Shared-contract changes do not stop work — flag and log them per the `CONTRACT:` rule.
 
 ## Evidence packet
 

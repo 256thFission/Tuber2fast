@@ -1,10 +1,9 @@
 # TuberNotes — Execution Plan (parent doc)
 
-This is the single long-running coordination document. It replaces all prior
-handoffs (`M0V2*`, `FeedbackThreads*`, `OpenCodeAuthReproduction` handoffs —
-deleted July 19, 2026). One work line = one child doc = one bounded task.
+This is the single long-running coordination document. One work line = one
+child doc = one bounded task.
 
-Authority chain: `SPEC.md` (frozen product contracts) → `AGENTS.md` (operating
+Authority chain: `SPEC.md` (product contracts) → `AGENTS.md` (operating
 contract) → this plan (current execution) → child docs (per-line detail).
 
 ## Decisions locked (Phillip, July 19, 2026)
@@ -12,74 +11,101 @@ contract) → this plan (current execution) → child docs (per-line detail).
 1. **Horizon:** ~1 week+ to demo-ready.
 2. **Demo agent:** deterministic **recorded** agent on stage (M1 loop). Live
    provider (M2) is a gated stretch, never a demo dependency.
-3. **Live-provider spike is retained** (`DebugCodex*`, `ResponsesSSEDecoder`,
-   `CodexAdapterTests`, `OpenCodeAuthReproduction`) and becomes WL-D, behind
-   the `AgentClient` protocol. It must never leak into the M1 path.
+3. **Live-provider spike is retained** and becomes WL-D, behind the
+   `AgentClient` protocol. It must never leak into the M1 path.
 4. **Persistence/relaunch, PDF import, and notebook creation are in scope.**
-5. The only pre-approved shared-contract addition is the
-   `persistence-relaunch` scenario name (see WL-C). Everything else escalates.
+5. **Two-human split:** Phillip's friend owns the **notebook substrate**
+   (Track N: SpatialCanvas, documents, ink, persistence, Pin projection).
+   Phillip owns the **intelligence layer** (Track I: AgentHarness, Knowledge,
+   investigation/conversation UI). **Phillip keeps coordination**: merges to
+   `main`, `RootView.swift` integration, and final judgment. Track N never
+   edits `RootView.swift` or Track I subsystems, and vice versa.
+6. **Long-press Pin conversation UI is promoted into the main spec**
+   (SPEC §1 Confirmed #11) — it is Track I's headline deliverable after M1.
+7. **Contracts are soft:** any agent may change `TuberNotes/App/Contracts/`
+   or scenario contracts when the work requires it, without stopping.
+   Every contract-touching commit carries a `CONTRACT:` prefix and a plan-log
+   entry here naming the changed type and why. Phillip reviews after the fact
+   and rolls back if needed. Architecture-*ownership* changes still need
+   Phillip first.
 
 ## Status board
 
-Update the Status column and the log below when a work line changes state.
 States: `not-started` → `in-progress` → `mechanically-accepted` →
 `human-accepted`. Blockers get named inline.
 
-| Line | Child doc | Owner subsystem | Depends on | Status |
-|---|---|---|---|---|
-| P0 — Stabilize tree | [Phase0-Stabilize.md](Phase0-Stabilize.md) | coordinator | — | in-progress — mechanically accepted; overnight branch cleanup blocked by linked-worktree edits |
-| WL-A — Lasso capture + crop | [WL-A-LassoCrop.md](WL-A-LassoCrop.md) | SpatialCanvas | P0 | mechanically-accepted — merged; human Pencil review queued |
-| WL-B — Investigation UI | [WL-B-InvestigationUI.md](WL-B-InvestigationUI.md) | App | P0 (step 3 needs WL-A) | in-progress — steps 1–2 mechanically complete and merged; step 3 pending |
-| WL-C — Documents + persistence | [WL-C-DocumentsPersistence.md](WL-C-DocumentsPersistence.md) | App + DeveloperSupport | P0 | in-progress — implementation merged by direction; notebook acceptance blocked by device-service timeouts |
-| WL-D — Live adapter [stretch] | [WL-D-LiveAdapter.md](WL-D-LiveAdapter.md) | AgentHarness | P0; gated | not-started |
-| WL-E — Verification + review | [WL-E-VerificationReview.md](WL-E-VerificationReview.md) | DeveloperTools | continuous | not-started |
+### Coordination (Phillip)
+
+| Line | Child doc | Status |
+|---|---|---|
+| P0 — Stabilize tree | [Phase0-Stabilize.md](Phase0-Stabilize.md) | mechanically accepted; overnight-branch cleanup deferred (ignored by direction) |
+
+### Track N — Notebook substrate (friend)
+
+| Line | Child doc | Owner subsystem | Status |
+|---|---|---|---|
+| WL-A — Lasso capture + crop | [WL-A-LassoCrop.md](WL-A-LassoCrop.md) | SpatialCanvas | mechanically-accepted — merged; human Pencil review queued |
+| WL-C — Documents + persistence | [WL-C-DocumentsPersistence.md](WL-C-DocumentsPersistence.md) | App(Persistence) + DeveloperSupport | in-progress — merged by direction; notebook acceptance blocked by device-service timeouts |
+| WL-E(N) — Notebook device reviews | [WL-E-VerificationReview.md](WL-E-VerificationReview.md) §Track N | DeveloperTools | not-started |
+
+### Track I — Intelligence layer (Phillip)
+
+| Line | Child doc | Owner subsystem | Status |
+|---|---|---|---|
+| WL-B — Investigation UI | [WL-B-InvestigationUI.md](WL-B-InvestigationUI.md) | App | in-progress — steps 1–2 merged; step 3 (real lasso hookup) unblocked by WL-A |
+| WL-F — Conversation UI | [WL-F-ConversationUI.md](WL-F-ConversationUI.md) | App + AgentHarness | not-started — starts after WL-B step 3 |
+| WL-D — Live adapter [stretch] | [WL-D-LiveAdapter.md](WL-D-LiveAdapter.md) | AgentHarness | not-started; gated |
+| WL-E(I) — Agent-side verification | [WL-E-VerificationReview.md](WL-E-VerificationReview.md) §Track I | DeveloperTools | not-started |
 
 Dependency shape:
 
 ```text
-P0 (coordinator)
-    ├── WL-A ──┐
-    ├── WL-B ──┴─→ M1 deterministic point-back loop (demo core)
-    ├── WL-C ────→ repeatable/persistent demo
-    ├── WL-D ────→ M2 live flex (only if everything else is green)
-    └── WL-E ────→ truthful scenarios + human review → M4 demo candidate
+Track N (friend)              Track I (Phillip)
+  WL-A ✓ ────────────────────→ WL-B step 3 → M1 demo core
+  WL-C (device gate) ─→ repeatable demo      │
+                                             ├→ WL-F conversation UI
+                                             └→ WL-D live flex [gated]
+  Contracts (TuberNotes/App/Contracts/) are the interface.
+  WL-E rides both tracks → truthful scenarios + human review → M4
 ```
 
-Merge order into `main`: P0 → (WL-A, WL-C in any order) → WL-B steps as they
-complete → WL-E scenario updates ride with the line that changes behavior →
-WL-D last, only if green.
+Merge policy: **Phillip merges everything.** Track N delivers branches/PRs
+against the contracts; a line merges when its device-verified evidence bar
+passes — a device outage pauses the merge, it doesn't waive the gate (WL-C's
+pending notebook acceptance is the standing exception, by explicit direction,
+and gates further Track N merges until cleared).
 
 ## Session rules
 
 - Every session works **one** child doc. Before long-running work, restate its
   acceptance evidence, files in scope, non-goals, and stop point (AGENTS.md).
-- Subagents only when Phillip explicitly requests them, and only for WL-A,
-  WL-C, or WL-D — each stays inside one subsystem with a concrete return
-  contract. WL-B and all integration/merge judgment stay with the coordinator.
-  Never give a subagent work spanning two lines.
-- End each session by: updating the child doc's Status + Session log,
-  updating the status board row here, and producing an Evidence Packet
-  (`Docs/templates/EvidencePacket.md`) for user-visible changes.
-- Device work follows `Docs/DeviceWorkflow.md` (pin one iPad, verify, never
-  simulator-fallback) and the human-review session contract in `AGENTS.md`.
-- Frozen contracts (`TuberNotes/App/Contracts/`, scenario names/semantics,
-  architecture ownership) stop the line and escalate to Phillip.
+- Subagents only when Phillip explicitly requests them, and only for lines
+  marked subagent-eligible. Integration and merge judgment stay with the
+  coordinating agent.
+- End each session by: updating the child doc's Status + Session log, the
+  status board here, and an Evidence Packet for user-visible changes.
+- Device work follows `Docs/DeviceWorkflow.md` — one pinned iPad, sessions
+  serialize device access across BOTH tracks; never simulator-fallback.
+- Contract changes: allowed, `CONTRACT:`-flagged, plan-logged (decision 7).
 - Never modify `.cursor/`; never commit `__pycache__/`, `DerivedData*/`,
   `tmp/`, or `.tubernotes-device-session.json`.
+- Do not create standalone handoff docs; append here.
 
 ## Definition of done for the week
 
 1. **M1 gate passes** (SPEC §16) on the demo iPad: real lasso → crop → Check →
-   recorded events → real Pins; Retry without redraw; cancel/invalid output
-   safe. (WL-A + WL-B)
-2. **Repeatable demo state:** import or create a document, draw, get Pins,
-   relaunch — everything restored. (WL-C)
-3. **All runnable scenarios PASS** with rendered-runtime evidence; no scenario
-   claims more readiness than it has. (WL-E)
-4. **Human sign-off** on Pencil feel, spatial taste, hero timing via
-   human-device-loop. (WL-E / M4 gate)
-5. **Stretch, only if 1–4 green:** one live provider hero run behind the DEBUG
-   gate. (WL-D)
+   recorded events → real Pins; Retry without redraw; cancel/invalid safe.
+   (WL-A ✓ + WL-B step 3)
+2. **Repeatable demo state:** create/import, draw, get Pins, relaunch —
+   everything restored. (WL-C, pending device gate)
+3. **Conversation:** long-press an existing Pin → follow-up turn reusing the
+   retained selection → threaded reply renders. (WL-F)
+4. **All runnable scenarios PASS** with rendered-runtime evidence; no
+   scenario overstates readiness. (WL-E)
+5. **Human sign-off** on Pencil feel, spatial taste, hero + conversation
+   timing via human-device-loop. (WL-E / M4 gate)
+6. **Stretch, only if 1–5 green:** one live provider hero run behind the
+   DEBUG gate. (WL-D)
 
 ## Plan log
 
@@ -117,3 +143,7 @@ Append one line per meaningful state change: date, line, what changed.
   service blocker. A fresh two-attempt WL-C cycle again stopped before
   build/install with the exact iPad stuck `busy (Connecting)`; acceptance
   remains open.
+- 2026-07-19 — Plan restructured into Track N (friend: notebook substrate) and
+  Track I (Phillip: intelligence layer). Long-press conversation UI promoted
+  into SPEC critical path (WL-F created); contract-change policy softened to
+  the `CONTRACT:` flag-and-log rule; Phillip retains all coordination/merges.
