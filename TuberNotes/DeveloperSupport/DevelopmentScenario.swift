@@ -67,6 +67,7 @@ enum DevelopmentScenario: String, CaseIterable {
         let directory = documents.appendingPathComponent("developer-evidence", isDirectory: true)
         let url = directory.appendingPathComponent("scenario-selection.json")
         let runtimeURL = directory.appendingPathComponent("runtime-rendered.json")
+        let selectionCropURL = directory.appendingPathComponent("lasso-selection-crop.png")
         let fixture = scenario.fixture
         let currentPageIndex = fixture.currentPageID.flatMap { currentPageID in
             fixture.document?.pages.firstIndex(where: { $0.id == currentPageID })
@@ -91,6 +92,7 @@ enum DevelopmentScenario: String, CaseIterable {
         // A launch must produce fresh runtime evidence. Never let a prior launch's
         // rendered-state snapshot satisfy the verifier for a newly selected scenario.
         try? fileManager.removeItem(at: runtimeURL)
+        try? fileManager.removeItem(at: selectionCropURL)
         try? data.write(to: url, options: .atomic)
     }
 #endif
@@ -116,7 +118,8 @@ enum DevelopmentRuntimeEvidence {
         currentPageIndex: Int?,
         renderedPenFixtureName: String?,
         renderedAnnotationIDs: [UUID],
-        heroStatus: String? = nil
+        heroStatus: String? = nil,
+        selectionArtifact: SelectionArtifact? = nil
     ) {
         let verificationNonce = ProcessInfo.processInfo.environment["TUBER_VERIFY_NONCE"]
         let value: [String: Any] = [
@@ -130,6 +133,12 @@ enum DevelopmentRuntimeEvidence {
             "renderedPenFixtureName": (renderedPenFixtureName as Any?) ?? NSNull(),
             "renderedAnnotationIDs": renderedAnnotationIDs.map(\.uuidString).sorted(),
             "heroStatus": (heroStatus as Any?) ?? NSNull(),
+            "selectionID": (selectionArtifact?.id.uuidString as Any?) ?? NSNull(),
+            "selectionCropPath": selectionArtifact == nil ? NSNull() : "Documents/developer-evidence/lasso-selection-crop.png",
+            "selectionCropMediaType": (selectionArtifact?.crop.mediaType as Any?) ?? NSNull(),
+            "selectionCropPixelWidth": (selectionArtifact?.crop.pixelWidth as Any?) ?? NSNull(),
+            "selectionCropPixelHeight": (selectionArtifact?.crop.pixelHeight as Any?) ?? NSNull(),
+            "selectionPathPointCount": (selectionArtifact?.lassoPath.count as Any?) ?? NSNull(),
             "recordedAt": ISO8601DateFormatter().string(from: Date())
         ]
         guard JSONSerialization.isValidJSONObject(value),
@@ -181,6 +190,7 @@ struct DevelopmentScenarioFixture {
     let document: NotebookDocument?
     let currentPageID: UUID?
     let penFixturesByPageID: [UUID: PenFixture]
+    let lassoPathsByPageID: [UUID: [PageNormalizedPoint]]
     let annotations: [PageAnnotation]
     let expectsViewportTransition: Bool
 }
@@ -307,7 +317,22 @@ private enum DevelopmentScenarioFixtures {
                 ]
             )
         case .lassoCrop:
-            return later(family: .selection, expectedState: "known PDF and ink selection with an inspectable crop artifact")
+            return make(
+                family: .selection,
+                expectedState: "known PDF and ink selection with an inspectable crop artifact",
+                readiness: .appWired,
+                document: pdfDocument(currentPageID: ID.pdfPage2),
+                penFixtures: [ID.pdfPage2: diagonalFixture(name: "lasso-crop-ink", descending: false)],
+                lassoPaths: [
+                    ID.pdfPage2: [
+                        PageNormalizedPoint(x: 0.20, y: 0.28),
+                        PageNormalizedPoint(x: 0.76, y: 0.26),
+                        PageNormalizedPoint(x: 0.79, y: 0.66),
+                        PageNormalizedPoint(x: 0.24, y: 0.70),
+                        PageNormalizedPoint(x: 0.21, y: 0.31)
+                    ]
+                ]
+            )
         case .agentRecordedSuccess:
             return later(family: .agent, expectedState: "complete recorded agent event sequence")
         case .agentRecordedRetrieval:
@@ -330,6 +355,7 @@ private enum DevelopmentScenarioFixtures {
         readiness: DevelopmentScenarioFixture.IntegrationReadiness,
         document: NotebookDocument,
         penFixtures: [UUID: PenFixture] = [:],
+        lassoPaths: [UUID: [PageNormalizedPoint]] = [:],
         annotations: [PageAnnotation] = [],
         expectsViewportTransition: Bool = false
     ) -> DevelopmentScenarioFixture {
@@ -340,6 +366,7 @@ private enum DevelopmentScenarioFixtures {
             document: document,
             currentPageID: document.currentPageID,
             penFixturesByPageID: penFixtures,
+            lassoPathsByPageID: lassoPaths,
             annotations: annotations,
             expectsViewportTransition: expectsViewportTransition
         )
@@ -356,6 +383,7 @@ private enum DevelopmentScenarioFixtures {
             document: nil,
             currentPageID: nil,
             penFixturesByPageID: [:],
+            lassoPathsByPageID: [:],
             annotations: [],
             expectsViewportTransition: false
         )
