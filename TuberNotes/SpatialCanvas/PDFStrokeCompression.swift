@@ -22,8 +22,12 @@ enum PDFStrokeCompressor {
         }
 
         let tolerance = max(0, requestedTolerance)
-        let simplified = simplify(points, tolerance: tolerance)
-        let deviation = maximumDeviation(of: points, from: simplified)
+        let retainedIndices = simplify(points, tolerance: tolerance)
+        let simplified = retainedIndices.map { points[$0] }
+        let deviation = maximumDeviation(
+            of: points,
+            acrossSegmentsWithEndpointsAt: retainedIndices
+        )
         let validationSlack = max(CGFloat.ulpOfOne * 32, tolerance * 0.000_001)
 
         guard deviation <= tolerance + validationSlack else {
@@ -50,7 +54,7 @@ enum PDFStrokeCompressor {
     }
 
     /// Iterative RDP avoids recursion depth becoming dependent on Pencil sample count.
-    private static func simplify(_ points: [CGPoint], tolerance: CGFloat) -> [CGPoint] {
+    private static func simplify(_ points: [CGPoint], tolerance: CGFloat) -> [Int] {
         var retained = Array(repeating: false, count: points.count)
         retained[0] = true
         retained[points.count - 1] = true
@@ -80,26 +84,32 @@ enum PDFStrokeCompressor {
             }
         }
 
-        return zip(points, retained).compactMap { point, shouldRetain in
-            shouldRetain ? point : nil
+        return retained.indices.compactMap { index in
+            retained[index] ? index : nil
         }
     }
 
-    private static func maximumDeviation(of source: [CGPoint], from polyline: [CGPoint]) -> CGFloat {
-        guard polyline.count > 1 else {
-            return source.map { hypot($0.x - polyline[0].x, $0.y - polyline[0].y) }.max() ?? 0
-        }
-
+    /// RDP replaces each source span with the segment joining its retained
+    /// endpoints. Checking those spans directly preserves the tolerance
+    /// guarantee without comparing every sample to every emitted segment.
+    private static func maximumDeviation(
+        of source: [CGPoint],
+        acrossSegmentsWithEndpointsAt retainedIndices: [Int]
+    ) -> CGFloat {
         var maximum: CGFloat = 0
-        for point in source {
-            var nearest = CGFloat.greatestFiniteMagnitude
-            for index in 1..<polyline.count {
-                nearest = min(
-                    nearest,
-                    distanceFromSegment(point, start: polyline[index - 1], end: polyline[index])
+        for segmentIndex in 1..<retainedIndices.count {
+            let startIndex = retainedIndices[segmentIndex - 1]
+            let endIndex = retainedIndices[segmentIndex]
+            for sourceIndex in startIndex...endIndex {
+                maximum = max(
+                    maximum,
+                    distanceFromSegment(
+                        source[sourceIndex],
+                        start: source[startIndex],
+                        end: source[endIndex]
+                    )
                 )
             }
-            maximum = max(maximum, nearest)
         }
         return maximum
     }

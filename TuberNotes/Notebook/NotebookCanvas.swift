@@ -11,6 +11,7 @@ import UIKit
 struct NotebookCanvas: UIViewRepresentable {
     let pageID: UUID
     let drawingData: Data
+    let backgroundDrawingData: Data
     let tool: WritingTool
     let color: UIColor
     let width: CGFloat
@@ -23,12 +24,14 @@ struct NotebookCanvas: UIViewRepresentable {
     let images: [PlacedImage]
     let isArrangingImages: Bool
     let selectedImageID: UUID?
+    let isPageLocked: Bool
     var onChange: (Data) -> Void
     var onLongPress: () -> Void
     var onZoomChanged: (CGFloat) -> Void
     var onLassoChanged: (CGRect?) -> Void
     var onImagesChanged: ([PlacedImage]) -> Void
     var onSelectImage: (UUID?) -> Void
+    var onPageViewportChange: (CGRect) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -38,6 +41,8 @@ struct NotebookCanvas: UIViewRepresentable {
         view.canvasView.delegate = context.coordinator
         view.canvasView.tool = tool.pkTool(color: color, width: width)
         view.paperView.template = template
+        view.backgroundDrawingData = backgroundDrawingData
+        view.onPageViewportChange = onPageViewportChange
 
         let c = context.coordinator
         view.lassoView.onLoopComplete = { [weak c, weak view] points in c?.completeLasso(points, view) }
@@ -76,6 +81,8 @@ struct NotebookCanvas: UIViewRepresentable {
             view.paperView.setNeedsDisplay()
         }
         view.imageLayer.setImages(images)
+        view.backgroundDrawingData = backgroundDrawingData
+        view.onPageViewportChange = onPageViewportChange
         applyMode(to: view)
         if !isLassoActive || lassoRect == nil {
             view.lassoView.clear()
@@ -101,7 +108,8 @@ struct NotebookCanvas: UIViewRepresentable {
 
         let interacting = isLassoActive || isArrangingImages
         view.canvasView.isUserInteractionEnabled = !interacting
-        view.scrollView.isScrollEnabled = !interacting
+        view.scrollView.isScrollEnabled = !interacting && !isPageLocked
+        view.scrollView.pinchGestureRecognizer?.isEnabled = !interacting && !isPageLocked
 
         view.straightenRecognizer.acceptsFinger = fingerDrawing
         view.straightenRecognizer.isEnabled = snapStraight && !interacting && tool != .eraser
@@ -227,7 +235,11 @@ struct NotebookCanvas: UIViewRepresentable {
         // MARK: Zoom
 
         func viewForZooming(in scrollView: UIScrollView) -> UIView? { view?.contentView }
-        func scrollViewDidZoom(_ scrollView: UIScrollView) { view?.recenter() }
+        func scrollViewDidScroll(_ scrollView: UIScrollView) { view?.reportPageViewportIfNeeded() }
+        func scrollViewDidZoom(_ scrollView: UIScrollView) {
+            view?.recenter()
+            view?.reportPageViewportIfNeeded()
+        }
         func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) {
             parent.onZoomChanged(scale)
         }
@@ -445,9 +457,18 @@ final class ZoomablePageView: UIView {
     let contentView = UIView()
     let paperView = PaperSheetView()
     let imageLayer = ImageLayerView()
+    let backgroundInkView = UIImageView()
     let canvasView = PKCanvasView()
     let lassoView = LassoOverlayView()
     let straightenRecognizer = HoldStraightenRecognizer()
+    var onPageViewportChange: ((CGRect) -> Void)?
+    private var lastReportedPageViewportFrame = CGRect.null
+    var backgroundDrawingData = Data() {
+        didSet {
+            guard oldValue != backgroundDrawingData else { return }
+            updateBackgroundInk()
+        }
+    }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -482,6 +503,11 @@ final class ZoomablePageView: UIView {
         imageLayer.frame = contentView.bounds
         contentView.addSubview(imageLayer)
 
+        backgroundInkView.frame = contentView.bounds
+        backgroundInkView.backgroundColor = .clear
+        backgroundInkView.isUserInteractionEnabled = false
+        contentView.addSubview(backgroundInkView)
+
         canvasView.frame = contentView.bounds
         canvasView.backgroundColor = .clear
         canvasView.isOpaque = false
@@ -504,6 +530,7 @@ final class ZoomablePageView: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         recenter()
+        reportPageViewportIfNeeded()
     }
 
     func recenter() {
@@ -513,6 +540,19 @@ final class ZoomablePageView: UIView {
         let hInset = max(0, (scrollView.bounds.width - scaledW) / 2)
         let vInset = max(16, (scrollView.bounds.height - scaledH) / 2)
         scrollView.contentInset = UIEdgeInsets(top: vInset, left: hInset, bottom: 140, right: hInset)
+    }
+
+    func reportPageViewportIfNeeded() {
+        let frame = contentView.convert(contentView.bounds, to: self)
+        guard frame != lastReportedPageViewportFrame else { return }
+        lastReportedPageViewportFrame = frame
+        onPageViewportChange?(frame)
+    }
+
+    private func updateBackgroundInk() {
+        let drawing = (try? PKDrawing(data: backgroundDrawingData)) ?? PKDrawing()
+        let pageRect = CGRect(origin: .zero, size: NotebookPageLayout.size)
+        backgroundInkView.image = drawing.strokes.isEmpty ? nil : drawing.image(from: pageRect, scale: 1)
     }
 }
 

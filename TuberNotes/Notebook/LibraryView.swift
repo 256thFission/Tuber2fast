@@ -12,6 +12,9 @@ struct LibraryView: View {
     @State private var newTemplate: PageTemplate = .linedMedium
     @State private var renaming: Notebook?
     @State private var renameText = ""
+    @State private var pendingDeletion: Notebook?
+    @State private var openingNotebookID: UUID?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private let columns = [GridItem(.adaptive(minimum: 150, maximum: 200), spacing: 20)]
 
@@ -37,6 +40,7 @@ struct LibraryView: View {
                     Button { showingNew = true } label: {
                         Image(systemName: "plus")
                     }
+                    .accessibilityLabel("New notebook")
                     .accessibilityIdentifier("library-new-notebook")
                 }
             }
@@ -52,6 +56,21 @@ struct LibraryView: View {
                     renaming = nil
                 }
             }
+            .confirmationDialog(
+                "Delete \(pendingDeletion?.title ?? "notebook")?",
+                isPresented: deletionBinding,
+                titleVisibility: .visible
+            ) {
+                Button("Delete", role: .destructive) {
+                    if let notebook = pendingDeletion {
+                        store.delete(notebook)
+                    }
+                    pendingDeletion = nil
+                }
+                Button("Cancel", role: .cancel) { pendingDeletion = nil }
+            } message: {
+                Text("This notebook and all of its pages will be permanently deleted.")
+            }
         }
     }
 
@@ -61,16 +80,22 @@ struct LibraryView: View {
         ScrollView {
             LazyVGrid(columns: columns, spacing: 22) {
                 ForEach(store.notebooks) { notebook in
-                    NavigationLink(value: notebook.id) {
-                        NotebookCoverCard(notebook: notebook)
+                    Button {
+                        open(notebook)
+                    } label: {
+                        NotebookCoverCard(
+                            notebook: notebook,
+                            isOpening: openingNotebookID == notebook.id
+                        )
                     }
                     .buttonStyle(.plain)
+                    .disabled(openingNotebookID != nil)
                     .accessibilityIdentifier("notebook-card-\(notebook.id.uuidString)")
                     .contextMenu {
                         Button { beginRename(notebook) } label: {
                             Label("Rename", systemImage: "pencil")
                         }
-                        Button(role: .destructive) { store.delete(notebook) } label: {
+                        Button(role: .destructive) { pendingDeletion = notebook } label: {
                             Label("Delete", systemImage: "trash")
                         }
                     }
@@ -113,19 +138,25 @@ struct LibraryView: View {
                 Section("Cover") {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 54))], spacing: 14) {
                         ForEach(NotebookCover.allCases) { cover in
-                            Circle()
-                                .fill(cover.gradient)
-                                .frame(width: 44, height: 44)
-                                .overlay {
-                                    if cover == newCover {
-                                        Image(systemName: "checkmark")
-                                            .font(.headline)
-                                            .foregroundStyle(.white)
+                            Button {
+                                newCover = cover
+                            } label: {
+                                Circle()
+                                    .fill(cover.gradient)
+                                    .frame(width: 44, height: 44)
+                                    .overlay {
+                                        if cover == newCover {
+                                            Image(systemName: "checkmark")
+                                                .font(.headline)
+                                                .foregroundStyle(.white)
+                                        }
                                     }
-                                }
-                                .overlay(Circle().strokeBorder(.primary.opacity(0.1), lineWidth: 1))
-                                .onTapGesture { newCover = cover }
-                                .accessibilityIdentifier("cover-\(cover.rawValue)")
+                                    .overlay(Circle().strokeBorder(.primary.opacity(0.1), lineWidth: 1))
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("\(cover.displayName) cover")
+                            .accessibilityAddTraits(cover == newCover ? .isSelected : [])
+                            .accessibilityIdentifier("cover-\(cover.rawValue)")
                         }
                     }
                     .padding(.vertical, 6)
@@ -174,9 +205,32 @@ struct LibraryView: View {
         Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })
     }
 
+    private var deletionBinding: Binding<Bool> {
+        Binding(get: { pendingDeletion != nil }, set: { if !$0 { pendingDeletion = nil } })
+    }
+
     private func beginRename(_ notebook: Notebook) {
         renaming = notebook
         renameText = notebook.title
+    }
+
+    private func open(_ notebook: Notebook) {
+        guard openingNotebookID == nil else { return }
+        if reduceMotion {
+            path.append(notebook.id)
+            return
+        }
+
+        withAnimation(.spring(response: 0.34, dampingFraction: 0.72)) {
+            openingNotebookID = notebook.id
+        }
+
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(320))
+            guard openingNotebookID == notebook.id else { return }
+            path.append(notebook.id)
+            openingNotebookID = nil
+        }
     }
 }
 
@@ -184,6 +238,7 @@ struct LibraryView: View {
 
 struct NotebookCoverCard: View {
     let notebook: Notebook
+    var isOpening = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -192,14 +247,24 @@ struct NotebookCoverCard: View {
                 Rectangle()
                     .fill(.black.opacity(0.16))
                     .frame(width: 8)
-                Image(systemName: "book.closed.fill")
+                Image(systemName: isOpening ? "book.fill" : "book.closed.fill")
                     .foregroundStyle(.white.opacity(0.9))
                     .padding(14)
+                    .contentTransition(.symbolEffect(.replace))
+                    .symbolEffect(.bounce, options: .speed(1.35), value: isOpening)
             }
             .aspectRatio(3.0 / 4.0, contentMode: .fit)
             .clipShape(RoundedRectangle(cornerRadius: 14))
             .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(.white.opacity(0.15), lineWidth: 1))
             .shadow(color: .black.opacity(0.18), radius: 8, y: 5)
+            .rotation3DEffect(
+                .degrees(isOpening ? -7 : 0),
+                axis: (x: 0, y: 1, z: 0),
+                anchor: .leading,
+                perspective: 0.7
+            )
+            .scaleEffect(isOpening ? 1.035 : 1)
+            .shadow(color: .black.opacity(isOpening ? 0.25 : 0), radius: 14, x: 8, y: 7)
 
             Text(notebook.title)
                 .font(.subheadline.weight(.semibold))

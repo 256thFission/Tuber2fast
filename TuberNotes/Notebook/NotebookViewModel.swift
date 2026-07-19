@@ -4,7 +4,6 @@ import PencilKit
 import SwiftUI
 import UIKit
 
-/// One assistant observation shown in the sidebar.
 struct AgentObservation: Identifiable {
     let id = UUID()
     let summary: String
@@ -16,40 +15,62 @@ struct AgentObservation: Identifiable {
 @MainActor
 final class NotebookViewModel: ObservableObject {
     @Published var notebook: Notebook
-    @Published var currentIndex: Int = 0
+    @Published var currentIndex: Int = 0 {
+        didSet { selectFirstDrawingLayer() }
+    }
 
-    // Tool state
     @Published var tool: WritingTool = .pen
     @Published var inkColorHex: String = InkPalette.default
+
+    // Independent widths per tool so pen and highlighter keep their own size.
     @Published var penWidth: CGFloat = WritingTool.pen.defaultWidth
     @Published var pencilWidth: CGFloat = WritingTool.pencil.defaultWidth
     @Published var markerWidth: CGFloat = WritingTool.marker.defaultWidth
     @Published var eraserWidth: CGFloat = WritingTool.eraser.defaultWidth
 
-    // Lasso selection for the assistant
+    // Spatial selection, image placement, and page presentation.
     @Published var isLassoActive = false
-    @Published var lassoRect: CGRect?   // normalized (0...1) page-space rect
-
-    // Image placement
+    @Published var lassoRect: CGRect?
     @Published var isArrangingImages = false
     @Published var selectedImageID: UUID?
-
-    // Zoom + template
     @Published var zoomScale: CGFloat = 1
     @Published var lastTemplate: PageTemplate = .linedMedium
 
-    // Assistant
+    // Assistant output remains separate from persistent conversation layers.
     @Published var observations: [AgentObservation] = []
     @Published var isAnalyzing = false
     @Published var agentError: String?
+
+    @Published var conversationLayers: NoteConversationLayers {
+        didSet {
+            guard oldValue != conversationLayers else { return }
+            notebook.agenticLayers = conversationLayers.layers
+            scheduleSave()
+        }
+    }
+    @Published var selectedLayerID: UUID?
+    @Published var selectedDrawingLayerID: UUID?
+    @Published var isAgenticLayersActive = false
+    @Published var settings: NotebookSettings {
+        didSet {
+            guard oldValue != settings else { return }
+            notebook.settings = settings
+            scheduleSave()
+        }
+    }
 
     private let store: NotebookStore
     private var saveTask: Task<Void, Never>?
 
     init(notebook: Notebook, store: NotebookStore) {
+        let layers = notebook.agenticLayers
         self.notebook = notebook
         self.store = store
-        self.lastTemplate = notebook.pages.first?.template ?? .linedMedium
+        conversationLayers = NoteConversationLayers(noteID: notebook.id, layers: layers)
+        selectedLayerID = layers.first?.id
+        selectedDrawingLayerID = notebook.pages.first?.drawingLayers.first?.id
+        settings = notebook.settings ?? NotebookSettings()
+        lastTemplate = notebook.pages.first?.template ?? .linedMedium
     }
 
     // MARK: Derived
@@ -58,13 +79,24 @@ final class NotebookViewModel: ObservableObject {
     var currentPage: NotebookPage { notebook.pages[safe: currentIndex] ?? notebook.pages[0] }
     var currentPageID: UUID { currentPage.id }
     var currentTemplate: PageTemplate { currentPage.template }
+    var currentDrawingLayerID: UUID { currentDrawingLayer.id }
+    var currentDrawingLayer: DrawingLayer {
+        currentPage.drawingLayers.first { $0.id == selectedDrawingLayerID }
+            ?? currentPage.drawingLayers[0]
+    }
+    var backgroundDrawingData: Data {
+        let strokes = currentPage.drawingLayers
+            .filter { $0.isVisible && $0.id != currentDrawingLayerID }
+            .flatMap { $0.drawing.strokes }
+        return PKDrawing(strokes: strokes).dataRepresentation()
+    }
     var canGoBack: Bool { currentIndex > 0 }
     var canGoForward: Bool { currentIndex < notebook.pages.count - 1 }
     var pageLabel: String { "\(currentIndex + 1) / \(pageCount)" }
 
     // MARK: Tool state
 
-    var inkUIColor: UIColor { UIColor(hex: inkColorHex) ?? .label }
+    var inkUIColor: UIColor { UIColor(hex: inkColorHex) ?? .black }
     var inkColor: Color { Color(inkUIColor) }
 
     func selectColor(_ hex: String) {
@@ -84,19 +116,68 @@ final class NotebookViewModel: ObservableObject {
         isLassoActive.toggle()
         if isLassoActive { isArrangingImages = false }
     }
+
     func clearLasso() { lassoRect = nil }
 
-    // MARK: Images
+    func toggleFavoriteColor(_ hex: String) {
+        var updated = settings
+        if let index = updated.favoriteColors.firstIndex(where: {
+            $0.caseInsensitiveCompare(hex) == .orderedSame
+        }) {
+            updated.favoriteColors.remove(at: index)
+        } else {
+            updated.favoriteColors.append(hex.uppercased())
+        }
+        settings = updated
+    }
+
+    func isFavoriteColor(_ hex: String) -> Bool {
+        settings.favoriteColors.contains {
+            $0.caseInsensitiveCompare(hex) == .orderedSame
+        }
+    }
+
+    /// The width for whichever tool is active (bindable from the size popover).
+    var activeWidth: CGFloat {
+        get { width(for: tool) }
+        set { setWidth(newValue, for: tool) }
+    }
+
+    var widthRange: ClosedRange<CGFloat> { tool.widthRange }
+
+    func width(for tool: WritingTool) -> CGFloat {
+        switch tool {
+        case .pen:    penWidth
+        case .pencil: pencilWidth
+        case .marker: markerWidth
+        case .eraser: eraserWidth
+        }
+    }
+
+    func setWidth(_ width: CGFloat, for tool: WritingTool) {
+        let clamped = min(max(width, tool.widthRange.lowerBound), tool.widthRange.upperBound)
+        switch tool {
+        case .pen:    penWidth = clamped
+        case .pencil: pencilWidth = clamped
+        case .marker: markerWidth = clamped
+        case .eraser: eraserWidth = clamped
+        }
+    }
+
+    // MARK: Images and page presentation
 
     func addImage(data: Data, aspect: CGFloat) {
         guard notebook.pages.indices.contains(currentIndex) else { return }
-        let normWidth: CGFloat = 0.6
+        let normalizedWidth: CGFloat = 0.6
         let page = NotebookPageLayout.size
-        let pxWidth = normWidth * page.width
-        let pxHeight = pxWidth / max(aspect, 0.05)
-        let normHeight = min(pxHeight / page.height, 0.85)
-        let rect = CGRect(x: (1 - normWidth) / 2, y: max(0.05, (1 - normHeight) / 2),
-                          width: normWidth, height: normHeight)
+        let pointWidth = normalizedWidth * page.width
+        let normalizedHeight = min((pointWidth / max(aspect, 0.05)) / page.height, 0.85)
+        let rect = CGRect(
+            x: (1 - normalizedWidth) / 2,
+            y: max(0.05, (1 - normalizedHeight) / 2),
+            width: normalizedWidth,
+            height: normalizedHeight
+        )
         let placed = PlacedImage(imageData: data, rect: rect)
         notebook.pages[currentIndex].images.append(placed)
         selectedImageID = placed.id
@@ -130,36 +211,11 @@ final class NotebookViewModel: ObservableObject {
         selectedImageID = nil
     }
 
-    var activeWidth: CGFloat {
-        get {
-            switch tool {
-            case .pen:    penWidth
-            case .pencil: pencilWidth
-            case .marker: markerWidth
-            case .eraser: eraserWidth
-            }
-        }
-        set {
-            switch tool {
-            case .pen:    penWidth = newValue
-            case .pencil: pencilWidth = newValue
-            case .marker: markerWidth = newValue
-            case .eraser: eraserWidth = newValue
-            }
-        }
-    }
-
-    var widthRange: ClosedRange<CGFloat> { tool.widthRange }
-
-    // MARK: Zoom
-
     func setZoom(_ value: CGFloat) { zoomScale = min(max(value, 0.5), 5) }
-    func zoomIn()  { setZoom(zoomScale + 0.25) }
+    func zoomIn() { setZoom(zoomScale + 0.25) }
     func zoomOut() { setZoom(zoomScale - 0.25) }
     func resetZoom() { setZoom(1) }
     var zoomLabel: String { "\(Int((zoomScale * 100).rounded()))%" }
-
-    // MARK: Templates
 
     func setTemplate(_ template: PageTemplate) {
         guard notebook.pages.indices.contains(currentIndex) else { return }
@@ -172,9 +228,62 @@ final class NotebookViewModel: ObservableObject {
 
     func updateCurrentDrawing(_ data: Data) {
         guard notebook.pages.indices.contains(currentIndex) else { return }
-        guard notebook.pages[currentIndex].drawingData != data else { return }
-        notebook.pages[currentIndex].drawingData = data
+        guard let layerIndex = notebook.pages[currentIndex].drawingLayers.firstIndex(where: {
+            $0.id == currentDrawingLayerID
+        }) else { return }
+        guard notebook.pages[currentIndex].drawingLayers[layerIndex].drawingData != data else { return }
+        notebook.pages[currentIndex].drawingLayers[layerIndex].drawingData = data
         scheduleSave()
+    }
+
+    func addDrawingLayer(named rawName: String) {
+        let name = normalizedName(rawName, fallback: "Drawing \(currentPage.drawingLayers.count + 1)")
+        let layer = DrawingLayer(name: name)
+        notebook.pages[currentIndex].drawingLayers.append(layer)
+        selectedDrawingLayerID = layer.id
+        scheduleSave()
+    }
+
+    func selectDrawingLayer(_ id: UUID) {
+        guard currentPage.drawingLayers.contains(where: { $0.id == id && $0.isVisible }) else { return }
+        selectedDrawingLayerID = id
+    }
+
+    func toggleDrawingLayerVisibility(_ id: UUID) {
+        guard let index = notebook.pages[currentIndex].drawingLayers.firstIndex(where: { $0.id == id }) else { return }
+        let layer = notebook.pages[currentIndex].drawingLayers[index]
+        if layer.isVisible,
+           currentPage.drawingLayers.filter(\.isVisible).count == 1 {
+            return
+        }
+        notebook.pages[currentIndex].drawingLayers[index].isVisible.toggle()
+        selectFirstDrawingLayer()
+        scheduleSave()
+    }
+
+    func addAgenticLayer(named rawName: String) {
+        let name = normalizedName(rawName, fallback: "Agent \(conversationLayers.layers.count + 1)")
+        let layer = ConversationLayer(
+            id: UUID(),
+            name: name,
+            symbolName: "sparkles",
+            conversations: []
+        )
+        conversationLayers.layers.append(layer)
+        selectedLayerID = layer.id
+    }
+
+    func selectAgenticLayer(_ id: UUID) {
+        guard conversationLayers.layers.contains(where: { $0.id == id && $0.isVisible }) else { return }
+        selectedLayerID = id
+    }
+
+    func toggleAgenticLayerVisibility(_ id: UUID) {
+        guard let index = conversationLayers.layers.firstIndex(where: { $0.id == id }) else { return }
+        conversationLayers.layers[index].isVisible.toggle()
+        if !conversationLayers.layers.contains(where: { $0.id == selectedLayerID && $0.isVisible }) {
+            selectedLayerID = conversationLayers.layers.first(where: \.isVisible)?.id
+        }
     }
 
     // MARK: Pages
@@ -202,13 +311,22 @@ final class NotebookViewModel: ObservableObject {
         persistNow()
     }
 
-    func goForward() { guard canGoForward else { return }; currentIndex += 1; resetZoom(); persistNow() }
-    func goBack()    { guard canGoBack else { return }; currentIndex -= 1; resetZoom(); persistNow() }
+    func goForward() {
+        guard canGoForward else { return }
+        currentIndex += 1
+        resetZoom()
+        persistNow()
+    }
+
+    func goBack() {
+        guard canGoBack else { return }
+        currentIndex -= 1
+        resetZoom()
+        persistNow()
+    }
 
     // MARK: Assistant
 
-    /// Render the current page (white paper + ink) as JPEG for the vision model.
-    /// If a lasso region is selected, crop to it so the model focuses there.
     func makeSelectionSnapshot() -> SpatialSelection? {
         let drawing = currentPage.drawing
         let images = currentPage.images
@@ -216,39 +334,39 @@ final class NotebookViewModel: ObservableObject {
 
         let pageRect = CGRect(origin: .zero, size: NotebookPageLayout.size)
         let format = UIGraphicsImageRendererFormat.default()
-        format.scale = 1   // points == pixels, so cropping is straightforward
-        let renderer = UIGraphicsImageRenderer(size: pageRect.size, format: format)
-        let full = renderer.image { ctx in
+        format.scale = 1
+        let full = UIGraphicsImageRenderer(size: pageRect.size, format: format).image { context in
             UIColor.white.setFill()
-            ctx.fill(pageRect)
+            context.fill(pageRect)
             for placed in images {
-                guard let ui = placed.image else { continue }
-                let r = CGRect(x: placed.rect.minX * pageRect.width, y: placed.rect.minY * pageRect.height,
-                               width: placed.rect.width * pageRect.width, height: placed.rect.height * pageRect.height)
-                ui.draw(in: r)
+                guard let image = placed.image else { continue }
+                image.draw(in: CGRect(
+                    x: placed.rect.minX * pageRect.width,
+                    y: placed.rect.minY * pageRect.height,
+                    width: placed.rect.width * pageRect.width,
+                    height: placed.rect.height * pageRect.height
+                ))
             }
             drawing.image(from: pageRect, scale: 1).draw(in: pageRect)
         }
 
-        var normalized = CGRect(x: 0, y: 0, width: 1, height: 1)
+        var normalizedBounds = CGRect(x: 0, y: 0, width: 1, height: 1)
         var output = full
-
-        if let lasso = lassoRect {
-            let denorm = CGRect(
-                x: lasso.minX * pageRect.width,
-                y: lasso.minY * pageRect.height,
-                width: lasso.width * pageRect.width,
-                height: lasso.height * pageRect.height
+        if let lassoRect {
+            let crop = CGRect(
+                x: lassoRect.minX * pageRect.width,
+                y: lassoRect.minY * pageRect.height,
+                width: lassoRect.width * pageRect.width,
+                height: lassoRect.height * pageRect.height
             ).insetBy(dx: -14, dy: -14).intersection(pageRect).integral
-
-            if denorm.width > 10, denorm.height > 10, let cg = full.cgImage?.cropping(to: denorm) {
-                output = UIImage(cgImage: cg)
-                normalized = lasso
+            if crop.width > 10, crop.height > 10, let image = full.cgImage?.cropping(to: crop) {
+                output = UIImage(cgImage: image)
+                normalizedBounds = lassoRect
             }
         }
 
         guard let data = output.jpegData(compressionQuality: 0.8) else { return nil }
-        return SpatialSelection(pageID: currentPageID, normalizedBounds: normalized, imageData: data)
+        return SpatialSelection(pageID: currentPageID, normalizedBounds: normalizedBounds, imageData: data)
     }
 
     func analyzeCurrentPage(apiKey: String, question: String? = nil) {
@@ -293,6 +411,18 @@ final class NotebookViewModel: ObservableObject {
     func persistNow() {
         saveTask?.cancel()
         store.save(notebook)
+    }
+
+    private func selectFirstDrawingLayer() {
+        guard notebook.pages.indices.contains(currentIndex) else { return }
+        let layers = notebook.pages[currentIndex].drawingLayers
+        if layers.contains(where: { $0.id == selectedDrawingLayerID && $0.isVisible }) { return }
+        selectedDrawingLayerID = layers.first(where: \.isVisible)?.id ?? layers[0].id
+    }
+
+    private func normalizedName(_ name: String, fallback: String) -> String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? fallback : trimmed
     }
 }
 

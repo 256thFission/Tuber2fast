@@ -18,13 +18,13 @@ struct PageFlipOverlay: View {
                     .font(.headline)
 
                 HStack(spacing: 28) {
-                    flipButton("chevron.left", enabled: vm.canGoBack) {
+                    flipButton("chevron.left", label: "Previous page", enabled: vm.canGoBack) {
                         withAnimation(.easeInOut) { vm.goBack() }
                     }
                     Text(vm.pageLabel)
                         .font(.title3.monospacedDigit().weight(.semibold))
                         .frame(minWidth: 90)
-                    flipButton("chevron.right", enabled: vm.canGoForward) {
+                    flipButton("chevron.right", label: "Next page", enabled: vm.canGoForward) {
                         withAnimation(.easeInOut) { vm.goForward() }
                     }
                 }
@@ -89,7 +89,12 @@ struct PageFlipOverlay: View {
         }
     }
 
-    private func flipButton(_ symbol: String, enabled: Bool, action: @escaping () -> Void) -> some View {
+    private func flipButton(
+        _ symbol: String,
+        label: String,
+        enabled: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: 24, weight: .semibold))
@@ -98,6 +103,7 @@ struct PageFlipOverlay: View {
                 .background(Circle().fill(.primary.opacity(0.08)))
         }
         .disabled(!enabled)
+        .accessibilityLabel(label)
     }
 }
 

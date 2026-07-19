@@ -9,24 +9,46 @@ struct Notebook: Identifiable, Codable, Equatable {
     var title: String
     var cover: NotebookCover
     var pages: [NotebookPage]
+    var agenticLayers: [ConversationLayer]
     var createdAt: Date
     var updatedAt: Date
+    var settings: NotebookSettings?
 
     init(
         id: UUID = UUID(),
         title: String,
         cover: NotebookCover = .indigo,
         pages: [NotebookPage] = [NotebookPage()],
+        agenticLayers: [ConversationLayer] = [
+            ConversationLayer(
+                id: UUID(),
+                name: "Assistant",
+                symbolName: "sparkles",
+                conversations: []
+            )
+        ],
         createdAt: Date = Date(),
-        updatedAt: Date = Date()
+        updatedAt: Date = Date(),
+        settings: NotebookSettings? = NotebookSettings()
     ) {
         self.id = id
         self.title = title
         self.cover = cover
         self.pages = pages.isEmpty ? [NotebookPage()] : pages
+        self.agenticLayers = agenticLayers
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+        self.settings = settings
     }
+}
+
+struct NotebookSettings: Codable, Equatable {
+    var showsPageNavigation = true
+    var showsWritingTools = true
+    var showsLayers = true
+    var showsExport = true
+    var showsPageLock = true
+    var favoriteColors = [InkPalette.default, "#E11D2E", "#F4B400", "#1A73E8"]
 }
 
 // MARK: - Page
@@ -49,39 +71,57 @@ struct PlacedImage: Identifiable, Codable, Equatable {
 
 struct NotebookPage: Identifiable, Codable, Equatable {
     let id: UUID
-    /// Serialized `PKDrawing` in fixed page-space (`NotebookPageLayout.size`).
-    var drawingData: Data
+    var drawingLayers: [DrawingLayer]
     var createdAt: Date
     var template: PageTemplate
     var images: [PlacedImage]
 
     init(
         id: UUID = UUID(),
-        drawingData: Data = PKDrawing().dataRepresentation(),
+        drawingLayers: [DrawingLayer] = [DrawingLayer(name: "Drawing 1")],
         createdAt: Date = Date(),
         template: PageTemplate = .linedMedium,
         images: [PlacedImage] = []
     ) {
         self.id = id
-        self.drawingData = drawingData
+        self.drawingLayers = drawingLayers.isEmpty ? [DrawingLayer(name: "Drawing 1")] : drawingLayers
         self.createdAt = createdAt
         self.template = template
         self.images = images
     }
 
-    // Tolerant decoding so older saved notebooks (without newer fields) still load.
-    enum CodingKeys: String, CodingKey { case id, drawingData, createdAt, template, images }
+    // Tolerant decoding migrates the previous single-drawing page format into a layer.
+    enum CodingKeys: String, CodingKey {
+        case id, drawingLayers, drawingData, createdAt, template, images
+    }
+
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(UUID.self, forKey: .id)
-        drawingData = try c.decode(Data.self, forKey: .drawingData)
+        if let decodedLayers = try c.decodeIfPresent([DrawingLayer].self, forKey: .drawingLayers),
+           !decodedLayers.isEmpty {
+            drawingLayers = decodedLayers
+        } else {
+            let legacyData = try c.decodeIfPresent(Data.self, forKey: .drawingData)
+                ?? PKDrawing().dataRepresentation()
+            drawingLayers = [DrawingLayer(name: "Drawing 1", drawingData: legacyData)]
+        }
         createdAt = try c.decode(Date.self, forKey: .createdAt)
         template = try c.decodeIfPresent(PageTemplate.self, forKey: .template) ?? .linedMedium
         images = try c.decodeIfPresent([PlacedImage].self, forKey: .images) ?? []
     }
 
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(drawingLayers, forKey: .drawingLayers)
+        try c.encode(createdAt, forKey: .createdAt)
+        try c.encode(template, forKey: .template)
+        try c.encode(images, forKey: .images)
+    }
+
     var drawing: PKDrawing {
-        (try? PKDrawing(data: drawingData)) ?? PKDrawing()
+        PKDrawing(strokes: drawingLayers.filter(\.isVisible).flatMap { $0.drawing.strokes })
     }
 
     /// Small white-backed render (images under ink), for strips and thumbnails.
@@ -105,6 +145,29 @@ struct NotebookPage: Identifiable, Codable, Equatable {
                     .draw(in: CGRect(origin: .zero, size: size))
             }
         }
+    }
+}
+
+struct DrawingLayer: Identifiable, Codable, Equatable {
+    let id: UUID
+    var name: String
+    var drawingData: Data
+    var isVisible: Bool
+
+    init(
+        id: UUID = UUID(),
+        name: String,
+        drawingData: Data = PKDrawing().dataRepresentation(),
+        isVisible: Bool = true
+    ) {
+        self.id = id
+        self.name = name
+        self.drawingData = drawingData
+        self.isVisible = isVisible
+    }
+
+    var drawing: PKDrawing {
+        (try? PKDrawing(data: drawingData)) ?? PKDrawing()
     }
 }
 
@@ -172,7 +235,7 @@ enum WritingTool: String, CaseIterable, Identifiable {
         case .pen:    PKInkingTool(.pen, color: color, width: width)
         case .pencil: PKInkingTool(.pencil, color: color, width: width)
         case .marker: PKInkingTool(.marker, color: color.withAlphaComponent(0.4), width: width)
-        case .eraser: PKEraserTool(.bitmap, width: width) // iOS 16.4+
+        case .eraser: PKEraserTool(.bitmap, width: width)
         }
     }
 
@@ -224,5 +287,11 @@ extension UIColor {
         var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
         getRed(&r, green: &g, blue: &b, alpha: &a)
         return String(format: "#%02X%02X%02X", Int(r * 255), Int(g * 255), Int(b * 255))
+    }
+
+    var isLight: Bool {
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        guard getRed(&r, green: &g, blue: &b, alpha: &a) else { return false }
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.62
     }
 }
