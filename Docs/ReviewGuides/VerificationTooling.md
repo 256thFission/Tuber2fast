@@ -7,11 +7,11 @@ truthfulness, and related developer checks.
 
 | Capability | Status |
 |---|---|
-| Build/install/launch and screenshot capture | **IMPLEMENTED + VERIFIED** |
+| Pinned-device build/install/launch | **IMPLEMENTED + VERIFIED** |
 | Fixture-declaration assertions | **IMPLEMENTED + VERIFIED** |
 | Separate runtime-rendered assertions | **IMPLEMENTED + VERIFIED** |
 | Per-launch nonce rejecting stale evidence | **IMPLEMENTED + VERIFIED** |
-| Console capture/fatal scan and new-crash scan | **IMPLEMENTED + VERIFIED** |
+| Physical screenshot, attached console, and device crash diagnostics | **OUTSIDE VERIFIER; REPORT SEPARATELY** |
 | Accumulated failure state and forced-failure check | **IMPLEMENTED + VERIFIED** |
 | Pixel comparison, automated navigation, drift measurement, taste | **NOT IMPLEMENTED BY VERIFIER** |
 
@@ -28,7 +28,7 @@ This group normally uses **harness conformance**, not a visible human review
 session. Do not create feedback threads or Review Runs for queue state, marker
 contents, nonce matching, exit codes, console capture, or crash scanning.
 
-If a screenshot reveals a visual question, route that question to the owning
+If physical-iPad inspection reveals a visual question, route that question to the owning
 Documents/Ink, Spatial/Pins, or Agent/Knowledge guide instead.
 
 ## Mechanical packet
@@ -43,6 +43,7 @@ DeveloperTools/PencilFixtureMCP/.venv/bin/python -m unittest discover \
   -s DeveloperTools/PencilFixtureMCP/tests -p 'test_*.py'
 python3 -m unittest discover -s DeveloperTools/tests -p 'test_*.py'
 
+DeveloperTools/device-preflight.sh --device <device-id>
 SKIP_BUILD=1 DeveloperTools/verify-scenario.sh pin-drift
 SKIP_BUILD=1 DeveloperTools/verify-scenario.sh hero-recorded
 ```
@@ -67,15 +68,15 @@ guide's scenarios plus one forced-failure check when verifier logic changed.
 - Both carry the verifier's current per-launch nonce.
 - App-wired scenarios require exact surface, page, pen-fixture, and annotation state.
 - `hero-recorded` reports `partial-stub`, never App-wired acceptance.
-- Console capture failure contributes to the final failure state.
 - `MECHANICAL_ASSERTION: PASS` is reachable only when accumulated `pass == 1`.
 - A verifier PASS does not claim pixel correctness, navigation coverage, Pin-drift
-  measurement, Apple Pencil feel, or visual taste.
+  measurement, screenshot/console/crash coverage, Apple Pencil feel, or visual taste.
 
 ## Evidence and stop conditions
 
-Produce `Docs/templates/EvidencePacket.md` with command results, dynamic artifact
-directories, screenshots, console/crash status, and the expected forced-failure
+Produce `Docs/templates/EvidencePacket.md` with command results, the pinned-device
+session artifact, dynamic artifact directories, explicit collected/uncollected
+screenshot/console/crash status, and the expected forced-failure
 artifact. Stop on a stale-evidence acceptance, false PASS, missing runtime file,
-console-capture failure reported as success, scenario metadata divergence, or any
+scenario metadata divergence, device-session mismatch, or any
 claim beyond the verifier's documented limits.

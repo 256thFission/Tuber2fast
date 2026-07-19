@@ -7,11 +7,11 @@ multi-page-notebook, page-local ink, and Pencil drawing surfaces.
 
 | Capability | Status |
 |---|---|
-| Three-page PDF fixture and navigation | **IMPLEMENTED + SIMULATOR VERIFIED** |
+| Three-page PDF fixture and navigation | **IMPLEMENTED; PHYSICAL-IPAD RECHECK REQUIRED** |
 | One-page blank dot-grid notebook | **IMPLEMENTED + INITIAL STATE VERIFIED** |
 | App-owned notebook page addition | **IMPLEMENTED; DEVICE REVIEW REQUIRED** |
-| Multi-page notebook with page-specific canned drawings | **IMPLEMENTED + SIMULATOR VERIFIED** |
-| PDF pages with page-local canned ink | **IMPLEMENTED + SIMULATOR VERIFIED** |
+| Multi-page notebook with page-specific canned drawings | **IMPLEMENTED; PHYSICAL-IPAD RECHECK REQUIRED** |
+| PDF pages with page-local canned ink | **IMPLEMENTED; PHYSICAL-IPAD RECHECK REQUIRED** |
 | Pencil drawing surface | **IMPLEMENTED; PHYSICAL-IPAD REVIEW REQUIRED** |
 | Production persistence and relaunch restoration | **DEFERRED / NOT IMPLEMENTED** |
 
@@ -23,23 +23,22 @@ Relevant implementation:
 
 ## Mechanical preflight
 
-Build the canonical project and run these scenarios before creating a human
-packet:
+Pin the physical iPad, then build the canonical project and run these scenarios
+before creating a human packet:
 
 ```sh
-xcodebuild -project TuberNotes.xcodeproj -scheme TuberNotes \
-  -destination 'platform=iOS Simulator,name=iPad Pro 13-inch (M5)' \
-  -derivedDataPath DerivedData build
-
-SKIP_BUILD=1 DeveloperTools/verify-scenario.sh pdf-pages
+DeveloperTools/device-preflight.sh --device <device-id>
+DeveloperTools/verify-scenario.sh pdf-pages
 SKIP_BUILD=1 DeveloperTools/verify-scenario.sh blank-notebook
 SKIP_BUILD=1 DeveloperTools/verify-scenario.sh notebook-pages
 SKIP_BUILD=1 DeveloperTools/verify-scenario.sh ink-pages
 ```
 
-Privately confirm launch, exact scenario marker, fresh runtime evidence, expected
-page identity/count, screenshot integrity, console scan, and no new crash report.
-Inspect screenshots for missing surfaces, clipping, and catastrophic overlap.
+Privately confirm device build/install/launch, exact scenario marker, fresh
+runtime evidence, and expected page identity/count. Inspect the running iPad for
+missing surfaces, clipping, and catastrophic overlap. Record physical-device
+screenshot, attached-console, and crash-diagnostic evidence as collected or not
+collected; the verifier does not provide them.
 
 ## Packet plan
 
@@ -65,8 +64,7 @@ console state, or crash logs.
 
 ## Authentic Pencil packet
 
-Pencil feel cannot be accepted from simulator mouse input. Use
-`request_pen_fixture` for a separately named one-stroke capture, then collect it
+Use `request_pen_fixture` for a separately named one-stroke capture, then collect it
 through the human-device loop. Ask for one concrete stroke and, separately when
 appropriate, one short feel/latency verdict. Do not combine an exact stroke
 instruction with a PASS/FAIL request in the same step.

@@ -43,7 +43,8 @@ xcrun swiftc -parse-as-library -strict-concurrency=complete -warnings-as-errors 
   -o /tmp/tubernotes-agent-knowledge-checks
 /tmp/tubernotes-agent-knowledge-checks
 
-SKIP_BUILD=1 DeveloperTools/verify-scenario.sh hero-recorded
+DeveloperTools/device-preflight.sh --device <device-id>
+DeveloperTools/verify-scenario.sh hero-recorded
 ```
 
 Require `AGENT_KNOWLEDGE_CHECKS: PASS`. Privately confirm ordered events,
@@ -75,7 +76,7 @@ only that the recorded stub's composition is acceptable.
 
 ## Evidence and stop conditions
 
-Keep focused-test output, stub scenario artifacts, screenshot, console/crash state,
-and human layout verdict. Stop on a missing completion state, missing proposed Pin,
+Keep focused-test output, stub scenario artifacts, explicitly collected or
+uncollected screenshot/console/crash state, and human layout verdict. Stop on a missing completion state, missing proposed Pin,
 invalid spatial output, unreadable/obscuring Pin, or any attempt to expand the
 packet into acceptance of deferred behavior.

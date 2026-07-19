@@ -19,7 +19,9 @@ Fill this for user-visible TuberNotes changes. Keep it compact. Point to artifac
 ## Build
 
 - Result: pass / fail
-- Destination: `iPad Pro 13-inch (M5)`
+- Device preflight result:
+- Pinned physical-device ID:
+- Session snapshot: `.tubernotes-device-session.json` / copied artifact path
 - Log path (if any):
 
 ## Verification
@@ -27,8 +29,10 @@ Fill this for user-visible TuberNotes changes. Keep it compact. Point to artifac
 - Command / loop used: `DeveloperTools/verify-scenario.sh …` or manual
 - Scenario(s):
 - Expected state:
-- Screenshot path(s):
-- Console / crash status:
+- Physical-iPad inspection performed:
+- Screenshot path(s): collected path / not collected
+- Attached console status: collected path / not collected
+- Device crash diagnostics: collected path / not collected
 - Artifact directory:
 
 ## Mechanical checks
@@ -52,13 +56,15 @@ Use Skill `human-device-loop` / PencilFixtureMCP when Pencil feel, authentic str
 - Fixture path (if any):
 - Collected artifact dir (`.pencil-fixtures/collected/…`):
 
-## Automatic feedback wake (if used)
+## Feedback wake (if used)
 
 - Feedback thread ID:
 - Watch status: `watching` / `closed` / `feedback-created-but-not-armed`
 - Last acknowledged sequence:
 - Wake ID:
+- Delivery: active wait / event bridge / one-minute heartbeat fallback
 - Originating Codex task resumed automatically: yes / no
+- Desktop/CLI host divergence: none / details
 
 ## Human-only checks still required
 

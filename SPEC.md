@@ -1131,7 +1131,7 @@ The current source tree is a disposable integration scaffold, not an architectur
 
 - DEBUG human-device loop types and storage;
 - project bundle identity;
-- canonical simulator configuration; and
+- the explicit physical-iPad session defined in `Docs/DeviceWorkflow.md`; and
 - evidence templates.
 
 Do not perform a broad rewrite in one change. Each replacement must enter through a bounded work package, compile against frozen contracts, and prove its demoable-alone bar before integration.

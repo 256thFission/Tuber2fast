@@ -7,10 +7,10 @@ page transitions, and spatial stability.
 
 | Capability | Status |
 |---|---|
-| One and multiple deterministic interior Pins | **IMPLEMENTED + SIMULATOR VERIFIED** |
+| One and multiple deterministic interior Pins | **IMPLEMENTED; PHYSICAL-IPAD RECHECK REQUIRED** |
 | Canonical top/right/bottom/left edge Pins | **IMPLEMENTED + VISUALLY INSPECTED** |
-| Page-scoped deterministic zoom/pan state | **IMPLEMENTED + SIMULATOR VERIFIED** |
-| Pin anchoring across zoom, pan, page turn, return, and rotation | **IMPLEMENTED + SIMULATOR VERIFIED** |
+| Page-scoped deterministic zoom/pan state | **IMPLEMENTED; PHYSICAL-IPAD RECHECK REQUIRED** |
+| Pin anchoring across zoom, pan, page turn, return, and rotation | **IMPLEMENTED; PHYSICAL-IPAD RECHECK REQUIRED** |
 | Physical-iPad spatial feel and label taste | **DEVICE REVIEW REQUIRED** |
 | Arbitrary production gestures and every device geometry | **NOT FULLY VERIFIED** |
 
@@ -27,15 +27,17 @@ loop whenever diagnosing drift or coordinate conversion.
 ## Mechanical preflight
 
 ```sh
-SKIP_BUILD=1 DeveloperTools/verify-scenario.sh fake-pin
+DeveloperTools/device-preflight.sh --device <device-id>
+DeveloperTools/verify-scenario.sh fake-pin
 SKIP_BUILD=1 DeveloperTools/verify-scenario.sh multi-pin
 SKIP_BUILD=1 DeveloperTools/verify-scenario.sh edge-pins
 SKIP_BUILD=1 DeveloperTools/verify-scenario.sh pin-drift
 ```
 
 Privately verify exact annotation IDs supplied to rendering, the target page ID,
-fresh runtime evidence, screenshots, console/crash state, and accessibility
-controls. For `pin-drift`, mechanically exercise:
+fresh runtime evidence, and accessibility controls. Inspect the pinned iPad and
+record screenshots, console, and crash evidence as collected or not collected.
+For `pin-drift`, mechanically exercise:
 
 1. Target page begins fit to page.
 2. `Change viewport` reports zoomed and panned.

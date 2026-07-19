@@ -26,6 +26,7 @@ Model-independent handoff for continuing TuberNotes work in another session or a
 
 ## Verification performed
 
+- Physical-device session / preflight:
 - Build:
 - Scenario(s):
 - Artifact paths:
@@ -42,4 +43,4 @@ Model-independent handoff for continuing TuberNotes work in another session or a
 - Single next step:
 - Acceptance evidence for that step:
 - When to stop and report:
-- If human input is needed next: `create_feedback_thread` with an armed task heartbeat for review, or `request_pen_fixture` for authentic Pencil input, via Skill `human-device-loop`
+- If human input is needed next: use one asynchronous `create_review_run` for independent human-autonomous checks, or one guided `create_feedback_thread` for sequential checks. Actively wait, then arm the event bridge before yielding; use a one-minute heartbeat only if bridge registration fails. Use `request_pen_fixture` separately for authentic Pencil input.
