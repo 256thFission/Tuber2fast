@@ -4,7 +4,10 @@ import UIKit
 
 /// GoodNotes-style page with pinch/button zoom. Ruled paper, placed images, the
 /// PencilKit canvas, and the lasso overlay share one zooming content view.
-/// Images render under the ink so you can annotate on top of them.
+///
+/// The lasso works like a traditional lasso: loop around strokes to select them,
+/// then drag inside to move them. The selection's region is also what the
+/// assistant analyzes when you tap "Analyze selection".
 struct NotebookCanvas: UIViewRepresentable {
     let pageID: UUID
     let drawingData: Data
@@ -36,21 +39,19 @@ struct NotebookCanvas: UIViewRepresentable {
         view.canvasView.tool = tool.pkTool(color: color, width: width)
         view.paperView.template = template
 
-        let onLasso = onLassoChanged
-        view.lassoView.onFinished = { rect in
-            guard let r = rect else { onLasso(nil); return }
-            let page = NotebookPageLayout.size
-            onLasso(CGRect(x: r.minX / page.width, y: r.minY / page.height,
-                           width: r.width / page.width, height: r.height / page.height))
-        }
+        let c = context.coordinator
+        view.lassoView.onLoopComplete = { [weak c, weak view] points in c?.completeLasso(points, view) }
+        view.lassoView.beginMoveIfInside = { [weak c] p in c?.canMove(at: p) ?? false }
+        view.lassoView.onMove = { [weak c, weak view] delta in c?.moveSelection(by: delta, view) }
+        view.lassoView.onMoveEnded = { [weak c, weak view] in c?.commitMove(view) }
 
         view.imageLayer.onChange = onImagesChanged
         view.imageLayer.onSelect = onSelectImage
         view.imageLayer.setImages(images)
 
         view.straightenRecognizer.delegate = context.coordinator
-        view.straightenRecognizer.onHoldStraighten = { [weak coordinator = context.coordinator, weak view] start, end in
-            coordinator?.straighten(from: start, to: end, in: view)
+        view.straightenRecognizer.onHoldStraighten = { [weak c, weak view] start, end in
+            c?.straighten(from: start, to: end, in: view)
         }
 
         let longPress = UILongPressGestureRecognizer(
@@ -76,7 +77,10 @@ struct NotebookCanvas: UIViewRepresentable {
         }
         view.imageLayer.setImages(images)
         applyMode(to: view)
-        if lassoRect == nil { view.lassoView.clear() }
+        if !isLassoActive || lassoRect == nil {
+            view.lassoView.clear()
+            context.coordinator.clearLassoSelection()
+        }
         if context.coordinator.loadedPageID != pageID {
             context.coordinator.load(drawingData, pageID: pageID, into: view)
         }
@@ -109,6 +113,7 @@ struct NotebookCanvas: UIViewRepresentable {
         private(set) var loadedPageID: UUID?
         private var isLoading = false
         private var isProgrammatic = false
+        private var lassoSelection: [Int] = []
 
         init(_ parent: NotebookCanvas) { self.parent = parent }
 
@@ -117,6 +122,7 @@ struct NotebookCanvas: UIViewRepresentable {
             isLoading = true
             view.canvasView.drawing = (try? PKDrawing(data: data)) ?? PKDrawing()
             loadedPageID = pageID
+            lassoSelection = []
             DispatchQueue.main.async { self.isLoading = false }
         }
 
@@ -124,6 +130,67 @@ struct NotebookCanvas: UIViewRepresentable {
             guard !isLoading, !isProgrammatic else { return }
             parent.onChange(canvasView.drawing.dataRepresentation())
         }
+
+        // MARK: Lasso (select + move)
+
+        func clearLassoSelection() { lassoSelection = [] }
+
+        func completeLasso(_ points: [CGPoint], _ view: ZoomablePageView?) {
+            guard let view, points.count > 2 else { return }
+            let drawing = view.canvasView.drawing
+            lassoSelection = strokesInside(polygon: points, drawing: drawing)
+
+            var rect = CGRect.null
+            for i in lassoSelection where drawing.strokes.indices.contains(i) {
+                rect = rect.union(drawing.strokes[i].renderBounds)
+            }
+            if rect.isNull {
+                let xs = points.map(\.x), ys = points.map(\.y)
+                rect = CGRect(x: xs.min()!, y: ys.min()!, width: xs.max()! - xs.min()!, height: ys.max()! - ys.min()!)
+            }
+            rect = rect.insetBy(dx: -8, dy: -8)
+
+            view.lassoView.showSelection(rect)
+            parent.onLassoChanged(normalize(rect))
+        }
+
+        func canMove(at point: CGPoint) -> Bool { !lassoSelection.isEmpty }
+
+        func moveSelection(by delta: CGPoint, _ view: ZoomablePageView?) {
+            guard let view, !lassoSelection.isEmpty else { return }
+            var drawing = view.canvasView.drawing
+            let translate = CGAffineTransform(translationX: delta.x, y: delta.y)
+            for i in lassoSelection where drawing.strokes.indices.contains(i) {
+                drawing.strokes[i].transform = drawing.strokes[i].transform.concatenating(translate)
+            }
+            isProgrammatic = true
+            view.canvasView.drawing = drawing
+            isProgrammatic = false
+        }
+
+        func commitMove(_ view: ZoomablePageView?) {
+            guard let view else { return }
+            let drawing = view.canvasView.drawing
+            parent.onChange(drawing.dataRepresentation())
+
+            var rect = CGRect.null
+            for i in lassoSelection where drawing.strokes.indices.contains(i) {
+                rect = rect.union(drawing.strokes[i].renderBounds)
+            }
+            if !rect.isNull {
+                rect = rect.insetBy(dx: -8, dy: -8)
+                view.lassoView.showSelection(rect)
+                parent.onLassoChanged(normalize(rect))
+            }
+        }
+
+        private func normalize(_ rect: CGRect) -> CGRect {
+            let page = NotebookPageLayout.size
+            return CGRect(x: rect.minX / page.width, y: rect.minY / page.height,
+                          width: rect.width / page.width, height: rect.height / page.height)
+        }
+
+        // MARK: Hold-to-straighten
 
         func straighten(from start: CGPoint, to end: CGPoint, in view: ZoomablePageView?) {
             guard let view else { return }
@@ -157,7 +224,8 @@ struct NotebookCanvas: UIViewRepresentable {
             }
         }
 
-        // Zoom
+        // MARK: Zoom
+
         func viewForZooming(in scrollView: UIScrollView) -> UIView? { view?.contentView }
         func scrollViewDidZoom(_ scrollView: UIScrollView) { view?.recenter() }
         func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) {
@@ -170,6 +238,42 @@ struct NotebookCanvas: UIViewRepresentable {
 
         func gestureRecognizer(_ g: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
     }
+}
+
+// MARK: - Stroke selection helpers
+
+private func pointInPolygon(_ p: CGPoint, _ polygon: [CGPoint]) -> Bool {
+    guard polygon.count > 2 else { return false }
+    var inside = false
+    var j = polygon.count - 1
+    for i in 0..<polygon.count {
+        let a = polygon[i], b = polygon[j]
+        if (a.y > p.y) != (b.y > p.y) {
+            let slope = (p.y - a.y) / (b.y - a.y)
+            if p.x < a.x + slope * (b.x - a.x) { inside.toggle() }
+        }
+        j = i
+    }
+    return inside
+}
+
+private func strokesInside(polygon: [CGPoint], drawing: PKDrawing) -> [Int] {
+    var result: [Int] = []
+    for (i, stroke) in drawing.strokes.enumerated() {
+        var inside = 0, total = 0
+        for point in stroke.path {
+            let loc = point.location.applying(stroke.transform)
+            total += 1
+            if pointInPolygon(loc, polygon) { inside += 1 }
+        }
+        if total > 0, Double(inside) / Double(total) >= 0.5 {
+            result.append(i)
+        } else {
+            let c = CGPoint(x: stroke.renderBounds.midX, y: stroke.renderBounds.midY)
+            if pointInPolygon(c, polygon) { result.append(i) }
+        }
+    }
+    return result
 }
 
 // MARK: - Hold-to-straighten recognizer
@@ -229,8 +333,6 @@ final class HoldStraightenRecognizer: UIGestureRecognizer {
 
 // MARK: - Image layer
 
-/// Renders placed images (under the ink). When editing, tap to select, drag to
-/// move, pinch to resize the selected image.
 final class ImageLayerView: UIView {
     private(set) var images: [PlacedImage] = []
     private var views: [UUID: UIImageView] = [:]
@@ -260,11 +362,9 @@ final class ImageLayerView: UIView {
     func setImages(_ newImages: [PlacedImage]) {
         guard !interacting else { return }
         images = newImages
-        // Remove stale views
         for (id, v) in views where !newImages.contains(where: { $0.id == id }) {
             v.removeFromSuperview(); views[id] = nil
         }
-        // Add / update
         for placed in newImages {
             let v = views[placed.id] ?? {
                 let iv = UIImageView()
@@ -368,9 +468,9 @@ final class ZoomablePageView: UIView {
         scrollView.addSubview(contentView)
 
         contentView.layer.shadowColor = UIColor.black.cgColor
-        contentView.layer.shadowOpacity = 0.45
-        contentView.layer.shadowRadius = 22
-        contentView.layer.shadowOffset = CGSize(width: 0, height: 10)
+        contentView.layer.shadowOpacity = 0.5
+        contentView.layer.shadowRadius = 26
+        contentView.layer.shadowOffset = CGSize(width: 0, height: 12)
         contentView.layer.shadowPath = UIBezierPath(rect: CGRect(origin: .zero, size: page)).cgPath
 
         paperView.frame = contentView.bounds
@@ -416,22 +516,39 @@ final class ZoomablePageView: UIView {
     }
 }
 
-// MARK: - Lasso overlay
+// MARK: - Lasso overlay (loop to select, drag to move)
 
 final class LassoOverlayView: UIView {
-    private let shapeLayer = CAShapeLayer()
-    private var points: [CGPoint] = []
-    var onFinished: ((CGRect?) -> Void)?
+    private enum Mode { case idle, loop, move }
+
+    private let loopLayer = CAShapeLayer()
+    private let selectionLayer = CAShapeLayer()
+    private var loopPoints: [CGPoint] = []
+    private var mode: Mode = .idle
+    private var lastMovePoint: CGPoint = .zero
+    private(set) var selectionRect: CGRect?
+
+    var onLoopComplete: (([CGPoint]) -> Void)?
+    var beginMoveIfInside: ((CGPoint) -> Bool)?
+    var onMove: ((CGPoint) -> Void)?
+    var onMoveEnded: (() -> Void)?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         backgroundColor = .clear
-        shapeLayer.fillColor = UIColor.systemBlue.withAlphaComponent(0.10).cgColor
-        shapeLayer.strokeColor = UIColor.systemBlue.cgColor
-        shapeLayer.lineWidth = 2
-        shapeLayer.lineDashPattern = [6, 4]
-        shapeLayer.lineJoin = .round
-        layer.addSublayer(shapeLayer)
+
+        loopLayer.fillColor = UIColor.systemBlue.withAlphaComponent(0.08).cgColor
+        loopLayer.strokeColor = UIColor.systemBlue.cgColor
+        loopLayer.lineWidth = 2
+        loopLayer.lineDashPattern = [6, 4]
+        loopLayer.lineJoin = .round
+        layer.addSublayer(loopLayer)
+
+        selectionLayer.fillColor = UIColor.systemBlue.withAlphaComponent(0.06).cgColor
+        selectionLayer.strokeColor = UIColor.systemBlue.cgColor
+        selectionLayer.lineWidth = 1.5
+        selectionLayer.lineDashPattern = [6, 4]
+        layer.addSublayer(selectionLayer)
 
         let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
         pan.maximumNumberOfTouches = 1
@@ -442,57 +559,81 @@ final class LassoOverlayView: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        shapeLayer.frame = bounds
+        loopLayer.frame = bounds
+        selectionLayer.frame = bounds
     }
 
     @objc private func handlePan(_ gr: UIPanGestureRecognizer) {
         let p = gr.location(in: self)
         switch gr.state {
         case .began:
-            points = [p]
-            startMarching()
+            if let rect = selectionRect, rect.insetBy(dx: -20, dy: -20).contains(p),
+               beginMoveIfInside?(p) == true {
+                mode = .move
+                lastMovePoint = p
+            } else {
+                mode = .loop
+                loopPoints = [p]
+                selectionLayer.path = nil
+                selectionRect = nil
+                startMarching(loopLayer)
+            }
         case .changed:
-            points.append(p)
-            updatePath(closed: false)
+            if mode == .move {
+                let d = CGPoint(x: p.x - lastMovePoint.x, y: p.y - lastMovePoint.y)
+                lastMovePoint = p
+                onMove?(d)
+                if var r = selectionRect { r.origin.x += d.x; r.origin.y += d.y; showSelection(r) }
+            } else if mode == .loop {
+                loopPoints.append(p)
+                drawLoop(closed: false)
+            }
         case .ended, .cancelled:
-            updatePath(closed: true)
-            onFinished?(boundingRect())
+            if mode == .move {
+                onMoveEnded?()
+            } else if mode == .loop {
+                drawLoop(closed: true)
+                loopLayer.path = nil
+                onLoopComplete?(loopPoints)
+            }
+            mode = .idle
         default:
             break
         }
     }
 
-    private func updatePath(closed: Bool) {
-        guard let first = points.first else { shapeLayer.path = nil; return }
+    private func drawLoop(closed: Bool) {
+        guard let first = loopPoints.first else { loopLayer.path = nil; return }
         let path = UIBezierPath()
         path.move(to: first)
-        for pt in points.dropFirst() { path.addLine(to: pt) }
+        for pt in loopPoints.dropFirst() { path.addLine(to: pt) }
         if closed { path.close() }
-        shapeLayer.path = path.cgPath
+        loopLayer.path = path.cgPath
     }
 
-    private func boundingRect() -> CGRect? {
-        guard points.count > 2 else { clear(); return nil }
-        let xs = points.map(\.x), ys = points.map(\.y)
-        let rect = CGRect(x: xs.min()!, y: ys.min()!,
-                          width: xs.max()! - xs.min()!, height: ys.max()! - ys.min()!)
-        guard rect.width > 12, rect.height > 12 else { clear(); return nil }
-        return rect
+    func showSelection(_ rect: CGRect?) {
+        selectionRect = rect
+        guard let rect else { selectionLayer.path = nil; return }
+        selectionLayer.path = UIBezierPath(roundedRect: rect, cornerRadius: 8).cgPath
+        startMarching(selectionLayer)
     }
 
     func clear() {
-        points = []
-        shapeLayer.path = nil
+        loopPoints = []
+        loopLayer.path = nil
+        selectionLayer.path = nil
+        selectionRect = nil
+        mode = .idle
     }
 
-    private func startMarching() {
-        guard shapeLayer.animation(forKey: "march") == nil else { return }
+    private func startMarching(_ layer: CAShapeLayer) {
+        guard layer.animation(forKey: "march") == nil else { return }
         let anim = CABasicAnimation(keyPath: "lineDashPhase")
         anim.fromValue = 0
         anim.toValue = 10
         anim.duration = 0.45
         anim.repeatCount = .infinity
-        shapeLayer.add(anim, forKey: "march")
+        layer.add(anim, forKey: "march")
     }
 }
 

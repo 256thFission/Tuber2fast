@@ -39,7 +39,11 @@ struct PageStripView: View {
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(.white.opacity(0.14), lineWidth: 1)
+                .strokeBorder(
+                    LinearGradient(colors: [.white.opacity(0.5), .white.opacity(0.12)],
+                                   startPoint: .top, endPoint: .bottom),
+                    lineWidth: 1
+                )
         )
         .shadow(color: .black.opacity(0.3), radius: 16, y: 6)
         .padding(.horizontal, 10)

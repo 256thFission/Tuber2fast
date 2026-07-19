@@ -20,7 +20,7 @@ struct NotebookView: View {
 
     var body: some View {
         ZStack {
-            EditorBackdrop()
+            AmbientBackground()
 
             VStack(spacing: 0) {
                 if showStrip {

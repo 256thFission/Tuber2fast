@@ -1,3 +1,36 @@
+# This round — real lasso, living background, unified frost
+
+## Lasso now selects & moves
+The lasso works like a traditional lasso: loop around strokes to select them
+(shown as a dashed selection box), then drag inside the box to move them. The
+selection's region is still what the assistant crops to — so lasso a molecule,
+move it if you like, then tap **Analyze selection** and it analyzes exactly that
+region. Looping empty space still gives the assistant a region to look at.
+
+## Soothing animated background
+New `AmbientBackground` replaces the static backdrop: black with a few very slow,
+breathing white/grey blotches (heavily blurred, low opacity — minimal, not busy).
+Touching an exposed area sends out a soft ripple. Because the frosted panels blur
+whatever's behind them, this moving backdrop is also what makes the glass read as
+truly frosted.
+
+Note: ripples fire where the background is actually touchable (the margins around
+the page, top/bottom). The drawing surface sits on top and captures its own
+touches, so ripples won't appear directly under the pen — the breathing effect is
+the always-on,全-screen part.
+
+## Unified frost
+Tool bar, top page strip, and assistant sidebar now share the same clean frosted
+glass (bright hairline edge, dark scheme) and blur the living background behind
+them. Frost strength is kept light enough that glyphs and controls stay crisp.
+
+New file: `AmbientBackground.swift` (goes in the `Notebook/` group).
+
+Heads-up: the background animates continuously (TimelineView), which is great for
+a demo but does keep the GPU lightly busy — fine on iPad, worth knowing for battery.
+
+---
+
 # This round — selection clarity, clean frost, add-image
 
 ## Clearer selected tool
