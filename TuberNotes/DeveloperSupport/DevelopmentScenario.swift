@@ -357,7 +357,7 @@ private enum DevelopmentScenarioFixtures {
         case .heroRecorded:
             return make(
                 family: .hero,
-                expectedState: "recorded agent-to-Pin stub; genuine lasso capture and crop remain pending",
+                expectedState: "fixture selection and action strip; genuine lasso integration remains pending",
                 readiness: .partialStub,
                 document: blankDocument()
             )

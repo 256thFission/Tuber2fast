@@ -195,15 +195,14 @@ scenario_metadata() {
             ;;
         hero-recorded)
             FAMILY="hero"
-            EXPECTED_STATE="recorded agent-to-Pin stub; genuine lasso capture and crop remain pending"
+            EXPECTED_STATE="fixture selection and action strip; genuine lasso integration remains pending"
             INTEGRATION_READINESS="partial-stub"
             REQUIRES_RUNTIME_EVIDENCE=true
             EXPECTED_RUNTIME_SURFACE="recorded-hero-stub"
             EXPECTED_RUNTIME_PAGE_COUNT=1
             EXPECTED_RUNTIME_PAGE_INDEX=0
             EXPECTED_RUNTIME_PAGE_ID="70000000-0000-0000-0000-000000000011"
-            EXPECTED_RUNTIME_ANNOTATION_IDS="70000000-0000-0000-0000-000000000001"
-            EXPECTED_RUNTIME_HERO_STATUS="Proposed Pin ready"
+            EXPECTED_RUNTIME_HERO_STATUS="Selection ready"
             ;;
         *)
             return 1
