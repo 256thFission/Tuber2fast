@@ -33,6 +33,9 @@ M0 scenarios:
   lasso-crop      PDF + ink Magic Lasso selection with retained PNG crop
   pin-drift       Stable Pin before/after deterministic viewport transition
   edge-pins       Four Pins near the page edges
+  agent-recorded-success    Recorded success sequence ending in one Pin
+  agent-recorded-retrieval  Recorded retrieval sequence ending in one cited Pin
+  agent-recorded-failure    Recorded recoverable failure with no Pin
   hero-recorded   Recorded agent-to-Pin stub; genuine lasso/crop pending
 
 Environment:
@@ -160,6 +163,35 @@ scenario_metadata() {
             REQUIRES_RUNTIME_EVIDENCE=true
             EXPECTED_RUNTIME_SURFACE="standalone-pin-surface"
             EXPECTED_RUNTIME_ANNOTATION_IDS="46666666-6666-6666-6666-666666666661,46666666-6666-6666-6666-666666666662,46666666-6666-6666-6666-666666666663,46666666-6666-6666-6666-666666666664"
+            ;;
+        agent-recorded-success)
+            FAMILY="agent"
+            EXPECTED_STATE="complete recorded agent event sequence ending in one proposed Pin"
+            INTEGRATION_READINESS="app-wired"
+            REQUIRES_RUNTIME_EVIDENCE=true
+            EXPECTED_RUNTIME_SURFACE="recorded-hero-stub"
+            EXPECTED_RUNTIME_PAGE_ID="70000000-0000-0000-0000-000000000011"
+            EXPECTED_RUNTIME_ANNOTATION_IDS="70000000-0000-0000-0000-000000000001"
+            EXPECTED_RUNTIME_HERO_STATUS="Proposed Pin ready"
+            ;;
+        agent-recorded-retrieval)
+            FAMILY="agent"
+            EXPECTED_STATE="recorded textbook retrieval tool sequence ending in one cited Pin"
+            INTEGRATION_READINESS="app-wired"
+            REQUIRES_RUNTIME_EVIDENCE=true
+            EXPECTED_RUNTIME_SURFACE="recorded-hero-stub"
+            EXPECTED_RUNTIME_PAGE_ID="70000000-0000-0000-0000-000000000011"
+            EXPECTED_RUNTIME_ANNOTATION_IDS="70000000-0000-0000-0000-000000000003"
+            EXPECTED_RUNTIME_HERO_STATUS="Proposed Pin ready"
+            ;;
+        agent-recorded-failure)
+            FAMILY="agent"
+            EXPECTED_STATE="recoverable recorded provider failure with no proposed Pin"
+            INTEGRATION_READINESS="app-wired"
+            REQUIRES_RUNTIME_EVIDENCE=true
+            EXPECTED_RUNTIME_SURFACE="recorded-hero-stub"
+            EXPECTED_RUNTIME_PAGE_ID="70000000-0000-0000-0000-000000000011"
+            EXPECTED_RUNTIME_HERO_STATUS="The recorded provider is temporarily unavailable."
             ;;
         hero-recorded)
             FAMILY="hero"

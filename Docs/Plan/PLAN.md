@@ -29,7 +29,7 @@ States: `not-started` → `in-progress` → `mechanically-accepted` →
 |---|---|---|---|---|
 | P0 — Stabilize tree | [Phase0-Stabilize.md](Phase0-Stabilize.md) | coordinator | — | in-progress — mechanically accepted; overnight branch cleanup blocked by linked-worktree edits |
 | WL-A — Lasso capture + crop | [WL-A-LassoCrop.md](WL-A-LassoCrop.md) | SpatialCanvas | P0 | not-started |
-| WL-B — Investigation UI | [WL-B-InvestigationUI.md](WL-B-InvestigationUI.md) | App | P0 (step 3 needs WL-A) | not-started |
+| WL-B — Investigation UI | [WL-B-InvestigationUI.md](WL-B-InvestigationUI.md) | App | P0 (step 3 needs WL-A) | in-progress — step 1 mechanically complete |
 | WL-C — Documents + persistence | [WL-C-DocumentsPersistence.md](WL-C-DocumentsPersistence.md) | App + DeveloperSupport | P0 | not-started |
 | WL-D — Live adapter [stretch] | [WL-D-LiveAdapter.md](WL-D-LiveAdapter.md) | AgentHarness | P0; gated | not-started |
 | WL-E — Verification + review | [WL-E-VerificationReview.md](WL-E-VerificationReview.md) | DeveloperTools | continuous | not-started |
@@ -90,3 +90,7 @@ Append one line per meaningful state change: date, line, what changed.
   tooling/live-spike commits landed on `main` and five work-line branches were
   created. Overnight branch cleanup remains blocked by uncommitted edits in its
   linked worktree.
+- 2026-07-19 — WL-B step 1 mechanically complete on the pinned physical iPad:
+  fixture-backed `LassoState` selection plus Explain / Check / typed Ask action
+  strip. WL-B remains `in-progress`; recorded event wiring and real lasso
+  integration remain steps 2–3.

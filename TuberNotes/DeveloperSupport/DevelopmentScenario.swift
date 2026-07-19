@@ -334,11 +334,26 @@ private enum DevelopmentScenarioFixtures {
                 ]
             )
         case .agentRecordedSuccess:
-            return later(family: .agent, expectedState: "complete recorded agent event sequence")
+            return make(
+                family: .agent,
+                expectedState: "complete recorded agent event sequence ending in one proposed Pin",
+                readiness: .appWired,
+                document: blankDocument()
+            )
         case .agentRecordedRetrieval:
-            return later(family: .agent, expectedState: "recorded textbook retrieval tool sequence")
+            return make(
+                family: .agent,
+                expectedState: "recorded textbook retrieval tool sequence ending in one cited Pin",
+                readiness: .appWired,
+                document: blankDocument()
+            )
         case .agentRecordedFailure:
-            return later(family: .agent, expectedState: "recoverable recorded provider failure")
+            return make(
+                family: .agent,
+                expectedState: "recoverable recorded provider failure with no proposed Pin",
+                readiness: .appWired,
+                document: blankDocument()
+            )
         case .heroRecorded:
             return make(
                 family: .hero,

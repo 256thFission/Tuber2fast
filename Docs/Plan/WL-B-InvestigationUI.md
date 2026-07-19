@@ -1,6 +1,6 @@
 # WL-B — Investigation UI and hero integration
 
-Status: not-started
+Status: in-progress — steps 1–2 mechanically complete
 Owner subsystem: coordinator `App`, consuming `AgentHarness` and `Pins` as-is
 Depends on: P0. Step 3 depends on WL-A.
 Subagent-eligible: **no** — this is coordinator integration work.
@@ -73,4 +73,29 @@ timing. Never ask the human to judge mechanical facts.
 
 ## Session log
 
-- (none yet)
+- 2026-07-19 — Step 1 mechanically complete. Replaced the automatic
+  `RecordedHeroView` journey with a fixture-backed `.selected` state and an
+  adjacent Explain / Check / typed Ask action strip. Each action constructs an
+  `InvestigationRequest` retaining the fixture `SelectionArtifact` and moves to
+  `.submitting`; selection and submitting cancellation return safely to
+  `.idle`, with a Debug fixture restore control for repeatable checks. Physical
+  iPad build/install/launch passed on
+  `2DD98ECC-A26A-5730-943B-01DD63DC4117`; nonce-matched runtime evidence is in
+  `tmp/verify/20260719-141254-wl-b-step1/`. Stopped before recorded event
+  wiring, progress/Pin handling, scenario readiness changes, and live lasso
+  integration (steps 2–3).
+- 2026-07-19 — Step 2 mechanically complete. Wired the success, retrieval,
+  and recoverable-failure `RecordedAgentClient` variants through truthful
+  submitting/receiving/terminal UI; valid crop-relative drafts now render as
+  page-normalized streaming/completed Pins, while cancel and Retry retain the
+  fixture selection. Moved the three `agent-recorded-*` fixtures to
+  `app-wired`. With coordinator approval, made the narrow WL-E ownership
+  exception needed to add verifier allowlist/runtime expectations for only
+  those scenarios. Generic iOS build, strict-concurrency agent checks, and
+  verifier truthfulness tests passed. Physical iPad preflight and all three
+  scenario verifiers passed on `2DD98ECC-A26A-5730-943B-01DD63DC4117`; runtime
+  artifacts are in `tmp/verify/20260719-150032-agent-recorded-success/`,
+  `tmp/verify/20260719-150050-agent-recorded-retrieval/`, and
+  `tmp/verify/20260719-150057-agent-recorded-failure/`. Stopped before step 3
+  and live lasso integration; human interaction/visual review remains deferred
+  until step 3 per this work-line plan.
