@@ -27,7 +27,7 @@ States: `not-started` → `in-progress` → `mechanically-accepted` →
 
 | Line | Child doc | Owner subsystem | Depends on | Status |
 |---|---|---|---|---|
-| P0 — Stabilize tree | [Phase0-Stabilize.md](Phase0-Stabilize.md) | coordinator | — | not-started |
+| P0 — Stabilize tree | [Phase0-Stabilize.md](Phase0-Stabilize.md) | coordinator | — | in-progress — mechanically accepted; overnight branch cleanup blocked by linked-worktree edits |
 | WL-A — Lasso capture + crop | [WL-A-LassoCrop.md](WL-A-LassoCrop.md) | SpatialCanvas | P0 | not-started |
 | WL-B — Investigation UI | [WL-B-InvestigationUI.md](WL-B-InvestigationUI.md) | App | P0 (step 3 needs WL-A) | not-started |
 | WL-C — Documents + persistence | [WL-C-DocumentsPersistence.md](WL-C-DocumentsPersistence.md) | App + DeveloperSupport | P0 | not-started |
@@ -86,3 +86,7 @@ WL-D last, only if green.
 Append one line per meaningful state change: date, line, what changed.
 
 - 2026-07-19 — PLAN created; stale handoffs deleted; all lines `not-started`.
+- 2026-07-19 — P0 mechanically accepted on the pinned physical iPad; split
+  tooling/live-spike commits landed on `main` and five work-line branches were
+  created. Overnight branch cleanup remains blocked by uncommitted edits in its
+  linked worktree.

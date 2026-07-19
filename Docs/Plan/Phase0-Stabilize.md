@@ -1,6 +1,6 @@
 # P0 — Stabilize the tree
 
-Status: not-started
+Status: in-progress — mechanically accepted; overnight branch archival blocked by uncommitted linked-worktree edits
 Owner: coordinator (Phillip + one session; not parallelizable, not subagent work)
 Estimated: ~½ day
 
@@ -48,4 +48,15 @@ independently.
 
 ## Session log
 
-- (none yet)
+- 2026-07-19 — Secret scan passed for all named live-spike sources and harnesses;
+  no credential-like material was found. Created separate commits for tooling
+  (`6b7bac4`) and the DEBUG live spike (`3d36ab5`); doc consolidation remains
+  isolated in `2a1adf5`. Fast-forwarded `main`, created the five work-line
+  branches, and verified all ten declared scenarios on physical iPad
+  `2DD98ECC-A26A-5730-943B-01DD63DC4117`. Build and scenario evidence is under
+  `tmp/verify/20260719-140420-blank-canvas/` through
+  `tmp/verify/20260719-140524-hero-recorded/`. Remaining blocker: linked
+  worktree `/Users/phil/Documents/Build_Week/TuberNotes-feedback-threads-overnight`
+  has uncommitted edits, so `codex/feedback-threads-overnight` was not archived
+  or deleted. No physical screenshot, attached console, crash diagnostics, or
+  human visual/Pencil verdict was collected.
