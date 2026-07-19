@@ -99,3 +99,8 @@ timing. Never ask the human to judge mechanical facts.
   `tmp/verify/20260719-150057-agent-recorded-failure/`. Stopped before step 3
   and live lasso integration; human interaction/visual review remains deferred
   until step 3 per this work-line plan.
+- 2026-07-19 — Coordinator merged commit `81b7444` to `main`, reconciling the
+  disjoint WL-A/WL-B `RootView` scenario branches. The first post-merge sweep
+  exposed one stale `hero-recorded` verifier expectation from the already
+  accepted step-1 UI; after the narrow metadata correction, all 14 runnable
+  scenarios passed on the pinned iPad. Step 3 remains unstarted.

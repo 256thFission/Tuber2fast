@@ -28,9 +28,9 @@ States: `not-started` → `in-progress` → `mechanically-accepted` →
 | Line | Child doc | Owner subsystem | Depends on | Status |
 |---|---|---|---|---|
 | P0 — Stabilize tree | [Phase0-Stabilize.md](Phase0-Stabilize.md) | coordinator | — | in-progress — mechanically accepted; overnight branch cleanup blocked by linked-worktree edits |
-| WL-A — Lasso capture + crop | [WL-A-LassoCrop.md](WL-A-LassoCrop.md) | SpatialCanvas | P0 | not-started |
-| WL-B — Investigation UI | [WL-B-InvestigationUI.md](WL-B-InvestigationUI.md) | App | P0 (step 3 needs WL-A) | in-progress — step 1 mechanically complete |
-| WL-C — Documents + persistence | [WL-C-DocumentsPersistence.md](WL-C-DocumentsPersistence.md) | App + DeveloperSupport | P0 | not-started |
+| WL-A — Lasso capture + crop | [WL-A-LassoCrop.md](WL-A-LassoCrop.md) | SpatialCanvas | P0 | mechanically-accepted — merged; human Pencil review queued |
+| WL-B — Investigation UI | [WL-B-InvestigationUI.md](WL-B-InvestigationUI.md) | App | P0 (step 3 needs WL-A) | in-progress — steps 1–2 mechanically complete and merged; step 3 pending |
+| WL-C — Documents + persistence | [WL-C-DocumentsPersistence.md](WL-C-DocumentsPersistence.md) | App + DeveloperSupport | P0 | in-progress — persistence/import passed; notebook acceptance blocked by device-service timeouts; unmerged |
 | WL-D — Live adapter [stretch] | [WL-D-LiveAdapter.md](WL-D-LiveAdapter.md) | AgentHarness | P0; gated | not-started |
 | WL-E — Verification + review | [WL-E-VerificationReview.md](WL-E-VerificationReview.md) | DeveloperTools | continuous | not-started |
 
@@ -94,3 +94,15 @@ Append one line per meaningful state change: date, line, what changed.
   fixture-backed `LassoState` selection plus Explain / Check / typed Ask action
   strip. WL-B remains `in-progress`; recorded event wiring and real lasso
   integration remain steps 2–3.
+- 2026-07-19 — WL-A mechanically accepted and merged to `main` as `a07b5bf`;
+  genuine lasso capture/crop passed with retained PDF+ink PNG evidence. The
+  complete 11-scenario post-merge sweep passed on the pinned iPad.
+- 2026-07-19 — WL-B step 2 mechanically accepted and merged to `main` as
+  `81b7444`; all three `agent-recorded-*` scenarios passed. After correcting
+  one stale step-1 `hero-recorded` expectation, the complete 14-scenario
+  post-merge sweep passed. Step 3 remains pending.
+- 2026-07-19 — WL-C persistence-relaunch and external three-page PDF import /
+  navigation evidence passed, with no frozen-contract pressure. Final notebook
+  create/append/relaunch acceptance and regression sweep stopped after repeated
+  device-service/container-copy/install-query timeouts; branch remains
+  uncommitted and unmerged.

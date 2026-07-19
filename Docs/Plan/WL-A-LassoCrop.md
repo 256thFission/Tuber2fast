@@ -1,6 +1,6 @@
 # WL-A — Genuine Magic Lasso capture and crop
 
-Status: complete — physical-device verifier PASS 2026-07-19
+Status: mechanically-accepted — merged to `main`; human Pencil review queued
 Owner subsystem: `SpatialCanvas` (SPEC §14 WP1)
 Depends on: P0. Blocks WL-B step 3.
 Subagent-eligible: yes (single subsystem, concrete return contract).
@@ -84,3 +84,6 @@ Lasso feel with a real Pencil stroke via `human-device-loop` +
   stayed within the child file list. Physical screenshots, attached console,
   crash diagnostics, and human Pencil feel/visual-taste verdict were not
   collected; Pencil feel remains queued and non-blocking per this work-line.
+- 2026-07-19 — Coordinator merged commit `a07b5bf` to `main` and reran the
+  complete 11-scenario post-merge sweep on the pinned iPad; every runnable
+  scenario passed, including `lasso-crop` and `ink-pages`.

@@ -1,6 +1,6 @@
 # WL-C — Real documents: creation, import, persistence, relaunch
 
-Status: not-started
+Status: in-progress — persistence/import evidence passed; device-service blocker prevents final notebook acceptance
 Owner subsystem: coordinator `App` + `DeveloperSupport` for fixtures
 Depends on: P0. Independent of WL-A/B.
 Subagent-eligible: yes, per step (each step is a bounded deliverable).
@@ -64,4 +64,27 @@ Creation and import flow feel; add-page discoverability (see
 
 ## Session log
 
-- (none yet)
+- 2026-07-19 — Implemented the branch-local persistence layer, blank notebook
+  creation/append flow, system PDF import, and the pre-approved
+  `persistence-relaunch` scenario. Generic iOS Debug build, verifier syntax,
+  and diff checks passed. Existing `InkReference.relativePath` semantics were
+  sufficient; no frozen contract change or parallel representation was needed.
+- 2026-07-19 — `persistence-relaunch` passed on physical iPad
+  `2DD98ECC-A26A-5730-943B-01DD63DC4117` after one narrow fixture-binding fix;
+  artifacts: `tmp/verify/20260719-150653-persistence-relaunch/`. Runtime
+  evidence proved stable page identity, ink reference, and annotation IDs
+  across relaunch.
+- 2026-07-19 — Guided import evidence passed: an external PDF was copied into
+  app-owned storage, parsed as exactly three pages, and persisted with three
+  unique page IDs; page navigation reached persisted page index 2. Artifacts:
+  `tmp/wl-c-import-evidence.OJkc9f/` and
+  `tmp/wl-c-page-turn-evidence.6DTcXo/`. The Codex event bridge did not resume
+  automatically, so replies were collected and acknowledged manually.
+- 2026-07-19 — Stopped before final acceptance and commit after repeated
+  device/host divergence during notebook creation evidence. Feedback container
+  copies timed out; after explicit human authorization, exact-device preflight
+  passed wired but reported the app unavailable, and both a non-destructive
+  reinstall and read-only installed-app query timed out without results. No
+  uninstall, feedback reset, or product-data deletion occurred. Notebook
+  create/append/relaunch survival and the final existing-scenario sweep remain
+  unproven; the WL-C branch is intentionally unmerged.
