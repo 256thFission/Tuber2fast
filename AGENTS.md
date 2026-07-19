@@ -11,18 +11,18 @@ TuberNotes is a one-week iPad hackathon. Prioritize: (1) hero interaction qualit
 - Never bypass OS security or permission boundaries.
 - Keep collaborator ownership clear: `App` integrates; `SpatialCanvas` owns Pencil/coordinates; `Pins` owns spatial UI; `AgentHarness` owns the in-product AI boundary; `Knowledge` owns retrieval; `DeveloperSupport` and `DeveloperTools` own fixtures/tooling.
 
-Codex, Skills, MCPs, Xcode, simulators, and fixtures are **development tooling**. The multimodal agent shipped inside TuberNotes and product tools such as `search_textbook`, `search_notebook`, and `place_pins` are **product runtime**. Never conflate their permissions, APIs, or responsibilities.
+Codex, Skills, MCPs, Xcode, physical-device harnesses, and fixtures are **development tooling**. The multimodal agent shipped inside TuberNotes and product tools such as `search_textbook`, `search_notebook`, and `place_pins` are **product runtime**. Never conflate their permissions, APIs, or responsibilities.
 
-Canonical workflow: `TuberNotes.xcodeproj`, scheme `TuberNotes`, simulator `iPad Pro 13-inch (M5)`. See `Docs/Development.md` and the repo Skills under `.codex/skills/`.
+Canonical workflow: pin an explicitly named connected physical iPad with `DeveloperTools/device-preflight.sh`, then use `TuberNotes.xcodeproj`, scheme `TuberNotes`, through that shared session. Build, install, launch, and inspect the pinned device; never discover or fall back to another target. See `Docs/DeviceWorkflow.md`, `Docs/Development.md`, and the repo Skills under `.codex/skills/`.
 
-Human Pencil capture and in-app review feedback go through Debug `DeveloperSupport` + `DeveloperTools/PencilFixtureMCP` (Skill: `human-device-loop`). Conversational review uses a persistent feedback thread plus a task heartbeat so a later human reply resumes the originating Codex task; authentic Pencil capture remains a separate one-stroke fixture protocol. The human works only in TuberNotes—no Mac-side file work. Details: `Docs/Development.md` § Human device loop.
+Human Pencil capture and in-app review feedback go through Debug `DeveloperSupport` + `DeveloperTools/PencilFixtureMCP` (Skill: `human-device-loop`). Conversational review uses active waiting while the turn is live, then a one-response event bridge to resume the originating Codex task; a one-minute task heartbeat is emergency fallback only when bridge arming fails. Authentic Pencil capture remains a separate one-stroke fixture protocol. The human works only in TuberNotes—no Mac-side file work. Details: `Docs/Development.md` § Human device loop.
 
 ### Human review session contract
 
 - One guided review journey maps to one visible feedback session unless the human explicitly requests separate conversations. Queue, ownership, and protocol-conformance work stays out of that session.
 - Show the human only the current action and, when needed, one short question. Keep thread/request IDs, owner tokens, sequence cursors, lifecycle states, queue details, expected assertions, artifact paths, and test keys agent-side.
 - Ask for either an exact response needed to exercise behavior or a subjective verdict, never both in one step. Do not ask the human to judge mechanical facts the tooling can verify.
-- A task heartbeat is collection-only by default: it may collect, acknowledge, record, and notify, but must not post or activate the next human step. Advance only after the prior response is understood and recorded.
+- An event-bridge or fallback-heartbeat wake collects, acknowledges, records, and notifies before advancing. Advance only after the prior response is understood, recorded, and the next precondition is verified.
 - Stop the guided journey on an unmet precondition, ambiguous response, first failure, device/host state divergence, or human confusion. Explain the issue before asking for another action; never invent Pencil feel, visual taste, intent, or interaction judgments.
 
 ## Operating contract
@@ -42,7 +42,7 @@ For substantial work, follow this loop and stop when the named condition is met:
 
 1. **Inspect / plan** — confirm objective, scope, non-goals, and acceptance evidence.
 2. **Bounded edit** — change only the files needed for the milestone.
-3. **Build** — canonical project/scheme/simulator; retain failure tails, not full logs in context.
+3. **Build** — canonical project/scheme on the explicitly named physical iPad; retain failure tails, not full logs in context.
 4. **Launch scenario** — pick scenarios from the change-type map in `Docs/Development.md`.
 5. **Mechanical visual verification** — clipping, overlap, crashes, missing state, Pin drift.
 6. **Identify human review** — Pencil feel, taste, architecture, or anything the scenario cannot prove. Prefer `human-device-loop` so feedback messages, attachments, watch state, or Pencil fixtures land as durable evidence.
@@ -66,3 +66,10 @@ For user-visible changes, end with this compact packet (template: `Docs/template
 - stop reason or unresolved issue
 
 Handoffs between sessions or models use `Docs/templates/Handoff.md`.
+
+## Current execution plan
+
+The long-running coordination document is `Docs/Plan/PLAN.md`. Every session
+works exactly one of its child work-line docs, then updates that child's
+Status and Session log plus the parent status board before stopping. Do not
+create new standalone handoff documents; append to the plan instead.
