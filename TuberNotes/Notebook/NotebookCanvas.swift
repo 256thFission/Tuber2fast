@@ -91,7 +91,12 @@ struct NotebookCanvas: UIViewRepresentable {
         if context.coordinator.loadedPageID != pageID {
             context.coordinator.load(drawingData, pageID: pageID, into: view)
         }
-        if abs(view.scrollView.zoomScale - zoomScale) > 0.001 {
+        // Viewport updates are published while a pinch is in progress. The
+        // model only receives the final scale in scrollViewDidEndZooming, so
+        // synchronizing here during the gesture would animate back toward the
+        // stale model value on every SwiftUI update.
+        if !view.scrollView.isZooming && !view.scrollView.isTracking,
+           abs(view.scrollView.zoomScale - zoomScale) > 0.001 {
             view.scrollView.setZoomScale(zoomScale, animated: true)
         }
     }
@@ -463,6 +468,7 @@ final class ZoomablePageView: UIView {
     let straightenRecognizer = HoldStraightenRecognizer()
     var onPageViewportChange: ((CGRect) -> Void)?
     private var lastReportedPageViewportFrame = CGRect.null
+    private var lastContentInset: UIEdgeInsets = .zero
     var backgroundDrawingData = Data() {
         didSet {
             guard oldValue != backgroundDrawingData else { return }
@@ -539,7 +545,10 @@ final class ZoomablePageView: UIView {
         let scaledH = page.height * scrollView.zoomScale
         let hInset = max(0, (scrollView.bounds.width - scaledW) / 2)
         let vInset = max(16, (scrollView.bounds.height - scaledH) / 2)
-        scrollView.contentInset = UIEdgeInsets(top: vInset, left: hInset, bottom: 140, right: hInset)
+        let inset = UIEdgeInsets(top: vInset, left: hInset, bottom: 140, right: hInset)
+        guard inset != lastContentInset else { return }
+        lastContentInset = inset
+        scrollView.contentInset = inset
     }
 
     func reportPageViewportIfNeeded() {
