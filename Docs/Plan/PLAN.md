@@ -30,7 +30,7 @@ States: `not-started` → `in-progress` → `mechanically-accepted` →
 | P0 — Stabilize tree | [Phase0-Stabilize.md](Phase0-Stabilize.md) | coordinator | — | in-progress — mechanically accepted; overnight branch cleanup blocked by linked-worktree edits |
 | WL-A — Lasso capture + crop | [WL-A-LassoCrop.md](WL-A-LassoCrop.md) | SpatialCanvas | P0 | mechanically-accepted — merged; human Pencil review queued |
 | WL-B — Investigation UI | [WL-B-InvestigationUI.md](WL-B-InvestigationUI.md) | App | P0 (step 3 needs WL-A) | in-progress — steps 1–2 mechanically complete and merged; step 3 pending |
-| WL-C — Documents + persistence | [WL-C-DocumentsPersistence.md](WL-C-DocumentsPersistence.md) | App + DeveloperSupport | P0 | in-progress — persistence/import passed; notebook acceptance blocked by device-service timeouts; unmerged |
+| WL-C — Documents + persistence | [WL-C-DocumentsPersistence.md](WL-C-DocumentsPersistence.md) | App + DeveloperSupport | P0 | in-progress — implementation merged by direction; notebook acceptance blocked by device-service timeouts |
 | WL-D — Live adapter [stretch] | [WL-D-LiveAdapter.md](WL-D-LiveAdapter.md) | AgentHarness | P0; gated | not-started |
 | WL-E — Verification + review | [WL-E-VerificationReview.md](WL-E-VerificationReview.md) | DeveloperTools | continuous | not-started |
 
@@ -104,5 +104,8 @@ Append one line per meaningful state change: date, line, what changed.
 - 2026-07-19 — WL-C persistence-relaunch and external three-page PDF import /
   navigation evidence passed, with no frozen-contract pressure. Final notebook
   create/append/relaunch acceptance and regression sweep stopped after repeated
-  device-service/container-copy/install-query timeouts; branch remains
-  uncommitted and unmerged.
+  device-service/container-copy/install-query timeouts.
+- 2026-07-19 — Phillip explicitly directed WL-C to merge despite incomplete
+  notebook acceptance. The implementation was reconciled with WL-A/WL-B and
+  merged without upgrading WL-C to mechanically accepted; the device blocker
+  remains open.

@@ -1041,6 +1041,7 @@ Required new scenarios:
 - `lasso-crop` — known PDF + ink selection with inspectable crop artifact
 - `pin-drift` — known anchor before and after deterministic viewport changes
 - `edge-pins` — multiple Pins near all page edges
+- `persistence-relaunch` — identical page, ink-reference, and annotation identities after relaunch
 - `agent-recorded-success` — complete recorded event sequence
 - `agent-recorded-retrieval` — recorded textbook tool sequence
 - `agent-recorded-failure` — recoverable provider failure

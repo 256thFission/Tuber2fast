@@ -1,6 +1,6 @@
 # WL-C — Real documents: creation, import, persistence, relaunch
 
-Status: in-progress — persistence/import evidence passed; device-service blocker prevents final notebook acceptance
+Status: in-progress — implementation merged by direction; notebook acceptance remains blocked by device-service timeouts
 Owner subsystem: coordinator `App` + `DeveloperSupport` for fixtures
 Depends on: P0. Independent of WL-A/B.
 Subagent-eligible: yes, per step (each step is a bounded deliverable).
@@ -87,4 +87,7 @@ Creation and import flow feel; add-page discoverability (see
   reinstall and read-only installed-app query timed out without results. No
   uninstall, feedback reset, or product-data deletion occurred. Notebook
   create/append/relaunch survival and the final existing-scenario sweep remain
-  unproven; the WL-C branch is intentionally unmerged.
+  unproven.
+- 2026-07-19 — Phillip explicitly directed the coordinator to merge the
+  implementation despite the incomplete notebook evidence. The blocker remains
+  open and this status is not upgraded to mechanically accepted.

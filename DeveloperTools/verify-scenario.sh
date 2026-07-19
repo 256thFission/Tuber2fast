@@ -36,6 +36,7 @@ M0 scenarios:
   agent-recorded-success    Recorded success sequence ending in one Pin
   agent-recorded-retrieval  Recorded retrieval sequence ending in one cited Pin
   agent-recorded-failure    Recorded recoverable failure with no Pin
+  persistence-relaunch  Persisted page, ink reference, and Pin IDs survive relaunch
   hero-recorded   Recorded agent-to-Pin stub; genuine lasso/crop pending
 
 Environment:
@@ -69,6 +70,8 @@ scenario_metadata() {
     EXPECTED_RUNTIME_ANNOTATION_IDS=""
     EXPECTED_RUNTIME_HERO_STATUS=""
     REQUIRES_SELECTION_CROP=false
+    EXPECTED_RUNTIME_INK_REFERENCE=""
+    EXPECTED_RUNTIME_RESTORED=false
     case "$1" in
         blank-canvas)
             FAMILY="baseline"
@@ -192,6 +195,19 @@ scenario_metadata() {
             EXPECTED_RUNTIME_SURFACE="recorded-hero-stub"
             EXPECTED_RUNTIME_PAGE_ID="70000000-0000-0000-0000-000000000011"
             EXPECTED_RUNTIME_HERO_STATUS="The recorded provider is temporarily unavailable."
+            ;;
+        persistence-relaunch)
+            FAMILY="persistence"
+            EXPECTED_STATE="same page identity, ink reference, and annotation identity after relaunch"
+            INTEGRATION_READINESS="app-wired"
+            EXPECTED_PAGE_ID="50000000-0000-0000-0000-000000000011"
+            EXPECTED_PEN_FIXTURE_COUNT=1
+            EXPECTED_ANNOTATION_COUNT=1
+            REQUIRES_RUNTIME_EVIDENCE=true
+            EXPECTED_RUNTIME_SURFACE="spatial-canvas"
+            EXPECTED_RUNTIME_PEN_FIXTURE="persistence-page-ink"
+            EXPECTED_RUNTIME_ANNOTATION_IDS="50000000-0000-0000-0000-000000000021"
+            EXPECTED_RUNTIME_INK_REFERENCE="ink/50000000-0000-0000-0000-000000000011.drawing"
             ;;
         hero-recorded)
             FAMILY="hero"
@@ -350,6 +366,9 @@ note "INSTALL: pass"
 
 set +e
 launch_environment="{\"TUBER_SCENARIO\":\"$SCENARIO\",\"TUBER_VERIFY_NONCE\":\"$VERIFY_NONCE\"}"
+if [[ "$SCENARIO" == "persistence-relaunch" ]]; then
+    launch_environment="{\"TUBER_SCENARIO\":\"$SCENARIO\",\"TUBER_VERIFY_NONCE\":\"$VERIFY_NONCE\",\"TUBER_PERSISTENCE_RESET\":\"1\"}"
+fi
 xcrun devicectl device process launch \
     --device "$DEVICE_ID" \
     --terminate-existing \
@@ -505,16 +524,18 @@ if [[ "$REQUIRES_RUNTIME_EVIDENCE" == "true" ]]; then
         python3 - "$RUNTIME_EVIDENCE" "$SCENARIO" "$EXPECTED_RUNTIME_SURFACE" \
             "$EXPECTED_RUNTIME_PAGE_COUNT" "$EXPECTED_RUNTIME_PAGE_INDEX" "$EXPECTED_RUNTIME_PAGE_ID" \
             "$EXPECTED_RUNTIME_PEN_FIXTURE" "$EXPECTED_RUNTIME_ANNOTATION_IDS" \
-            "$EXPECTED_RUNTIME_HERO_STATUS" "$VERIFY_NONCE" "$REQUIRES_SELECTION_CROP" \
+            "$EXPECTED_RUNTIME_HERO_STATUS" "$EXPECTED_RUNTIME_INK_REFERENCE" \
+            "$EXPECTED_RUNTIME_RESTORED" "$VERIFY_NONCE" "$REQUIRES_SELECTION_CROP" \
             >"$RUNTIME_ASSERTIONS" 2>&1 <<'PY'
 import json
 import sys
 
 (
     evidence_path, scenario, surface, page_count, page_index, page_id,
-    pen_fixture, annotation_ids, hero_status, verification_nonce,
-) = sys.argv[1:11]
-requires_selection_crop = len(sys.argv) > 11 and sys.argv[11] == "true"
+    pen_fixture, annotation_ids, hero_status, ink_reference, restored, verification_nonce,
+    requires_selection_crop,
+) = sys.argv[1:]
+requires_selection_crop = requires_selection_crop == "true"
 with open(evidence_path, encoding="utf-8") as evidence_file:
     evidence = json.load(evidence_file)
 
@@ -529,6 +550,8 @@ expected = {
     "renderedPenFixtureName": pen_fixture or None,
     "renderedAnnotationIDs": sorted(filter(None, annotation_ids.split(","))),
     "heroStatus": hero_status or None,
+    "renderedInkReference": ink_reference or None,
+    "restoredFromPersistence": restored == "true",
 }
 failures = []
 for key, expected_value in expected.items():
@@ -624,6 +647,66 @@ PY
         selection_crop_status="fail-missing"
         printf '%s\n' "selection crop missing from app data container" >"$SELECTION_CROP_ASSERTIONS"
         pass=0
+    fi
+fi
+
+if [[ "$SCENARIO" == "persistence-relaunch" && $pass -eq 1 ]]; then
+    FIRST_RUNTIME_EVIDENCE="$ARTIFACT_DIR/runtime-rendered-first-launch.json"
+    cp "$RUNTIME_EVIDENCE" "$FIRST_RUNTIME_EVIDENCE"
+    RELAUNCH_NONCE="$(uuidgen)"
+    RELAUNCH_LOG="$ARTIFACT_DIR/relaunch.log"
+    set +e
+    xcrun devicectl device process launch \
+        --device "$DEVICE_ID" \
+        --terminate-existing \
+        --environment-variables "{\"TUBER_SCENARIO\":\"$SCENARIO\",\"TUBER_VERIFY_NONCE\":\"$RELAUNCH_NONCE\"}" \
+        "$BUNDLE_ID" >"$RELAUNCH_LOG" 2>&1
+    relaunch_exit=$?
+    set -e
+    sleep 3
+    if [[ $relaunch_exit -ne 0 ]] || ! pull_device_file \
+        "Documents/developer-evidence/runtime-rendered.json" \
+        "$RUNTIME_EVIDENCE" "$ARTIFACT_DIR/runtime-relaunch-pull.log" "$RELAUNCH_NONCE"; then
+        printf '%s\n' "relaunch failed or runtime evidence missing" >>"$RUNTIME_ASSERTIONS"
+        pass=0
+    else
+        set +e
+        python3 - "$FIRST_RUNTIME_EVIDENCE" "$RUNTIME_EVIDENCE" "$RELAUNCH_NONCE" >>"$RUNTIME_ASSERTIONS" 2>&1 <<'PY'
+import json
+import sys
+
+first_path, second_path, nonce = sys.argv[1:]
+with open(first_path, encoding="utf-8") as stream:
+    first = json.load(stream)
+with open(second_path, encoding="utf-8") as stream:
+    second = json.load(stream)
+
+stable_keys = ["currentPageID", "renderedInkReference", "renderedAnnotationIDs"]
+failures = []
+if first.get("restoredFromPersistence") is not False:
+    failures.append("first launch was not a clean persistence seed")
+if second.get("restoredFromPersistence") is not True:
+    failures.append("second launch did not report persistence restoration")
+if second.get("verificationNonce") != nonce:
+    failures.append("second launch nonce mismatch")
+for key in stable_keys:
+    if first.get(key) != second.get(key):
+        failures.append(f"{key} changed: first={first.get(key)!r} second={second.get(key)!r}")
+if failures:
+    print("persistence relaunch assertions failed")
+    print("\n".join(failures))
+    raise SystemExit(1)
+print("persistence relaunch assertions passed")
+for key in stable_keys:
+    print(f"stable {key}={second.get(key)!r}")
+PY
+        relaunch_assert_exit=$?
+        set -e
+        if [[ $relaunch_assert_exit -ne 0 ]]; then
+            pass=0
+        else
+            runtime_evidence_status="pass-including-relaunch"
+        fi
     fi
 fi
 

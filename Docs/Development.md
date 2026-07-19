@@ -66,7 +66,7 @@ End user-visible tasks with the evidence packet in `Docs/templates/EvidencePacke
 | Human feel / taste / interaction quality | scenario that exposes the change | Mechanical verify first, then create a feedback thread; use the morning queue for human-only checks |
 | Non-UI / pure contract text | none required | Still avoid product/runtime vs tooling confusion |
 
-M0 verifier values are `blank-canvas`, `fake-pin`, `multi-pin`, `pdf-pages`, `blank-notebook`, `notebook-pages`, `ink-pages`, `pin-drift`, `edge-pins`, and the explicitly partial `hero-recorded` stub. Default is `blank-canvas`.
+M0 verifier values are `blank-canvas`, `fake-pin`, `multi-pin`, `pdf-pages`, `blank-notebook`, `notebook-pages`, `ink-pages`, `pin-drift`, `edge-pins`, `persistence-relaunch`, and the explicitly partial `hero-recorded` stub. Default is `blank-canvas`.
 
 `DevelopmentScenario.fixture` owns stable documents, page IDs, page-specific `PenFixture` values, canned `PageAnnotation` values, expected state, and integration readiness. `blank-canvas`, `fake-pin`, and `multi-pin` are rendered by the current scaffold. `pdf-pages`, `blank-notebook`, `notebook-pages`, `ink-pages`, `pin-drift`, and `edge-pins` are rendered through the coordinator App integration seam. `hero-recorded` is only a bounded offline recorded agent-to-Pin **stub**; genuine SpatialCanvas lasso capture and crop remain pending, so it is not App-wired acceptance evidence. Other selections remain **ready for coordinator App wiring** or later milestones; a verifier PASS for those states does not accept pending UI behavior.
 

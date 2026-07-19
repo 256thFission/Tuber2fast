@@ -32,6 +32,7 @@
 		A00000000000000000000017 /* ResponsesSSEDecoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000117 /* ResponsesSSEDecoder.swift */; };
 		A00000000000000000000018 /* DebugCodexTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000118 /* DebugCodexTransport.swift */; };
 		A00000000000000000000019 /* DebugCodexAgentClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000119 /* DebugCodexAgentClient.swift */; };
+		C00000000000000000000001 /* DocumentStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00000000000000000000101 /* DocumentStore.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -61,6 +62,7 @@
 		A00000000000000000000117 /* ResponsesSSEDecoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResponsesSSEDecoder.swift; sourceTree = "<group>"; };
 		A00000000000000000000118 /* DebugCodexTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugCodexTransport.swift; sourceTree = "<group>"; };
 		A00000000000000000000119 /* DebugCodexAgentClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugCodexAgentClient.swift; sourceTree = "<group>"; };
+		C00000000000000000000101 /* DocumentStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentStore.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -101,6 +103,7 @@
 				A00000000000000000000101 /* TuberNotesApp.swift */,
 				A00000000000000000000102 /* RootView.swift */,
 				A0000000000000000000020A /* Contracts */,
+				C00000000000000000000201 /* Persistence */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -176,6 +179,14 @@
 				A00000000000000000000113 /* KnowledgeContracts.swift */,
 			);
 			path = Contracts;
+			sourceTree = "<group>";
+		};
+		C00000000000000000000201 /* Persistence */ = {
+			isa = PBXGroup;
+			children = (
+				C00000000000000000000101 /* DocumentStore.swift */,
+			);
+			path = Persistence;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -271,6 +282,7 @@
 				A00000000000000000000017 /* ResponsesSSEDecoder.swift in Sources */,
 				A00000000000000000000018 /* DebugCodexTransport.swift in Sources */,
 				A00000000000000000000019 /* DebugCodexAgentClient.swift in Sources */,
+				C00000000000000000000001 /* DocumentStore.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
