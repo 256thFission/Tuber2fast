@@ -9,6 +9,7 @@ struct LibraryView: View {
     @State private var showingNew = false
     @State private var newTitle = ""
     @State private var newCover: NotebookCover = .indigo
+    @State private var newTemplate: PageTemplate = .linedMedium
     @State private var renaming: Notebook?
     @State private var renameText = ""
 
@@ -129,6 +130,11 @@ struct LibraryView: View {
                     }
                     .padding(.vertical, 6)
                 }
+                Section("Paper") {
+                    Picker("Template", selection: $newTemplate) {
+                        ForEach(PageTemplate.allCases) { Text($0.label).tag($0) }
+                    }
+                }
             }
             .navigationTitle("New notebook")
             .navigationBarTitleDisplayMode(.inline)
@@ -146,7 +152,11 @@ struct LibraryView: View {
 
     private func createNotebook() {
         let trimmed = newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        let notebook = store.createNotebook(title: trimmed.isEmpty ? "Untitled" : trimmed, cover: newCover)
+        let notebook = store.createNotebook(
+            title: trimmed.isEmpty ? "Untitled" : trimmed,
+            cover: newCover,
+            template: newTemplate
+        )
         resetNewForm()
         showingNew = false
         path.append(notebook.id)
@@ -155,6 +165,7 @@ struct LibraryView: View {
     private func resetNewForm() {
         newTitle = ""
         newCover = .indigo
+        newTemplate = .linedMedium
     }
 
     // MARK: Rename

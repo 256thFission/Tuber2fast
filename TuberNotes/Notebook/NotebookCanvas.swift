@@ -2,150 +2,201 @@ import PencilKit
 import SwiftUI
 import UIKit
 
-/// GoodNotes-style page: a fixed-size portrait sheet that scrolls vertically.
-/// PencilKit's canvas is itself a scroll view, so we size its content to the
-/// page and let the finger pan/scroll while the Pencil draws.
+/// GoodNotes-style page with pinch/button zoom. The PencilKit canvas and the
+/// ruled paper live inside a shared zooming content view so they scale together
+/// and stay aligned. Pencil draws; a finger pans/zooms (unless finger-drawing is
+/// on, in which case a finger draws and two fingers pan).
 struct NotebookCanvas: UIViewRepresentable {
     let pageID: UUID
     let drawingData: Data
     let tool: WritingTool
     let color: UIColor
     let width: CGFloat
+    let template: PageTemplate
+    let zoomScale: CGFloat
+    let fingerDrawing: Bool
     var onChange: (Data) -> Void
     var onLongPress: () -> Void
+    var onZoomChanged: (CGFloat) -> Void
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator(onChange: onChange, onLongPress: onLongPress)
-    }
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
 
-    func makeUIView(context: Context) -> PKCanvasView {
-        let canvas = PageCanvasView()
-        canvas.backgroundColor = .clear
-        canvas.isOpaque = false
-        // Pencil draws; a single finger scrolls the tall page (GoodNotes feel).
-        // Switch to `.anyInput` if you want to draw with a finger too — but then
-        // one-finger scrolling of the page is no longer available.
-        canvas.drawingPolicy = .pencilOnly
-        canvas.alwaysBounceVertical = true
-        canvas.showsVerticalScrollIndicator = true
-        canvas.showsHorizontalScrollIndicator = false
-        canvas.delegate = context.coordinator
-        canvas.tool = tool.pkTool(color: color, width: width)
+    func makeUIView(context: Context) -> ZoomablePageView {
+        let view = ZoomablePageView()
+        view.scrollView.delegate = context.coordinator
+        view.canvasView.delegate = context.coordinator
+        applyInput(to: view)
+        view.canvasView.tool = tool.pkTool(color: color, width: width)
+        view.paperView.template = template
 
         let longPress = UILongPressGestureRecognizer(
-            target: context.coordinator,
-            action: #selector(Coordinator.handleLongPress(_:))
+            target: context.coordinator, action: #selector(Coordinator.longPress(_:))
         )
         longPress.minimumPressDuration = 0.55
         longPress.cancelsTouchesInView = false
-        longPress.delaysTouchesBegan = false
         longPress.delegate = context.coordinator
-        canvas.addGestureRecognizer(longPress)
+        view.scrollView.addGestureRecognizer(longPress)
 
-        context.coordinator.load(drawingData, into: canvas, pageID: pageID)
-        return canvas
+        context.coordinator.load(drawingData, pageID: pageID, into: view)
+        view.scrollView.setZoomScale(zoomScale, animated: false)
+        return view
     }
 
-    func updateUIView(_ canvas: PKCanvasView, context: Context) {
-        context.coordinator.onChange = onChange
-        context.coordinator.onLongPress = onLongPress
-        canvas.tool = tool.pkTool(color: color, width: width)
-
+    func updateUIView(_ view: ZoomablePageView, context: Context) {
+        context.coordinator.parent = self
+        applyInput(to: view)
+        view.canvasView.tool = tool.pkTool(color: color, width: width)
+        if view.paperView.template != template {
+            view.paperView.template = template
+            view.paperView.setNeedsDisplay()
+        }
         if context.coordinator.loadedPageID != pageID {
-            context.coordinator.load(drawingData, into: canvas, pageID: pageID)
+            context.coordinator.load(drawingData, pageID: pageID, into: view)
+        }
+        if abs(view.scrollView.zoomScale - zoomScale) > 0.001 {
+            view.scrollView.setZoomScale(zoomScale, animated: true)
         }
     }
 
-    final class Coordinator: NSObject, PKCanvasViewDelegate, UIGestureRecognizerDelegate {
-        var onChange: (Data) -> Void
-        var onLongPress: () -> Void
+    private func applyInput(to view: ZoomablePageView) {
+        view.canvasView.drawingPolicy = fingerDrawing ? .anyInput : .pencilOnly
+        view.scrollView.panGestureRecognizer.minimumNumberOfTouches = fingerDrawing ? 2 : 1
+    }
+
+    final class Coordinator: NSObject, PKCanvasViewDelegate, UIScrollViewDelegate, UIGestureRecognizerDelegate {
+        var parent: NotebookCanvas
+        weak var view: ZoomablePageView?
         private(set) var loadedPageID: UUID?
         private var isLoading = false
 
-        init(onChange: @escaping (Data) -> Void, onLongPress: @escaping () -> Void) {
-            self.onChange = onChange
-            self.onLongPress = onLongPress
-        }
+        init(_ parent: NotebookCanvas) { self.parent = parent }
 
-        func load(_ data: Data, into canvas: PKCanvasView, pageID: UUID) {
+        func load(_ data: Data, pageID: UUID, into view: ZoomablePageView) {
+            self.view = view
             isLoading = true
-            canvas.drawing = (try? PKDrawing(data: data)) ?? PKDrawing()
+            view.canvasView.drawing = (try? PKDrawing(data: data)) ?? PKDrawing()
             loadedPageID = pageID
             DispatchQueue.main.async { self.isLoading = false }
         }
 
         func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
             guard !isLoading else { return }
-            onChange(canvasView.drawing.dataRepresentation())
+            parent.onChange(canvasView.drawing.dataRepresentation())
         }
 
-        @objc func handleLongPress(_ gr: UILongPressGestureRecognizer) {
-            if gr.state == .began { onLongPress() }
+        // Zoom
+        func viewForZooming(in scrollView: UIScrollView) -> UIView? { view?.contentView }
+        func scrollViewDidZoom(_ scrollView: UIScrollView) { view?.recenter() }
+        func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) {
+            parent.onZoomChanged(scale)
         }
 
-        func gestureRecognizer(
-            _ gestureRecognizer: UIGestureRecognizer,
-            shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer
-        ) -> Bool {
-            true
+        @objc func longPress(_ gr: UILongPressGestureRecognizer) {
+            if gr.state == .began { parent.onLongPress() }
         }
+
+        func gestureRecognizer(_ g: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
     }
 }
 
-// MARK: - Page canvas + ruled paper
+// MARK: - Zooming container
 
-/// PKCanvasView sized to a fixed portrait sheet, centered horizontally, with a
-/// ruled-paper background drawn behind the ink and scrolling with the content.
-private final class PageCanvasView: PKCanvasView {
-    private let paper = PaperSheetView()
+/// Hosts a scroll view whose zooming content holds the paper + the PencilKit canvas.
+final class ZoomablePageView: UIView {
+    let scrollView = UIScrollView()
+    let contentView = UIView()
+    let paperView = PaperSheetView()
+    let canvasView = PKCanvasView()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        paper.isUserInteractionEnabled = false
-        paper.backgroundColor = .clear
-        addSubview(paper)
+
+        scrollView.frame = bounds
+        scrollView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        scrollView.showsHorizontalScrollIndicator = false
+        scrollView.showsVerticalScrollIndicator = true
+        scrollView.alwaysBounceVertical = true
+        scrollView.minimumZoomScale = 0.5
+        scrollView.maximumZoomScale = 5
+        scrollView.contentInsetAdjustmentBehavior = .never
+        addSubview(scrollView)
+
+        let page = NotebookPageLayout.size
+        contentView.frame = CGRect(origin: .zero, size: page)
+        scrollView.contentSize = page
+        scrollView.addSubview(contentView)
+
+        paperView.frame = contentView.bounds
+        paperView.isUserInteractionEnabled = false
+        contentView.addSubview(paperView)
+
+        canvasView.frame = contentView.bounds
+        canvasView.backgroundColor = .clear
+        canvasView.isOpaque = false
+        canvasView.isScrollEnabled = false
+        // Keep ink colors exactly as chosen (no dark-mode remap on the white page).
+        canvasView.overrideUserInterfaceStyle = .light
+        contentView.addSubview(canvasView)
     }
 
-    required init?(coder: NSCoder) {
-        super.init(coder: coder)
-        paper.isUserInteractionEnabled = false
-        addSubview(paper)
-    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) not used") }
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        let page = NotebookPageLayout.size
-        contentSize = page
-        paper.frame = CGRect(origin: .zero, size: page)
-        sendSubviewToBack(paper)
+        recenter()
+    }
 
-        let hInset = max(0, (bounds.width - page.width) / 2)
-        contentInset = UIEdgeInsets(top: 16, left: hInset, bottom: 140, right: hInset)
+    func recenter() {
+        let page = NotebookPageLayout.size
+        let scaledW = page.width * scrollView.zoomScale
+        let scaledH = page.height * scrollView.zoomScale
+        let hInset = max(0, (scrollView.bounds.width - scaledW) / 2)
+        let vInset = max(16, (scrollView.bounds.height - scaledH) / 2)
+        scrollView.contentInset = UIEdgeInsets(top: vInset, left: hInset, bottom: 140, right: hInset)
     }
 }
 
-/// White ruled sheet with a margin line, drawn in page-space coordinates.
-private final class PaperSheetView: UIView {
+// MARK: - Ruled paper
+
+/// White sheet drawn per `PageTemplate`. Lives inside the zooming content, so it
+/// scales with the ink.
+final class PaperSheetView: UIView {
+    var template: PageTemplate = .linedMedium { didSet { setNeedsDisplay() } }
+
     override func draw(_ rect: CGRect) {
         guard let ctx = UIGraphicsGetCurrentContext() else { return }
 
         ctx.setFillColor(UIColor.white.cgColor)
         ctx.fill(bounds)
 
-        ctx.setStrokeColor(UIColor(red: 0.60, green: 0.72, blue: 0.90, alpha: 0.5).cgColor)
+        guard template.spacing > 0 else { return }
+        let spacing = template.spacing
+        let lineColor = UIColor(red: 0.62, green: 0.72, blue: 0.88, alpha: 0.55)
+        ctx.setStrokeColor(lineColor.cgColor)
         ctx.setLineWidth(1)
-        var y = NotebookPageLayout.lineSpacing
+
+        var y = spacing
         while y < bounds.height {
             ctx.move(to: CGPoint(x: 0, y: y))
             ctx.addLine(to: CGPoint(x: bounds.width, y: y))
-            y += NotebookPageLayout.lineSpacing
+            y += spacing
+        }
+
+        if template.isGrid {
+            var x = spacing
+            while x < bounds.width {
+                ctx.move(to: CGPoint(x: x, y: 0))
+                ctx.addLine(to: CGPoint(x: x, y: bounds.height))
+                x += spacing
+            }
         }
         ctx.strokePath()
 
-        ctx.setStrokeColor(UIColor(red: 0.90, green: 0.45, blue: 0.45, alpha: 0.55).cgColor)
-        ctx.setLineWidth(1)
-        ctx.move(to: CGPoint(x: NotebookPageLayout.marginX, y: 0))
-        ctx.addLine(to: CGPoint(x: NotebookPageLayout.marginX, y: bounds.height))
-        ctx.strokePath()
+        if template.isLined {
+            ctx.setStrokeColor(UIColor(red: 0.90, green: 0.45, blue: 0.45, alpha: 0.5).cgColor)
+            ctx.move(to: CGPoint(x: 60, y: 0))
+            ctx.addLine(to: CGPoint(x: 60, y: bounds.height))
+            ctx.strokePath()
+        }
     }
 }

@@ -1,61 +1,70 @@
-# Notebook gallery + pages + tool bar
+# Notebook feature set
 
-Product-facing feature set added on top of your existing spatial-canvas app.
-Drop the eight `Notebook*` / `LibraryView` / `PageFlipOverlay` files into a new
-`Notebook/` group, and replace `App/TuberNotesApp.swift` with the one here.
+Drop the `Notebook*` / `Library*` / `Page*` / `Agent*` files into your `Notebook/`
+group; `TuberNotesApp.swift` replaces the one in `App/`.
 
-## What's in it
+## New in this round
 
-- **Gallery** (`LibraryView.swift`) — grid of notebook covers saved locally. Create, rename, delete.
-- **Local persistence** (`NotebookStore.swift`) — one JSON file per notebook in `Documents/Notebooks/`, same `Codable` + `FileManager` style as `PenFixtureStore`. Drawings stored as serialized `PKDrawing` per page.
-- **GoodNotes-style vertical pages** (`NotebookCanvas.swift`) — each page is a fixed portrait sheet (`NotebookPageLayout.size`, ~Letter ratio) with ruled lines + a margin line drawn *inside* the scrolling canvas. Drawings are stored in fixed page-space, so they're device-independent (thumbnails/exports stay consistent).
-- **Page flipping** — long-press the page for the navigator (arrows, swipe, thumbnails), **plus dedicated back/forward buttons in the menu bar**.
-- **Thin menu bar** (`NotebookToolbar.swift`) — home · page back/forward · pen / pencil / highlighter / eraser · color · size · add page · page indicator.
-- **Standard color picking** — tap the color dot for a 16-swatch palette **and** a system `ColorPicker` for any custom color.
-- **Pen & highlighter resizing** — the size button opens a slider with a live preview. Each tool keeps its **own** width (pen, pencil, highlighter are independent).
+- **Exact ink colors.** The canvas now uses a nested zoom container with the
+  PencilKit view forced to `.light` interface style, so PencilKit no longer
+  remaps your colors for dark mode — the stroke matches the swatch/color dot.
+- **Assistant sidebar (AI).** Toggle it from the ✨ button in the nav bar. It
+  captures the current page (white paper + your ink, including whatever you
+  circled) and asks a vision model to describe what it sees. Uses your existing
+  `SpatialSelection` boundary. Runs in **demo mode with no key**; paste an OpenAI
+  key (🔑 in the sidebar) to get real analysis.
+- **Zoom.** Pinch to zoom, or use the − / % / + controls in the tool bar. The
+  paper and ink scale together and stay aligned.
+- **Eraser sizing.** The size control now applies to the eraser too (each tool
+  keeps its own width).
+- **Page templates.** Plain, Lined (Large/Medium/Small), Grid (Large/Medium/Small).
+  Choose per page from the ▦ menu in the nav bar, or set the starting template
+  when creating a notebook. Stored per page.
+- **Top page strip.** Toggle the ▤ button for a horizontal thumbnail strip to
+  jump between pages quickly. It auto-scrolls to the current page.
+- **Finger drawing toggle.** In the ▦ menu. Off (default) = Pencil draws, one
+  finger scrolls (GoodNotes feel). On = one finger draws, two fingers scroll.
 
-## Folder placement (matches your feature-based layout)
+## AI setup
 
-Create one new group `Notebook/` alongside `Pins/`, `SpatialCanvas/`, etc.:
+Default is **demo mode** — the app works with no key and returns a placeholder.
+For real analysis:
+1. Open a notebook → tap ✨ → tap 🔑 → paste an OpenAI API key.
+2. Draw/circle something → tap **Analyze this page**.
 
-```
-Notebook/
-  Notebook.swift
-  NotebookStore.swift
-  NotebookViewModel.swift
-  NotebookCanvas.swift
-  NotebookToolbar.swift
-  PageFlipOverlay.swift
-  LibraryView.swift
-  NotebookView.swift
-App/
-  TuberNotesApp.swift   ← replaces the existing one
-```
+The client (`AgentInsight.swift`) targets OpenAI's `chat/completions` vision
+endpoint (`gpt-4o-mini`). **Don't ship an API key inside the app** — for anything
+beyond local dev, put the key behind your own backend and point the client at it.
+To swap providers (e.g. Anthropic, or your Codex agent), implement
+`AgentInsightClient` and return it from `AgentClientFactory.make`.
 
-`README-notebooks.md` is not a source file — keep it out of the target.
+## Platform
 
-## Input model — important
+Targets **iPadOS/iOS 17**. Set the deployment target to 17.0 (17.x is fine).
+APIs used top out at iOS 16.4 (`presentationCompactAdaptation`,
+`scrollBounceBehavior`, `PKEraserTool(_:width:)`), and `onChange` uses the
+two-parameter iOS-17 form. No iOS-18-only APIs are used.
 
-The page uses `drawingPolicy = .pencilOnly`, which is what makes the GoodNotes
-feel work: **Apple Pencil draws, a single finger scrolls/pans the tall page.**
-If you need finger drawing (e.g. testing in the Simulator with no Pencil), change
-one line in `NotebookCanvas.swift` to `.anyInput` — but note that with `.anyInput`
-a single finger draws instead of scrolling, so a tall page becomes harder to
-navigate by touch.
+Note: drawing is Pencil-only by default (see the finger-drawing toggle), so to
+ink in the Simulator without a Pencil, turn on **Finger drawing** in the ▦ menu.
 
-## Light/dark
+## Files
 
-Removed, per request. The page is always white paper with your chosen ink color;
-the app otherwise follows the system appearance for its chrome.
+New: `PageTemplate.swift`, `AgentInsight.swift`, `AgentSidebarView.swift`,
+`PageStripView.swift`.
+Changed: `Notebook.swift`, `NotebookViewModel.swift`, `NotebookCanvas.swift`,
+`NotebookToolbar.swift`, `NotebookView.swift`, `NotebookStore.swift`,
+`LibraryView.swift`, `PageFlipOverlay.swift`.
 
-## Design notes
+## Unrelated build error you hit earlier
 
-- Saving is debounced (~0.6s) while drawing, forced on page change / add / delete / home / disappear.
-- Highlighter renders at 40% alpha so it reads as a highlight over ink.
-- Agent harness preserved: `TuberNotesApp` still shows your existing `RootView(scenario:)` when launched with `TUBER_SCENARIO` / `TUBER_RECORD_PEN_FIXTURE` / `TUBER_PEN_FIXTURE` / `--scenario`; normal launches open the gallery.
+The "Multiple commands produce … SKILL.md / openai.yaml" errors are from your
+`.codex/skills/` folders being added to **Copy Bundle Resources** (four folders,
+same filenames). Remove those entries from the target's Build Phases (or uncheck
+target membership for `.codex`), add `.codex/` to `.gitignore`, then Clean Build
+Folder (⇧⌘K). Not related to these files.
 
 ## Caveats
 
-- **Not compiled in Xcode here** — written to your conventions but expect to shake out a minor issue on first build.
-- **iPhone toolbar width**: the bar hugs its content; with page-nav + tools + color + size it's comfortable on iPad but tight on small iPhones. If you ship iPhone, wrap the toolbar `HStack` in a horizontal `ScrollView` or fold tools behind a `Menu`.
-- **Pins** aren't on notebook pages yet; the README's earlier note on adding `var pins: [Pin]` to `NotebookPage` still applies.
+- Not compiled in Xcode here — expect to shake out a minor issue on first build.
+- Pins aren't drawn on notebook pages yet (the `NotebookPage` → `[Pin]` note still applies).

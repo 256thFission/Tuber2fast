@@ -133,12 +133,7 @@ private struct PageThumbnail: View {
         }
     }
 
-    /// Render the whole page rect so thumbnails share the page aspect and show
-    /// strokes in their true position.
     private func render() -> UIImage? {
-        let drawing = page.drawing
-        guard !drawing.bounds.isNull else { return nil }
-        let rect = CGRect(origin: .zero, size: NotebookPageLayout.size)
-        return drawing.image(from: rect, scale: 0.25)
+        page.renderThumbnail(maxWidth: 160)
     }
 }

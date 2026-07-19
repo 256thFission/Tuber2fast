@@ -4,7 +4,6 @@ import UIKit
 
 // MARK: - Notebook
 
-/// A locally-persisted notebook. Each notebook owns an ordered list of pages.
 struct Notebook: Identifiable, Codable, Equatable {
     let id: UUID
     var title: String
@@ -34,33 +33,59 @@ struct Notebook: Identifiable, Codable, Equatable {
 
 struct NotebookPage: Identifiable, Codable, Equatable {
     let id: UUID
-    /// Serialized `PKDrawing` (`dataRepresentation()`), stored in fixed page-space
-    /// coordinates (`NotebookPageLayout.size`) so drawings are device-independent.
+    /// Serialized `PKDrawing` in fixed page-space (`NotebookPageLayout.size`).
     var drawingData: Data
     var createdAt: Date
+    var template: PageTemplate
 
     init(
         id: UUID = UUID(),
         drawingData: Data = PKDrawing().dataRepresentation(),
-        createdAt: Date = Date()
+        createdAt: Date = Date(),
+        template: PageTemplate = .linedMedium
     ) {
         self.id = id
         self.drawingData = drawingData
         self.createdAt = createdAt
+        self.template = template
+    }
+
+    // Tolerant decoding so older saved notebooks (without `template`) still load.
+    enum CodingKeys: String, CodingKey { case id, drawingData, createdAt, template }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        drawingData = try c.decode(Data.self, forKey: .drawingData)
+        createdAt = try c.decode(Date.self, forKey: .createdAt)
+        template = try c.decodeIfPresent(PageTemplate.self, forKey: .template) ?? .linedMedium
     }
 
     var drawing: PKDrawing {
         (try? PKDrawing(data: drawingData)) ?? PKDrawing()
+    }
+
+    /// Small white-backed render of the page's ink, for strips and thumbnails.
+    func renderThumbnail(maxWidth: CGFloat = 120) -> UIImage? {
+        let page = NotebookPageLayout.size
+        let scale = maxWidth / page.width
+        let size = CGSize(width: page.width * scale, height: page.height * scale)
+        let renderer = UIGraphicsImageRenderer(size: size)
+        return renderer.image { ctx in
+            UIColor.white.setFill()
+            ctx.fill(CGRect(origin: .zero, size: size))
+            let d = drawing
+            if !d.bounds.isNull {
+                d.image(from: CGRect(origin: .zero, size: page), scale: 1)
+                    .draw(in: CGRect(origin: .zero, size: size))
+            }
+        }
     }
 }
 
 // MARK: - Page layout (GoodNotes-style portrait sheet)
 
 enum NotebookPageLayout {
-    /// Fixed portrait sheet (~Letter ratio). The canvas scrolls vertically within this.
     static let size = CGSize(width: 768, height: 994)
-    static let lineSpacing: CGFloat = 38
-    static let marginX: CGFloat = 60
     static var aspect: CGFloat { size.height / size.width }
 }
 
@@ -82,11 +107,7 @@ enum NotebookCover: String, Codable, CaseIterable, Identifiable {
     }
 
     var gradient: LinearGradient {
-        LinearGradient(
-            colors: [base, base.opacity(0.72)],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
+        LinearGradient(colors: [base, base.opacity(0.72)], startPoint: .topLeading, endPoint: .bottomTrailing)
     }
 
     var displayName: String { rawValue.capitalized }
@@ -117,15 +138,15 @@ enum WritingTool: String, CaseIterable, Identifiable {
     }
 
     var usesColor: Bool { self != .eraser }
-    var usesWidth: Bool { self != .eraser }
+    /// All tools — including the eraser — are now sizable.
+    var usesWidth: Bool { true }
 
-    /// Highlighter is drawn semi-transparent so it reads as a highlight.
     func pkTool(color: UIColor, width: CGFloat) -> PKTool {
         switch self {
         case .pen:    PKInkingTool(.pen, color: color, width: width)
         case .pencil: PKInkingTool(.pencil, color: color, width: width)
         case .marker: PKInkingTool(.marker, color: color.withAlphaComponent(0.4), width: width)
-        case .eraser: PKEraserTool(.bitmap)
+        case .eraser: PKEraserTool(.bitmap, width: width) // iOS 16.4+
         }
     }
 
@@ -134,7 +155,7 @@ enum WritingTool: String, CaseIterable, Identifiable {
         case .pen:    2...16
         case .pencil: 1...14
         case .marker: 8...44
-        case .eraser: 10...60
+        case .eraser: 8...80
         }
     }
 
@@ -151,7 +172,6 @@ enum WritingTool: String, CaseIterable, Identifiable {
 // MARK: - Color palette + hex helpers
 
 enum InkPalette {
-    /// A standard, GoodNotes-like default palette.
     static let standard: [String] = [
         "#1C1E26", "#5B5F66", "#9AA0A6", "#FFFFFF",
         "#E11D2E", "#F2711C", "#F4B400", "#2FA84F",

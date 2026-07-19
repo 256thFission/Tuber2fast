@@ -49,8 +49,8 @@ final class NotebookStore: ObservableObject {
     }
 
     @discardableResult
-    func createNotebook(title: String, cover: NotebookCover) -> Notebook {
-        let notebook = Notebook(title: title, cover: cover)
+    func createNotebook(title: String, cover: NotebookCover, template: PageTemplate = .linedMedium) -> Notebook {
+        let notebook = Notebook(title: title, cover: cover, pages: [NotebookPage(template: template)])
         save(notebook)
         return notebook
     }
