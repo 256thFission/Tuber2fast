@@ -1,6 +1,6 @@
 # WL-C — Real documents: creation, import, persistence, relaunch
 
-Status: not-started
+Status: in-progress — local implementation ready; physical acceptance paused because the pinned iPad is unavailable
 Owner subsystem: coordinator `App` + `DeveloperSupport` for fixtures
 Depends on: P0. Independent of WL-A/B.
 Subagent-eligible: yes, per step (each step is a bounded deliverable).
@@ -64,4 +64,13 @@ Creation and import flow feel; add-page discoverability (see
 
 ## Session log
 
-- (none yet)
+- 2026-07-19: Implemented the App-owned single-document persistence layer,
+  blank notebook creation/append flow, basic system PDF import with an app-owned
+  copy, per-page PencilKit persistence through the existing
+  `InkReference.relativePath`, and isolated `persistence-relaunch` DEBUG
+  scenario/verifier support. Explicit DEBUG scenarios continue to override user
+  state. Generic iOS Debug build passed with code signing disabled; verifier
+  shell syntax/help checks passed. No frozen-contract or `inkReference` pressure
+  appeared. Physical verification and commit are deferred: the coordinator's
+  pinned iPad was disconnected/not booted before the serialized WL-C slot, so
+  WL-C consumed zero device verification attempts.

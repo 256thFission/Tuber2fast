@@ -13,6 +13,7 @@ enum DevelopmentScenario: String, CaseIterable {
     case lassoCrop = "lasso-crop"
     case pinDrift = "pin-drift"
     case edgePins = "edge-pins"
+    case persistenceRelaunch = "persistence-relaunch"
     case agentRecordedSuccess = "agent-recorded-success"
     case agentRecordedRetrieval = "agent-recorded-retrieval"
     case agentRecordedFailure = "agent-recorded-failure"
@@ -34,6 +35,15 @@ enum DevelopmentScenario: String, CaseIterable {
         recordSelection(.blankCanvas, source: "default")
 #endif
         return .blankCanvas
+    }
+
+    static var isExplicitlySelected: Bool {
+#if DEBUG
+        if ProcessInfo.processInfo.environment["TUBER_SCENARIO"] != nil { return true }
+        return ProcessInfo.processInfo.arguments.contains("--scenario")
+#else
+        return false
+#endif
     }
 
     var displayName: String { rawValue }
@@ -116,7 +126,9 @@ enum DevelopmentRuntimeEvidence {
         currentPageIndex: Int?,
         renderedPenFixtureName: String?,
         renderedAnnotationIDs: [UUID],
-        heroStatus: String? = nil
+        heroStatus: String? = nil,
+        renderedInkReference: String? = nil,
+        restoredFromPersistence: Bool = false
     ) {
         let verificationNonce = ProcessInfo.processInfo.environment["TUBER_VERIFY_NONCE"]
         let value: [String: Any] = [
@@ -130,6 +142,8 @@ enum DevelopmentRuntimeEvidence {
             "renderedPenFixtureName": (renderedPenFixtureName as Any?) ?? NSNull(),
             "renderedAnnotationIDs": renderedAnnotationIDs.map(\.uuidString).sorted(),
             "heroStatus": (heroStatus as Any?) ?? NSNull(),
+            "renderedInkReference": (renderedInkReference as Any?) ?? NSNull(),
+            "restoredFromPersistence": restoredFromPersistence,
             "recordedAt": ISO8601DateFormatter().string(from: Date())
         ]
         guard JSONSerialization.isValidJSONObject(value),
@@ -160,6 +174,7 @@ struct DevelopmentScenarioFixture {
         case selection
         case agent
         case hero
+        case persistence
     }
 
     enum IntegrationReadiness: String {
@@ -210,6 +225,10 @@ private enum DevelopmentScenarioFixtures {
         static let edgeRight = uuid("46666666-6666-6666-6666-666666666662")
         static let edgeBottom = uuid("46666666-6666-6666-6666-666666666663")
         static let edgeLeft = uuid("46666666-6666-6666-6666-666666666664")
+
+        static let persistenceDocument = uuid("50000000-0000-0000-0000-000000000001")
+        static let persistencePage = uuid("50000000-0000-0000-0000-000000000011")
+        static let persistencePin = uuid("50000000-0000-0000-0000-000000000021")
 
         private static func uuid(_ value: String) -> UUID {
             guard let id = UUID(uuidString: value) else { preconditionFailure("Invalid fixture UUID: \(value)") }
@@ -305,6 +324,40 @@ private enum DevelopmentScenarioFixtures {
                     annotation(id: ID.edgeBottom, pageID: ID.blankPage, x: 0.50, y: 0.97, teaser: "Bottom", body: "Bottom-edge fixture."),
                     annotation(id: ID.edgeLeft, pageID: ID.blankPage, x: 0.03, y: 0.50, teaser: "Left", body: "Left-edge fixture.")
                 ]
+            )
+        case .persistenceRelaunch:
+            let page = PageRecord(
+                id: ID.persistencePage,
+                index: 0,
+                background: .blank(style: .tuberDotGrid, dimensions: .tuberPortrait),
+                inkReference: nil,
+                annotations: [
+                    annotation(
+                        id: ID.persistencePin,
+                        pageID: ID.persistencePage,
+                        x: 0.61,
+                        y: 0.37,
+                        teaser: "Persisted Pin",
+                        body: "Stable page-normalized annotation restored across relaunch."
+                    )
+                ]
+            )
+            let document = NotebookDocument(
+                id: ID.persistenceDocument,
+                title: "Persistence Fixture",
+                source: .notebook(defaultPaperStyle: .tuberDotGrid),
+                pages: [page],
+                currentPageID: ID.persistencePage
+            )
+            return make(
+                family: .persistence,
+                expectedState: "same page identity, ink reference, and annotation identity after relaunch",
+                readiness: .appWired,
+                document: document,
+                penFixtures: [
+                    ID.persistencePage: diagonalFixture(name: "persistence-page-ink", descending: false)
+                ],
+                annotations: page.annotations
             )
         case .lassoCrop:
             return later(family: .selection, expectedState: "known PDF and ink selection with an inspectable crop artifact")

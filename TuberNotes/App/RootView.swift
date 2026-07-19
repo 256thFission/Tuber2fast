@@ -1,12 +1,20 @@
 import PDFKit
 import PencilKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct RootView: View {
     let scenario: DevelopmentScenario
+    private let documentStore: DocumentStore
+    private let usesPersistentProductState: Bool
     @State private var displayedScenario: DevelopmentScenario
     @State private var document: NotebookDocument?
     @State private var currentPageID: UUID?
+    @State private var initialDrawingData: [UUID: Data]
+    @State private var importedPDFDocument: PDFDocument?
+    @State private var restoredFromPersistence: Bool
+    @State private var isImportingPDF = false
+    @State private var importError: String?
     @State private var surfaceGeneration = 0
 #if DEBUG
     @StateObject private var agentSession = AgentInteractionSession()
@@ -15,9 +23,50 @@ struct RootView: View {
 
     init(scenario: DevelopmentScenario) {
         self.scenario = scenario
+        let explicitFixture = DevelopmentScenario.isExplicitlySelected
+        let persistenceScenario = explicitFixture && scenario == .persistenceRelaunch
+        let store = DocumentStore(
+            rootName: persistenceScenario ? "developer-persistence-scenario" : "documents"
+        )
+#if DEBUG
+        if persistenceScenario,
+           ProcessInfo.processInfo.environment["TUBER_PERSISTENCE_RESET"] == "1" {
+            store.resetForDeterministicVerification()
+        }
+#endif
+        let restored = (persistenceScenario || !explicitFixture) ? store.loadDocument() : nil
+        var selectedDocument = restored ?? (explicitFixture ? scenario.fixture.document : nil)
+
+        if persistenceScenario,
+           restored == nil,
+           var seededDocument = selectedDocument,
+           let pageID = seededDocument.currentPageID,
+           let fixture = scenario.fixture.penFixturesByPageID[pageID] {
+            let drawing = fixture.makeDrawing(in: CGSize(width: 768, height: 1024))
+            try? store.saveDrawing(
+                drawing.dataRepresentation(),
+                pageID: pageID,
+                in: &seededDocument
+            )
+            selectedDocument = seededDocument
+        }
+
+        documentStore = store
+        usesPersistentProductState = persistenceScenario || !explicitFixture
         _displayedScenario = State(initialValue: scenario)
-        _document = State(initialValue: scenario.fixture.document)
-        _currentPageID = State(initialValue: scenario.fixture.currentPageID)
+        _document = State(initialValue: selectedDocument)
+        _currentPageID = State(initialValue: selectedDocument?.currentPageID)
+        _initialDrawingData = State(
+            initialValue: selectedDocument.map(store.drawingData(for:)) ?? [:]
+        )
+        _importedPDFDocument = State(
+            initialValue: selectedDocument.flatMap(store.pdfDocument(for:))
+        )
+        _restoredFromPersistence = State(initialValue: restored != nil)
+
+        if persistenceScenario, restored == nil, let selectedDocument {
+            try? store.saveDocument(selectedDocument)
+        }
     }
 
     var body: some View {
@@ -68,13 +117,37 @@ struct RootView: View {
                         .accessibilityIdentifier("append-page")
                     }
                 }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Text(displayedScenario.displayName)
-                        .font(.caption.monospaced())
-                        .foregroundStyle(.secondary)
-                        .accessibilityIdentifier("scenario-label")
+                if canManageDocuments {
+                    ToolbarItemGroup(placement: .topBarTrailing) {
+                        Button(action: createBlankNotebook) {
+                            Label("New Notebook", systemImage: "square.and.pencil")
+                        }
+                        .accessibilityIdentifier("create-notebook")
+                        Button(action: { isImportingPDF = true }) {
+                            Label("Import PDF", systemImage: "square.and.arrow.down")
+                        }
+                        .accessibilityIdentifier("import-pdf")
+                    }
+                } else {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Text(displayedScenario.displayName)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                            .accessibilityIdentifier("scenario-label")
+                    }
                 }
             }
+        }
+        .fileImporter(
+            isPresented: $isImportingPDF,
+            allowedContentTypes: [.pdf],
+            allowsMultipleSelection: false,
+            onCompletion: importPDF
+        )
+        .alert("Couldn’t Import PDF", isPresented: importErrorPresented) {
+            Button("OK", role: .cancel) { importError = nil }
+        } message: {
+            Text(importError ?? "Unknown error")
         }
 #if DEBUG
         .task(id: runtimeEvidenceFingerprint) {
@@ -87,17 +160,37 @@ struct RootView: View {
 #if DEBUG
             agentSession.reload()
             feedbackSession.reload()
-            bindScenarioToActiveRequest()
+            if agentSession.activeRequest != nil || feedbackSession.activeFeedbackThread != nil {
+                bindScenarioToActiveRequest()
+            }
 #endif
+        }
+        .onChange(of: currentPageID) { _, newValue in
+            guard usesPersistentProductState, var updated = document else { return }
+            updated.currentPageID = newValue
+            document = updated
+            persist(updated)
         }
     }
 
     @ViewBuilder
     private var scenarioSurface: some View {
+        if usesPersistentProductState, document == nil {
+            ContentUnavailableView {
+                Label("Start a TuberNotes Document", systemImage: "doc.badge.plus")
+            } description: {
+                Text("Create a dot-grid notebook or import a PDF.")
+            } actions: {
+                Button("New Notebook", action: createBlankNotebook)
+                    .buttonStyle(.borderedProminent)
+                Button("Import PDF") { isImportingPDF = true }
+                    .buttonStyle(.bordered)
+            }
+        } else {
         switch displayedScenario {
         case .fakePin, .multiPin, .edgePins:
             standalonePinSurface
-        case .blankCanvas, .pdfPages, .blankNotebook, .notebookPages, .inkPages, .pinDrift:
+        case .blankCanvas, .pdfPages, .blankNotebook, .notebookPages, .inkPages, .pinDrift, .persistenceRelaunch:
             standaloneSpatialSurface
         case .heroRecorded:
             RecordedHeroView()
@@ -108,6 +201,7 @@ struct RootView: View {
                 description: Text(scenario.fixture.expectedState)
             )
         }
+        }
     }
 
     @ViewBuilder
@@ -117,6 +211,7 @@ struct RootView: View {
                 document: document,
                 currentPageID: $currentPageID,
                 pdfDocument: pdfDocument(for: document),
+                initialDrawingData: initialDrawingData,
                 penFixturesByPageID: displayedScenario.fixture.penFixturesByPageID,
                 pageOverlay: { page, projection in
                     AnyView(
@@ -126,6 +221,7 @@ struct RootView: View {
                         )
                     )
                 },
+                onDrawingChanged: drawingChangedHandler,
                 onDrawingSnapshot: drawingSnapshotHandler,
                 allowsDeterministicViewportTransition: displayedScenario == .pinDrift
             )
@@ -177,6 +273,10 @@ struct RootView: View {
         return false
     }
 
+    private var canManageDocuments: Bool {
+        usesPersistentProductState && displayedScenario != .persistenceRelaunch
+    }
+
     private func spatialAnnotations(for page: PageRecord) -> [PageAnnotation] {
         let fixtureAnnotations = displayedScenario.fixture.annotations.filter { $0.pageID == page.id }
         let fixtureIDs = Set(fixtureAnnotations.map(\.id))
@@ -199,11 +299,68 @@ struct RootView: View {
         document.currentPageID = pageID
         self.document = document
         currentPageID = pageID
+        persist(document)
     }
 
     private func pdfDocument(for document: NotebookDocument) -> PDFDocument? {
-        guard case .bundledPDF = document.source else { return nil }
-        return SpatialCanvasFixtures.makeM0DemoPDF()
+        switch document.source {
+        case .bundledPDF:
+            return SpatialCanvasFixtures.makeM0DemoPDF()
+        case .importedPDF:
+            return importedPDFDocument ?? documentStore.pdfDocument(for: document)
+        case .notebook:
+            return nil
+        }
+    }
+
+    private func createBlankNotebook() {
+        let pageID = UUID()
+        let newDocument = NotebookDocument(
+            id: UUID(),
+            title: "Untitled Notebook",
+            source: .notebook(defaultPaperStyle: .tuberDotGrid),
+            pages: [
+                PageRecord(
+                    id: pageID,
+                    index: 0,
+                    background: .blank(style: .tuberDotGrid, dimensions: .tuberPortrait),
+                    inkReference: nil,
+                    annotations: []
+                )
+            ],
+            currentPageID: pageID
+        )
+        document = newDocument
+        currentPageID = pageID
+        initialDrawingData = [:]
+        importedPDFDocument = nil
+        restoredFromPersistence = false
+        persist(newDocument)
+        surfaceGeneration += 1
+    }
+
+    private func importPDF(_ result: Result<[URL], Error>) {
+        do {
+            guard let url = try result.get().first else { return }
+            let imported = try documentStore.importPDF(from: url)
+            document = imported.0
+            currentPageID = imported.0.currentPageID
+            initialDrawingData = [:]
+            importedPDFDocument = imported.1
+            restoredFromPersistence = false
+            surfaceGeneration += 1
+        } catch {
+            importError = error.localizedDescription
+        }
+    }
+
+    private var importErrorPresented: Binding<Bool> {
+        Binding(get: { importError != nil }, set: { if !$0 { importError = nil } })
+    }
+
+    private func persist(_ document: NotebookDocument) {
+        guard usesPersistentProductState else { return }
+        try? documentStore.saveDocument(document)
     }
 
 #if DEBUG
@@ -274,8 +431,17 @@ struct RootView: View {
     }
 
     private func resetScenarioSurface() {
-        document = displayedScenario.fixture.document
-        currentPageID = displayedScenario.fixture.currentPageID
+        if usesPersistentProductState, let restored = documentStore.loadDocument() {
+            document = restored
+            currentPageID = restored.currentPageID
+            initialDrawingData = documentStore.drawingData(for: restored)
+            importedPDFDocument = documentStore.pdfDocument(for: restored)
+            restoredFromPersistence = true
+        } else {
+            document = displayedScenario.fixture.document
+            currentPageID = displayedScenario.fixture.currentPageID
+            initialDrawingData = [:]
+        }
         surfaceGeneration += 1
     }
 
@@ -299,7 +465,7 @@ struct RootView: View {
         }
 
         switch displayedScenario {
-        case .pdfPages, .blankNotebook, .notebookPages, .inkPages, .pinDrift:
+        case .pdfPages, .blankNotebook, .notebookPages, .inkPages, .pinDrift, .persistenceRelaunch:
             let renderedAnnotations = currentPageID
                 .flatMap { selectedID in document.pages.first(where: { $0.id == selectedID }) }
                 .map(spatialAnnotations(for:)) ?? []
@@ -310,7 +476,11 @@ struct RootView: View {
                 currentPageID: currentPageID,
                 currentPageIndex: currentIndex,
                 renderedPenFixtureName: penFixtureName,
-                renderedAnnotationIDs: renderedAnnotations.map(\.id)
+                renderedAnnotationIDs: renderedAnnotations.map(\.id),
+                renderedInkReference: currentPageID.flatMap { selectedID in
+                    document.pages.first(where: { $0.id == selectedID })?.inkReference?.relativePath
+                },
+                restoredFromPersistence: restoredFromPersistence
             )
         case .edgePins:
             DevelopmentRuntimeEvidence.record(
@@ -336,6 +506,19 @@ struct RootView: View {
 #else
         { _, _, _ in }
 #endif
+    }
+
+    private var drawingChangedHandler: (UUID, Data) -> Void {
+        { pageID, data in
+            guard usesPersistentProductState, var updated = document else { return }
+            do {
+                try documentStore.saveDrawing(data, pageID: pageID, in: &updated)
+                document = updated
+                initialDrawingData[pageID] = data
+            } catch {
+                print("TuberNotes persistence drawing-save error=\(error.localizedDescription)")
+            }
+        }
     }
 }
 
