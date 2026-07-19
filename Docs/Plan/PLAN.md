@@ -113,3 +113,7 @@ Append one line per meaningful state change: date, line, what changed.
   attempts before build/install: exact wired preflight passed, but Xcode kept
   the pinned iPad in `Device is busy (Connecting to Phillip’s iPad)`. WL-C
   remains in-progress and no new human-review session was started.
+- 2026-07-19 — Physical disconnect/reconnect did not clear the Xcode developer
+  service blocker. A fresh two-attempt WL-C cycle again stopped before
+  build/install with the exact iPad stuck `busy (Connecting)`; acceptance
+  remains open.

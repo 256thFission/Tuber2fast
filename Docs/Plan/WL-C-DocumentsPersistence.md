@@ -99,3 +99,9 @@ Creation and import flow feel; add-page discoverability (see
   `tmp/verify/20260719-160154-persistence-relaunch/` and
   `tmp/verify/20260719-160331-persistence-relaunch/`. No fresh feedback session
   or product mutation was created; the two-attempt stop condition was reached.
+- 2026-07-19 — After Phillip physically disconnected/reconnected the iPad, a
+  fresh two-attempt cycle produced the same Xcode destination failure before
+  build/install: `Device is busy (Connecting to Phillip’s iPad)`. Artifacts:
+  `tmp/verify/20260719-160606-persistence-relaunch/` and
+  `tmp/verify/20260719-160748-persistence-relaunch/`. Wired preflight continued
+  to pass, but the Debug app remained unavailable; no human action was asked.
