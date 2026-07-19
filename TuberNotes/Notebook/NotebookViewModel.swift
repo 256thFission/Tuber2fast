@@ -1,14 +1,21 @@
 import Combine
 import Foundation
 import PencilKit
+import SwiftUI
+import UIKit
 
 @MainActor
 final class NotebookViewModel: ObservableObject {
     @Published var notebook: Notebook
     @Published var currentIndex: Int = 0
+
     @Published var tool: WritingTool = .pen
-    @Published var inkColor: InkColor = .ink
-    @Published var strokeWidth: CGFloat = 4
+    @Published var inkColorHex: String = InkPalette.default
+
+    // Independent widths per tool so pen and highlighter keep their own size.
+    @Published var penWidth: CGFloat = WritingTool.pen.defaultWidth
+    @Published var pencilWidth: CGFloat = WritingTool.pencil.defaultWidth
+    @Published var markerWidth: CGFloat = WritingTool.marker.defaultWidth
 
     private let store: NotebookStore
     private var saveTask: Task<Void, Never>?
@@ -26,6 +33,38 @@ final class NotebookViewModel: ObservableObject {
     var canGoBack: Bool { currentIndex > 0 }
     var canGoForward: Bool { currentIndex < notebook.pages.count - 1 }
     var pageLabel: String { "\(currentIndex + 1) / \(pageCount)" }
+
+    // MARK: Tool state
+
+    var inkUIColor: UIColor { UIColor(hex: inkColorHex) ?? .label }
+    var inkColor: Color { Color(inkUIColor) }
+
+    func selectColor(_ hex: String) {
+        inkColorHex = hex
+        if tool == .eraser { tool = .pen }
+    }
+
+    /// The width for whichever tool is active (bindable from the size popover).
+    var activeWidth: CGFloat {
+        get {
+            switch tool {
+            case .pen:    penWidth
+            case .pencil: pencilWidth
+            case .marker: markerWidth
+            case .eraser: penWidth
+            }
+        }
+        set {
+            switch tool {
+            case .pen:    penWidth = newValue
+            case .pencil: pencilWidth = newValue
+            case .marker: markerWidth = newValue
+            case .eraser: break
+            }
+        }
+    }
+
+    var widthRange: ClosedRange<CGFloat> { tool.widthRange }
 
     // MARK: Drawing
 

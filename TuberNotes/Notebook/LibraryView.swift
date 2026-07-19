@@ -12,11 +12,7 @@ struct LibraryView: View {
     @State private var renaming: Notebook?
     @State private var renameText = ""
 
-    @AppStorage("tuber.appearance") private var appearanceRaw = AppAppearance.system.rawValue
-
     private let columns = [GridItem(.adaptive(minimum: 150, maximum: 200), spacing: 20)]
-
-    private var appearance: AppAppearance { AppAppearance(rawValue: appearanceRaw) ?? .system }
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -36,14 +32,6 @@ struct LibraryView: View {
                 }
             }
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button {
-                        appearanceRaw = appearance.next.rawValue
-                    } label: {
-                        Image(systemName: appearance.symbol)
-                    }
-                    .accessibilityIdentifier("library-appearance")
-                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { showingNew = true } label: {
                         Image(systemName: "plus")

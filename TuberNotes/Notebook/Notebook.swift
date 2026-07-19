@@ -34,7 +34,8 @@ struct Notebook: Identifiable, Codable, Equatable {
 
 struct NotebookPage: Identifiable, Codable, Equatable {
     let id: UUID
-    /// Serialized `PKDrawing` (`dataRepresentation()`), stored in page-local coordinates.
+    /// Serialized `PKDrawing` (`dataRepresentation()`), stored in fixed page-space
+    /// coordinates (`NotebookPageLayout.size`) so drawings are device-independent.
     var drawingData: Data
     var createdAt: Date
 
@@ -51,6 +52,16 @@ struct NotebookPage: Identifiable, Codable, Equatable {
     var drawing: PKDrawing {
         (try? PKDrawing(data: drawingData)) ?? PKDrawing()
     }
+}
+
+// MARK: - Page layout (GoodNotes-style portrait sheet)
+
+enum NotebookPageLayout {
+    /// Fixed portrait sheet (~Letter ratio). The canvas scrolls vertically within this.
+    static let size = CGSize(width: 768, height: 994)
+    static let lineSpacing: CGFloat = 38
+    static let marginX: CGFloat = 60
+    static var aspect: CGFloat { size.height / size.width }
 }
 
 // MARK: - Cover
@@ -96,67 +107,76 @@ enum WritingTool: String, CaseIterable, Identifiable {
         }
     }
 
-    var label: String { rawValue.capitalized }
+    var label: String {
+        switch self {
+        case .pen:    "Pen"
+        case .pencil: "Pencil"
+        case .marker: "Highlighter"
+        case .eraser: "Eraser"
+        }
+    }
 
+    var usesColor: Bool { self != .eraser }
+    var usesWidth: Bool { self != .eraser }
+
+    /// Highlighter is drawn semi-transparent so it reads as a highlight.
     func pkTool(color: UIColor, width: CGFloat) -> PKTool {
         switch self {
         case .pen:    PKInkingTool(.pen, color: color, width: width)
         case .pencil: PKInkingTool(.pencil, color: color, width: width)
-        case .marker: PKInkingTool(.marker, color: color, width: width * 3.2)
+        case .marker: PKInkingTool(.marker, color: color.withAlphaComponent(0.4), width: width)
         case .eraser: PKEraserTool(.bitmap)
         }
     }
+
+    var widthRange: ClosedRange<CGFloat> {
+        switch self {
+        case .pen:    2...16
+        case .pencil: 1...14
+        case .marker: 8...44
+        case .eraser: 10...60
+        }
+    }
+
+    var defaultWidth: CGFloat {
+        switch self {
+        case .pen:    4
+        case .pencil: 3
+        case .marker: 18
+        case .eraser: 24
+        }
+    }
 }
 
-// MARK: - Ink color
+// MARK: - Color palette + hex helpers
 
-enum InkColor: String, CaseIterable, Identifiable {
-    case ink, blue, red, green, orange, purple
-    var id: String { rawValue }
-
-    /// Note: `.ink` is a fixed near-black (not `.label`) so it stays visible on the
-    /// always-white notebook page in both light and dark appearances.
-    var uiColor: UIColor {
-        switch self {
-        case .ink:    UIColor(red: 0.11, green: 0.12, blue: 0.15, alpha: 1)
-        case .blue:   UIColor(red: 0.13, green: 0.42, blue: 0.92, alpha: 1)
-        case .red:    UIColor(red: 0.85, green: 0.20, blue: 0.24, alpha: 1)
-        case .green:  UIColor(red: 0.16, green: 0.55, blue: 0.30, alpha: 1)
-        case .orange: UIColor(red: 0.92, green: 0.52, blue: 0.10, alpha: 1)
-        case .purple: UIColor(red: 0.50, green: 0.26, blue: 0.80, alpha: 1)
-        }
-    }
-
-    var swatch: Color { Color(uiColor) }
-    var label: String { rawValue.capitalized }
+enum InkPalette {
+    /// A standard, GoodNotes-like default palette.
+    static let standard: [String] = [
+        "#1C1E26", "#5B5F66", "#9AA0A6", "#FFFFFF",
+        "#E11D2E", "#F2711C", "#F4B400", "#2FA84F",
+        "#0B8043", "#00897B", "#1A73E8", "#1652CE",
+        "#7C3AED", "#D81B8C", "#8B5E3C", "#111111",
+    ]
+    static let `default` = "#1C1E26"
 }
 
-// MARK: - Appearance
-
-enum AppAppearance: String, CaseIterable {
-    case system, light, dark
-
-    var colorScheme: ColorScheme? {
-        switch self {
-        case .system: nil
-        case .light:  .light
-        case .dark:   .dark
-        }
+extension UIColor {
+    convenience init?(hex: String) {
+        var s = hex.trimmingCharacters(in: .whitespacesAndNewlines)
+        if s.hasPrefix("#") { s.removeFirst() }
+        guard s.count == 6, let v = UInt32(s, radix: 16) else { return nil }
+        self.init(
+            red: CGFloat((v >> 16) & 0xFF) / 255,
+            green: CGFloat((v >> 8) & 0xFF) / 255,
+            blue: CGFloat(v & 0xFF) / 255,
+            alpha: 1
+        )
     }
 
-    var next: AppAppearance {
-        switch self {
-        case .system: .light
-        case .light:  .dark
-        case .dark:   .system
-        }
-    }
-
-    var symbol: String {
-        switch self {
-        case .system: "circle.lefthalf.filled"
-        case .light:  "sun.max"
-        case .dark:   "moon"
-        }
+    var hexString: String {
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        getRed(&r, green: &g, blue: &b, alpha: &a)
+        return String(format: "#%02X%02X%02X", Int(r * 255), Int(g * 255), Int(b * 255))
     }
 }

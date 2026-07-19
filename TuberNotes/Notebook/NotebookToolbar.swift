@@ -1,17 +1,15 @@
 import SwiftUI
+import UIKit
 
-/// The thin floating menu bar shown over the page: home, writing utensils,
-/// ink color, light/dark toggle, add page, and a tappable page indicator.
+/// Thin floating menu bar: home, page back/forward, writing utensils, color,
+/// size (for pen/pencil/highlighter), add page, and a tappable page indicator.
 struct NotebookToolbar: View {
     @ObservedObject var vm: NotebookViewModel
-    @AppStorage("tuber.appearance") private var appearanceRaw = AppAppearance.system.rawValue
-
     var onHome: () -> Void
     var onShowPages: () -> Void
 
-    private var appearance: AppAppearance {
-        AppAppearance(rawValue: appearanceRaw) ?? .system
-    }
+    @State private var showColors = false
+    @State private var showSize = false
 
     var body: some View {
         HStack(spacing: 12) {
@@ -20,18 +18,26 @@ struct NotebookToolbar: View {
 
             divider
 
+            iconButton("chevron.left", enabled: vm.canGoBack) {
+                withAnimation(.easeInOut) { vm.goBack() }
+            }
+            .accessibilityIdentifier("toolbar-prev-page")
+
+            iconButton("chevron.right", enabled: vm.canGoForward) {
+                withAnimation(.easeInOut) { vm.goForward() }
+            }
+            .accessibilityIdentifier("toolbar-next-page")
+
+            divider
+
             ForEach(WritingTool.allCases) { tool in
                 toolButton(tool)
             }
 
-            colorMenu
+            colorButton
+            if vm.tool.usesWidth { sizeButton }
 
             divider
-
-            iconButton(appearance.symbol) {
-                appearanceRaw = appearance.next.rawValue
-            }
-            .accessibilityIdentifier("toolbar-appearance")
 
             iconButton("plus.rectangle.on.rectangle") { vm.addPage() }
                 .accessibilityIdentifier("toolbar-add-page")
@@ -52,15 +58,15 @@ struct NotebookToolbar: View {
         .accessibilityIdentifier("notebook-toolbar")
     }
 
+    // MARK: Pieces
+
     private var divider: some View {
-        Rectangle()
-            .fill(.primary.opacity(0.12))
-            .frame(width: 1, height: 22)
+        Rectangle().fill(.primary.opacity(0.12)).frame(width: 1, height: 22)
     }
 
     private func toolButton(_ tool: WritingTool) -> some View {
         let selected = vm.tool == tool
-        let fill: Color = tool == .eraser ? .secondary : vm.inkColor.swatch
+        let fill: Color = tool == .eraser ? .secondary : vm.inkColor
         return Button {
             vm.tool = tool
         } label: {
@@ -68,45 +74,137 @@ struct NotebookToolbar: View {
                 .font(.system(size: 17, weight: .medium))
                 .frame(width: 34, height: 34)
                 .foregroundStyle(selected ? Color.white : Color.primary)
-                .background {
-                    if selected { Circle().fill(fill) }
-                }
+                .background { if selected { Circle().fill(fill) } }
         }
         .accessibilityIdentifier("tool-\(tool.rawValue)")
         .accessibilityLabel(tool.label)
         .accessibilityAddTraits(selected ? [.isSelected] : [])
     }
 
-    private var colorMenu: some View {
-        Menu {
-            ForEach(InkColor.allCases) { color in
-                Button {
-                    vm.inkColor = color
-                    if vm.tool == .eraser { vm.tool = .pen }
-                } label: {
-                    Label(
-                        color.label,
-                        systemImage: vm.inkColor == color ? "checkmark.circle.fill" : "circle.fill"
-                    )
-                }
-            }
-        } label: {
+    private var colorButton: some View {
+        Button { showColors = true } label: {
             Circle()
-                .fill(vm.inkColor.swatch)
-                .frame(width: 22, height: 22)
+                .fill(vm.inkColor)
+                .frame(width: 24, height: 24)
                 .overlay(Circle().strokeBorder(.white.opacity(0.85), lineWidth: 2))
-                .overlay(Circle().strokeBorder(.primary.opacity(0.15), lineWidth: 1))
+                .overlay(Circle().strokeBorder(.primary.opacity(0.18), lineWidth: 1))
         }
         .accessibilityIdentifier("toolbar-color")
         .accessibilityLabel("Ink color")
+        .popover(isPresented: $showColors) {
+            ColorPalettePopover(vm: vm)
+                .presentationCompactAdaptation(.popover)
+        }
     }
 
-    private func iconButton(_ symbol: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol)
+    private var sizeButton: some View {
+        Button { showSize = true } label: {
+            Image(systemName: "lineweight")
                 .font(.system(size: 17, weight: .medium))
                 .frame(width: 34, height: 34)
                 .foregroundStyle(.primary)
         }
+        .accessibilityIdentifier("toolbar-size")
+        .accessibilityLabel("Stroke size")
+        .popover(isPresented: $showSize) {
+            ToolSizePopover(vm: vm)
+                .presentationCompactAdaptation(.popover)
+        }
+    }
+
+    private func iconButton(_ symbol: String, enabled: Bool = true, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 17, weight: .medium))
+                .frame(width: 34, height: 34)
+                .foregroundStyle(enabled ? Color.primary : Color.primary.opacity(0.25))
+        }
+        .disabled(!enabled)
+    }
+}
+
+// MARK: - Color popover
+
+private struct ColorPalettePopover: View {
+    @ObservedObject var vm: NotebookViewModel
+    @State private var custom: Color = .black
+
+    private let columns = Array(repeating: GridItem(.fixed(34), spacing: 12), count: 4)
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Colors").font(.subheadline.weight(.semibold))
+
+            LazyVGrid(columns: columns, spacing: 12) {
+                ForEach(InkPalette.standard, id: \.self) { hex in
+                    swatch(hex)
+                }
+            }
+
+            Divider()
+
+            ColorPicker("Custom color", selection: $custom, supportsOpacity: false)
+                .font(.subheadline)
+                .onChange(of: custom) { newValue in
+                    vm.selectColor(UIColor(newValue).hexString)
+                }
+        }
+        .padding(16)
+        .frame(width: 240)
+    }
+
+    private func swatch(_ hex: String) -> some View {
+        let ui = UIColor(hex: hex) ?? .label
+        let isSelected = vm.inkColorHex.caseInsensitiveCompare(hex) == .orderedSame
+        return Button {
+            vm.selectColor(hex)
+        } label: {
+            Circle()
+                .fill(Color(ui))
+                .frame(width: 30, height: 30)
+                .overlay(Circle().strokeBorder(.primary.opacity(0.15), lineWidth: 1))
+                .overlay {
+                    if isSelected {
+                        Image(systemName: "checkmark")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.white)
+                            .shadow(color: .black.opacity(0.4), radius: 1)
+                    }
+                }
+        }
+        .accessibilityIdentifier("swatch-\(hex)")
+    }
+}
+
+// MARK: - Size popover
+
+private struct ToolSizePopover: View {
+    @ObservedObject var vm: NotebookViewModel
+
+    var body: some View {
+        VStack(spacing: 14) {
+            Text("\(vm.tool.label) size")
+                .font(.subheadline.weight(.semibold))
+
+            ZStack {
+                RoundedRectangle(cornerRadius: 6).fill(.white)
+                Capsule()
+                    .fill(vm.inkColor.opacity(vm.tool == .marker ? 0.4 : 1))
+                    .frame(width: 170, height: max(2, min(vm.activeWidth, 44)))
+            }
+            .frame(width: 200, height: 52)
+            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.primary.opacity(0.1)))
+
+            Slider(
+                value: Binding(get: { vm.activeWidth }, set: { vm.activeWidth = $0 }),
+                in: vm.widthRange
+            )
+
+            Text(String(format: "%.0f pt", vm.activeWidth))
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+        }
+        .padding(16)
+        .frame(width: 232)
     }
 }

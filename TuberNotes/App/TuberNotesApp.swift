@@ -3,7 +3,6 @@ import SwiftUI
 @main
 struct TuberNotesApp: App {
     @StateObject private var notebookStore = NotebookStore.shared
-    @AppStorage("tuber.appearance") private var appearanceRaw = AppAppearance.system.rawValue
 
     init() {
         #if DEBUG
@@ -14,7 +13,6 @@ struct TuberNotesApp: App {
     var body: some Scene {
         WindowGroup {
             rootContent
-                .preferredColorScheme((AppAppearance(rawValue: appearanceRaw) ?? .system).colorScheme)
         }
     }
 

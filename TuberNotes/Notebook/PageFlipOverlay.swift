@@ -105,18 +105,21 @@ private struct PageThumbnail: View {
     let isCurrent: Bool
     let number: Int
 
+    private var thumbWidth: CGFloat { 64 }
+    private var thumbHeight: CGFloat { 64 * NotebookPageLayout.aspect }
+
     var body: some View {
         VStack(spacing: 6) {
-            ZStack {
+            ZStack(alignment: .topLeading) {
                 RoundedRectangle(cornerRadius: 8).fill(.white)
                 if let image = render() {
                     Image(uiImage: image)
                         .resizable()
                         .scaledToFit()
-                        .padding(4)
                 }
             }
-            .frame(width: 68, height: 92)
+            .frame(width: thumbWidth, height: thumbHeight)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
             .overlay(
                 RoundedRectangle(cornerRadius: 8)
                     .strokeBorder(
@@ -130,10 +133,12 @@ private struct PageThumbnail: View {
         }
     }
 
+    /// Render the whole page rect so thumbnails share the page aspect and show
+    /// strokes in their true position.
     private func render() -> UIImage? {
         let drawing = page.drawing
-        let bounds = drawing.bounds
-        guard bounds.width > 1, bounds.height > 1 else { return nil }
-        return drawing.image(from: bounds, scale: 1)
+        guard !drawing.bounds.isNull else { return nil }
+        let rect = CGRect(origin: .zero, size: NotebookPageLayout.size)
+        return drawing.image(from: rect, scale: 0.25)
     }
 }

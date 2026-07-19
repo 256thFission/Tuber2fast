@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// The editor for a single notebook: paper + PencilKit canvas for the current
-/// page, the floating menu bar, and the long-press page navigator.
+/// Editor for a single notebook: a GoodNotes-style vertical page (paper is drawn
+/// inside the scrolling canvas), the floating menu bar, and the page navigator.
 struct NotebookView: View {
     @StateObject private var vm: NotebookViewModel
     @Environment(\.dismiss) private var dismiss
@@ -47,43 +47,24 @@ struct NotebookView: View {
     }
 
     private var pageArea: some View {
-        ZStack {
-            PaperBackground()
-            NotebookCanvas(
-                pageID: vm.currentPageID,
-                drawingData: vm.currentPage.drawingData,
-                tool: vm.tool,
-                inkColor: vm.inkColor,
-                strokeWidth: vm.strokeWidth,
-                onChange: { vm.updateCurrentDrawing($0) },
-                onLongPress: { withAnimation { showPages = true } }
-            )
-        }
-        .clipShape(RoundedRectangle(cornerRadius: 18))
-        .overlay(RoundedRectangle(cornerRadius: 18).stroke(.black.opacity(0.08), lineWidth: 1))
-        .padding(20)
+        NotebookCanvas(
+            pageID: vm.currentPageID,
+            drawingData: vm.currentPage.drawingData,
+            tool: vm.tool,
+            color: vm.inkUIColor,
+            width: vm.activeWidth,
+            onChange: { vm.updateCurrentDrawing($0) },
+            onLongPress: { withAnimation { showPages = true } }
+        )
+        .padding(.horizontal, 12)
+        .padding(.top, 8)
         .padding(.bottom, 74) // room for the floating toolbar
-        // Changing identity per page gives a clean canvas + a page-turn transition.
+        // New identity per page → clean canvas + page-turn transition.
         .id(vm.currentPageID)
         .transition(.asymmetric(
             insertion: .move(edge: .trailing),
             removal: .move(edge: .leading)
         ))
         .accessibilityIdentifier("notebook-page-area")
-    }
-}
-
-/// White ruled paper. Kept white in both appearances so ink stays legible.
-struct PaperBackground: View {
-    var body: some View {
-        Canvas { context, size in
-            context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(.white))
-            var lines = Path()
-            stride(from: 36.0, through: size.height, by: 36.0).forEach { y in
-                lines.move(to: CGPoint(x: 0, y: y))
-                lines.addLine(to: CGPoint(x: size.width, y: y))
-            }
-            context.stroke(lines, with: .color(.blue.opacity(0.12)), lineWidth: 1)
-        }
     }
 }

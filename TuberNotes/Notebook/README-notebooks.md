@@ -1,45 +1,61 @@
 # Notebook gallery + pages + tool bar
 
-New product-facing feature set added on top of your existing spatial-canvas app.
+Product-facing feature set added on top of your existing spatial-canvas app.
+Drop the eight `Notebook*` / `LibraryView` / `PageFlipOverlay` files into a new
+`Notebook/` group, and replace `App/TuberNotesApp.swift` with the one here.
 
-## What was added
+## What's in it
 
-- **Gallery page** (`LibraryView.swift`) — grid of notebook covers saved locally to the app. Create, rename (context menu), delete (context menu). Tapping a cover opens it.
-- **Local persistence** (`NotebookStore.swift`) — one JSON file per notebook in `Documents/Notebooks/<uuid>.json`, following the same `Codable` + `FileManager` pattern as your `PenFixtureStore`. Drawings are stored as serialized `PKDrawing` data inside each page.
-- **Pages + page flipping** (`NotebookViewModel.swift`, `PageFlipOverlay.swift`) — a notebook is an ordered list of pages. **Long-press the page** to open a navigator with prev/next arrows, a swipe gesture, and tappable thumbnails. Add/delete pages from there too.
-- **Thin menu bar** (`NotebookToolbar.swift`) — a floating capsule with: home button, the four writing utensils (pen / pencil / marker / eraser), an ink-color picker, a light/dark/system toggle, an add-page button, and a tappable page indicator (also opens the navigator).
-- **Editor screen** (`NotebookView.swift`) — white ruled paper + a clean PencilKit canvas (`NotebookCanvas.swift`) that isn't entangled with the DEBUG fixture-recording canvas.
+- **Gallery** (`LibraryView.swift`) — grid of notebook covers saved locally. Create, rename, delete.
+- **Local persistence** (`NotebookStore.swift`) — one JSON file per notebook in `Documents/Notebooks/`, same `Codable` + `FileManager` style as `PenFixtureStore`. Drawings stored as serialized `PKDrawing` per page.
+- **GoodNotes-style vertical pages** (`NotebookCanvas.swift`) — each page is a fixed portrait sheet (`NotebookPageLayout.size`, ~Letter ratio) with ruled lines + a margin line drawn *inside* the scrolling canvas. Drawings are stored in fixed page-space, so they're device-independent (thumbnails/exports stay consistent).
+- **Page flipping** — long-press the page for the navigator (arrows, swipe, thumbnails), **plus dedicated back/forward buttons in the menu bar**.
+- **Thin menu bar** (`NotebookToolbar.swift`) — home · page back/forward · pen / pencil / highlighter / eraser · color · size · add page · page indicator.
+- **Standard color picking** — tap the color dot for a 16-swatch palette **and** a system `ColorPicker` for any custom color.
+- **Pen & highlighter resizing** — the size button opens a slider with a live preview. Each tool keeps its **own** width (pen, pencil, highlighter are independent).
 
-## Files
+## Folder placement (matches your feature-based layout)
 
-| File | Role |
-|------|------|
-| `Notebook.swift` | Models: `Notebook`, `NotebookPage`, `NotebookCover`, `WritingTool`, `InkColor`, `AppAppearance` |
-| `NotebookStore.swift` | Local file persistence (`ObservableObject`, `NotebookStore.shared`) |
-| `NotebookViewModel.swift` | Per-notebook page/tool state + debounced saving |
-| `NotebookCanvas.swift` | `UIViewRepresentable` PencilKit surface for a page |
-| `NotebookToolbar.swift` | The thin floating menu bar |
-| `PageFlipOverlay.swift` | Long-press page navigator (arrows, swipe, thumbnails) |
-| `LibraryView.swift` | The gallery + cover cards + create/rename/delete |
-| `NotebookView.swift` | The page editor screen + ruled paper background |
-| `TuberNotesApp.swift` | **Replaces** your existing entry point (see below) |
+Create one new group `Notebook/` alongside `Pins/`, `SpatialCanvas/`, etc.:
 
-## Wiring
+```
+Notebook/
+  Notebook.swift
+  NotebookStore.swift
+  NotebookViewModel.swift
+  NotebookCanvas.swift
+  NotebookToolbar.swift
+  PageFlipOverlay.swift
+  LibraryView.swift
+  NotebookView.swift
+App/
+  TuberNotesApp.swift   ← replaces the existing one
+```
 
-1. Add all the `.swift` files to your target.
-2. Replace your current `TuberNotesApp.swift` with the one here. It now opens the **gallery** on normal launch, and still shows your existing `RootView(scenario:)` whenever the app is launched by the agent harness (any of `TUBER_SCENARIO`, `TUBER_RECORD_PEN_FIXTURE`, `TUBER_PEN_FIXTURE`, or `--scenario`). Your agent tests keep working unchanged.
-3. None of your existing files were modified.
+`README-notebooks.md` is not a source file — keep it out of the target.
 
-## Design decisions worth knowing
+## Input model — important
 
-- **Appearance** is stored in `@AppStorage("tuber.appearance")` and applied at the app root with `.preferredColorScheme`. The toolbar and the library toggle share that key, so they stay in sync automatically.
-- **Ink & paper.** The page is always white so pencil work stays legible; the light/dark toggle themes the app chrome (library, nav bars, backgrounds), not the paper. Because of that, the default `.ink` color is a fixed near-black rather than `.label`, so it never disappears on a white page in dark mode.
-- **Long-press vs. drawing.** The long-press recognizer lives on the canvas with `cancelsTouchesInView = false` and simultaneous recognition, so it opens the navigator without blocking strokes. If you want a Pencil-only drawing surface (finger reserved purely for navigation), change `drawingPolicy = .anyInput` to `.pencilOnly` in `NotebookCanvas.swift`.
-- **Saving** is debounced (~0.6s) while drawing and forced (`persistNow`) on page change, add/delete page, home, and view disappear.
+The page uses `drawingPolicy = .pencilOnly`, which is what makes the GoodNotes
+feel work: **Apple Pencil draws, a single finger scrolls/pans the tall page.**
+If you need finger drawing (e.g. testing in the Simulator with no Pencil), change
+one line in `NotebookCanvas.swift` to `.anyInput` — but note that with `.anyInput`
+a single finger draws instead of scrolling, so a tall page becomes harder to
+navigate by touch.
 
-## Notes / things you may want to tweak
+## Light/dark
 
-- **Couldn't be compiled here** — this was written against your codebase's conventions but not built in Xcode. Expect to resolve minor issues on first build.
-- **iPhone toolbar width.** The capsule hugs its content; with 11 controls it's comfortable on iPad but tight on small iPhones. If you support iPhone, consider wrapping the toolbar `HStack` in a horizontal `ScrollView` or collapsing tools behind a `Menu`.
-- **Thumbnails** render each page's `PKDrawing` bounds to a `UIImage`. Fine for typical notebooks; if pages get very dense you may want to cache the images.
-- **Pins.** The new page model doesn't carry `Pin`s yet. If you want the spatial `Pin` overlay on notebook pages, add `var pins: [Pin]` to `NotebookPage` (it'll need `Pin: Codable`) and drop your `PinOverlayView` into `NotebookView.pageArea`.
+Removed, per request. The page is always white paper with your chosen ink color;
+the app otherwise follows the system appearance for its chrome.
+
+## Design notes
+
+- Saving is debounced (~0.6s) while drawing, forced on page change / add / delete / home / disappear.
+- Highlighter renders at 40% alpha so it reads as a highlight over ink.
+- Agent harness preserved: `TuberNotesApp` still shows your existing `RootView(scenario:)` when launched with `TUBER_SCENARIO` / `TUBER_RECORD_PEN_FIXTURE` / `TUBER_PEN_FIXTURE` / `--scenario`; normal launches open the gallery.
+
+## Caveats
+
+- **Not compiled in Xcode here** — written to your conventions but expect to shake out a minor issue on first build.
+- **iPhone toolbar width**: the bar hugs its content; with page-nav + tools + color + size it's comfortable on iPad but tight on small iPhones. If you ship iPhone, wrap the toolbar `HStack` in a horizontal `ScrollView` or fold tools behind a `Menu`.
+- **Pins** aren't on notebook pages yet; the README's earlier note on adding `var pins: [Pin]` to `NotebookPage` still applies.
