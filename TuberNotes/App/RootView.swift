@@ -8,6 +8,7 @@ struct RootView: View {
     @State private var document: NotebookDocument?
     @State private var currentPageID: UUID?
     @State private var surfaceGeneration = 0
+    @State private var selectionArtifact: SelectionArtifact?
 #if DEBUG
     @StateObject private var agentSession = AgentInteractionSession()
     @StateObject private var feedbackSession = FeedbackThreadSession()
@@ -97,11 +98,11 @@ struct RootView: View {
         switch displayedScenario {
         case .fakePin, .multiPin, .edgePins:
             standalonePinSurface
-        case .blankCanvas, .pdfPages, .blankNotebook, .notebookPages, .inkPages, .pinDrift:
+        case .blankCanvas, .pdfPages, .blankNotebook, .notebookPages, .inkPages, .pinDrift, .lassoCrop:
             standaloneSpatialSurface
         case .heroRecorded:
             RecordedHeroView()
-        case .lassoCrop, .agentRecordedSuccess, .agentRecordedRetrieval, .agentRecordedFailure:
+        case .agentRecordedSuccess, .agentRecordedRetrieval, .agentRecordedFailure:
             ContentUnavailableView(
                 "Later milestone",
                 systemImage: "hammer",
@@ -117,7 +118,9 @@ struct RootView: View {
                 document: document,
                 currentPageID: $currentPageID,
                 pdfDocument: pdfDocument(for: document),
+                toolMode: displayedScenario == .lassoCrop ? .magicLasso : .ink,
                 penFixturesByPageID: displayedScenario.fixture.penFixturesByPageID,
+                initialLassoPathsByPageID: displayedScenario.fixture.lassoPathsByPageID,
                 pageOverlay: { page, projection in
                     AnyView(
                         PinOverlayView(
@@ -127,6 +130,7 @@ struct RootView: View {
                     )
                 },
                 onDrawingSnapshot: drawingSnapshotHandler,
+                onSelectionChanged: handleSelectionChanged,
                 allowsDeterministicViewportTransition: displayedScenario == .pinDrift
             )
         }
@@ -276,6 +280,7 @@ struct RootView: View {
     private func resetScenarioSurface() {
         document = displayedScenario.fixture.document
         currentPageID = displayedScenario.fixture.currentPageID
+        selectionArtifact = nil
         surfaceGeneration += 1
     }
 
@@ -285,7 +290,8 @@ struct RootView: View {
             displayedScenario.rawValue,
             currentPageID?.uuidString ?? "none",
             String(document?.pages.count ?? 0),
-            displayedScenario.fixture.annotations.map(\.id.uuidString).sorted().joined(separator: ",")
+            displayedScenario.fixture.annotations.map(\.id.uuidString).sorted().joined(separator: ","),
+            selectionArtifact?.id.uuidString ?? "no-selection"
         ].joined(separator: "|")
     }
 
@@ -299,7 +305,7 @@ struct RootView: View {
         }
 
         switch displayedScenario {
-        case .pdfPages, .blankNotebook, .notebookPages, .inkPages, .pinDrift:
+        case .pdfPages, .blankNotebook, .notebookPages, .inkPages, .pinDrift, .lassoCrop:
             let renderedAnnotations = currentPageID
                 .flatMap { selectedID in document.pages.first(where: { $0.id == selectedID }) }
                 .map(spatialAnnotations(for:)) ?? []
@@ -310,7 +316,8 @@ struct RootView: View {
                 currentPageID: currentPageID,
                 currentPageIndex: currentIndex,
                 renderedPenFixtureName: penFixtureName,
-                renderedAnnotationIDs: renderedAnnotations.map(\.id)
+                renderedAnnotationIDs: renderedAnnotations.map(\.id),
+                selectionArtifact: selectionArtifact
             )
         case .edgePins:
             DevelopmentRuntimeEvidence.record(
@@ -335,6 +342,20 @@ struct RootView: View {
         }
 #else
         { _, _, _ in }
+#endif
+    }
+
+    private func handleSelectionChanged(_ artifact: SelectionArtifact) {
+        selectionArtifact = artifact
+#if DEBUG
+        let fileManager = FileManager.default
+        guard let documents = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first else { return }
+        let directory = documents.appendingPathComponent("developer-evidence", isDirectory: true)
+        try? fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        try? artifact.crop.imageData.write(
+            to: directory.appendingPathComponent("lasso-selection-crop.png"),
+            options: .atomic
+        )
 #endif
     }
 }

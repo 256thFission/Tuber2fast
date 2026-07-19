@@ -11,6 +11,7 @@
 		A00000000000000000000002 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000102 /* RootView.swift */; };
 		A00000000000000000000003 /* SpatialCanvasView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000103 /* SpatialCanvasView.swift */; };
 		A00000000000000000000004 /* PencilCanvas.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000104 /* PencilCanvas.swift */; };
+		A00000000000000000000028 /* MagicLasso.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000128 /* MagicLasso.swift */; };
 		A00000000000000000000005 /* Pin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000105 /* Pin.swift */; };
 		A00000000000000000000006 /* PinOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000106 /* PinOverlayView.swift */; };
 		A00000000000000000000007 /* AgentClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000107 /* AgentClient.swift */; };
@@ -38,6 +39,7 @@
 		A00000000000000000000102 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
 		A00000000000000000000103 /* SpatialCanvasView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpatialCanvasView.swift; sourceTree = "<group>"; };
 		A00000000000000000000104 /* PencilCanvas.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PencilCanvas.swift; sourceTree = "<group>"; };
+		A00000000000000000000128 /* MagicLasso.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MagicLasso.swift; sourceTree = "<group>"; };
 		A00000000000000000000105 /* Pin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Pin.swift; sourceTree = "<group>"; };
 		A00000000000000000000106 /* PinOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PinOverlayView.swift; sourceTree = "<group>"; };
 		A00000000000000000000107 /* AgentClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentClient.swift; sourceTree = "<group>"; };
@@ -108,6 +110,7 @@
 			children = (
 				A00000000000000000000103 /* SpatialCanvasView.swift */,
 				A00000000000000000000104 /* PencilCanvas.swift */,
+				A00000000000000000000128 /* MagicLasso.swift */,
 			);
 			path = SpatialCanvas;
 			sourceTree = "<group>";
@@ -247,6 +250,7 @@
 				A00000000000000000000002 /* RootView.swift in Sources */,
 				A00000000000000000000003 /* SpatialCanvasView.swift in Sources */,
 				A00000000000000000000004 /* PencilCanvas.swift in Sources */,
+				A00000000000000000000028 /* MagicLasso.swift in Sources */,
 				A00000000000000000000005 /* Pin.swift in Sources */,
 				A00000000000000000000006 /* PinOverlayView.swift in Sources */,
 				A00000000000000000000007 /* AgentClient.swift in Sources */,

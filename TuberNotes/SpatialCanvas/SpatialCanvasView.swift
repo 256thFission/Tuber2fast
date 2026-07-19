@@ -166,11 +166,13 @@ struct SpatialCanvasView: View {
     let pdfDocument: PDFDocument?
     let toolMode: CanvasToolMode
     let penFixturesByPageID: [UUID: PenFixture]
+    let initialLassoPathsByPageID: [UUID: [PageNormalizedPoint]]
     let anchors: [SpatialCanvasAnchor]
     let pageOverlay: (PageRecord, PageAnchorProjection) -> AnyView
     let onDrawingChanged: (UUID, Data) -> Void
     let onDrawingSnapshot: (UUID, PKDrawing, CGSize) -> Void
     let onViewportChanged: (PageViewportState) -> Void
+    let onSelectionChanged: (SelectionArtifact) -> Void
     let allowsDeterministicViewportTransition: Bool
 
     @StateObject private var drawingStore: SpatialDrawingStore
@@ -184,11 +186,13 @@ struct SpatialCanvasView: View {
         toolMode: CanvasToolMode = .ink,
         initialDrawingData: [UUID: Data] = [:],
         penFixturesByPageID: [UUID: PenFixture] = [:],
+        initialLassoPathsByPageID: [UUID: [PageNormalizedPoint]] = [:],
         anchors: [SpatialCanvasAnchor] = [],
         pageOverlay: @escaping (PageRecord, PageAnchorProjection) -> AnyView = { _, _ in AnyView(EmptyView()) },
         onDrawingChanged: @escaping (UUID, Data) -> Void = { _, _ in },
         onDrawingSnapshot: @escaping (UUID, PKDrawing, CGSize) -> Void = { _, _, _ in },
         onViewportChanged: @escaping (PageViewportState) -> Void = { _ in },
+        onSelectionChanged: @escaping (SelectionArtifact) -> Void = { _ in },
         allowsDeterministicViewportTransition: Bool = false
     ) {
         self.document = document
@@ -196,11 +200,13 @@ struct SpatialCanvasView: View {
         self.pdfDocument = pdfDocument
         self.toolMode = toolMode
         self.penFixturesByPageID = penFixturesByPageID
+        self.initialLassoPathsByPageID = initialLassoPathsByPageID
         self.anchors = anchors
         self.pageOverlay = pageOverlay
         self.onDrawingChanged = onDrawingChanged
         self.onDrawingSnapshot = onDrawingSnapshot
         self.onViewportChanged = onViewportChanged
+        self.onSelectionChanged = onSelectionChanged
         self.allowsDeterministicViewportTransition = allowsDeterministicViewportTransition
         _drawingStore = StateObject(wrappedValue: SpatialDrawingStore(initialDrawingData: initialDrawingData))
 
@@ -236,11 +242,13 @@ struct SpatialCanvasView: View {
         pdfDocument = nil
         toolMode = .ink
         penFixturesByPageID = penFixture.map { [pageID: $0] } ?? [:]
+        initialLassoPathsByPageID = [:]
         anchors = []
         pageOverlay = { _, _ in AnyView(EmptyView()) }
         onDrawingChanged = { _, _ in }
         onDrawingSnapshot = { _, _, _ in }
         onViewportChanged = { _ in }
+        onSelectionChanged = { _ in }
         allowsDeterministicViewportTransition = false
         _drawingStore = StateObject(wrappedValue: SpatialDrawingStore())
         _selectedPageID = State(initialValue: pageID)
@@ -260,16 +268,19 @@ struct SpatialCanvasView: View {
                 TabView(selection: $selectedPageID) {
                     ForEach(document.pages) { page in
                         ZoomableSpatialPage(
+                            document: document,
                             page: page,
                             pdfPage: pdfPage(for: page),
                             drawingData: drawingStore.drawingData(for: page.id),
                             toolMode: toolMode,
                             penFixture: penFixturesByPageID[page.id],
+                            initialLassoPath: initialLassoPathsByPageID[page.id],
                             anchors: anchors.filter { $0.pageID == page.id },
                             pageOverlay: pageOverlay,
                             onDrawingChanged: handleDrawingChanged,
                             onDrawingSnapshot: onDrawingSnapshot,
                             onViewportChanged: onViewportChanged,
+                            onSelectionChanged: onSelectionChanged,
                             viewportTransitionGeneration: viewportTransitionGenerationByPageID[page.id] ?? 0
                         )
                         .padding(.horizontal, 14)
@@ -288,6 +299,9 @@ struct SpatialCanvasView: View {
             let error = SpatialCoordinateTransform.diagnosticMaximumRoundTripError()
             print("SpatialCanvas coordinate-round-trip maxError=\(error)")
             assert(error <= 1e-6, "Spatial coordinate round-trip exceeded 1e-6")
+            let lassoChecksPass = MagicLassoGeometry.diagnosticChecksPass()
+            print("SpatialCanvas lasso geometry diagnostics=\(lassoChecksPass ? "PASS" : "FAIL")")
+            assert(lassoChecksPass, "Lasso closure, degeneracy, or crop round-trip diagnostic failed")
         }
         .onChange(of: selectedPageID) { _, newValue in
             guard currentPageID != newValue else { return }
@@ -403,16 +417,19 @@ struct SpatialCanvasView: View {
 // MARK: - Zoom viewport
 
 private struct ZoomableSpatialPage: UIViewRepresentable {
+    let document: NotebookDocument
     let page: PageRecord
     let pdfPage: PDFPage?
     let drawingData: Data?
     let toolMode: CanvasToolMode
     let penFixture: PenFixture?
+    let initialLassoPath: [PageNormalizedPoint]?
     let anchors: [SpatialCanvasAnchor]
     let pageOverlay: (PageRecord, PageAnchorProjection) -> AnyView
     let onDrawingChanged: (UUID, Data) -> Void
     let onDrawingSnapshot: (UUID, PKDrawing, CGSize) -> Void
     let onViewportChanged: (PageViewportState) -> Void
+    let onSelectionChanged: (SelectionArtifact) -> Void
     let viewportTransitionGeneration: Int
 
     func makeCoordinator() -> Coordinator {
@@ -463,15 +480,18 @@ private struct ZoomableSpatialPage: UIViewRepresentable {
 
     private var content: SpatialPageContent {
         SpatialPageContent(
+            document: document,
             page: page,
             pdfPage: pdfPage,
             drawingData: drawingData,
             toolMode: toolMode,
             penFixture: penFixture,
+            initialLassoPath: initialLassoPath,
             anchors: anchors,
             pageOverlay: pageOverlay,
             onDrawingChanged: onDrawingChanged,
-            onDrawingSnapshot: onDrawingSnapshot
+            onDrawingSnapshot: onDrawingSnapshot,
+            onSelectionChanged: onSelectionChanged
         )
     }
 
@@ -628,15 +648,18 @@ private final class FittedPageScrollView: UIScrollView {
 // MARK: - Page content
 
 private struct SpatialPageContent: View {
+    let document: NotebookDocument
     let page: PageRecord
     let pdfPage: PDFPage?
     let drawingData: Data?
     let toolMode: CanvasToolMode
     let penFixture: PenFixture?
+    let initialLassoPath: [PageNormalizedPoint]?
     let anchors: [SpatialCanvasAnchor]
     let pageOverlay: (PageRecord, PageAnchorProjection) -> AnyView
     let onDrawingChanged: (UUID, Data) -> Void
     let onDrawingSnapshot: (UUID, PKDrawing, CGSize) -> Void
+    let onSelectionChanged: (SelectionArtifact) -> Void
 
     var body: some View {
         ZStack {
@@ -649,6 +672,25 @@ private struct SpatialPageContent: View {
                 penFixture: penFixture,
                 onDrawingChanged: onDrawingChanged,
                 onDrawingSnapshot: onDrawingSnapshot
+            )
+
+            MagicLassoOverlay(
+                enabled: toolMode == .magicLasso,
+                initialPath: initialLassoPath,
+                onCapturedPath: { path, size in
+                    let drawing = drawingData.flatMap { try? PKDrawing(data: $0) }
+                        ?? penFixture?.makeDrawing(in: size)
+                        ?? PKDrawing()
+                    guard let artifact = SelectionCropCompositor.artifact(
+                        document: document,
+                        page: page,
+                        pdfPage: pdfPage,
+                        drawing: drawing,
+                        canvasSize: size,
+                        capturedPath: path
+                    ) else { return }
+                    onSelectionChanged(artifact)
+                }
             )
 
             GeometryReader { proxy in

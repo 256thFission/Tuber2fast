@@ -30,6 +30,7 @@ M0 scenarios:
   blank-notebook  One branded dot-grid notebook page
   notebook-pages  Three dot-grid pages; distinct ink on appended pages 2 and 3
   ink-pages       Three-page M0Demo PDF; distinct ink on pages 1 and 3
+  lasso-crop      PDF + ink Magic Lasso selection with retained PNG crop
   pin-drift       Stable Pin before/after deterministic viewport transition
   edge-pins       Four Pins near the page edges
   hero-recorded   Recorded agent-to-Pin stub; genuine lasso/crop pending
@@ -64,6 +65,7 @@ scenario_metadata() {
     EXPECTED_RUNTIME_PEN_FIXTURE=""
     EXPECTED_RUNTIME_ANNOTATION_IDS=""
     EXPECTED_RUNTIME_HERO_STATUS=""
+    REQUIRES_SELECTION_CROP=false
     case "$1" in
         blank-canvas)
             FAMILY="baseline"
@@ -123,6 +125,19 @@ scenario_metadata() {
             REQUIRES_RUNTIME_EVIDENCE=true
             EXPECTED_RUNTIME_SURFACE="spatial-canvas"
             EXPECTED_RUNTIME_PEN_FIXTURE="pdf-page-3-ink"
+            ;;
+        lasso-crop)
+            FAMILY="selection"
+            EXPECTED_STATE="known PDF and ink selection with an inspectable crop artifact"
+            INTEGRATION_READINESS="app-wired"
+            EXPECTED_PAGE_COUNT=3
+            EXPECTED_PAGE_INDEX=1
+            EXPECTED_PAGE_ID="20000000-0000-0000-0000-000000000012"
+            EXPECTED_PEN_FIXTURE_COUNT=1
+            REQUIRES_RUNTIME_EVIDENCE=true
+            EXPECTED_RUNTIME_SURFACE="spatial-canvas"
+            EXPECTED_RUNTIME_PEN_FIXTURE="lasso-crop-ink"
+            REQUIRES_SELECTION_CROP=true
             ;;
         pin-drift)
             FAMILY="spatial"
@@ -221,6 +236,8 @@ SCENARIO_SELECTION="$ARTIFACT_DIR/scenario-selection.json"
 SCENARIO_ASSERTIONS="$ARTIFACT_DIR/scenario-assertions.txt"
 RUNTIME_EVIDENCE="$ARTIFACT_DIR/runtime-rendered.json"
 RUNTIME_ASSERTIONS="$ARTIFACT_DIR/runtime-assertions.txt"
+SELECTION_CROP="$ARTIFACT_DIR/lasso-selection-crop.png"
+SELECTION_CROP_ASSERTIONS="$ARTIFACT_DIR/selection-crop-assertions.txt"
 CRASH_HITS="$ARTIFACT_DIR/crash-hits.txt"
 SUMMARY="$ARTIFACT_DIR/summary.txt"
 
@@ -232,6 +249,7 @@ scenario_marker_status="not-captured"
 crash_status="not-collected-physical-device"
 console_status="not-collected-physical-device"
 runtime_evidence_status="not-captured"
+selection_crop_status="not-required"
 
 note() {
     printf '%s\n' "$*" | tee -a "$SUMMARY"
@@ -361,6 +379,27 @@ PY
     return 1
 }
 
+pull_device_artifact() {
+    local relative_source="$1"
+    local destination="$2"
+    local pull_log="$3"
+    local attempt
+    for attempt in $(seq 1 10); do
+        rm -f -- "$destination"
+        if xcrun devicectl device copy from \
+            --device "$DEVICE_ID" \
+            --domain-type appDataContainer \
+            --domain-identifier "$BUNDLE_ID" \
+            --source "$relative_source" \
+            --destination "$destination" >"$pull_log" 2>&1 \
+            && [[ -s "$destination" ]]; then
+            return 0
+        fi
+        sleep 1
+    done
+    return 1
+}
+
 if pull_device_file "Documents/developer-evidence/scenario-selection.json" "$SCENARIO_SELECTION" "$ARTIFACT_DIR/scenario-pull.log" "$VERIFY_NONCE"; then
     set +e
     python3 - "$SCENARIO_SELECTION" "$SCENARIO" "$FAMILY" "$INTEGRATION_READINESS" \
@@ -435,14 +474,16 @@ if [[ "$REQUIRES_RUNTIME_EVIDENCE" == "true" ]]; then
         python3 - "$RUNTIME_EVIDENCE" "$SCENARIO" "$EXPECTED_RUNTIME_SURFACE" \
             "$EXPECTED_RUNTIME_PAGE_COUNT" "$EXPECTED_RUNTIME_PAGE_INDEX" "$EXPECTED_RUNTIME_PAGE_ID" \
             "$EXPECTED_RUNTIME_PEN_FIXTURE" "$EXPECTED_RUNTIME_ANNOTATION_IDS" \
-            "$EXPECTED_RUNTIME_HERO_STATUS" "$VERIFY_NONCE" >"$RUNTIME_ASSERTIONS" 2>&1 <<'PY'
+            "$EXPECTED_RUNTIME_HERO_STATUS" "$VERIFY_NONCE" "$REQUIRES_SELECTION_CROP" \
+            >"$RUNTIME_ASSERTIONS" 2>&1 <<'PY'
 import json
 import sys
 
 (
     evidence_path, scenario, surface, page_count, page_index, page_id,
     pen_fixture, annotation_ids, hero_status, verification_nonce,
-) = sys.argv[1:]
+) = sys.argv[1:11]
+requires_selection_crop = len(sys.argv) > 11 and sys.argv[11] == "true"
 with open(evidence_path, encoding="utf-8") as evidence_file:
     evidence = json.load(evidence_file)
 
@@ -467,6 +508,24 @@ for key, expected_value in expected.items():
 recorded_at = evidence.get("recordedAt")
 if not isinstance(recorded_at, str) or not recorded_at:
     failures.append(f"recordedAt: expected=non-empty-string observed={recorded_at!r}")
+
+if requires_selection_crop:
+    selection_expectations = {
+        "selectionCropPath": "Documents/developer-evidence/lasso-selection-crop.png",
+        "selectionCropMediaType": "image/png",
+        "selectionPathPointCount": 5,
+    }
+    for key, expected_value in selection_expectations.items():
+        observed = evidence.get(key)
+        if observed != expected_value:
+            failures.append(f"{key}: expected={expected_value!r} observed={observed!r}")
+    for key in ("selectionCropPixelWidth", "selectionCropPixelHeight"):
+        observed = evidence.get(key)
+        if not isinstance(observed, int) or observed <= 0:
+            failures.append(f"{key}: expected=positive-int observed={observed!r}")
+    selection_id = evidence.get("selectionID")
+    if not isinstance(selection_id, str) or not selection_id:
+        failures.append(f"selectionID: expected=non-empty-string observed={selection_id!r}")
 
 if failures:
     print("runtime-rendered assertions failed")
@@ -497,6 +556,46 @@ else
     printf '%s\n' "runtime-rendered evidence is not required for this scenario" >"$RUNTIME_ASSERTIONS"
 fi
 
+if [[ "$REQUIRES_SELECTION_CROP" == "true" ]]; then
+    if pull_device_artifact \
+        "Documents/developer-evidence/lasso-selection-crop.png" \
+        "$SELECTION_CROP" "$ARTIFACT_DIR/selection-crop-pull.log"; then
+        set +e
+        python3 - "$SELECTION_CROP" "$RUNTIME_EVIDENCE" >"$SELECTION_CROP_ASSERTIONS" 2>&1 <<'PY'
+import json
+import struct
+import sys
+
+crop_path, runtime_path = sys.argv[1:]
+with open(crop_path, "rb") as crop_file:
+    header = crop_file.read(24)
+if len(header) != 24 or header[:8] != b"\x89PNG\r\n\x1a\n" or header[12:16] != b"IHDR":
+    print("selection crop is not a valid PNG header")
+    raise SystemExit(1)
+width, height = struct.unpack(">II", header[16:24])
+with open(runtime_path, encoding="utf-8") as runtime_file:
+    runtime = json.load(runtime_file)
+expected = (runtime.get("selectionCropPixelWidth"), runtime.get("selectionCropPixelHeight"))
+if (width, height) != expected:
+    print(f"selection crop dimensions expected={expected!r} observed={(width, height)!r}")
+    raise SystemExit(1)
+print(f"selection crop PNG assertions passed width={width} height={height}")
+PY
+        crop_assert_exit=$?
+        set -e
+        if [[ $crop_assert_exit -eq 0 ]]; then
+            selection_crop_status="pass"
+        else
+            selection_crop_status="fail-crop-assertions"
+            pass=0
+        fi
+    else
+        selection_crop_status="fail-missing"
+        printf '%s\n' "selection crop missing from app data container" >"$SELECTION_CROP_ASSERTIONS"
+        pass=0
+    fi
+fi
+
 printf '%s\n' "Not collected by the physical-device verifier; report a separate attached console session if used." >"$CONSOLE_LOG"
 : >"$CONSOLE_ERRORS"
 printf '%s\n' "Not collected by the physical-device verifier; report device diagnostics separately if inspected." >"$CRASH_HITS"
@@ -510,6 +609,11 @@ note "scenario_assertions: $SCENARIO_ASSERTIONS"
 note "RUNTIME_EVIDENCE: $runtime_evidence_status"
 note "runtime_rendered: $RUNTIME_EVIDENCE"
 note "runtime_assertions: $RUNTIME_ASSERTIONS"
+note "SELECTION_CROP: $selection_crop_status"
+if [[ "$REQUIRES_SELECTION_CROP" == "true" ]]; then
+    note "selection_crop: $SELECTION_CROP"
+    note "selection_crop_assertions: $SELECTION_CROP_ASSERTIONS"
+fi
 note "CRASH_STATUS: $crash_status"
 note "crash_hits: $CRASH_HITS"
 
