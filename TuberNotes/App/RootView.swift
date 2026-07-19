@@ -340,7 +340,7 @@ struct RootView: View {
 }
 
 private struct RecordedHeroView: View {
-    private let agent = RecordedAgentClient()
+    private let agent: any AgentClient
     private let documentID = UUID(uuidString: "70000000-0000-0000-0000-000000000010")!
     private let pageID = UUID(uuidString: "70000000-0000-0000-0000-000000000011")!
     private let investigationID = UUID(uuidString: "70000000-0000-0000-0000-000000000012")!
@@ -349,6 +349,20 @@ private struct RecordedHeroView: View {
 
     @State private var annotation: PageAnnotation?
     @State private var status = "Selection ready"
+
+    init() {
+#if DEBUG
+        if let configuration = DebugCodexConfiguration.processEnvironment() {
+            agent = DebugCodexAgentClient(configuration: configuration)
+        } else if ProcessInfo.processInfo.environment["TUBER_AGENT_MODE"] == "codex" {
+            agent = MissingDebugCodexCredentialsClient()
+        } else {
+            agent = RecordedAgentClient()
+        }
+#else
+        agent = RecordedAgentClient()
+#endif
+    }
 
     var body: some View {
         GeometryReader { proxy in
@@ -489,7 +503,8 @@ private struct RecordedHeroView: View {
     }
 
     private var selectionArtifact: SelectionArtifact {
-        SelectionArtifact(
+        let crop = Self.makeSelectionCrop(pageBounds: selectionBounds)
+        return SelectionArtifact(
             id: UUID(uuidString: "70000000-0000-0000-0000-000000000014")!,
             documentID: documentID,
             pageID: pageID,
@@ -502,13 +517,7 @@ private struct RecordedHeroView: View {
                 PageNormalizedPoint(x: 0.18, y: 0.24)
             ],
             pageBounds: selectionBounds,
-            crop: SelectionCrop(
-                imageData: Data("offline-recorded-selection".utf8),
-                mediaType: "application/x-tubernotes-recorded-selection",
-                pixelWidth: 580,
-                pixelHeight: 380,
-                pageBounds: selectionBounds
-            ),
+            crop: crop,
             context: SelectionContext(
                 documentTitle: "Recorded algebra check",
                 sourceDocumentID: documentID,
@@ -517,4 +526,56 @@ private struct RecordedHeroView: View {
             )
         )
     }
+
+    private static func makeSelectionCrop(pageBounds: PageNormalizedRect) -> SelectionCrop {
+        let size = CGSize(width: 580, height: 380)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        let image = UIGraphicsImageRenderer(size: size, format: format).image { context in
+            context.cgContext.setFillColor(UIColor(red: 0.992, green: 0.978, blue: 0.936, alpha: 1).cgColor)
+            context.cgContext.fill(CGRect(origin: .zero, size: size))
+            let heading = "Check the first incorrect step" as NSString
+            heading.draw(
+                at: CGPoint(x: 34, y: 28),
+                withAttributes: [
+                    .font: UIFont.systemFont(ofSize: 27, weight: .bold),
+                    .foregroundColor: UIColor.label
+                ]
+            )
+            let work = "3x − 7 = 11\n\n3x = 11 − 7\n\nx = 6" as NSString
+            work.draw(
+                in: CGRect(x: 70, y: 100, width: 440, height: 250),
+                withAttributes: [
+                    .font: UIFont.monospacedSystemFont(ofSize: 32, weight: .regular),
+                    .foregroundColor: UIColor.label
+                ]
+            )
+        }
+        guard let data = image.pngData() else { preconditionFailure("Failed to encode the fixed hero selection") }
+        return SelectionCrop(
+            imageData: data,
+            mediaType: "image/png",
+            pixelWidth: Int(size.width),
+            pixelHeight: Int(size.height),
+            pageBounds: pageBounds
+        )
+    }
 }
+
+#if DEBUG
+private struct MissingDebugCodexCredentialsClient: AgentClient {
+    func investigate(_ request: InvestigationRequest) -> AsyncThrowingStream<AgentEvent, Error> {
+        AsyncThrowingStream { continuation in
+            continuation.yield(.failed(AgentFailure(
+                code: .unauthorized,
+                userMessage: "Live Codex mode requires a temporary access token.",
+                recoverable: true
+            )))
+            continuation.finish()
+        }
+    }
+
+    func cancel(investigationID: UUID) async { }
+}
+#endif
