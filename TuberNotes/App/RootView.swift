@@ -99,9 +99,9 @@ struct RootView: View {
             standalonePinSurface
         case .blankCanvas, .pdfPages, .blankNotebook, .notebookPages, .inkPages, .pinDrift:
             standaloneSpatialSurface
-        case .heroRecorded:
-            RecordedHeroView()
-        case .lassoCrop, .agentRecordedSuccess, .agentRecordedRetrieval, .agentRecordedFailure:
+        case .heroRecorded, .agentRecordedSuccess, .agentRecordedRetrieval, .agentRecordedFailure:
+            RecordedHeroView(scenario: displayedScenario)
+        case .lassoCrop:
             ContentUnavailableView(
                 "Later milestone",
                 systemImage: "hammer",
@@ -340,28 +340,23 @@ struct RootView: View {
 }
 
 private struct RecordedHeroView: View {
+    private let scenario: DevelopmentScenario
     private let agent: any AgentClient
     private let documentID = UUID(uuidString: "70000000-0000-0000-0000-000000000010")!
     private let pageID = UUID(uuidString: "70000000-0000-0000-0000-000000000011")!
-    private let investigationID = UUID(uuidString: "70000000-0000-0000-0000-000000000012")!
     private let threadID = UUID(uuidString: "70000000-0000-0000-0000-000000000013")!
     private let selectionBounds = PageNormalizedRect(x: 0.18, y: 0.24, width: 0.58, height: 0.38)
 
-    @State private var annotation: PageAnnotation?
+    @State private var lassoState: LassoState
+    @State private var submittedIntent: InvestigationIntent?
+    @State private var annotations: [PageAnnotation] = []
     @State private var status = "Selection ready"
+    @State private var investigationTask: Task<Void, Never>?
 
-    init() {
-#if DEBUG
-        if let configuration = DebugCodexConfiguration.processEnvironment() {
-            agent = DebugCodexAgentClient(configuration: configuration)
-        } else if ProcessInfo.processInfo.environment["TUBER_AGENT_MODE"] == "codex" {
-            agent = MissingDebugCodexCredentialsClient()
-        } else {
-            agent = RecordedAgentClient()
-        }
-#else
-        agent = RecordedAgentClient()
-#endif
+    init(scenario: DevelopmentScenario) {
+        self.scenario = scenario
+        agent = RecordedAgentClient(scenario: Self.recordedScenario(for: scenario))
+        _lassoState = State(initialValue: .selected(selectionID: Self.selectionID))
     }
 
     var body: some View {
@@ -371,32 +366,43 @@ private struct RecordedHeroView: View {
                 recordedWork
                 selectionGlow
 
-                if let annotation {
-                    PinOverlayView(
-                        annotations: [annotation],
-                        projectAnchor: { point in
-                            CGPoint(x: point.x * proxy.size.width, y: point.y * proxy.size.height)
-                        },
-                        initiallyExpandedAnnotationID: annotation.id
+                PinOverlayView(
+                    annotations: annotations,
+                    projectAnchor: { point in
+                        CGPoint(x: point.x * proxy.size.width, y: point.y * proxy.size.height)
+                    },
+                    initiallyExpandedAnnotationID: annotations.first?.id
+                )
+
+                if case .selected = lassoState {
+                    InvestigationActionStrip(
+                        onInvestigate: submit,
+                        onCancel: cancelSelection
                     )
+                    .position(
+                        x: proxy.size.width / 2,
+                        y: max(42, selectionBounds.y * proxy.size.height - 34)
+                    )
+                } else if isInvestigationActive {
+                    progressStatus
+                } else if case .failed(_, let recoverable) = lassoState {
+                    terminalStatus(showRetry: recoverable)
+                } else if case .completed = lassoState {
+                    terminalStatus(showRetry: true)
                 }
 
-                VStack {
-                    Spacer()
-                    Label(status, systemImage: annotation == nil ? "lasso.badge.sparkles" : "mappin.and.ellipse")
-                        .font(.subheadline.weight(.semibold))
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 10)
-                        .background(.regularMaterial, in: Capsule())
-                        .accessibilityIdentifier("recorded-hero-status")
+                if case .idle = lassoState {
+                    Button("Restore fixture selection", action: restoreSelection)
+                        .buttonStyle(.borderedProminent)
+                        .accessibilityIdentifier("restore-fixture-selection")
                 }
-                .padding(.bottom, 18)
             }
             .accessibilityIdentifier("recorded-hero-surface")
         }
         .padding(20)
         .background(Color(uiColor: .systemGroupedBackground))
-        .task { await runRecordedJourney() }
+        .onAppear(perform: startRecordedScenarioIfNeeded)
+        .onDisappear { investigationTask?.cancel() }
     }
 
     private var recordedWork: some View {
@@ -431,53 +437,151 @@ private struct RecordedHeroView: View {
         .allowsHitTesting(false)
     }
 
-    @MainActor
-    private func runRecordedJourney() async {
-        guard annotation == nil else { return }
+    private var isInvestigationActive: Bool {
+        if case .submitting = lassoState { return true }
+        if case .receiving = lassoState { return true }
+        return false
+    }
+
+    private var progressStatus: some View {
+        VStack(spacing: 12) {
+            Label(status, systemImage: "sparkles")
+                .font(.headline)
+            Button("Cancel", role: .cancel, action: cancelInvestigation)
+                .buttonStyle(.bordered)
+        }
+        .padding(16)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+        .accessibilityIdentifier("investigation-submitting")
+    }
+
+    private func terminalStatus(showRetry: Bool) -> some View {
+        VStack(spacing: 12) {
+            Text(status).font(.headline)
+            if showRetry {
+                Button("Retry", action: retryInvestigation)
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("investigation-retry")
+            }
+        }
+        .padding(16)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+        .accessibilityIdentifier("investigation-terminal")
+    }
+
+    private func submit(_ intent: InvestigationIntent) {
+        guard case let .selected(selectionID) = lassoState,
+              selectionID == selectionArtifact.id else { return }
         let request = InvestigationRequest(
-            id: investigationID,
-            intent: .check,
+            id: UUID(),
+            intent: intent,
             selection: selectionArtifact,
             conversationID: nil
         )
+        submittedIntent = request.intent
+        lassoState = .submitting(investigationID: request.id)
+        status = intentLabel(intent)
+        run(request)
+    }
 
-        do {
-            for try await event in agent.investigate(request) {
-                consume(event)
-                await Task.yield()
-            }
-        } catch {
-            status = "Recorded investigation failed"
+    private func cancelSelection() {
+        guard case .selected = lassoState else { return }
+        submittedIntent = nil
+        lassoState = .idle
+    }
+
+    private func cancelInvestigation() {
+        let investigationID: UUID
+        switch lassoState {
+        case let .submitting(id), let .receiving(id): investigationID = id
+        default: return
+        }
+        investigationTask?.cancel()
+        Task { await agent.cancel(investigationID: investigationID) }
+        status = "Investigation cancelled"
+        lassoState = .selected(selectionID: selectionArtifact.id)
+    }
+
+    private func restoreSelection() {
+        lassoState = .selected(selectionID: selectionArtifact.id)
+        status = "Selection ready"
+    }
+
+    private func retryInvestigation() {
+        guard let submittedIntent else { return }
+        lassoState = .selected(selectionID: selectionArtifact.id)
+        submit(submittedIntent)
+    }
+
+    private func intentLabel(_ intent: InvestigationIntent) -> String {
+        switch intent {
+        case .explain: "Submitting Explain"
+        case .check: "Submitting Check"
+        case let .ask(question): "Submitting Ask: \(question)"
         }
     }
 
-    @MainActor
-    private func consume(_ event: AgentEvent) {
+    private func startRecordedScenarioIfNeeded() {
+        guard scenario != .heroRecorded else {
+            recordRuntimeEvidence()
+            return
+        }
+        submit(.check)
+    }
+
+    private func run(_ request: InvestigationRequest) {
+        investigationTask?.cancel()
+        investigationTask = Task { @MainActor in
+            do {
+                for try await event in agent.investigate(request) {
+                    guard !Task.isCancelled else { return }
+                    consume(event, investigationID: request.id)
+                }
+            } catch {
+                status = "Recorded investigation failed"
+                lassoState = .failed(investigationID: request.id, recoverable: true)
+                recordRuntimeEvidence()
+            }
+        }
+    }
+
+    private func consume(_ event: AgentEvent, investigationID: UUID) {
         switch event {
-        case .accepted: status = "Check submitted"
-        case .inspectingSelection: status = "Inspecting selection…"
-        case let .toolStarted(tool): status = tool.userVisibleStatus
-        case let .pinStarted(draft): annotation = annotation(from: draft, status: .streaming)
-        case let .pinDelta(id, delta):
-            guard annotation?.id == id else { return }
-            annotation?.body += delta
-        case let .pinCompleted(draft): annotation = annotation(from: draft, status: .complete)
-        case .toolFinished: break
+        case .accepted:
+            status = "Request accepted"
+            lassoState = .receiving(investigationID: investigationID)
+        case .inspectingSelection:
+            status = "Inspecting selection…"
+        case let .toolStarted(tool):
+            status = tool.userVisibleStatus
+        case .toolFinished:
+            break
+        case let .pinStarted(draft):
+            guard let annotation = annotation(from: draft, status: .streaming) else {
+                status = "The response contained an invalid Pin location."
+                lassoState = .failed(investigationID: investigationID, recoverable: true)
+                recordRuntimeEvidence()
+                return
+            }
+            annotations.removeAll { $0.id == annotation.id }
+            annotations.append(annotation)
+            status = "Receiving a proposed Pin…"
+        case let .pinDelta(id, bodyDelta):
+            guard let index = annotations.firstIndex(where: { $0.id == id }) else { return }
+            annotations[index].body += bodyDelta
+        case let .pinCompleted(draft):
+            guard let annotation = annotation(from: draft, status: .complete) else { return }
+            annotations.removeAll { $0.id == annotation.id }
+            annotations.append(annotation)
+            status = "Proposed Pin ready"
         case .completed:
             status = "Proposed Pin ready"
-#if DEBUG
-            DevelopmentRuntimeEvidence.record(
-                scenario: .heroRecorded,
-                surfaceKind: .recordedHeroStub,
-                pageCount: 1,
-                currentPageID: pageID,
-                currentPageIndex: 0,
-                renderedPenFixtureName: nil,
-                renderedAnnotationIDs: annotation.map { [$0.id] } ?? [],
-                heroStatus: status
-            )
-#endif
-        case let .failed(failure): status = failure.userMessage
+            lassoState = .completed(investigationID: investigationID)
+            recordRuntimeEvidence()
+        case let .failed(failure):
+            status = failure.userMessage
+            lassoState = .failed(investigationID: investigationID, recoverable: failure.recoverable)
+            recordRuntimeEvidence()
         }
     }
 
@@ -502,10 +606,25 @@ private struct RecordedHeroView: View {
         )
     }
 
+    private func recordRuntimeEvidence() {
+#if DEBUG
+        DevelopmentRuntimeEvidence.record(
+            scenario: scenario,
+            surfaceKind: .recordedHeroStub,
+            pageCount: 1,
+            currentPageID: pageID,
+            currentPageIndex: 0,
+            renderedPenFixtureName: nil,
+            renderedAnnotationIDs: annotations.map(\.id),
+            heroStatus: status
+        )
+#endif
+    }
+
     private var selectionArtifact: SelectionArtifact {
         let crop = Self.makeSelectionCrop(pageBounds: selectionBounds)
         return SelectionArtifact(
-            id: UUID(uuidString: "70000000-0000-0000-0000-000000000014")!,
+            id: Self.selectionID,
             documentID: documentID,
             pageID: pageID,
             pageIndex: 0,
@@ -525,6 +644,23 @@ private struct RecordedHeroView: View {
                 nearbyText: "3x − 7 = 11; 3x = 11 − 7; x = 6"
             )
         )
+    }
+
+    private static let selectionID = UUID(uuidString: "70000000-0000-0000-0000-000000000014")!
+
+    private static func recordedScenario(for scenario: DevelopmentScenario) -> RecordedAgentScenario {
+        switch scenario {
+        case .agentRecordedRetrieval:
+            return .retrieval
+        case .agentRecordedFailure:
+            return .failure(AgentFailure(
+                code: .unavailable,
+                userMessage: "The recorded provider is temporarily unavailable.",
+                recoverable: true
+            ))
+        default:
+            return .success
+        }
     }
 
     private static func makeSelectionCrop(pageBounds: PageNormalizedRect) -> SelectionCrop {
@@ -563,19 +699,54 @@ private struct RecordedHeroView: View {
     }
 }
 
-#if DEBUG
-private struct MissingDebugCodexCredentialsClient: AgentClient {
-    func investigate(_ request: InvestigationRequest) -> AsyncThrowingStream<AgentEvent, Error> {
-        AsyncThrowingStream { continuation in
-            continuation.yield(.failed(AgentFailure(
-                code: .unauthorized,
-                userMessage: "Live Codex mode requires a temporary access token.",
-                recoverable: true
-            )))
-            continuation.finish()
+private struct InvestigationActionStrip: View {
+    let onInvestigate: (InvestigationIntent) -> Void
+    let onCancel: () -> Void
+
+    @State private var isAsking = false
+    @State private var question = ""
+    @FocusState private var questionIsFocused: Bool
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if isAsking {
+                TextField("Ask about this selection", text: $question)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 260)
+                    .focused($questionIsFocused)
+                    .onSubmit(submitQuestion)
+                    .accessibilityIdentifier("investigation-ask-field")
+                Button("Send", action: submitQuestion)
+                    .disabled(trimmedQuestion.isEmpty)
+                    .accessibilityIdentifier("investigation-ask-send")
+            } else {
+                Button("Explain") { onInvestigate(.explain) }
+                    .accessibilityIdentifier("investigation-explain")
+                Button("Check") { onInvestigate(.check) }
+                    .accessibilityIdentifier("investigation-check")
+                Button("Ask") {
+                    isAsking = true
+                    questionIsFocused = true
+                }
+                .accessibilityIdentifier("investigation-ask")
+            }
+
+            Button("Cancel", role: .cancel, action: onCancel)
+                .accessibilityIdentifier("investigation-cancel")
         }
+        .buttonStyle(.bordered)
+        .padding(10)
+        .background(.regularMaterial, in: Capsule())
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("investigation-action-strip")
     }
 
-    func cancel(investigationID: UUID) async { }
+    private var trimmedQuestion: String {
+        question.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func submitQuestion() {
+        guard !trimmedQuestion.isEmpty else { return }
+        onInvestigate(.ask(question: trimmedQuestion))
+    }
 }
-#endif
