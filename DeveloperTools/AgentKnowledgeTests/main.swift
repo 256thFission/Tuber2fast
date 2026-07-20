@@ -14,14 +14,19 @@ private func check(_ condition: @autoclosure () -> Bool, _ message: String) thro
     guard condition() else { throw CheckFailure.failed(message) }
 }
 
-private func recordedRequest(id: UUID = UUID()) -> InvestigationRequest {
+private func recordedRequest(
+    id: UUID = UUID(),
+    intent: InvestigationIntent = .check,
+    conversationID: String? = nil,
+    selection: SelectionArtifact? = nil
+) -> InvestigationRequest {
     let documentID = UUID(uuidString: "83000000-0000-0000-0000-000000000001")!
     let pageID = UUID(uuidString: "83000000-0000-0000-0000-000000000002")!
     let bounds = PageNormalizedRect(x: 0.1, y: 0.2, width: 0.5, height: 0.4)
     return InvestigationRequest(
         id: id,
-        intent: .check,
-        selection: SelectionArtifact(
+        intent: intent,
+        selection: selection ?? SelectionArtifact(
             id: UUID(uuidString: "83000000-0000-0000-0000-000000000003")!,
             documentID: documentID,
             pageID: pageID,
@@ -47,7 +52,7 @@ private func recordedRequest(id: UUID = UUID()) -> InvestigationRequest {
                 nearbyText: "3x - 7 = 11"
             )
         ),
-        conversationID: nil
+        conversationID: conversationID
     )
 }
 
@@ -89,6 +94,99 @@ private func testRecordedCancellation() async throws {
         throw CheckFailure.failed("cancellation should finish with a failure event")
     }
     try check(failure.code == .cancelled, "cancellation should use the cancelled failure code")
+}
+
+private func testRecordedConversationFollowUp() async throws {
+    let client = RecordedAgentClient(eventDelay: .milliseconds(1))
+    let checkRequest = recordedRequest()
+    let checkEvents = try await collect(client, request: checkRequest)
+    guard case let .completed(conversationID) = checkEvents.last,
+          let conversationID else {
+        throw CheckFailure.failed("hero Check should return a conversation ID")
+    }
+
+    let followUpRequest = recordedRequest(
+        intent: .ask(question: "Why does the sign change?"),
+        conversationID: conversationID,
+        selection: checkRequest.selection
+    )
+    let events = try await collect(client, request: followUpRequest)
+
+    try check(events.count == 7, "recorded follow-up should emit seven ordered events")
+    try check(events[0] == .accepted, "recorded follow-up should begin with accepted")
+    try check(events[1] == .inspectingSelection, "recorded follow-up should inspect the retained selection")
+
+    guard case let .pinStarted(startedPin) = events[2] else {
+        throw CheckFailure.failed("recorded follow-up should begin its threaded reply")
+    }
+    guard case let .pinDelta(firstDeltaID, firstDelta) = events[3],
+          firstDeltaID == startedPin.id,
+          !firstDelta.isEmpty else {
+        throw CheckFailure.failed("recorded follow-up should stream its first reply delta in order")
+    }
+    guard case let .pinDelta(secondDeltaID, secondDelta) = events[4],
+          secondDeltaID == startedPin.id,
+          !secondDelta.isEmpty else {
+        throw CheckFailure.failed("recorded follow-up should stream its second reply delta in order")
+    }
+    guard case let .pinCompleted(completedPin) = events[5],
+          completedPin.id == startedPin.id,
+          completedPin.body == firstDelta + secondDelta else {
+        throw CheckFailure.failed("recorded follow-up should complete the streamed reply in order")
+    }
+    try check(
+        events[6] == .completed(conversationID: conversationID),
+        "recorded follow-up should preserve conversation ID continuity"
+    )
+    try check(
+        followUpRequest.selection == checkRequest.selection,
+        "recorded follow-up should reuse the hero Check selection"
+    )
+}
+
+private func testRecordedConversationCancellation() async throws {
+    let client = RecordedAgentClient(eventDelay: .milliseconds(20))
+    let checkRequest = recordedRequest()
+    let checkEvents = try await collect(client, request: checkRequest)
+    guard case let .completed(conversationID) = checkEvents.last,
+          let conversationID else {
+        throw CheckFailure.failed("hero Check should return a conversation ID before cancellation test")
+    }
+
+    let followUpRequest = recordedRequest(
+        intent: .ask(question: "Why does the sign change?"),
+        conversationID: conversationID,
+        selection: checkRequest.selection
+    )
+    var events: [AgentEvent] = []
+    for try await event in client.investigate(followUpRequest) {
+        events.append(event)
+        if case .pinDelta = event {
+            await client.cancel(investigationID: followUpRequest.id)
+        }
+    }
+
+    try check(events.count == 5, "mid-turn cancellation should stop remaining follow-up events")
+    try check(events[0] == .accepted, "cancelled follow-up should begin with accepted")
+    try check(events[1] == .inspectingSelection, "cancelled follow-up should inspect the retained selection")
+    guard case .pinStarted = events[2] else {
+        throw CheckFailure.failed("cancelled follow-up should begin its threaded reply")
+    }
+    guard case .pinDelta = events[3] else {
+        throw CheckFailure.failed("cancelled follow-up should emit one reply delta before cancellation")
+    }
+    guard case let .failed(failure) = events[4] else {
+        throw CheckFailure.failed("cancelled follow-up should end with a failure event")
+    }
+    try check(failure.code == .cancelled, "mid-turn cancellation should use the cancelled failure code")
+    try check(
+        !events.contains { if case .pinCompleted = $0 { return true }; return false },
+        "mid-turn cancellation must suppress reply completion"
+    )
+    try check(
+        !events.contains { if case .completed = $0 { return true }; return false },
+        "mid-turn cancellation must suppress conversation completion"
+    )
 }
 
 private func testRecordedVariants() async throws {
@@ -184,6 +282,8 @@ private struct AgentKnowledgeChecks {
     static func main() async throws {
         try await testRecordedSuccess()
         try await testRecordedCancellation()
+        try await testRecordedConversationFollowUp()
+        try await testRecordedConversationCancellation()
         try await testRecordedVariants()
         try await testOfflineKnowledgeSearch()
         try testCorpusFailures()

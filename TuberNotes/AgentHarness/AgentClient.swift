@@ -31,7 +31,10 @@ struct RecordedAgentClient: AgentClient {
     }
 
     func investigate(_ request: InvestigationRequest) -> AsyncThrowingStream<AgentEvent, Error> {
-        let events = Self.events(for: scenario)
+        let events = Self.events(
+            for: scenario,
+            conversationID: request.conversationID
+        )
         let registry = registry
         let eventDelay = eventDelay
         let streamToken = UUID()
@@ -80,7 +83,23 @@ struct RecordedAgentClient: AgentClient {
         await registry.cancel(investigationID: investigationID)
     }
 
-    private static func events(for scenario: RecordedAgentScenario) -> [AgentEvent] {
+    private static func events(
+        for scenario: RecordedAgentScenario,
+        conversationID: String?
+    ) -> [AgentEvent] {
+        if let conversationID {
+            let followUpEvents: [AgentEvent]
+            if case .success = scenario, conversationID == heroConversationID {
+                followUpEvents = heroFollowUpEvents
+            } else {
+                followUpEvents = [
+                    .accepted,
+                    .failed(unknownConversationFailure)
+                ]
+            }
+            return validated(followUpEvents)
+        }
+
         let recordedEvents: [AgentEvent] = switch scenario {
         case .success:
             successEvents
@@ -134,7 +153,17 @@ struct RecordedAgentClient: AgentClient {
         .pinDelta(id: pinID, bodyDelta: completedBody),
         .pinCompleted(completedPin),
         .toolFinished(placePinsTool),
-        .completed(conversationID: "recorded-hero")
+        .completed(conversationID: heroConversationID)
+    ]
+
+    private static let heroFollowUpEvents: [AgentEvent] = [
+        .accepted,
+        .inspectingSelection,
+        .pinStarted(followUpPin),
+        .pinDelta(id: followUpPinID, bodyDelta: followUpBodyFirstDelta),
+        .pinDelta(id: followUpPinID, bodyDelta: followUpBodySecondDelta),
+        .pinCompleted(completedFollowUpPin),
+        .completed(conversationID: heroConversationID)
     ]
 
     private static let retrievalEvents: [AgentEvent] = [
@@ -150,11 +179,15 @@ struct RecordedAgentClient: AgentClient {
     ]
 
     private static let pinID = UUID(uuidString: "70000000-0000-0000-0000-000000000001")!
+    private static let followUpPinID = UUID(uuidString: "70000000-0000-0000-0000-000000000006")!
     private static let retrievalPinID = UUID(uuidString: "70000000-0000-0000-0000-000000000003")!
     private static let placePinsToolID = UUID(uuidString: "70000000-0000-0000-0000-000000000002")!
     private static let searchTextbookToolID = UUID(uuidString: "70000000-0000-0000-0000-000000000004")!
     private static let citationID = UUID(uuidString: "82000000-0000-0000-0000-000000000001")!
+    private static let heroConversationID = "recorded-hero"
     private static let completedBody = "The sign changes when the negative term moves across the equals sign."
+    private static let followUpBodyFirstDelta = "It does not change merely because the term moves. "
+    private static let followUpBodySecondDelta = "Adding 7 to both sides cancels -7 on the left, leaving +7 on the right."
 
     private static let proposedPin = PinDraft(
         id: pinID,
@@ -169,6 +202,22 @@ struct RecordedAgentClient: AgentClient {
     private static var completedPin: PinDraft {
         var draft = proposedPin
         draft.body = completedBody
+        return draft
+    }
+
+    private static let followUpPin = PinDraft(
+        id: followUpPinID,
+        target: CropNormalizedPoint(x: 0.64, y: 0.54),
+        targetRegion: nil,
+        kind: .explanation,
+        teaser: "Why the sign changes",
+        body: "",
+        citations: []
+    )
+
+    private static var completedFollowUpPin: PinDraft {
+        var draft = followUpPin
+        draft.body = followUpBodyFirstDelta + followUpBodySecondDelta
         return draft
     }
 
@@ -215,6 +264,12 @@ struct RecordedAgentClient: AgentClient {
     private static let invalidCoordinateFailure = AgentFailure(
         code: .invalidResponse,
         userMessage: "The recorded response contained an invalid Pin location.",
+        recoverable: true
+    )
+
+    private static let unknownConversationFailure = AgentFailure(
+        code: .invalidResponse,
+        userMessage: "The recorded conversation could not be continued.",
         recoverable: true
     )
 }
