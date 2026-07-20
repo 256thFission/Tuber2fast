@@ -1,233 +1,249 @@
-# TuberNotes — Execution Plan (parent doc)
+# TuberNotes — Product Coherence Review Plan
 
-This is the single long-running coordination document. One work line = one
-child doc = one bounded task.
+This is the active execution plan for the current review: inspect the product
+that actually ships from this checkout, repair behavior that is inconsistent or
+confusing, preserve working capability, and make the experience feel direct,
+calm, and enjoyable.
 
-Authority chain: `SPEC.md` (product contracts) → `AGENTS.md` (operating
-contract) → this plan (current execution) → child docs (per-line detail).
+The former multi-developer hackathon plan is no longer authoritative here. The
+existing `Phase0-*` and `WL-*` documents remain historical implementation and
+verification records only. Do not use their ownership split, status board, or
+merge sequence to choose current work.
 
-## Decisions locked (Phillip, July 19, 2026)
+Authority chain: `SPEC.md` (product contracts) → `AGENTS.md` (operating and
+device contract) → this plan (current review).
 
-1. **Horizon:** ~1 week+ to demo-ready.
-2. **Demo agent:** deterministic **recorded** agent on stage (M1 loop). Live
-   provider (M2) is a gated stretch, never a demo dependency.
-3. **Live-provider spike is retained** and becomes WL-D, behind the
-   `AgentClient` protocol. It must never leak into the M1 path.
-4. **Persistence/relaunch, PDF import, and notebook creation are in scope.**
-5. **Two-human split:** Phillip's friend owns the **notebook substrate**
-   (Track N: SpatialCanvas, documents, ink, persistence, Pin projection).
-   Phillip owns the **intelligence layer** (Track I: AgentHarness, Knowledge,
-   investigation/conversation UI). **Phillip keeps coordination**: merges to
-   `main`, `RootView.swift` integration, and final judgment. Track N never
-   edits `RootView.swift` or Track I subsystems, and vice versa.
-6. **Long-press Pin conversation UI is promoted into the main spec**
-   (SPEC §1 Confirmed #11) — it is Track I's headline deliverable after M1.
-7. **Contracts are soft:** any agent may change `TuberNotes/App/Contracts/`
-   or scenario contracts when the work requires it, without stopping.
-   Every contract-touching commit carries a `CONTRACT:` prefix and a plan-log
-   entry here naming the changed type and why. Phillip reviews after the fact
-   and rolls back if needed. Architecture-*ownership* changes still need
-   Phillip first.
+## Branch router
 
-## Status board
+Always confirm `git branch --show-current` before using this plan.
 
-States: `not-started` → `in-progress` → `mechanically-accepted` →
-`human-accepted`. Blockers get named inline.
-
-### Coordination (Phillip)
-
-| Line | Child doc | Status |
+| Branch | Product entry point / purpose | Plan to use |
 |---|---|---|
-| P0 — Stabilize tree | [Phase0-Stabilize.md](Phase0-Stabilize.md) | mechanically accepted; overnight-branch cleanup deferred (ignored by direction) |
+| `sive/dev` | Current integrated product: `LibraryView` → `NotebookView`, with the Debug scenario harness retained separately | **This plan.** It is the active review target. |
+| `main` | Shared baseline and deterministic scenario history | Use this plan only after rebasing its inventory and status to `main`; consult the old `WL-*` files only for provenance. |
+| `claire/bleh` | Separate experimental visual work | This plan does not authorize edits there. Review its branch-local diff and establish a branch-local scope before changing it. |
+| `codex-tenative-m0` / other branches | Historical or isolated experiments | Do not infer current behavior from them. Use only when a task explicitly names that branch. |
 
-### Track N — Notebook substrate (friend)
+Do not switch, merge, rebase, commit, or push as part of this review unless the
+user explicitly asks. Preserve existing uncommitted work and distinguish it
+from review changes in every diff inspection.
 
-| Line | Child doc | Owner subsystem | Status |
-|---|---|---|---|
-| WL-A — Lasso capture + crop | [WL-A-LassoCrop.md](WL-A-LassoCrop.md) | SpatialCanvas | mechanically-accepted — merged; human Pencil review queued |
-| WL-C — Documents + persistence | [WL-C-DocumentsPersistence.md](WL-C-DocumentsPersistence.md) | App(Persistence) + DeveloperSupport | in-progress — `.spud`/PDF contracts + notebook UI consistency locally checked; device acceptance open (Linux host) |
-| WL-E(N) — Notebook device reviews | [WL-E-VerificationReview.md](WL-E-VerificationReview.md) §Track N | DeveloperTools | not-started |
+## Mandatory plan structure
 
-### Track I — Intelligence layer (Phillip)
+Every additional planned effort must receive its own clearly labeled section in
+this file. Do not silently fold new work into PC-1, a session-log entry, or an
+unrelated existing section.
 
-| Line | Child doc | Owner subsystem | Status |
-|---|---|---|---|
-| WL-B — Investigation UI | [WL-B-InvestigationUI.md](WL-B-InvestigationUI.md) | App | mechanically-accepted — M1 real lasso-to-recorded-Pin loop complete; human hero review queued |
-| WL-F — Conversation UI | [WL-F-ConversationUI.md](WL-F-ConversationUI.md) | App + AgentHarness + Pins | mechanically-accepted — composition/feel accepted directly in Codex; open discoverability finding requires a visible first-expansion affordance + two-minute re-test |
-| WL-D — Live adapter [stretch] | [WL-D-LiveAdapter.md](WL-D-LiveAdapter.md) | AgentHarness | not-started; gated |
-| WL-E(I) — Agent-side verification | [WL-E-VerificationReview.md](WL-E-VerificationReview.md) §Track I | DeveloperTools | not-started |
+A new section is mandatory whenever work introduces any of the following:
 
-Dependency shape:
+- a new user-visible feature or independently testable behavior;
+- a different developer, owner, or collaborator responsibility;
+- a branch-specific implementation or integration path;
+- a separate subsystem, contract, migration, investigation, or verification
+  effort;
+- materially different acceptance evidence or stop conditions;
+- a follow-up large enough to require more than one bounded edit-and-verify
+  cycle.
 
-```text
-Track N (friend)              Track I (Phillip)
-  WL-A ✓ ────────────────────→ WL-B step 3 → M1 demo core
-  WL-C (device gate) ─→ repeatable demo      │
-                                             ├→ WL-F conversation UI
-                                             └→ WL-D live flex [gated]
-  Contracts (TuberNotes/App/Contracts/) are the interface.
-  WL-E rides both tracks → truthful scenarios + human review → M4
-```
+Each section must have a stable identifier and contain, at minimum:
 
-Merge policy: **Phillip merges everything.** Track N delivers branches/PRs
-against the contracts; a line merges when its device-verified evidence bar
-passes — a device outage pauses the merge, it doesn't waive the gate (WL-C's
-pending notebook acceptance is the standing exception, by explicit direction,
-and gates further Track N merges until cleared).
+1. title and status;
+2. target branch and responsible developer/owner, when applicable;
+3. objective and user-visible outcome;
+4. files or subsystems in scope;
+5. explicit non-goals and dependencies;
+6. ordered work and verification steps;
+7. acceptance evidence and stop conditions;
+8. a dated session log that distinguishes completed, blocked, and deferred
+   work.
 
-## Session rules
+If an effort is too large to remain readable here, create one dedicated child
+plan and add a section here that links to it, identifies its branch and owner,
+and summarizes its current status. One child plan must still represent one
+feature, developer-owned effort, or other coherent work line; never use a child
+document as a miscellaneous backlog.
 
-- Every session works **one** child doc. Before long-running work, restate its
-  acceptance evidence, files in scope, non-goals, and stop point (AGENTS.md).
-- Subagents only when Phillip explicitly requests them, and only for lines
-  marked subagent-eligible. Integration and merge judgment stay with the
-  coordinating agent.
-- End each session by: updating the child doc's Status + Session log, the
-  status board here, and an Evidence Packet for user-visible changes.
-- Device work follows `Docs/DeviceWorkflow.md` — one pinned iPad, sessions
-  serialize device access across BOTH tracks; never simulator-fallback.
-- Verification is tiered (`Docs/Development.md` § Verification tiers): per-edit
-  runs use only the change-map scenarios; the last plan-logged green sweep at
-  the current commit is the baseline — do not re-sweep before editing. Full
-  sweeps are reserved for tooling changes, multi-line merge days, and the M4
-  gate.
-- Push `main` to origin after every merged work line — Track N and Track I
-  sync through origin, not through this Mac.
-- Contract changes: allowed, `CONTRACT:`-flagged, plan-logged (decision 7).
-- Never modify `.cursor/`; never commit `__pycache__/`, `DerivedData*/`,
-  `tmp/`, or `.tubernotes-device-session.json`.
-- Do not create standalone handoff docs; append here.
+Before editing product code, update the applicable section to `in progress`.
+Before ending the session, update that same section with evidence and status.
+If no section accurately owns the requested work, create one before proceeding.
 
-## Definition of done for the week
+## Active line — PC-1: end-to-end product coherence
 
-1. **M1 gate passes** (SPEC §16) on the demo iPad: real lasso → crop → Check →
-   recorded events → real Pins; Retry without redraw; cancel/invalid safe.
-   (WL-A ✓ + WL-B step 3)
-2. **Repeatable demo state:** create/import, draw, get Pins, relaunch —
-   everything restored. (WL-C, pending device gate)
-3. **Conversation:** long-press an existing Pin → follow-up turn reusing the
-   retained selection → threaded reply renders. (WL-F)
-4. **All runnable scenarios PASS** with rendered-runtime evidence; no
-   scenario overstates readiness. (WL-E)
-5. **Human sign-off** on Pencil feel, spatial taste, hero + conversation
-   timing via human-device-loop. (WL-E / M4 gate)
-6. **Stretch, only if 1–5 green:** one live provider hero run behind the
-   DEBUG gate. (WL-D)
+Status: **in progress — planning and inventory**
 
-## Plan log
+### Objective
 
-Append one line per meaningful state change: date, line, what changed.
+Review the complete normal-use journey on `sive/dev` and repair concrete
+inconsistencies without stripping capability or redesigning working systems:
 
-- 2026-07-19 — PLAN created; stale handoffs deleted; all lines `not-started`.
-- 2026-07-19 — P0 mechanically accepted on the pinned physical iPad; split
-  tooling/live-spike commits landed on `main` and five work-line branches were
-  created. Overnight branch cleanup remains blocked by uncommitted edits in its
-  linked worktree.
-- 2026-07-19 — WL-B step 1 mechanically complete on the pinned physical iPad:
-  fixture-backed `LassoState` selection plus Explain / Check / typed Ask action
-  strip. WL-B remains `in-progress`; recorded event wiring and real lasso
-  integration remain steps 2–3.
-- 2026-07-19 — WL-A mechanically accepted and merged to `main` as `a07b5bf`;
-  genuine lasso capture/crop passed with retained PDF+ink PNG evidence. The
-  complete 11-scenario post-merge sweep passed on the pinned iPad.
-- 2026-07-19 — WL-B step 2 mechanically accepted and merged to `main` as
-  `81b7444`; all three `agent-recorded-*` scenarios passed. After correcting
-  one stale step-1 `hero-recorded` expectation, the complete 14-scenario
-  post-merge sweep passed. Step 3 remains pending.
-- 2026-07-19 — WL-C persistence-relaunch and external three-page PDF import /
-  navigation evidence passed, with no frozen-contract pressure. Final notebook
-  create/append/relaunch acceptance and regression sweep stopped after repeated
-  device-service/container-copy/install-query timeouts.
-- 2026-07-19 — Phillip explicitly directed WL-C to merge despite incomplete
-  notebook acceptance. The implementation was reconciled with WL-A/WL-B and
-  merged without upgrading WL-C to mechanically accepted; the device blocker
-  remains open.
-- 2026-07-19 — A focused merged-main WL-C retry exhausted its two allowed
-  attempts before build/install: exact wired preflight passed, but Xcode kept
-  the pinned iPad in `Device is busy (Connecting to Phillip’s iPad)`. WL-C
-  remains in-progress and no new human-review session was started.
-- 2026-07-19 — Physical disconnect/reconnect did not clear the Xcode developer
-  service blocker. A fresh two-attempt WL-C cycle again stopped before
-  build/install with the exact iPad stuck `busy (Connecting)`; acceptance
-  remains open.
-- 2026-07-19 — Plan restructured into Track N (friend: notebook substrate) and
-  Track I (Phillip: intelligence layer). Long-press conversation UI promoted
-  into SPEC critical path (WL-F created); contract-change policy softened to
-  the `CONTRACT:` flag-and-log rule; Phillip retains all coordination/merges.
-- 2026-07-19 — WL-E tooling fix: cross-session device safety. Root cause of the
-  recurring `Device is busy (Connecting)` failures was orphaned
-  verifier/xcodebuild processes surviving interrupted conversations while new
-  sessions started competing runs. Added a PID-liveness device lock to
-  `verify-scenario.sh`, contender detection + `--reclaim` to preflight, and
-  `DeveloperTools/device-recover.sh`; documented in `Docs/DeviceWorkflow.md`
-  §2a. 15 focused tests pass.
-- 2026-07-19 — WL-B step 3 mechanically accepted on the pinned iPad. Replaced
-  the synthetic recorded hero with the real `SpatialCanvasView` lasso/crop →
-  recorded events → page-normalized Pin loop; focused recorded scenarios and
-  the complete 14-scenario regression sweep passed. Scenario-contract change:
-  `DevelopmentScenarioFixture.IntegrationReadiness` for `hero-recorded` is now
-  `app-wired`, and `DevelopmentRuntimeEvidence.SurfaceKind.recordedHeroStub`
-  was removed because all recorded scenarios now prove the real spatial
-  surface and retained crop. Human hero-quality review remains queued with its
-  event bridge armed.
-- 2026-07-19 — WL-F scenario-contract addition: added
-  `DevelopmentScenario.pinConversation` plus additive
-  `DevelopmentRuntimeEvidence` conversation fields so the verifier can prove a
-  Pin-tethered recorded follow-up and in-session page-away/page-return survival.
-- 2026-07-19 — WL-F mechanically accepted on physical iPad
-  `2DD98ECC-A26A-5730-943B-01DD63DC4117`: focused continuation/cancellation
-  checks and `pin-conversation`, `hero-recorded`, `agent-recorded-success`, and
-  `agent-recorded-failure` all pass. The Pin-anchored thread reuses the real
-  hero selection and `recorded-hero` conversation ID, streams a reply through
-  the existing event path, and survives page-away/page-return in App-owned
-  session state. The non-blocking human journey was not queued because the
-  feedback system reported divergent device-slot ownership; existing review
-  sessions were left untouched.
-- 2026-07-19 — WL-F guided human review completed after Phillip authorized
-  clearing the divergent feedback queue. Human result is needs-work: long-press
-  was not discoverable, and the completed-investigation Retry card remains
-  above and visually competes with the Pin conversation panel. Screenshot
-  evidence confirms the App overlay ordering. Suggested direction: a subtle
-  Pin shake with a slowly tracing circular outline; no UI fix was made in this
-  review-only session.
-- 2026-07-20 — WL-F human-review correction in progress. Contract seam:
-  `PinOverlayEvent` gained additive `conversationRequested(annotationID:)` so
-  `Pins` owns precise hold recognition while `App` retains conversation state.
-  The page popup is being replaced by a Pin-tethered right sidebar; screenshot
-  submission now encodes captures sequentially and destructive Block actions
-  require confirmation after Phillip's screenshot attempt crashed and was
-  incorrectly recorded as a human block.
-- 2026-07-20 — WL-F correction branch closeout: physical-iPad
-  `pin-conversation`, `hero-recorded`, `agent-recorded-success`, and
-  `agent-recorded-failure` are green after the Pin-tethered sidebar, mutually
-  exclusive tap/hold handling, keyboard-stable canvas, and feedback capture
-  safeguards. Phillip accepted composition/feel as "Excellent" directly in
-  the originating Codex task; there is no thread-side final verdict. Because
-  he could not reliably trigger the final long-press and needed the sidebar
-  opened remotely, WL-F remains mechanically accepted with an open
-  discoverability finding. Follow-up: add one visible first-expansion
-  affordance (not another timing tweak), then run a two-minute unaided re-test
-  that also re-exercises screenshot send. The dangling device prompt was
-  explicitly resolved before its closed-watch transcript was exported.
-- 2026-07-20 — WL-C notebook branch rebased onto current `main`. Conflict
-  resolution preserved the canonical contracts, Debug harness, and Pin UI while
-  keeping the branch's library/editor, layered ink, ambience, and file tools.
-  Branch features were consolidated rather than deleted: questions enter through
-  Agentic Layers and persist answers as Pins; refinement is a separate
-  sparkle-lasso that commits to page drawing/image state. Pins remain owned only
-  by `ConversationLayer.conversations` inside `Notebook.agenticLayers` and are
-  visible only when an Agentic Layer is active. Current Linux host lacks Xcode
-  and a pinned-device session, so build/device acceptance remains open.
-- 2026-07-20 — WL-C CONTRACT: `TuberNoteArchive` advanced to version 2 because
-  full canonical `PageAnnotation` values and Agentic Layer visibility now round-trip,
-  with version 1 decoding retained. Compressed PDF remains drawing-only and has
-  no annotation/conversation input seam. Three focused Linux contract checks
-  pass; Xcode/device verification was unavailable on this Linux host.
-- 2026-07-20 — WL-C Linux-safe UI consistency pass fixed live-canvas refresh
-  after applied refinement, synchronized the Agentic sidebar with layer-mode
-  exit, made the expanded bottom toolbar horizontally reachable without
-  clipping, and restored the Xcode workspace descriptor. Focused WL-C/archive
-  and device-session/review-harness checks pass, source references and diff
-  hygiene are clean. Exact-iPad preflight remains blocked because this Linux
-  host has no `xcrun`; no build, launch, screenshot, or human visual judgment
-  is claimed. A stale pre-existing WL-E verifier unit test remains out of scope.
+1. launch into the library and create, open, rename, duplicate, import, export,
+   and delete notebooks with clear consequences;
+2. write and navigate pages without tool, gesture, or chrome conflicts;
+3. use layers, Agentic Layers, Pins, notebook analysis, and drawing refinement
+   through distinct and understandable entry points;
+4. preserve page identity, ink, images, Pins, layer visibility, and navigation
+   state across save/export/import/relaunch boundaries;
+5. keep empty, loading, active, success, failure, cancellation, retry, and
+   destructive states consistent in language, placement, and recovery;
+6. retain deterministic Debug scenarios as regression evidence without
+   mistaking the harness UI for the shipping product.
+
+### Experience principles
+
+- The notebook and page remain visually dominant; controls recede when idle.
+- One concept has one obvious home. Avoid duplicate controls with different
+  wording or subtly different behavior.
+- Pencil, finger, tap, hold, drag, and keyboard input must not compete for the
+  same gesture without visible explanation and reliable cancellation.
+- Irreversible or lossy actions explain what will happen and require deliberate
+  confirmation. Reversible actions should feel immediate.
+- AI features state what they affect, which service/path they use, whether they
+  are deterministic or live, and how to cancel or recover.
+- Spatial content remains attached to page identity and normalized page
+  coordinates; visual layout must never rewrite an anchor.
+- Accessibility labels describe the action and current state, not internal
+  implementation terminology.
+
+### Scope
+
+Primary product surfaces:
+
+- `TuberNotes/App/TuberNotesApp.swift`
+- `TuberNotes/Library/`
+- `TuberNotes/Notebook/`
+- `TuberNotes/SpatialCanvas/`
+- `TuberNotes/Pins/`
+- persistence, archive, PDF, and import/export code reached by those surfaces
+- product-runtime agent/refinement seams reached from the normal notebook UI
+
+Regression-only surfaces:
+
+- `TuberNotes/App/RootView.swift`
+- `TuberNotes/DeveloperSupport/`
+- `DeveloperTools/` scenario and device tooling
+
+These are inspected or changed only when a product repair breaks their truthful
+regression contract. Development tooling and the in-product agent remain
+separate security and responsibility boundaries.
+
+### Non-goals
+
+- architecture rewrites, subsystem ownership changes, or parallel models;
+- new cloud/sync/provider scope, credential distribution, or permission bypass;
+- speculative feature expansion unrelated to a demonstrated coherence problem;
+- polishing historical branches or making the Debug harness the shipping UI;
+- broad test-suite construction where a focused check proves the repair.
+
+## Review order
+
+Work in this order. Finish the current stage and record evidence before
+expanding the diff.
+
+### 1. Establish the truthful baseline
+
+- Record branch, HEAD, dirty files, and available host/device tooling.
+- Identify the Release and Debug entry paths and every user-reachable top-level
+  surface.
+- Preserve collaborator edits; review them as current behavior but do not
+  silently rewrite or discard them.
+- Use the last plan-logged green device scenarios only as historical evidence;
+  do not claim they verify the current branch if HEAD differs.
+
+Exit evidence: branch snapshot, entry-point map, scoped file inventory, and
+named verification limits.
+
+### 2. Audit complete user journeys
+
+For each journey, trace view → state/model → persistence/runtime side effect →
+recovery path. Record findings before editing.
+
+| Journey | Required states and consistency checks |
+|---|---|
+| Library and documents | first launch, empty state, create, open, rename, duplicate, import, export, delete, error recovery |
+| Page lifecycle | blank/PDF page, add, reorder if exposed, navigate away/back, relaunch, page identity |
+| Writing | tool selection, color/width, Pencil versus finger, erasing, undo/redo, lock, lasso cancellation |
+| Layers | create/select/hide/reorder/delete, mode exit, sidebar visibility, persistence |
+| Agentic work | ask, selection context, progress, cancel, failure, retry, resulting Pin, follow-up/discoverability |
+| Refinement | select, preview/progress, cancel, apply, undo/recovery, distinction from notebook analysis |
+| Files and settings | PDF/SPUD semantics, loss disclosure, credential UI, settings discoverability and naming |
+| Layout/accessibility | portrait/landscape, keyboard, sidebar, compact widths, clipping/overlap, focus, labels, hit targets |
+
+Severity order:
+
+1. data loss, crash, security/permission confusion, or spatial corruption;
+2. unreachable capability, contradictory state, or gesture conflict;
+3. broken recovery, misleading copy, clipping, or overlap;
+4. discoverability and consistency;
+5. visual delight that does not compromise the first four.
+
+### 3. Make bounded repairs
+
+- Repair one coherent finding cluster at a time.
+- Prefer consolidation, better state transitions, and clearer copy over adding
+  more controls or tutorial chrome.
+- Keep stable data and contract representations. If a shared contract must
+  change, use the repository's `CONTRACT:` commit/log rule when committing.
+- After each cluster, inspect the diff for unrelated churn before continuing.
+- Stop after two verification failures without a narrower diagnosis.
+
+### 4. Verify proportionally
+
+Host-safe checks:
+
+- project/source membership and compile-reference inspection;
+- focused persistence/archive/export and state-machine checks;
+- `git diff --check` and final ownership/scope inspection.
+
+Canonical user-visible verification when an Apple host and explicitly pinned
+physical iPad are available:
+
+1. run `DeveloperTools/device-preflight.sh --device <device-id>`;
+2. run only scenarios selected by `Docs/Development.md` for changed surfaces;
+3. launch the normal library/notebook path and inspect the repaired journey;
+4. mechanically check content, clipping, overlap, crashes, deterministic Pin
+   placement, and spatial drift where applicable;
+5. use `human-device-loop` only for Pencil feel, gesture discoverability,
+   animation feel, and visual taste.
+
+Compilation and scenario evidence are necessary but do not substitute for
+physical inspection. On a non-Apple host, stop at the host evidence boundary
+and leave build, launch, touch, screenshot, and human judgments explicitly
+open.
+
+## Acceptance evidence
+
+PC-1 is complete only when the evidence packet contains:
+
+- a journey matrix with every row reviewed and each finding marked repaired,
+  accepted, deferred with reason, or blocked;
+- changed files and a concise diff summary confirming unrelated collaborator
+  work was preserved;
+- focused test/check results and clean source/diff hygiene;
+- canonical build/install/launch results on the explicitly pinned iPad;
+- scenario names, expected state, and artifact paths for affected surfaces;
+- normal-product-path inspection, including portrait/landscape and keyboard or
+  sidebar composition when affected;
+- crash/console status and mechanical clipping/overlap/spatial checks;
+- human-only judgments collected or listed honestly as outstanding;
+- unresolved risks and the exact stop reason.
+
+## Stop conditions
+
+Stop and report when any of these is true:
+
+- all acceptance evidence is collected;
+- the next change would alter architecture ownership or require new external
+  authority;
+- an exact-device or host prerequisite is unavailable;
+- verification fails twice without a narrower repair;
+- the next step would bypass security, permission, or credential boundaries;
+- a collaborator's uncommitted change overlaps the required repair and intent
+  cannot be preserved safely.
+
+## Session log
+
+- 2026-07-20 — Replaced the obsolete cross-developer hackathon coordination
+  plan with PC-1, a branch-aware review of the integrated `sive/dev` product.
+  Historical `WL-*` documents remain provenance only. Initial known constraint:
+  this Linux host has no Xcode/device execution, so physical-device acceptance
+  will require continuation from the named Apple/iPad environment.

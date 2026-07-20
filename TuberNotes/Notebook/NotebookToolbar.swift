@@ -2,23 +2,19 @@ import SwiftUI
 import UIKit
 
 /// Floating control bar for page navigation, writing tools, agentic layers,
-/// exports, page locking, and the page navigator.
+/// and the page navigator. Page-level utilities live in the top navigation bar.
 struct NotebookToolbar: View {
     @ObservedObject var vm: NotebookViewModel
-    @Binding var isPageLocked: Bool
     @Binding var isLassoActive: Bool
     @Binding var isRefinementActive: Bool
     @Environment(\.colorScheme) private var colorScheme
     var onHome: () -> Void
     var onShowPages: () -> Void
-    var onExportPDF: () -> Void
-    var onExportArchive: () -> Void
     var onAskAgent: () -> Void
 
     @State private var showColors = false
     @State private var showSize = false
     @State private var showLayers = false
-    @State private var showSettings = false
     @State private var pressedTool: WritingTool?
     @State private var isLassoHeld = false
     @State private var pressStartWidth: CGFloat = 0
@@ -63,23 +59,10 @@ struct NotebookToolbar: View {
                     if vm.tool.usesWidth { sizeButton }
                 }
 
-                if showsUtilityControls {
-                    divider
-                }
-
                 if vm.settings.showsLayers {
+                    divider
                     agenticLayersButton
                 }
-
-                if vm.settings.showsExport {
-                    exportMenu
-                }
-
-                if vm.settings.showsPageLock {
-                    lockButton
-                }
-
-                settingsButton
 
                 Button(action: onShowPages) {
                     Text(vm.pageLabel)
@@ -102,7 +85,6 @@ struct NotebookToolbar: View {
         .buttonStyle(TactileGlyphButtonStyle())
         .sensoryFeedback(.selection, trigger: vm.tool.rawValue)
         .sensoryFeedback(.selection, trigger: isLassoActive)
-        .sensoryFeedback(.impact(weight: .light, intensity: 0.7), trigger: isPageLocked)
         .accessibilityIdentifier("notebook-toolbar")
         .onChange(of: vm.settings.showsWritingTools) { _, isVisible in
             if !isVisible {
@@ -125,43 +107,6 @@ struct NotebookToolbar: View {
 
     private var divider: some View {
         Rectangle().fill(.primary.opacity(0.12)).frame(width: 1, height: 22)
-    }
-
-    private var showsUtilityControls: Bool {
-        vm.settings.showsLayers || vm.settings.showsExport || vm.settings.showsPageLock
-    }
-
-    private var settingsButton: some View {
-        Button {
-            showSettings = true
-        } label: {
-            Image(systemName: "gearshape")
-                .font(.system(size: 17, weight: .medium))
-                .frame(width: 34, height: 34)
-                .foregroundStyle(.primary)
-        }
-        .accessibilityIdentifier("toolbar-settings")
-        .accessibilityLabel("Notebook toolbar settings")
-        .popover(isPresented: $showSettings) {
-            NotebookToolbarSettingsView(vm: vm)
-                .presentationCompactAdaptation(.popover)
-        }
-    }
-
-    private var lockButton: some View {
-        Button {
-            isPageLocked.toggle()
-        } label: {
-            Image(systemName: isPageLocked ? "lock.fill" : "lock.open")
-                .font(.system(size: 17, weight: .medium))
-                .frame(width: 34, height: 34)
-                .foregroundStyle(isPageLocked ? Color.accentColor : Color.primary)
-                .contentTransition(.symbolEffect(.replace))
-                .symbolEffect(.bounce, options: .speed(1.4), value: isPageLocked)
-        }
-        .accessibilityIdentifier("toolbar-page-lock")
-        .accessibilityLabel(isPageLocked ? "Unlock page" : "Lock page")
-        .accessibilityValue(isPageLocked ? "Locked" : "Unlocked")
     }
 
     private func toolButton(_ tool: WritingTool) -> some View {
@@ -426,24 +371,6 @@ struct NotebookToolbar: View {
         }
     }
 
-    private var exportMenu: some View {
-        Menu {
-            Button(action: onExportPDF) {
-                Label("Export PDF", systemImage: "doc.richtext")
-            }
-            Button(action: onExportArchive) {
-                Label("Export SPUD", systemImage: "archivebox")
-            }
-        } label: {
-            Image(systemName: "square.and.arrow.up")
-                .font(.system(size: 17, weight: .medium))
-                .frame(width: 34, height: 34)
-                .foregroundStyle(.primary)
-        }
-        .accessibilityIdentifier("toolbar-export")
-        .accessibilityLabel("Export note")
-    }
-
     private func iconButton(
         _ symbol: String,
         label: String,
@@ -681,7 +608,7 @@ private struct TactileGlyphButtonStyle: ButtonStyle {
 
 // MARK: - Color popover
 
-private struct NotebookToolbarSettingsView: View {
+struct NotebookToolbarSettingsView: View {
     @ObservedObject var vm: NotebookViewModel
 
     private let columns = Array(repeating: GridItem(.fixed(34), spacing: 12), count: 6)

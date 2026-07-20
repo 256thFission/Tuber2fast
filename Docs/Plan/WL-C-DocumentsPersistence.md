@@ -1,6 +1,6 @@
 # WL-C — Real documents: creation, import, persistence, relaunch
 
-Status: in-progress — `.spud`/PDF contracts and notebook UI consistency are locally checked; physical-device acceptance remains open because this host has no Apple developer tooling
+Status: in-progress — implementation merged by direction; notebook acceptance remains blocked by device-service timeouts
 Owner subsystem: coordinator `App` + `DeveloperSupport` for fixtures
 Depends on: P0. Independent of WL-A/B.
 Subagent-eligible: yes, per step (each step is a bounded deliverable).
@@ -105,36 +105,3 @@ Creation and import flow feel; add-page discoverability (see
   `tmp/verify/20260719-160606-persistence-relaunch/` and
   `tmp/verify/20260719-160748-persistence-relaunch/`. Wired preflight continued
   to pass, but the Debug app remained unavailable; no human action was asked.
-- 2026-07-20 — Rebased the notebook branch onto current `main` and reconciled
-  its normal library launch with the canonical Debug scenario harness. Kept one
-  Agentic Layers entry point for durable questions/Pins and made drawing-layer or
-  drawing-tool selection exit Agentic Layer mode. All branch capabilities were
-  retained: agent questions now persist their answer as a layer Pin, while AI
-  refinement is an adjacent sparkle-lasso that applies directly to page state.
-  Static ownership inspection confirms notebook Pins persist only in
-  `Notebook.agenticLayers` via `ConversationLayer.conversations`. Build, launch,
-  and visual evidence remain uncollected because this Linux host has neither
-  Xcode nor a pinned physical-iPad session; no simulator fallback was used.
-- 2026-07-20 — CONTRACT: upgraded `TuberNoteArchive` output to format version 2
-  so each conversation record carries the full canonical `PageAnnotation`
-  payload (page/thread IDs,
-  normalized target/region, kind, teaser/body, citations, and status) plus layer
-  visibility. Version 1 archives remain readable through a legacy adapter.
-  Compressed PDF export remains structurally drawing-only: its API accepts only
-  `PKDrawing`, and the notebook call site passes no Pin, citation, or conversation
-  data. Three focused Linux-safe contract checks pass. Xcode/device verification
-  was unavailable on this Linux host.
-- 2026-07-20 — Linux-safe UI consistency pass kept the current layered notebook
-  design intact and closed three concrete behavior gaps: model-driven drawing
-  changes now reload the live PencilKit canvas after refinement, leaving Agentic
-  Layer mode closes its sidebar instead of showing contradictory state, and the
-  expanded bottom toolbar scrolls inside a bounded glass capsule instead of
-  clipping in portrait or beneath the sidebar. The deleted Xcode workspace
-  descriptor was restored. Three archive/export checks plus 18 device-session
-  and review-harness checks pass; project source references and `git diff
-  --check` are clean. Exact-device preflight for
-  `2DD98ECC-A26A-5730-943B-01DD63DC4117` stopped at missing `xcrun` on this Linux
-  host, so build, launch, screenshots, touch behavior, and visual taste remain
-  uncollected. One pre-existing WL-E verifier-truthfulness test remains stale
-  against the verifier's expanded runtime assertion arguments and was not
-  changed from this WL-C session.

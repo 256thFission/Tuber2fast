@@ -9,10 +9,12 @@ struct NotebookView: View {
     @Environment(\.dismiss) private var dismiss
     @AppStorage("tuber.fingerDrawing") private var fingerDrawing = false
     @AppStorage("tuber.snapStraight") private var snapStraight = true
+    @AppStorage("tuber.openaiKey") private var apiKey = ""
     @State private var showPages = false
     @State private var showStrip = false
     @State private var showAgentSidebar = false
     @State private var showKeyPopup = false
+    @State private var showToolbarSettings = false
     @State private var isRefinementActive = false
     @State private var showPDFOptions = false
     @State private var showFileExporter = false
@@ -70,21 +72,14 @@ struct NotebookView: View {
                 Spacer()
                 NotebookToolbar(
                     vm: vm,
-                    isPageLocked: $isPageLocked,
                     isLassoActive: $vm.isLassoActive,
                     isRefinementActive: $isRefinementActive,
                     onHome: { vm.persistNow(); dismiss() },
                     onShowPages: { withAnimation { showPages = true } },
-                    onExportPDF: { showPDFOptions = true },
-                    onExportArchive: prepareSPUDExport,
                     onAskAgent: { withAnimation { showAgentSidebar = true } }
                 )
                 .padding(.bottom, 14)
                 .padding(.trailing, showAgentSidebar ? 348 : 0)
-                .popover(isPresented: $showPDFOptions) {
-                    pdfOptions
-                        .presentationCompactAdaptation(.popover)
-                }
             }
 
             if showPages {
@@ -123,6 +118,17 @@ struct NotebookView: View {
                 }
                 .accessibilityIdentifier("nav-add-image")
                 .accessibilityLabel("Add image")
+
+                if vm.settings.showsPageLock {
+                    pageLockButton
+                }
+
+                if vm.settings.showsExport {
+                    exportMenu
+                }
+
+                aiAccessButton
+                toolbarSettingsButton
             }
         }
         .fileExporter(
@@ -179,6 +185,72 @@ struct NotebookView: View {
             Image(systemName: "square.grid.2x2")
         }
         .accessibilityIdentifier("nav-template")
+    }
+
+    private var pageLockButton: some View {
+        Button {
+            isPageLocked.toggle()
+        } label: {
+            Image(systemName: isPageLocked ? "lock.fill" : "lock.open")
+                .foregroundStyle(isPageLocked ? Color.accentColor : Color.primary)
+                .contentTransition(.symbolEffect(.replace))
+                .symbolEffect(.bounce, options: .speed(1.4), value: isPageLocked)
+        }
+        .sensoryFeedback(.impact(weight: .light, intensity: 0.7), trigger: isPageLocked)
+        .accessibilityIdentifier("toolbar-page-lock")
+        .accessibilityLabel(isPageLocked ? "Unlock page" : "Lock page")
+        .accessibilityValue(isPageLocked ? "Locked" : "Unlocked")
+    }
+
+    private var exportMenu: some View {
+        Menu {
+            Button {
+                showPDFOptions = true
+            } label: {
+                Label("Export PDF", systemImage: "doc.richtext")
+            }
+            Button(action: prepareSPUDExport) {
+                Label("Export SPUD", systemImage: "archivebox")
+            }
+        } label: {
+            Image(systemName: "square.and.arrow.up")
+        }
+        .accessibilityIdentifier("toolbar-export")
+        .accessibilityLabel("Export note")
+        .popover(isPresented: $showPDFOptions) {
+            pdfOptions
+                .presentationCompactAdaptation(.popover)
+        }
+    }
+
+    private var aiAccessButton: some View {
+        Button {
+            withAnimation { showKeyPopup = true }
+        } label: {
+            Image(systemName: apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? "key"
+                : "key.fill")
+        }
+        .accessibilityIdentifier("nav-ai-access")
+        .accessibilityLabel("Notebook analysis access")
+        .accessibilityValue(apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? "Demo mode"
+            : "OpenAI API key configured")
+        .accessibilityHint("Configure the on-device OpenAI API key used for notebook analysis")
+    }
+
+    private var toolbarSettingsButton: some View {
+        Button {
+            showToolbarSettings = true
+        } label: {
+            Image(systemName: "gearshape")
+        }
+        .accessibilityIdentifier("toolbar-settings")
+        .accessibilityLabel("Notebook toolbar settings")
+        .popover(isPresented: $showToolbarSettings) {
+            NotebookToolbarSettingsView(vm: vm)
+                .presentationCompactAdaptation(.popover)
+        }
     }
 
     private var arrangeControls: some View {

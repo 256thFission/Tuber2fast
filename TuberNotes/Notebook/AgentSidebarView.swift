@@ -198,7 +198,7 @@ struct APIKeyPopup: View {
                         .accessibilityLabel("Close")
                 }
 
-                Text("Paste a key to enable real analysis. It's stored on-device only — for a shipped app, proxy requests through your own server instead.")
+                Text("Paste a key to enable real notebook analysis. It's stored on-device only. Refine with AI uses the configured TuberNotes refinement service instead of this key.")
                     .font(.footnote).foregroundStyle(.secondary)
 
                 SecureField("sk-…", text: $draft)
