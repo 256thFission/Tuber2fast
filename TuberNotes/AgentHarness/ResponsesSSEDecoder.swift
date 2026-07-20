@@ -1,4 +1,3 @@
-#if DEBUG
 import Foundation
 
 /// Bounded WHATWG-style SSE framing. It deliberately knows nothing about Responses events.
@@ -154,4 +153,70 @@ struct ResponsesSSEDecoder {
         case tooManyRecords
     }
 }
-#endif
+
+/// Extracts assistant text from either a complete Responses payload or its SSE events.
+/// Provider bodies stay inside the transport boundary and are never embedded in errors.
+enum ResponsesTextExtractor {
+    static func text(from data: Data) throws -> String? {
+        if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let text = text(fromResponse: object) {
+            return text
+        }
+        return text(from: try ResponsesSSEDecoder.payloads(from: data))
+    }
+
+    static func text(from payloads: [[String: Any]]) -> String? {
+        var deltas = ""
+        var doneText: String?
+        var completedText: String?
+
+        for payload in payloads {
+            switch payload["type"] as? String {
+            case "response.output_text.delta":
+                if let delta = payload["delta"] as? String {
+                    deltas += delta
+                }
+            case "response.output_text.done":
+                if let text = payload["text"] as? String, !text.isEmpty {
+                    doneText = text
+                }
+            case "response.completed", "response.incomplete":
+                if let response = payload["response"] as? [String: Any] {
+                    completedText = text(fromResponse: response)
+                }
+            default:
+                break
+            }
+        }
+
+        return [completedText, doneText, deltas.isEmpty ? nil : deltas]
+            .compactMap { $0 }
+            .first { !$0.isEmpty }
+    }
+
+    static func text(fromResponse response: [String: Any]) -> String? {
+        if let text = response["output_text"] as? String, !text.isEmpty {
+            return text
+        }
+
+        if let output = response["output"] as? [[String: Any]] {
+            let pieces = output.flatMap { item -> [String] in
+                guard let content = item["content"] as? [[String: Any]] else { return [] }
+                return content.compactMap { part in
+                    guard part["type"] as? String == "output_text" else { return nil }
+                    return part["text"] as? String
+                }
+            }
+            let joined = pieces.joined(separator: "\n")
+            if !joined.isEmpty { return joined }
+        }
+
+        if let choices = response["choices"] as? [[String: Any]],
+           let message = choices.first?["message"] as? [String: Any],
+           let content = message["content"] as? String,
+           !content.isEmpty {
+            return content
+        }
+        return nil
+    }
+}

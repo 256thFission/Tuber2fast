@@ -9,11 +9,14 @@ struct NotebookView: View {
     @Environment(\.dismiss) private var dismiss
     @AppStorage("tuber.fingerDrawing") private var fingerDrawing = false
     @AppStorage("tuber.snapStraight") private var snapStraight = true
-    @AppStorage("tuber.openaiKey") private var apiKey = ""
+    @AppStorage(AgentProviderAccess.credentialStorageKey) private var agentCredential = ""
+    @AppStorage("tuber.pencilDoubleTap") private var pencilDoubleTapEnabled = true
+    @AppStorage("tuber.pencilSqueeze") private var pencilSqueezeEnabled = true
+    @AppStorage("tuber.pencilHoverPreview") private var pencilHoverPreviewEnabled = true
     @State private var showPages = false
     @State private var showStrip = false
     @State private var showAgentSidebar = false
-    @State private var showKeyPopup = false
+    @State private var showProviderAccessPopup = false
     @State private var showToolbarSettings = false
     @State private var isRefinementActive = false
     @State private var showExportOptions = false
@@ -27,6 +30,11 @@ struct NotebookView: View {
     @State private var exportError: String?
     @State private var pageViewportFrame = CGRect.zero
     @StateObject private var rippleModel = AmbientRippleModel()
+    @State private var pencilPaletteAnchor: CGPoint?
+    @State private var pencilPaletteMode: PencilShortcutPalette.Mode = .full
+    @State private var flipOffset: CGFloat = 0
+    @State private var isFlipAnimating = false
+    @State private var pageContainerWidth: CGFloat = 1024
 
     init(notebook: Notebook, store: NotebookStore) {
         _vm = StateObject(wrappedValue: NotebookViewModel(notebook: notebook, store: store))
@@ -36,6 +44,12 @@ struct NotebookView: View {
         ZStack {
             AmbientBackground(rippleModel: rippleModel)
 
+            // The UIKit observer attaches passively at the window level. It
+            // reports Pencil movement without becoming a hit-test target.
+            AmbientTouchLayer { point in rippleModel.add(at: point) }
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
+
             VStack(spacing: 0) {
                 if showStrip {
                     PageStripView(vm: vm)
@@ -44,21 +58,13 @@ struct NotebookView: View {
                 pageArea
             }
 
-            // Passthrough observer: feeds ripples from touches over the page
-            // (finger or Pencil) without intercepting them. Sits above the page
-            // but below the chrome, so chrome buttons don't spawn ripples.
-            AmbientTouchLayer { point in rippleModel.add(at: point) }
-                .ignoresSafeArea()
-                .allowsHitTesting(true)
-                .zIndex(1)
-
             if showAgentSidebar {
                 HStack(spacing: 0) {
                     Spacer(minLength: 0)
                     AgentSidebarView(
                         vm: vm,
                         onClose: { withAnimation { showAgentSidebar = false } },
-                        onEditKey: { withAnimation { showKeyPopup = true } }
+                        onEditProviderAccess: { withAnimation { showProviderAccessPopup = true } }
                     )
                 }
                 .transition(.move(edge: .trailing))
@@ -73,6 +79,7 @@ struct NotebookView: View {
                 Spacer()
                 NotebookToolbar(
                     vm: vm,
+                    undo: vm.undo,
                     isLassoActive: $vm.isLassoActive,
                     isRefinementActive: $isRefinementActive,
                     onShowPages: { withAnimation { showPages = true } },
@@ -81,14 +88,22 @@ struct NotebookView: View {
                 .padding(.bottom, 14)
                 .padding(.trailing, showAgentSidebar ? 348 : 0)
             }
+            .zIndex(7)
+
+            if pencilPaletteAnchor != nil {
+                pencilPaletteLayer
+                    .transition(.opacity.combined(with: .scale(scale: 0.92)))
+                    .zIndex(7.5)
+            }
 
             if showPages {
                 PageFlipOverlay(vm: vm) { withAnimation { showPages = false } }
                     .transition(.opacity)
+                    .zIndex(8)
             }
 
-            if showKeyPopup {
-                APIKeyPopup { withAnimation { showKeyPopup = false } }
+            if showProviderAccessPopup {
+                AgentProviderAccessPopup { withAnimation { showProviderAccessPopup = false } }
                     .transition(.opacity.combined(with: .scale(scale: 0.96)))
                     .zIndex(10)
             }
@@ -162,6 +177,13 @@ struct NotebookView: View {
         .onChange(of: vm.isAgenticLayersActive) { _, isActive in
             guard !isActive, showAgentSidebar else { return }
             withAnimation { showAgentSidebar = false }
+        }
+        .onChange(of: vm.currentDrawingLayerID) { _, _ in dismissPencilPalette() }
+        .onChange(of: vm.isLassoActive) { _, active in
+            if active { dismissPencilPalette() }
+        }
+        .onChange(of: vm.isArrangingImages) { _, active in
+            if active { dismissPencilPalette() }
         }
         .onDisappear { vm.persistNow() }
     }
@@ -270,18 +292,27 @@ struct NotebookView: View {
         .popover(isPresented: $showToolbarSettings) {
             NotebookToolbarSettingsView(
                 vm: vm,
-                isAnalysisAccessConfigured: !apiKey
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                    .isEmpty,
+                pencilDoubleTapEnabled: $pencilDoubleTapEnabled,
+                pencilSqueezeEnabled: $pencilSqueezeEnabled,
+                pencilHoverPreviewEnabled: $pencilHoverPreviewEnabled,
+                isAnalysisAccessConfigured: isAnalysisAccessConfigured,
                 onEditAnalysisAccess: {
                     showToolbarSettings = false
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                        withAnimation { showKeyPopup = true }
+                        withAnimation { showProviderAccessPopup = true }
                     }
                 }
             )
                 .presentationCompactAdaptation(.popover)
         }
+    }
+
+    private var isAnalysisAccessConfigured: Bool {
+#if DEBUG
+        !agentCredential.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+#else
+        false
+#endif
     }
 
     private var arrangeControls: some View {
@@ -453,7 +484,180 @@ struct NotebookView: View {
         )
     }
 
+    // MARK: Apple Pencil shortcut palette
+
+    private var pencilPaletteLayer: some View {
+        GeometryReader { geometry in
+            let globalFrame = geometry.frame(in: .global)
+            let anchor = pencilPaletteAnchor ?? .zero
+            let localAnchor = CGPoint(
+                x: anchor.x - globalFrame.minX,
+                y: anchor.y - globalFrame.minY
+            )
+            let paletteSize = estimatedPencilPaletteSize
+
+            ZStack(alignment: .topLeading) {
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture { dismissPencilPalette() }
+
+                PencilShortcutPalette(
+                    vm: vm,
+                    undo: vm.undo,
+                    mode: pencilPaletteMode,
+                    onAction: { dismissPencilPalette() }
+                )
+                .position(
+                    clampedPalettePosition(
+                        near: localAnchor,
+                        size: paletteSize,
+                        in: geometry.size
+                    )
+                )
+            }
+        }
+        .ignoresSafeArea()
+    }
+
+    private var estimatedPencilPaletteSize: CGSize {
+        let width: CGFloat = 212
+        let swatchRows = max(1, Int(ceil(Double(vm.settings.favoriteColors.count) / 5)))
+        let hasColors = !vm.settings.favoriteColors.isEmpty
+        var height: CGFloat = 28
+        if hasColors {
+            height += CGFloat(swatchRows) * 30 + CGFloat(swatchRows - 1) * 10
+        }
+        if pencilPaletteMode == .full {
+            if hasColors { height += 13 }
+            height += 34 + 12
+            height += 13
+            height += 34
+        }
+        return CGSize(width: width, height: height)
+    }
+
+    private func clampedPalettePosition(
+        near point: CGPoint,
+        size: CGSize,
+        in bounds: CGSize
+    ) -> CGPoint {
+        let margin: CGFloat = 12
+        let tipOffset: CGFloat = 28
+        var center = CGPoint(
+            x: point.x + tipOffset + size.width / 2,
+            y: point.y + tipOffset + size.height / 2
+        )
+
+        if center.x + size.width / 2 > bounds.width - margin {
+            center.x = point.x - tipOffset - size.width / 2
+        }
+        if center.y + size.height / 2 > bounds.height - margin {
+            center.y = point.y - tipOffset - size.height / 2
+        }
+
+        center.x = min(
+            max(center.x, margin + size.width / 2),
+            bounds.width - margin - size.width / 2
+        )
+        center.y = min(
+            max(center.y, margin + size.height / 2),
+            bounds.height - margin - size.height / 2
+        )
+        return center
+    }
+
+    private func showPencilPalette(at screenPoint: CGPoint, colorsOnly: Bool) {
+        let mode: PencilShortcutPalette.Mode = colorsOnly ? .colorsOnly : .full
+        withAnimation(.spring(response: 0.26, dampingFraction: 0.78)) {
+            if pencilPaletteAnchor != nil, pencilPaletteMode == mode {
+                pencilPaletteAnchor = nil
+            } else {
+                pencilPaletteMode = mode
+                pencilPaletteAnchor = screenPoint
+            }
+        }
+    }
+
+    private func dismissPencilPalette() {
+        guard pencilPaletteAnchor != nil else { return }
+        withAnimation(.easeOut(duration: 0.16)) { pencilPaletteAnchor = nil }
+    }
+
+    // MARK: Interactive page turn
+
+    private func handlePageFlipChanged(_ translation: CGFloat) {
+        guard !isFlipAnimating else { return }
+        var offset = translation
+        if (offset < 0 && !vm.canGoForward) || (offset > 0 && !vm.canGoBack) {
+            offset *= 0.28
+        }
+        flipOffset = offset
+    }
+
+    private func handlePageFlipEnded(_ translation: CGFloat, velocity: CGFloat) {
+        guard !isFlipAnimating else { return }
+        let width = pageTurnDistance
+        let threshold = width * 0.28
+        let turnsForward = (translation < -threshold || velocity < -800) && vm.canGoForward
+        let turnsBack = (translation > threshold || velocity > 800) && vm.canGoBack
+
+        if turnsForward {
+            completePageFlip(forward: true, width: width)
+        } else if turnsBack {
+            completePageFlip(forward: false, width: width)
+        } else {
+            withAnimation(.interactiveSpring(response: 0.35, dampingFraction: 0.82)) {
+                flipOffset = 0
+            }
+        }
+    }
+
+    private func completePageFlip(forward: Bool, width: CGFloat) {
+        isFlipAnimating = true
+        withAnimation(.easeOut(duration: 0.18)) {
+            flipOffset = forward ? -width : width
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
+            if forward { vm.goForward() } else { vm.goBack() }
+            flipOffset = forward ? width : -width
+            DispatchQueue.main.async {
+                withAnimation(.easeOut(duration: 0.20)) { flipOffset = 0 }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.20) {
+                    isFlipAnimating = false
+                }
+            }
+        }
+    }
+
+    private var pageTurnDistance: CGFloat {
+        max(pageContainerWidth, 320)
+    }
+
+    private var pageTurnTransition: AnyTransition {
+        let distance = pageTurnDistance
+        switch vm.pageTurnDirection {
+        case .forward:
+            return .asymmetric(
+                insertion: .offset(x: distance, y: 0),
+                removal: .offset(x: -distance, y: 0)
+            )
+        case .backward:
+            return .asymmetric(
+                insertion: .offset(x: -distance, y: 0),
+                removal: .offset(x: distance, y: 0)
+            )
+        }
+    }
+
     private var pageArea: some View {
+        pageComposition
+            .id(vm.currentPageID)
+            .transition(pageTurnTransition)
+            .accessibilityIdentifier("notebook-page-area")
+    }
+
+    private var pageComposition: some View {
         NotebookCanvas(
             pageID: vm.currentDrawingLayerID,
             drawingData: vm.currentDrawingLayer.drawingData,
@@ -471,14 +675,26 @@ struct NotebookView: View {
             isArrangingImages: vm.isArrangingImages,
             selectedImageID: vm.selectedImageID,
             isPageLocked: isPageLocked,
+            undo: vm.undo,
+            pencilDoubleTapEnabled: pencilDoubleTapEnabled,
+            pencilSqueezeEnabled: pencilSqueezeEnabled,
+            pencilHoverPreviewEnabled: pencilHoverPreviewEnabled,
             onChange: { vm.updateCurrentDrawing($0) },
+            onPencilToggleEraser: { vm.togglePencilEraser() },
+            onPencilSwapTool: { vm.swapToPreviousTool() },
+            onPencilShowPalette: { point, colorsOnly in
+                showPencilPalette(at: point, colorsOnly: colorsOnly)
+            },
             onLongPress: { withAnimation { showPages = true } },
             onZoomChanged: { vm.zoomScale = $0 },
             onLassoChanged: { vm.lassoRect = $0 },
             onImagesChanged: { vm.updateImages($0) },
             onSelectImage: { vm.selectImage($0) },
+            onFlipChanged: { handlePageFlipChanged($0) },
+            onFlipEnded: { handlePageFlipEnded($0, velocity: $1) },
             onPageViewportChange: { pageViewportFrame = $0 }
         )
+        .id(vm.currentDrawingLayerID)
         .overlay(alignment: .topLeading) {
             ZStack {
                 if vm.isAgenticLayersActive {
@@ -513,13 +729,16 @@ struct NotebookView: View {
         .padding(.horizontal, 12)
         .padding(.top, 8)
         .padding(.bottom, showsWorkingToolbar ? 74 : 12)
-        // New identity per page → clean canvas + page-turn transition.
-        .id(vm.currentDrawingLayerID)
-        .transition(.asymmetric(
-            insertion: .move(edge: .trailing),
-            removal: .move(edge: .leading)
-        ))
-        .accessibilityIdentifier("notebook-page-area")
+        .offset(x: flipOffset)
+        .background(
+            GeometryReader { geometry in
+                Color.clear
+                    .onAppear { pageContainerWidth = geometry.size.width }
+                    .onChange(of: geometry.size.width) { _, width in
+                        pageContainerWidth = width
+                    }
+            }
+        )
     }
 
     private var showsWorkingToolbar: Bool {

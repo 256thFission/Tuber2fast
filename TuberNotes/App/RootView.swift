@@ -646,7 +646,13 @@ private struct RecordedInvestigationView: View {
         self.initialLassoPathsByPageID = initialLassoPathsByPageID
         self.onDrawingChanged = onDrawingChanged
         self.onDrawingSnapshot = onDrawingSnapshot
-        agent = RecordedAgentClient(scenario: Self.recordedScenario(for: scenario))
+        let providerAccess = ProcessInfo.processInfo.environment["TUBER_AGENT_MODE"] == "provider"
+            ? AgentProviderAccess.stored()
+            : nil
+        agent = AgentClientFactory.make(
+            access: providerAccess,
+            recordedScenario: Self.recordedScenario(for: scenario)
+        )
     }
 
     var body: some View {

@@ -14,13 +14,23 @@ struct AgentObservation: Identifiable {
     let date: Date
 }
 
+enum NotebookPageTurnDirection {
+    case forward
+    case backward
+}
+
 @MainActor
 final class NotebookViewModel: ObservableObject {
     @Published var notebook: Notebook
     @Published var currentIndex: Int = 0
+    @Published private(set) var pageTurnDirection: NotebookPageTurnDirection = .forward
+
+    // Undo/redo follows the active drawing layer across canvas reconstruction.
+    let undo = NotebookUndoBridge()
 
     // Tool state
-    @Published var tool: WritingTool = .pen
+    @Published private(set) var tool: WritingTool = .pen
+    @Published private(set) var previousTool: WritingTool = .pen
     @Published var inkColorHex: String = InkPalette.default
     @Published var penWidth: CGFloat = WritingTool.pen.defaultWidth
     @Published var pencilWidth: CGFloat = WritingTool.pencil.defaultWidth
@@ -102,13 +112,45 @@ final class NotebookViewModel: ObservableObject {
 
     func selectColor(_ hex: String) {
         inkColorHex = hex
-        if tool == .eraser { tool = .pen }
+        if tool == .eraser { setActiveTool(.pen) }
         isLassoActive = false
         isArrangingImages = false
     }
 
     func selectTool(_ newTool: WritingTool) {
+        setActiveTool(newTool)
+        clearCompetingToolModes()
+    }
+
+    /// Follows the system's "Switch between current tool and eraser" action.
+    func togglePencilEraser() {
+        if tool == .eraser {
+            let restoredTool = previousTool == .eraser ? WritingTool.pen : previousTool
+            previousTool = .eraser
+            tool = restoredTool
+        } else {
+            previousTool = tool
+            tool = .eraser
+        }
+        clearCompetingToolModes()
+    }
+
+    /// Follows the system's "Switch between current tool and last used" action.
+    func swapToPreviousTool() {
+        guard previousTool != tool else { return }
+        let currentTool = tool
+        tool = previousTool
+        previousTool = currentTool
+        clearCompetingToolModes()
+    }
+
+    private func setActiveTool(_ newTool: WritingTool) {
+        guard newTool != tool else { return }
+        previousTool = tool
         tool = newTool
+    }
+
+    private func clearCompetingToolModes() {
         isLassoActive = false
         isArrangingImages = false
         isAgenticLayersActive = false
@@ -386,6 +428,7 @@ final class NotebookViewModel: ObservableObject {
 
     func addPage() {
         let insertAt = min(currentIndex + 1, notebook.pages.count)
+        pageTurnDirection = .forward
         notebook.pages.insert(NotebookPage(template: lastTemplate), at: insertAt)
         currentIndex = insertAt
         selectFirstDrawingLayerForCurrentPage()
@@ -395,6 +438,7 @@ final class NotebookViewModel: ObservableObject {
 
     func deleteCurrentPage() {
         guard notebook.pages.count > 1 else { return }
+        pageTurnDirection = currentIndex < notebook.pages.count - 1 ? .forward : .backward
         notebook.pages.remove(at: currentIndex)
         currentIndex = min(currentIndex, notebook.pages.count - 1)
         selectFirstDrawingLayerForCurrentPage()
@@ -406,6 +450,9 @@ final class NotebookViewModel: ObservableObject {
     func deletePage(at index: Int) {
         guard notebook.pages.count > 1, notebook.pages.indices.contains(index) else { return }
         let currentID = currentPageID
+        if index == currentIndex {
+            pageTurnDirection = index < notebook.pages.count - 1 ? .forward : .backward
+        }
         notebook.pages.remove(at: index)
         if let idx = notebook.pages.firstIndex(where: { $0.id == currentID }) {
             currentIndex = idx
@@ -433,6 +480,9 @@ final class NotebookViewModel: ObservableObject {
 
     func go(to index: Int) {
         guard notebook.pages.indices.contains(index) else { return }
+        if index != currentIndex {
+            pageTurnDirection = index > currentIndex ? .forward : .backward
+        }
         currentIndex = index
         selectFirstDrawingLayerForCurrentPage()
         resetZoom()
@@ -441,6 +491,7 @@ final class NotebookViewModel: ObservableObject {
 
     func goForward() {
         guard canGoForward else { return }
+        pageTurnDirection = .forward
         currentIndex += 1
         selectFirstDrawingLayerForCurrentPage()
         resetZoom()
@@ -449,6 +500,7 @@ final class NotebookViewModel: ObservableObject {
 
     func goBack() {
         guard canGoBack else { return }
+        pageTurnDirection = .backward
         currentIndex -= 1
         selectFirstDrawingLayerForCurrentPage()
         resetZoom()
@@ -542,7 +594,10 @@ final class NotebookViewModel: ObservableObject {
         )
     }
 
-    func analyzeCurrentPage(apiKey: String, question: String? = nil) {
+    func analyzeCurrentPage(
+        providerAccess: AgentProviderAccess?,
+        question: String? = nil
+    ) {
         guard !isAnalyzing else { return }
         guard isAgenticLayersActive,
               let layerIndex = notebook.agenticLayers.firstIndex(where: {
@@ -560,7 +615,7 @@ final class NotebookViewModel: ObservableObject {
         let thumbnail = UIImage(data: selection.crop.imageData)
         isAnalyzing = true
         agentError = nil
-        let client = AgentClientFactory.make(apiKey: apiKey)
+        let client = AgentInsightClientFactory.make(access: providerAccess)
 
         Task { [weak self] in
             guard let self else { return }

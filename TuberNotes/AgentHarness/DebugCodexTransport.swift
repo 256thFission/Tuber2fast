@@ -7,6 +7,38 @@ struct DebugCodexConfiguration: Sendable {
     let accessToken: String
     let accountID: String?
     let model: String
+    let endpoint: URL
+    let originator: String?
+    let includesCodexOptions: Bool
+    private let providerAccess: AgentProviderAccess?
+
+    init(
+        accessToken: String,
+        accountID: String?,
+        model: String,
+        endpoint: URL = DebugCodexTransport.endpoint,
+        originator: String? = "opencode",
+        includesCodexOptions: Bool = true
+    ) {
+        self.accessToken = accessToken
+        self.accountID = accountID
+        self.model = model
+        self.endpoint = endpoint
+        self.originator = originator
+        self.includesCodexOptions = includesCodexOptions
+        providerAccess = nil
+    }
+
+    init(access: AgentProviderAccess) {
+        let route = access.provider.route(for: .pins)
+        accessToken = access.credential
+        accountID = nil
+        model = access.model
+        endpoint = route.endpoint
+        originator = nil
+        includesCodexOptions = access.provider == .rightCode
+        providerAccess = access
+    }
 
     static func processEnvironment(_ environment: [String: String] = ProcessInfo.processInfo.environment) -> Self? {
         guard environment["TUBER_AGENT_MODE"] == "codex",
@@ -18,6 +50,18 @@ struct DebugCodexConfiguration: Sendable {
             model: override.flatMap { $0.isEmpty ? nil : $0 } ?? defaultModel
         )
     }
+
+    func prepare(_ request: inout URLRequest) {
+        if let providerAccess {
+            providerAccess.prepare(&request)
+        } else {
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+            request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
+            request.setValue("no-cache", forHTTPHeaderField: "Pragma")
+            request.cachePolicy = .reloadIgnoringLocalCacheData
+        }
+    }
 }
 
 struct DebugCodexTransport: Sendable {
@@ -27,20 +71,17 @@ struct DebugCodexTransport: Sendable {
 
     init(configuration: DebugCodexConfiguration, session: URLSession? = nil) {
         self.configuration = configuration
-        self.session = session ?? Self.ephemeralSession()
+        self.session = session ?? AgentProviderNetworking.ephemeralSession()
     }
 
     func request(for investigation: InvestigationRequest) throws -> URLRequest {
-        guard investigation.conversationID == nil else { throw TransportError.invalidRequest }
-        var request = URLRequest(url: Self.endpoint)
+        var request = URLRequest(url: configuration.endpoint)
         request.httpMethod = "POST"
         request.timeoutInterval = 90
-        request.cachePolicy = .reloadIgnoringLocalCacheData
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
-        request.setValue("no-cache", forHTTPHeaderField: "Pragma")
-        request.setValue("Bearer \(configuration.accessToken)", forHTTPHeaderField: "Authorization")
-        request.setValue("opencode", forHTTPHeaderField: "originator")
+        configuration.prepare(&request)
+        if let originator = configuration.originator {
+            request.setValue(originator, forHTTPHeaderField: "originator")
+        }
         request.setValue(investigation.id.uuidString, forHTTPHeaderField: "session-id")
         request.setValue("TuberNotes-Debug/1", forHTTPHeaderField: "User-Agent")
         if let accountID = configuration.accountID, !accountID.isEmpty {
@@ -94,13 +135,11 @@ struct DebugCodexTransport: Sendable {
         case .check: "check"
         case let .ask(question): "answer: \(question)"
         }
-        return [
+        var body: [String: Any] = [
             "model": configuration.model,
             "stream": true,
             "store": false,
             "parallel_tool_calls": false,
-            "reasoning": ["effort": "medium", "summary": "auto"],
-            "text": ["verbosity": "low"],
             "input": [[
                 "role": "user",
                 "content": [
@@ -116,6 +155,14 @@ struct DebugCodexTransport: Sendable {
                 "parameters": Self.placePinsSchema()
             ]]
         ]
+        if configuration.includesCodexOptions {
+            body["reasoning"] = ["effort": "medium", "summary": "auto"]
+            body["text"] = ["verbosity": "low"]
+        }
+        if let conversationID = request.conversationID, !conversationID.isEmpty {
+            body["previous_response_id"] = conversationID
+        }
+        return body
     }
 
     private static func placePinsSchema() -> [String: Any] {
@@ -135,17 +182,6 @@ struct DebugCodexTransport: Sendable {
                 ]
             ]]
         ]
-    }
-
-    private static func ephemeralSession() -> URLSession {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.urlCache = nil
-        configuration.httpCookieStorage = nil
-        configuration.urlCredentialStorage = nil
-        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
-        configuration.timeoutIntervalForRequest = 90
-        configuration.timeoutIntervalForResource = 120
-        return URLSession(configuration: configuration)
     }
 
     enum TransportError: Error {

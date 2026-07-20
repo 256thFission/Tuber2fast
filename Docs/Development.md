@@ -142,6 +142,13 @@ wire-model default is exposed as `DebugCodexConfiguration.defaultModel` and is
 currently `gpt-5.6-terra`; `TUBER_CODEX_MODEL` may override it for a bounded
 comparison. `TUBER_CODEX_ACCOUNT_ID` is optional.
 
+For the normal app-configured provider path, first choose OpenAI or right.codes
+and a model in the notebook assistant settings, then launch the Debug scenario
+with `TUBER_AGENT_MODE=provider`. That mode reads the same locally stored
+`AgentProviderAccess` used by the Agentic Layer sidebar; it never discovers or
+copies credentials from another application. Missing provider access produces
+a recoverable configuration failure instead of silently selecting a recording.
+
 Do not place a real token in a shared Xcode scheme, source file, fixture, log, or
 artifact. The adapter holds launch configuration in process memory, uses an
 ephemeral URL session, and streams the undocumented ChatGPT Codex response as
@@ -149,8 +156,11 @@ typed Responses SSE events. If live mode is requested without a token, the app
 shows a credential failure instead of silently falling back to the recording.
 The current hero sends a deterministic 580×380 rendering of its selected
 algebra work; genuine user-driven lasso capture is still a separate milestone.
-This adapter is deliberately one-shot: it forces one strict `place_pins` call,
-does not advertise a reusable conversation ID, and rejects continuation input.
+The adapter forces one strict `place_pins` call per turn, returns the provider's
+response ID as the conversation ID, and sends that ID as
+`previous_response_id` for a follow-up. Provider failures and unexpected wire
+shapes are mapped to redacted recoverable failures; raw provider bodies are not
+shown in the UI or diagnostics.
 Live-provider evidence must be labeled separately and must never substitute for
 the credential-free recorded scenario.
 

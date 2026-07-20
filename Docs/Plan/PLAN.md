@@ -339,6 +339,28 @@ checks pass. Canonical build, `pin-drift`/`fake-pin`/`multi-pin`, live pinch,
 and visual inspection remain blocked because this Linux host has no Swift/Xcode
 toolchain or explicitly pinned physical iPad session.
 
+## Active line — PC-5: branch logic integration
+
+Status: **implementation complete — host-checked; physical visual verification blocked**
+
+Target branch: `sive/dev`
+
+Child work-line: [`PC-5-BranchLogicIntegration.md`](PC-5-BranchLogicIntegration.md)
+
+Summary: adapt the behavior from `origin/feat/pencil-pro-compat` and the latest
+available `origin/claire/bleh` to the current notebook architecture without
+merging branch histories, replacing newer files, or reverting current zoom,
+export, toolbar, persistence, and visual repairs. Forward turns now move the
+complete current page left and insert the next page from the physical right;
+backward turns apply the inverse. The redundant always-forward layer transition
+was removed. Host checks pass; canonical device visual verification remains
+blocked by the absent Apple/Xcode host and pinned iPad session.
+
+Shared-contract log — 2026-07-20: `CONTRACT:` extend persisted type
+`PageTemplate` with the three dotted-paper sizes required to carry Claire's
+dotted template behavior through current notebook save/load flows. No existing
+case, raw value, page identity, coordinate, or archive representation changes.
+
 ## Active line — PC-3: reliable notebook export presentation
 
 Status: **implementation complete — host-checked; awaiting pinned-iPad verification**
@@ -428,3 +450,23 @@ reliably open the system file exporter.
   interaction verification remain blocked because this Linux workspace has no
   Swift/Xcode toolchain or explicitly pinned physical-iPad session; no runtime
   success claim is made from host evidence alone.
+
+## Active line — PC-6: agent provider unification
+
+Status: **implemented — host-checked; Apple/device verification blocked**
+
+Target branch: `sive/dev`
+
+Child work-line: [`PC-6-AgentProviderUnification.md`](PC-6-AgentProviderUnification.md)
+
+Summary: adapt provider/model and external Responses-gateway behavior from
+`origin/workspace/shaftatron-torture-DONT-MERGE-THIS-SHIT` into the newer
+AgentHarness contracts so the normal Agentic Layer sidebar and streamed
+Pin/conversation client share one provider-access value. Preserve recorded/demo
+defaults, strict spatial validation, credential boundaries, and the separate
+image-refinement backend contract.
+
+Host implementation and scoped checks pass. Canonical Swift/Xcode build,
+physical-iPad scenarios, normal-product visual inspection, and separately
+authorized live-provider evidence remain blocked because this host exposes no
+Apple or Swift toolchain.

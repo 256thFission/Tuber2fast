@@ -53,6 +53,9 @@
 		D10000000000000000000012 /* PageFlipOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000112 /* PageFlipOverlay.swift */; };
 		D10000000000000000000013 /* PageStripView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000113 /* PageStripView.swift */; };
 		D10000000000000000000014 /* PageTemplate.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000114 /* PageTemplate.swift */; };
+		D10000000000000000000015 /* NotebookUndoBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000115 /* NotebookUndoBridge.swift */; };
+		D10000000000000000000016 /* PencilInteractionController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000116 /* PencilInteractionController.swift */; };
+		D10000000000000000000017 /* PencilShortcutPalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000117 /* PencilShortcutPalette.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -103,6 +106,9 @@
 		D10000000000000000000112 /* PageFlipOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PageFlipOverlay.swift; sourceTree = "<group>"; };
 		D10000000000000000000113 /* PageStripView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PageStripView.swift; sourceTree = "<group>"; };
 		D10000000000000000000114 /* PageTemplate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PageTemplate.swift; sourceTree = "<group>"; };
+		D10000000000000000000115 /* NotebookUndoBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotebookUndoBridge.swift; sourceTree = "<group>"; };
+		D10000000000000000000116 /* PencilInteractionController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PencilInteractionController.swift; sourceTree = "<group>"; };
+		D10000000000000000000117 /* PencilShortcutPalette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PencilShortcutPalette.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -253,6 +259,9 @@
 				D10000000000000000000112 /* PageFlipOverlay.swift */,
 				D10000000000000000000113 /* PageStripView.swift */,
 				D10000000000000000000114 /* PageTemplate.swift */,
+				D10000000000000000000115 /* NotebookUndoBridge.swift */,
+				D10000000000000000000116 /* PencilInteractionController.swift */,
+				D10000000000000000000117 /* PencilShortcutPalette.swift */,
 			);
 			path = Notebook;
 			sourceTree = "<group>";
@@ -371,6 +380,9 @@
 				D10000000000000000000012 /* PageFlipOverlay.swift in Sources */,
 				D10000000000000000000013 /* PageStripView.swift in Sources */,
 				D10000000000000000000014 /* PageTemplate.swift in Sources */,
+				D10000000000000000000015 /* NotebookUndoBridge.swift in Sources */,
+				D10000000000000000000016 /* PencilInteractionController.swift in Sources */,
+				D10000000000000000000017 /* PencilShortcutPalette.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

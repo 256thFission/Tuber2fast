@@ -1,9 +1,176 @@
 import Foundation
 
+enum AgentProvider: String, CaseIterable, Equatable, Identifiable, Sendable {
+    case openAI = "openai"
+    case rightCode = "right-code"
+
+    enum Capability: Sendable {
+        case insight
+        case pins
+    }
+
+    enum WireAPI: Equatable, Sendable {
+        case chatCompletions
+        case responses
+    }
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .openAI:
+            return "OpenAI"
+        case .rightCode:
+            return "right.codes"
+        }
+    }
+
+    var defaultModel: String {
+        switch self {
+        case .openAI:
+            return "gpt-4o-mini"
+        case .rightCode:
+            return "gpt-5.5"
+        }
+    }
+
+    var knownModels: [String] {
+        switch self {
+        case .openAI:
+            return ["gpt-4o-mini", "gpt-4o", "gpt-4.1", "gpt-4.1-mini"]
+        case .rightCode:
+            return [
+                "gpt-5.5", "gpt-5.5-openai-compact", "gpt-5.6-luna",
+                "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.4", "gpt-5.4-mini",
+                "codex-auto-review"
+            ]
+        }
+    }
+
+    func route(for capability: Capability) -> (endpoint: URL, wireAPI: WireAPI) {
+        switch (self, capability) {
+        case (.openAI, .insight):
+            return (
+                URL(string: "https://api.openai.com/v1/chat/completions")!,
+                .chatCompletions
+            )
+        case (.openAI, .pins):
+            return (URL(string: "https://api.openai.com/v1/responses")!, .responses)
+        case (.rightCode, _):
+            return (URL(string: "https://right.codes/codex/v1/responses")!, .responses)
+        }
+    }
+}
+
+/// AgentHarness-owned provider access shared by the sidebar insight and streamed Pin clients.
+/// The compatibility storage key remains `tuber.openaiKey`, but its value is treated as the
+/// locally supplied credential for the selected provider and is never written to diagnostics.
+struct AgentProviderAccess: Equatable, Sendable {
+    static let providerStorageKey = "tuber.provider"
+    static let credentialStorageKey = "tuber.openaiKey"
+    static let modelStorageKey = "tuber.model"
+
+    let provider: AgentProvider
+    let credential: String
+    let model: String
+
+    init?(
+        provider: AgentProvider,
+        credential: String,
+        model: String? = nil
+    ) {
+        let trimmedCredential = credential.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedCredential.isEmpty else { return nil }
+        let trimmedModel = model?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        self.provider = provider
+        self.credential = trimmedCredential
+        self.model = trimmedModel.isEmpty ? provider.defaultModel : trimmedModel
+    }
+
+    func prepare(_ request: inout URLRequest) {
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(credential)", forHTTPHeaderField: "Authorization")
+        request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
+        request.setValue("no-cache", forHTTPHeaderField: "Pragma")
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+    }
+
+    static func stored(in defaults: UserDefaults = .standard) -> Self? {
+        let rawProvider = defaults.string(forKey: providerStorageKey) ?? AgentProvider.openAI.rawValue
+        let provider = AgentProvider(rawValue: rawProvider) ?? .openAI
+        return Self(
+            provider: provider,
+            credential: defaults.string(forKey: credentialStorageKey) ?? "",
+            model: defaults.string(forKey: modelStorageKey)
+        )
+    }
+}
+
+enum AgentProviderNetworking {
+    static func ephemeralSession() -> URLSession {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.urlCache = nil
+        configuration.httpCookieStorage = nil
+        configuration.urlCredentialStorage = nil
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        configuration.timeoutIntervalForRequest = 90
+        configuration.timeoutIntervalForResource = 120
+        return URLSession(configuration: configuration)
+    }
+}
+
 /// Boundary for the AI agent shipped inside TuberNotes. Development agents and MCPs do not conform to this.
 protocol AgentClient: Sendable {
     func investigate(_ request: InvestigationRequest) -> AsyncThrowingStream<AgentEvent, Error>
     func cancel(investigationID: UUID) async
+}
+
+enum AgentClientFactory {
+    static func make(
+        access: AgentProviderAccess?,
+        recordedScenario: RecordedAgentScenario = .success,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> any AgentClient {
+#if DEBUG
+        switch environment["TUBER_AGENT_MODE"] {
+        case "provider":
+            guard let access else {
+                return ConfigurationFailureAgentClient(
+                    message: "Configure agent provider access before starting a live conversation."
+                )
+            }
+            return DebugCodexAgentClient(access: access)
+        case "codex":
+            guard let configuration = DebugCodexConfiguration.processEnvironment(environment) else {
+                return ConfigurationFailureAgentClient(
+                    message: "Supply temporary live-agent access before starting a live conversation."
+                )
+            }
+            return DebugCodexAgentClient(configuration: configuration)
+        default:
+            break
+        }
+#endif
+        return RecordedAgentClient(scenario: recordedScenario)
+    }
+}
+
+private struct ConfigurationFailureAgentClient: AgentClient {
+    let message: String
+
+    func investigate(_ request: InvestigationRequest) -> AsyncThrowingStream<AgentEvent, Error> {
+        AsyncThrowingStream { continuation in
+            continuation.yield(.accepted)
+            continuation.yield(.failed(AgentFailure(
+                code: .unauthorized,
+                userMessage: message,
+                recoverable: true
+            )))
+            continuation.finish()
+        }
+    }
+
+    func cancel(investigationID: UUID) async { }
 }
 
 /// Deterministic product-runtime recordings used to exercise lifecycle behavior offline.

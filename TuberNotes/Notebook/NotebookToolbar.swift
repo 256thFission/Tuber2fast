@@ -5,6 +5,7 @@ import UIKit
 /// and the page navigator. Page-level utilities live in the top navigation bar.
 struct NotebookToolbar: View {
     @ObservedObject var vm: NotebookViewModel
+    @ObservedObject var undo: NotebookUndoBridge
     @Binding var isLassoActive: Bool
     @Binding var isRefinementActive: Bool
     @Environment(\.colorScheme) private var colorScheme
@@ -89,6 +90,8 @@ struct NotebookToolbar: View {
                 colorButton
                 lassoButton
                 refinementButton
+                divider
+                undoControls
             }
 
             if vm.settings.showsLayers {
@@ -133,6 +136,19 @@ struct NotebookToolbar: View {
             }
             .accessibilityIdentifier("toolbar-add-page")
         }
+    }
+
+    @ViewBuilder
+    private var undoControls: some View {
+        iconButton("arrow.uturn.backward", label: "Undo", enabled: undo.canUndo) {
+            undo.undo()
+        }
+        .accessibilityIdentifier("toolbar-undo")
+
+        iconButton("arrow.uturn.forward", label: "Redo", enabled: undo.canRedo) {
+            undo.redo()
+        }
+        .accessibilityIdentifier("toolbar-redo")
     }
 
     @ViewBuilder
@@ -655,6 +671,9 @@ private struct TactileGlyphButtonStyle: ButtonStyle {
 
 struct NotebookToolbarSettingsView: View {
     @ObservedObject var vm: NotebookViewModel
+    @Binding var pencilDoubleTapEnabled: Bool
+    @Binding var pencilSqueezeEnabled: Bool
+    @Binding var pencilHoverPreviewEnabled: Bool
     let isAnalysisAccessConfigured: Bool
     let onEditAnalysisAccess: () -> Void
 
@@ -694,6 +713,25 @@ struct NotebookToolbarSettingsView: View {
 
                 Divider()
 
+                Text("Apple Pencil")
+                    .font(.headline)
+
+                Group {
+                    Toggle("Double-tap follows system action", isOn: $pencilDoubleTapEnabled)
+                        .accessibilityIdentifier("settings-pencil-double-tap")
+                    Toggle("Squeeze shows shortcuts", isOn: $pencilSqueezeEnabled)
+                        .accessibilityIdentifier("settings-pencil-squeeze")
+                    Toggle("Hover ink preview", isOn: $pencilHoverPreviewEnabled)
+                        .accessibilityIdentifier("settings-pencil-hover")
+                }
+                .font(.subheadline)
+
+                Text("Double-tap and squeeze honor the actions selected in Settings › Apple Pencil.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Divider()
+
                 Text("Analysis")
                     .font(.headline)
 
@@ -705,7 +743,7 @@ struct NotebookToolbarSettingsView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Notebook analysis access")
                                 .foregroundStyle(.primary)
-                            Text(isAnalysisAccessConfigured ? "API key configured" : "Demo mode")
+                            Text(isAnalysisAccessConfigured ? "Provider configured" : "Demo mode")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -720,7 +758,7 @@ struct NotebookToolbarSettingsView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("settings-analysis-access")
-                .accessibilityHint("Configure the on-device OpenAI API key used for notebook analysis")
+                .accessibilityHint("View or configure agent provider access for notebook analysis")
 
                 Divider()
 
