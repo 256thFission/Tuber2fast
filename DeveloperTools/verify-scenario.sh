@@ -267,6 +267,25 @@ if ! scenario_metadata "$SCENARIO"; then
     exit 2
 fi
 
+# Cross-session exclusivity: exactly one verifier may hold the pinned iPad.
+# The lock is owned by this shell's PID, so it stays valid while an orphaned
+# run keeps working after its conversation dies, and goes stale the moment
+# the process actually exits.
+set +e
+python3 "$DEVICE_SESSION_TOOL" acquire --pid $$ --label "verify-scenario:$SCENARIO" \
+    >/dev/null 2>"$ROOT/tmp/device-lock-error.log"
+lock_exit=$?
+set -e
+if [[ $lock_exit -ne 0 ]]; then
+    echo "FAIL: the pinned iPad is locked by another session" >&2
+    [[ ! -s "$ROOT/tmp/device-lock-error.log" ]] || tail -n 6 "$ROOT/tmp/device-lock-error.log" >&2
+    exit 2
+fi
+release_device_lock() {
+    python3 "$DEVICE_SESSION_TOOL" release --pid $$ >/dev/null 2>&1 || true
+}
+trap release_device_lock EXIT
+
 STAMP="$(date +%Y%m%d-%H%M%S)"
 ARTIFACT_DIR="$ROOT/tmp/verify/${STAMP}-${SCENARIO}"
 mkdir -p "$ARTIFACT_DIR"

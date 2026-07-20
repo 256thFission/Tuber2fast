@@ -38,6 +38,32 @@ navigation, measure Pin drift, or judge interaction quality.
 Inspect user-visible behavior on the pinned iPad. Record any uncollected check
 as uncollected, not passed.
 
+## 2a. Cross-session safety (one iPad, many conversations)
+
+The iPad is a single shared resource across conversations, agent instances, and
+both human tracks. The tooling enforces exclusivity:
+
+- `verify-scenario.sh` takes a PID-owned lock
+  (`.tubernotes-device-lock.json`, gitignored) before touching the device and
+  releases it on exit. An interrupted conversation does **not** release the
+  lock while its orphaned verifier/xcodebuild process keeps running — that is
+  intentional: the process still holds the device, so the lock still tells the
+  truth. The lock goes stale (and auto-breaks) the moment the owner exits.
+- `device-preflight.sh` refuses to pin when a live lock or active
+  verifier/xcodebuild/devicectl process from any session holds the device, and
+  names the offender. Pass `--reclaim` to kill those orphans and take over.
+- A `Device is busy (Connecting…)` build failure after a passing preflight
+  means a contender or stuck daemon: run `DeveloperTools/device-recover.sh`.
+  It kills repo-scoped orphans, clears the lock, restarts the user-level
+  CoreDevice daemon, warns if Xcode.app is open, and re-validates the session.
+  If it still fails, follow its printed escalation ladder (unlock → reboot
+  iPad → `sudo pkill remoted` → reboot Mac).
+
+Rules for agents: never start a device run while `lock-status` reports a live
+foreign owner; prefer waiting over `--reclaim` when the owner may be doing
+useful work; count a busy-device stop as a blocked attempt, not a verification
+failure; and keep Xcode.app closed during agent verification.
+
 ## 3. Start a clean human journey
 
 Between review journeys, clear only stale Debug feedback state:

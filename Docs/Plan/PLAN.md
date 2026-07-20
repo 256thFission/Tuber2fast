@@ -147,3 +147,10 @@ Append one line per meaningful state change: date, line, what changed.
   Track I (Phillip: intelligence layer). Long-press conversation UI promoted
   into SPEC critical path (WL-F created); contract-change policy softened to
   the `CONTRACT:` flag-and-log rule; Phillip retains all coordination/merges.
+- 2026-07-19 — WL-E tooling fix: cross-session device safety. Root cause of the
+  recurring `Device is busy (Connecting)` failures was orphaned
+  verifier/xcodebuild processes surviving interrupted conversations while new
+  sessions started competing runs. Added a PID-liveness device lock to
+  `verify-scenario.sh`, contender detection + `--reclaim` to preflight, and
+  `DeveloperTools/device-recover.sh`; documented in `Docs/DeviceWorkflow.md`
+  §2a. 15 focused tests pass.

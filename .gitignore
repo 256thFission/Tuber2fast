@@ -11,3 +11,4 @@ DeveloperTools/PencilFixtureMCP/.venv/
 DeveloperTools/PencilFixtureMCP/__pycache__/
 __pycache__/
 tmp/
+.tubernotes-device-lock.json
