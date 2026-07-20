@@ -104,5 +104,8 @@ Do not claim event-driven continuation unless the bridge is armed. If the
 desktop-owned task does not surface an externally resumed turn, report the host
 integration mismatch and continue from CLI; do not conceal it with rapid polling.
 
-Stop on the first failure, ambiguity, human confusion, missing prerequisite,
-unavailable device, or device/host divergence.
+Pause the human interaction on the first failure, ambiguity, human confusion,
+missing prerequisite, unavailable device, or device/host divergence. When an
+authorized in-scope product defect caused the failure, fix and mechanically
+verify it before resuming the same blocked visible session. Stop implementation
+only when another operating-contract stop condition applies.

@@ -23,7 +23,7 @@ Human Pencil capture and in-app review feedback go through Debug `DeveloperSuppo
 - Show the human only the current action and, when needed, one short question. Keep thread/request IDs, owner tokens, sequence cursors, lifecycle states, queue details, expected assertions, artifact paths, and test keys agent-side.
 - Ask for either an exact response needed to exercise behavior or a subjective verdict, never both in one step. Do not ask the human to judge mechanical facts the tooling can verify.
 - An event-bridge or fallback-heartbeat wake collects, acknowledges, records, and notifies before advancing. Advance only after the prior response is understood, recorded, and the next precondition is verified.
-- Stop the guided journey on an unmet precondition, ambiguous response, first failure, device/host state divergence, or human confusion. Explain the issue before asking for another action; never invent Pencil feel, visual taste, intent, or interaction judgments.
+- Pause the guided journey on an unmet precondition, ambiguous response, first failure, device/host state divergence, or human confusion. Do not ask the human for another action until the response is understood and recorded. When the failure is an authorized in-scope product defect, fix it, mechanically verify the fix, then resume the same blocked visible session; stop the implementation only when another stop condition applies. Never invent Pencil feel, visual taste, intent, or interaction judgments.
 
 ## Operating contract
 

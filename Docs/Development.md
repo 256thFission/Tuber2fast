@@ -182,7 +182,7 @@ persist without appending messages. `Finish Review` appends one immutable
 ordered summary and creates the single eligible wake. Collect and acknowledge it once,
 call `collect_review_run`, then `export_review_run` for the evidence bundle.
 
-After collection, summarize the interpreted response in the originating Codex task before presenting another action. Stop on the exact first failure, ambiguity, human confusion, unmet precondition, or device/host state divergence. Do not change the visible session to hide or reconcile a divergence, and do not infer subjective judgments from protocol state.
+After collection, summarize the interpreted response in the originating Codex task before presenting another action. Pause the human interaction on the exact first failure, ambiguity, human confusion, unmet precondition, or device/host state divergence. If an authorized in-scope product defect caused the failure, block the visible session, fix and mechanically verify it, then resume that same session. Do not change the visible session to hide or reconcile a divergence, and do not infer subjective judgments from protocol state.
 
 Keep the returned `owner_token`; only its hash is persisted. Bridge registration transfers the raw capability through an anonymous pipe and never writes it into its watch or configuration files. A human reply moves the active feedback thread to `awaiting-model`, retaining the device slot. A genuinely `blocked`, `resolved`, or `cancelled` thread releases the slot and advances the next queued scenario cleanly. Prefer one focused clarification before revising; ask another only when the answer exposes a materially different ambiguity.
 

@@ -113,9 +113,11 @@ The bridge must be armed only at the yield boundary, after active waiting ends.
 Do not arm it at thread creation: the standalone CLI app-server cannot observe a
 desktop-owned in-progress turn and could otherwise race it. A scheduled task
 heartbeat is now an emergency fallback only when bridge arming fails.
-Advance only after the previous response is understood and recorded.
-Stop on ambiguity, the first failure, an unmet precondition, human confusion, or
-device/host state divergence; do not mutate the visible session to conceal it.
+Advance only after the previous response is understood and recorded. Pause the
+human interaction on ambiguity, the first failure, an unmet precondition, human
+confusion, or device/host state divergence. For an authorized in-scope product
+defect, block the visible session, fix and mechanically verify it, then resume
+that same session; do not mutate the session to conceal divergence.
 
 ## Feedback model
 

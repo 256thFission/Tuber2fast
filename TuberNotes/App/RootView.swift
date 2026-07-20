@@ -606,6 +606,7 @@ private struct RecordedInvestigationView: View {
     @State private var status = "Draw a lasso to investigate"
     @State private var investigationTask: Task<Void, Never>?
     @State private var conversationTask: Task<Void, Never>?
+    @State private var conversationCueTask: Task<Void, Never>?
     @State private var canvasGeneration = 0
     @State private var permitsDeterministicSelection = true
     @State private var retainedConversationID: String?
@@ -615,6 +616,7 @@ private struct RecordedInvestigationView: View {
     @State private var pinOverlayGeneration = 0
     @State private var didAutomateConversation = false
     @State private var conversationPageReturnVerified = false
+    @State private var conversationCueAnnotationID: UUID?
 
     init(
         scenario: DevelopmentScenario,
@@ -663,6 +665,7 @@ private struct RecordedInvestigationView: View {
         .onDisappear {
             investigationTask?.cancel()
             conversationTask?.cancel()
+            conversationCueTask?.cancel()
         }
     }
 
@@ -686,6 +689,14 @@ private struct RecordedInvestigationView: View {
                     }
             )
 
+            if let cueAnnotationID = conversationCueAnnotationID,
+               presentedConversationID == nil,
+               let cueAnnotation = pageAnnotations.first(where: { $0.id == cueAnnotationID }) {
+                PinConversationDiscoveryCue()
+                    .position(projection(cueAnnotation.target))
+                    .allowsHitTesting(false)
+            }
+
             if let annotation = presentedConversationAnnotation(in: pageAnnotations),
                let conversation = conversations[annotation.threadID] {
                 PinConversationAnchor(
@@ -699,7 +710,7 @@ private struct RecordedInvestigationView: View {
                 )
             }
 
-            if selectionArtifact?.pageID == page.id {
+            if presentedConversationID == nil, selectionArtifact?.pageID == page.id {
                 if case .selected = lassoState {
                     InvestigationActionStrip(
                         onInvestigate: submit,
@@ -756,6 +767,7 @@ private struct RecordedInvestigationView: View {
         switch event {
         case let .expanded(annotationID):
             expandedAnnotationID = annotationID
+            showConversationCue(for: annotationID)
         case let .collapsed(annotationID):
             if expandedAnnotationID == annotationID {
                 expandedAnnotationID = nil
@@ -799,6 +811,8 @@ private struct RecordedInvestigationView: View {
         }
 
         presentedConversationID = annotation.threadID
+        conversationCueTask?.cancel()
+        conversationCueAnnotationID = nil
         expandedAnnotationID = nil
         pinOverlayGeneration += 1
         recordRuntimeEvidence()
@@ -812,6 +826,17 @@ private struct RecordedInvestigationView: View {
     private func dismissConversation() {
         presentedConversationID = nil
         recordRuntimeEvidence()
+    }
+
+    private func showConversationCue(for annotationID: UUID) {
+        conversationCueTask?.cancel()
+        conversationCueAnnotationID = annotationID
+        conversationCueTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2.2))
+            guard !Task.isCancelled,
+                  conversationCueAnnotationID == annotationID else { return }
+            conversationCueAnnotationID = nil
+        }
     }
 
     private func submitFollowUp(_ question: String, threadID: UUID) {
@@ -1058,6 +1083,8 @@ private struct RecordedInvestigationView: View {
 
     private func cancelSelection() {
         guard case .selected = lassoState else { return }
+        conversationCueTask?.cancel()
+        conversationCueAnnotationID = nil
         submittedIntent = nil
         selectionArtifact = nil
         retainedConversationID = nil
@@ -1229,6 +1256,8 @@ private struct RecordedInvestigationView: View {
         guard artifact.pageID == currentPageID else { return }
         investigationTask?.cancel()
         conversationTask?.cancel()
+        conversationCueTask?.cancel()
+        conversationCueAnnotationID = nil
         selectionArtifact = artifact
         submittedIntent = nil
         retainedConversationID = nil
@@ -1304,6 +1333,37 @@ private struct RecordedInvestigationView: View {
         }
     }
 
+}
+
+private struct PinConversationDiscoveryCue: View {
+    @State private var traceProgress: CGFloat = 0.06
+    @State private var horizontalNudge: CGFloat = -2
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(.indigo.opacity(0.20), lineWidth: 3)
+            Circle()
+                .trim(from: 0, to: traceProgress)
+                .stroke(
+                    .indigo,
+                    style: StrokeStyle(lineWidth: 3, lineCap: .round)
+                )
+                .rotationEffect(.degrees(-90))
+        }
+        .frame(width: 42, height: 42)
+        .offset(x: horizontalNudge)
+        .shadow(color: .indigo.opacity(0.35), radius: 4)
+        .accessibilityHidden(true)
+        .onAppear {
+            withAnimation(.linear(duration: 1.7)) {
+                traceProgress = 1
+            }
+            withAnimation(.easeInOut(duration: 0.14).repeatCount(6, autoreverses: true)) {
+                horizontalNudge = 2
+            }
+        }
+    }
 }
 
 private struct PinConversationAnchor: View {
