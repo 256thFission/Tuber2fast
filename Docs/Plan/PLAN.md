@@ -53,7 +53,7 @@ States: `not-started` → `in-progress` → `mechanically-accepted` →
 | Line | Child doc | Owner subsystem | Status |
 |---|---|---|---|
 | WL-B — Investigation UI | [WL-B-InvestigationUI.md](WL-B-InvestigationUI.md) | App | mechanically-accepted — M1 real lasso-to-recorded-Pin loop complete; human hero review queued |
-| WL-F — Conversation UI | [WL-F-ConversationUI.md](WL-F-ConversationUI.md) | App + AgentHarness | not-started — starts after WL-B step 3 |
+| WL-F — Conversation UI | [WL-F-ConversationUI.md](WL-F-ConversationUI.md) | App + AgentHarness | in-progress — recorded continuation fixture complete; Pin-anchored UI under verification |
 | WL-D — Live adapter [stretch] | [WL-D-LiveAdapter.md](WL-D-LiveAdapter.md) | AgentHarness | not-started; gated |
 | WL-E(I) — Agent-side verification | [WL-E-VerificationReview.md](WL-E-VerificationReview.md) §Track I | DeveloperTools | not-started |
 
@@ -170,3 +170,7 @@ Append one line per meaningful state change: date, line, what changed.
   was removed because all recorded scenarios now prove the real spatial
   surface and retained crop. Human hero-quality review remains queued with its
   event bridge armed.
+- 2026-07-19 — WL-F scenario-contract addition: added
+  `DevelopmentScenario.pinConversation` plus additive
+  `DevelopmentRuntimeEvidence` conversation fields so the verifier can prove a
+  Pin-tethered recorded follow-up and in-session page-away/page-return survival.

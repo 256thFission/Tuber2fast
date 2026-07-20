@@ -38,6 +38,7 @@ M0 scenarios:
   agent-recorded-failure    Recorded recoverable failure with no Pin
   persistence-relaunch  Persisted page, ink reference, and Pin IDs survive relaunch
   hero-recorded   Real SpatialCanvas lasso/crop through recorded Check to one Pin
+  pin-conversation  Pin-anchored streamed follow-up retained across page return
 
 Environment:
   SKIP_BUILD=1                Reuse an existing DerivedData build
@@ -72,6 +73,12 @@ scenario_metadata() {
     REQUIRES_SELECTION_CROP=false
     EXPECTED_RUNTIME_INK_REFERENCE=""
     EXPECTED_RUNTIME_RESTORED=false
+    EXPECTED_RUNTIME_CONVERSATION_PANEL_OPEN=""
+    EXPECTED_RUNTIME_CONVERSATION_ID=""
+    EXPECTED_RUNTIME_CONVERSATION_TURN_COUNT=""
+    EXPECTED_RUNTIME_CONVERSATION_REPLY_STATUS=""
+    EXPECTED_RUNTIME_CONVERSATION_PAGE_RETURN=""
+    EXPECTED_RUNTIME_CONVERSATION_SOURCE_PIN_ID=""
     case "$1" in
         blank-canvas)
             FAMILY="baseline"
@@ -225,6 +232,27 @@ scenario_metadata() {
             EXPECTED_RUNTIME_PEN_FIXTURE="recorded-selection-ink"
             EXPECTED_RUNTIME_ANNOTATION_IDS="70000000-0000-0000-0000-000000000001"
             EXPECTED_RUNTIME_HERO_STATUS="Proposed Pin ready"
+            REQUIRES_SELECTION_CROP=true
+            ;;
+        pin-conversation)
+            FAMILY="conversation"
+            EXPECTED_STATE="real hero Pin with a Pin-anchored streamed follow-up thread retained across page away and return"
+            INTEGRATION_READINESS="app-wired"
+            EXPECTED_PAGE_COUNT=3
+            EXPECTED_PAGE_INDEX=1
+            EXPECTED_PAGE_ID="30000000-0000-0000-0000-000000000012"
+            EXPECTED_PEN_FIXTURE_COUNT=1
+            REQUIRES_RUNTIME_EVIDENCE=true
+            EXPECTED_RUNTIME_SURFACE="spatial-canvas"
+            EXPECTED_RUNTIME_PEN_FIXTURE="recorded-selection-ink"
+            EXPECTED_RUNTIME_ANNOTATION_IDS="70000000-0000-0000-0000-000000000001,70000000-0000-0000-0000-000000000006"
+            EXPECTED_RUNTIME_HERO_STATUS="Proposed Pin ready"
+            EXPECTED_RUNTIME_CONVERSATION_PANEL_OPEN="true"
+            EXPECTED_RUNTIME_CONVERSATION_ID="recorded-hero"
+            EXPECTED_RUNTIME_CONVERSATION_TURN_COUNT="3"
+            EXPECTED_RUNTIME_CONVERSATION_REPLY_STATUS="Follow-up reply ready"
+            EXPECTED_RUNTIME_CONVERSATION_PAGE_RETURN="true"
+            EXPECTED_RUNTIME_CONVERSATION_SOURCE_PIN_ID="70000000-0000-0000-0000-000000000001"
             REQUIRES_SELECTION_CROP=true
             ;;
         *)
@@ -554,6 +582,9 @@ if [[ "$REQUIRES_RUNTIME_EVIDENCE" == "true" ]]; then
             "$EXPECTED_RUNTIME_PEN_FIXTURE" "$EXPECTED_RUNTIME_ANNOTATION_IDS" \
             "$EXPECTED_RUNTIME_HERO_STATUS" "$EXPECTED_RUNTIME_INK_REFERENCE" \
             "$EXPECTED_RUNTIME_RESTORED" "$VERIFY_NONCE" "$REQUIRES_SELECTION_CROP" \
+            "$EXPECTED_RUNTIME_CONVERSATION_PANEL_OPEN" "$EXPECTED_RUNTIME_CONVERSATION_ID" \
+            "$EXPECTED_RUNTIME_CONVERSATION_TURN_COUNT" "$EXPECTED_RUNTIME_CONVERSATION_REPLY_STATUS" \
+            "$EXPECTED_RUNTIME_CONVERSATION_PAGE_RETURN" "$EXPECTED_RUNTIME_CONVERSATION_SOURCE_PIN_ID" \
             >"$RUNTIME_ASSERTIONS" 2>&1 <<'PY'
 import json
 import sys
@@ -561,7 +592,8 @@ import sys
 (
     evidence_path, scenario, surface, page_count, page_index, page_id,
     pen_fixture, annotation_ids, hero_status, ink_reference, restored, verification_nonce,
-    requires_selection_crop,
+    requires_selection_crop, conversation_panel_open, conversation_id, conversation_turn_count,
+    conversation_reply_status, conversation_page_return, conversation_source_pin_id,
 ) = sys.argv[1:]
 requires_selection_crop = requires_selection_crop == "true"
 with open(evidence_path, encoding="utf-8") as evidence_file:
@@ -581,6 +613,15 @@ expected = {
     "renderedInkReference": ink_reference or None,
     "restoredFromPersistence": restored == "true",
 }
+if conversation_panel_open:
+    expected.update({
+        "conversationPanelOpen": conversation_panel_open == "true",
+        "conversationID": conversation_id,
+        "conversationTurnCount": int(conversation_turn_count),
+        "conversationReplyStatus": conversation_reply_status,
+        "conversationPageReturnVerified": conversation_page_return == "true",
+        "conversationSourcePinID": conversation_source_pin_id,
+    })
 failures = []
 for key, expected_value in expected.items():
     observed = evidence.get(key)

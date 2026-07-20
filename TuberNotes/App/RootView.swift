@@ -193,7 +193,7 @@ struct RootView: View {
             standalonePinSurface
         case .blankCanvas, .pdfPages, .blankNotebook, .notebookPages, .inkPages, .pinDrift, .lassoCrop, .persistenceRelaunch:
             standaloneSpatialSurface
-        case .heroRecorded, .agentRecordedSuccess, .agentRecordedRetrieval, .agentRecordedFailure:
+        case .heroRecorded, .agentRecordedSuccess, .agentRecordedRetrieval, .agentRecordedFailure, .pinConversation:
             recordedInvestigationSurface
         default:
             ContentUnavailableView(
@@ -386,6 +386,7 @@ struct RootView: View {
 
 #if DEBUG
     private func bindScenarioToActiveRequest() {
+        guard !DevelopmentScenario.isExplicitlySelected else { return }
         let feedbackScenario = feedbackSession.activeFeedbackThread
             .flatMap { DevelopmentScenario(rawValue: $0.scenario) }
         let legacyScenario = agentSession.activeRequest?.scenario
@@ -560,6 +561,31 @@ struct RootView: View {
     }
 }
 
+private struct PinConversationTurn: Identifiable, Equatable {
+    enum Role: Equatable {
+        case user
+        case assistant
+    }
+
+    let id: UUID
+    let role: Role
+    var text: String
+    var isStreaming: Bool
+}
+
+private struct PinConversation: Identifiable, Equatable {
+    let id: UUID
+    let sourcePinID: UUID
+    let selection: SelectionArtifact
+    var conversationID: String
+    var turns: [PinConversationTurn]
+    var activeRequestID: UUID?
+    var pendingPinID: UUID?
+    var lastQuestion: String?
+    var status: String
+    var canRetry: Bool
+}
+
 private struct RecordedInvestigationView: View {
     private let scenario: DevelopmentScenario
     private let document: NotebookDocument
@@ -579,8 +605,16 @@ private struct RecordedInvestigationView: View {
     @State private var annotations: [PageAnnotation] = []
     @State private var status = "Draw a lasso to investigate"
     @State private var investigationTask: Task<Void, Never>?
+    @State private var conversationTask: Task<Void, Never>?
     @State private var canvasGeneration = 0
     @State private var permitsDeterministicSelection = true
+    @State private var retainedConversationID: String?
+    @State private var expandedAnnotationID: UUID?
+    @State private var presentedConversationID: UUID?
+    @State private var conversations: [UUID: PinConversation] = [:]
+    @State private var pinOverlayGeneration = 0
+    @State private var didAutomateConversation = false
+    @State private var conversationPageReturnVerified = false
 
     init(
         scenario: DevelopmentScenario,
@@ -623,12 +657,12 @@ private struct RecordedInvestigationView: View {
         )
         .id(canvasGeneration)
         .accessibilityIdentifier("recorded-investigation-surface")
-        .onChange(of: currentPageID) { _, newPageID in
-            guard selectionArtifact?.pageID != newPageID else { return }
-            dismissSelection()
+        .onChange(of: currentPageID) { _, _ in
+            recordRuntimeEvidence()
         }
         .onDisappear {
             investigationTask?.cancel()
+            conversationTask?.cancel()
         }
     }
 
@@ -636,12 +670,34 @@ private struct RecordedInvestigationView: View {
         for page: PageRecord,
         projection: PageAnchorProjection
     ) -> some View {
-        ZStack {
+        let pageAnnotations = annotations.filter { $0.pageID == page.id }
+        return ZStack {
             PinOverlayView(
-                annotations: annotations.filter { $0.pageID == page.id },
+                annotations: pageAnnotations,
                 projectAnchor: { projection($0) },
-                initiallyExpandedAnnotationID: annotations.first?.id
+                initiallyExpandedAnnotationID: expandedAnnotationID,
+                onEvent: handlePinOverlayEvent
             )
+            .id("\(page.id.uuidString)-\(pinOverlayGeneration)")
+            .simultaneousGesture(
+                LongPressGesture(minimumDuration: 0.55)
+                    .onEnded { _ in
+                        openExpandedConversation(in: pageAnnotations)
+                    }
+            )
+
+            if let annotation = presentedConversationAnnotation(in: pageAnnotations),
+               let conversation = conversations[annotation.threadID] {
+                PinConversationAnchor(
+                    annotation: annotation,
+                    conversation: conversation,
+                    projectAnchor: { projection($0) },
+                    onSend: { submitFollowUp($0, threadID: annotation.threadID) },
+                    onCancel: { cancelFollowUp(threadID: annotation.threadID) },
+                    onRetry: { retryFollowUp(threadID: annotation.threadID) },
+                    onDismiss: dismissConversation
+                )
+            }
 
             if selectionArtifact?.pageID == page.id {
                 if case .selected = lassoState {
@@ -696,6 +752,294 @@ private struct RecordedInvestigationView: View {
         .accessibilityIdentifier("investigation-terminal")
     }
 
+    private func handlePinOverlayEvent(_ event: PinOverlayEvent) {
+        switch event {
+        case let .expanded(annotationID):
+            expandedAnnotationID = annotationID
+        case let .collapsed(annotationID):
+            if expandedAnnotationID == annotationID {
+                expandedAnnotationID = nil
+            }
+        case .citationSelected:
+            break
+        }
+    }
+
+    private func openExpandedConversation(in pageAnnotations: [PageAnnotation]) {
+        guard let expandedAnnotationID,
+              let annotation = pageAnnotations.first(where: { $0.id == expandedAnnotationID }) else { return }
+        openConversation(for: annotation)
+    }
+
+    private func openConversation(for annotation: PageAnnotation) {
+        guard annotation.status == .complete else { return }
+
+        if conversations[annotation.threadID] == nil {
+            guard let selectionArtifact,
+                  let retainedConversationID else { return }
+            conversations[annotation.threadID] = PinConversation(
+                id: annotation.threadID,
+                sourcePinID: annotation.id,
+                selection: selectionArtifact,
+                conversationID: retainedConversationID,
+                turns: [
+                    PinConversationTurn(
+                        id: UUID(),
+                        role: .assistant,
+                        text: annotation.body,
+                        isStreaming: false
+                    )
+                ],
+                activeRequestID: nil,
+                pendingPinID: nil,
+                lastQuestion: nil,
+                status: "Ask a follow-up about this Pin",
+                canRetry: false
+            )
+        }
+
+        presentedConversationID = annotation.threadID
+        expandedAnnotationID = nil
+        pinOverlayGeneration += 1
+        recordRuntimeEvidence()
+    }
+
+    private func presentedConversationAnnotation(in pageAnnotations: [PageAnnotation]) -> PageAnnotation? {
+        guard let presentedConversationID else { return nil }
+        return pageAnnotations.first { $0.threadID == presentedConversationID }
+    }
+
+    private func dismissConversation() {
+        presentedConversationID = nil
+        recordRuntimeEvidence()
+    }
+
+    private func submitFollowUp(_ question: String, threadID: UUID) {
+        let trimmedQuestion = question.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedQuestion.isEmpty,
+              var conversation = conversations[threadID],
+              conversation.activeRequestID == nil else { return }
+
+        let request = InvestigationRequest(
+            id: UUID(),
+            intent: .ask(question: trimmedQuestion),
+            selection: conversation.selection,
+            conversationID: conversation.conversationID
+        )
+        conversation.turns.append(
+            PinConversationTurn(
+                id: UUID(),
+                role: .user,
+                text: trimmedQuestion,
+                isStreaming: false
+            )
+        )
+        conversation.activeRequestID = request.id
+        conversation.pendingPinID = nil
+        conversation.lastQuestion = trimmedQuestion
+        conversation.status = "Sending follow-up…"
+        conversation.canRetry = false
+        conversations[threadID] = conversation
+        runFollowUp(request, threadID: threadID)
+        recordRuntimeEvidence()
+    }
+
+    private func runFollowUp(_ request: InvestigationRequest, threadID: UUID) {
+        conversationTask?.cancel()
+        conversationTask = Task { @MainActor in
+            do {
+                for try await event in agent.investigate(request) {
+                    guard !Task.isCancelled else { return }
+                    consumeFollowUp(event, requestID: request.id, threadID: threadID)
+                }
+            } catch {
+                guard conversations[threadID]?.activeRequestID == request.id else { return }
+                failFollowUp(
+                    threadID: threadID,
+                    message: "Recorded follow-up failed.",
+                    recoverable: true
+                )
+            }
+        }
+    }
+
+    private func consumeFollowUp(_ event: AgentEvent, requestID: UUID, threadID: UUID) {
+        guard var conversation = conversations[threadID],
+              conversation.activeRequestID == requestID else { return }
+
+        switch event {
+        case .accepted:
+            conversation.status = "Follow-up accepted"
+        case .inspectingSelection:
+            conversation.status = "Re-reading the retained selection…"
+        case let .toolStarted(tool):
+            conversation.status = tool.userVisibleStatus
+        case .toolFinished:
+            break
+        case let .pinStarted(draft):
+            guard let annotation = annotation(
+                from: draft,
+                status: .streaming,
+                selection: conversation.selection
+            ) else {
+                conversations[threadID] = conversation
+                failFollowUp(
+                    threadID: threadID,
+                    message: "The follow-up contained an invalid Pin location.",
+                    recoverable: true
+                )
+                Task { await agent.cancel(investigationID: requestID) }
+                return
+            }
+            annotations.removeAll { $0.id == annotation.id }
+            annotations.append(annotation)
+            conversation.pendingPinID = annotation.id
+            conversation.turns.append(
+                PinConversationTurn(
+                    id: UUID(),
+                    role: .assistant,
+                    text: draft.body,
+                    isStreaming: true
+                )
+            )
+            conversation.status = "Streaming reply…"
+        case let .pinDelta(id, bodyDelta):
+            if let annotationIndex = annotations.firstIndex(where: { $0.id == id }) {
+                annotations[annotationIndex].body += bodyDelta
+            }
+            if let turnIndex = conversation.turns.lastIndex(where: {
+                $0.role == .assistant && $0.isStreaming
+            }) {
+                conversation.turns[turnIndex].text += bodyDelta
+            }
+        case let .pinCompleted(draft):
+            guard let annotation = annotation(
+                from: draft,
+                status: .complete,
+                selection: conversation.selection
+            ) else {
+                conversations[threadID] = conversation
+                failFollowUp(
+                    threadID: threadID,
+                    message: "The follow-up contained an invalid Pin location.",
+                    recoverable: true
+                )
+                Task { await agent.cancel(investigationID: requestID) }
+                return
+            }
+            annotations.removeAll { $0.id == annotation.id }
+            annotations.append(annotation)
+            if let turnIndex = conversation.turns.lastIndex(where: {
+                $0.role == .assistant && $0.isStreaming
+            }) {
+                conversation.turns[turnIndex].text = draft.body
+                conversation.turns[turnIndex].isStreaming = false
+            }
+            conversation.status = "Finishing reply…"
+        case let .completed(returnedConversationID):
+            guard returnedConversationID == conversation.conversationID else {
+                conversations[threadID] = conversation
+                failFollowUp(
+                    threadID: threadID,
+                    message: "The follow-up lost its conversation context.",
+                    recoverable: true
+                )
+                return
+            }
+            conversation.activeRequestID = nil
+            conversation.pendingPinID = nil
+            conversation.status = "Follow-up reply ready"
+            conversation.canRetry = false
+            conversations[threadID] = conversation
+            recordRuntimeEvidence()
+            automatePageReturnIfNeeded(threadID: threadID)
+            return
+        case let .failed(failure):
+            conversations[threadID] = conversation
+            failFollowUp(
+                threadID: threadID,
+                message: failure.userMessage,
+                recoverable: failure.recoverable
+            )
+            return
+        }
+
+        conversations[threadID] = conversation
+        recordRuntimeEvidence()
+    }
+
+    private func cancelFollowUp(threadID: UUID) {
+        guard let requestID = conversations[threadID]?.activeRequestID else { return }
+        conversationTask?.cancel()
+        Task { await agent.cancel(investigationID: requestID) }
+        failFollowUp(threadID: threadID, message: "Reply cancelled", recoverable: true)
+    }
+
+    private func retryFollowUp(threadID: UUID) {
+        guard let question = conversations[threadID]?.lastQuestion else { return }
+        submitFollowUp(question, threadID: threadID)
+    }
+
+    private func failFollowUp(threadID: UUID, message: String, recoverable: Bool) {
+        guard var conversation = conversations[threadID] else { return }
+        if let pendingPinID = conversation.pendingPinID {
+            annotations.removeAll { $0.id == pendingPinID }
+        }
+        if let turnIndex = conversation.turns.lastIndex(where: {
+            $0.role == .assistant && $0.isStreaming
+        }) {
+            conversation.turns[turnIndex].isStreaming = false
+        }
+        conversation.activeRequestID = nil
+        conversation.pendingPinID = nil
+        conversation.status = message
+        conversation.canRetry = recoverable
+        conversations[threadID] = conversation
+        recordRuntimeEvidence()
+    }
+
+    private func automateConversationIfNeeded() {
+#if DEBUG
+        guard scenario == .pinConversation,
+              ProcessInfo.processInfo.environment["TUBER_VERIFY_NONCE"] != nil,
+              !didAutomateConversation,
+              let annotation = annotations.first(where: { $0.status == .complete }) else { return }
+        didAutomateConversation = true
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(120))
+            expandedAnnotationID = annotation.id
+            pinOverlayGeneration += 1
+            try? await Task.sleep(for: .milliseconds(120))
+            openConversation(for: annotation)
+            try? await Task.sleep(for: .milliseconds(120))
+            submitFollowUp(
+                "Why is adding 7 to both sides the right step?",
+                threadID: annotation.threadID
+            )
+        }
+#endif
+    }
+
+    private func automatePageReturnIfNeeded(threadID: UUID) {
+#if DEBUG
+        guard scenario == .pinConversation,
+              ProcessInfo.processInfo.environment["TUBER_VERIFY_NONCE"] != nil,
+              !conversationPageReturnVerified,
+              let selectedPageID = conversations[threadID]?.selection.pageID,
+              let awayPageID = document.pages.first(where: { $0.id != selectedPageID })?.id else { return }
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(120))
+            currentPageID = awayPageID
+            try? await Task.sleep(for: .milliseconds(120))
+            currentPageID = selectedPageID
+            try? await Task.sleep(for: .milliseconds(120))
+            conversationPageReturnVerified = presentedConversationID == threadID
+                && conversations[threadID]?.status == "Follow-up reply ready"
+            recordRuntimeEvidence()
+        }
+#endif
+    }
+
     private func submit(_ intent: InvestigationIntent) {
         guard let selectionArtifact,
               case let .selected(selectionID) = lassoState,
@@ -716,6 +1060,9 @@ private struct RecordedInvestigationView: View {
         guard case .selected = lassoState else { return }
         submittedIntent = nil
         selectionArtifact = nil
+        retainedConversationID = nil
+        presentedConversationID = nil
+        expandedAnnotationID = nil
         lassoState = .idle
         status = "Selection cancelled"
         permitsDeterministicSelection = false
@@ -805,10 +1152,12 @@ private struct RecordedInvestigationView: View {
             annotations.removeAll { $0.id == annotation.id }
             annotations.append(annotation)
             status = "Proposed Pin ready"
-        case .completed:
+        case let .completed(conversationID):
+            retainedConversationID = conversationID
             status = "Proposed Pin ready"
             lassoState = .completed(investigationID: investigationID)
             recordRuntimeEvidence()
+            automateConversationIfNeeded()
         case let .failed(failure):
             status = failure.userMessage
             lassoState = .failed(investigationID: investigationID, recoverable: failure.recoverable)
@@ -818,15 +1167,23 @@ private struct RecordedInvestigationView: View {
 
     private func annotation(from draft: PinDraft, status: AnnotationStatus) -> PageAnnotation? {
         guard let selectionArtifact else { return nil }
+        return annotation(from: draft, status: status, selection: selectionArtifact)
+    }
+
+    private func annotation(
+        from draft: PinDraft,
+        status: AnnotationStatus,
+        selection: SelectionArtifact
+    ) -> PageAnnotation? {
         guard draft.target.isFiniteAndInUnitBounds else { return nil }
         let target = SpatialCoordinateTransform.cropPointToPage(
             draft.target,
-            cropPageBounds: selectionArtifact.pageBounds
+            cropPageBounds: selection.pageBounds
         )
         guard target.isFiniteAndInUnitBounds else { return nil }
         return PageAnnotation(
             id: draft.id,
-            pageID: selectionArtifact.pageID,
+            pageID: selection.pageID,
             threadID: threadID,
             target: target,
             targetRegion: nil,
@@ -843,6 +1200,10 @@ private struct RecordedInvestigationView: View {
         let currentIndex = currentPageID.flatMap { selectedID in
             document.pages.firstIndex(where: { $0.id == selectedID })
         }
+        let presentedConversation = presentedConversationID.flatMap { conversations[$0] }
+        let sourceAnnotation = presentedConversation.flatMap { conversation in
+            annotations.first(where: { $0.id == conversation.sourcePinID })
+        }
         DevelopmentRuntimeEvidence.record(
             scenario: scenario,
             surfaceKind: .spatialCanvas,
@@ -852,7 +1213,14 @@ private struct RecordedInvestigationView: View {
             renderedPenFixtureName: currentPageID.flatMap { penFixturesByPageID[$0]?.name },
             renderedAnnotationIDs: annotations.map(\.id),
             heroStatus: status,
-            selectionArtifact: selectionArtifact
+            selectionArtifact: selectionArtifact,
+            conversationPanelOpen: presentedConversation != nil
+                && sourceAnnotation?.pageID == currentPageID,
+            conversationID: presentedConversation?.conversationID,
+            conversationTurnCount: presentedConversation?.turns.count,
+            conversationReplyStatus: presentedConversation?.status,
+            conversationPageReturnVerified: conversationPageReturnVerified,
+            conversationSourcePinID: presentedConversation?.sourcePinID
         )
 #endif
     }
@@ -860,8 +1228,12 @@ private struct RecordedInvestigationView: View {
     private func receiveSelection(_ artifact: SelectionArtifact) {
         guard artifact.pageID == currentPageID else { return }
         investigationTask?.cancel()
+        conversationTask?.cancel()
         selectionArtifact = artifact
         submittedIntent = nil
+        retainedConversationID = nil
+        presentedConversationID = nil
+        expandedAnnotationID = nil
         lassoState = .selected(selectionID: artifact.id)
         status = "Selection ready"
         persistSelectionCrop(artifact)
@@ -869,15 +1241,6 @@ private struct RecordedInvestigationView: View {
         if shouldAutomateCheck {
             submit(.check)
         }
-    }
-
-    private func dismissSelection() {
-        investigationTask?.cancel()
-        selectionArtifact = nil
-        submittedIntent = nil
-        lassoState = .idle
-        status = "Draw a lasso to investigate"
-        permitsDeterministicSelection = false
     }
 
     private func persistSelectionCrop(_ artifact: SelectionArtifact) {
@@ -941,6 +1304,231 @@ private struct RecordedInvestigationView: View {
         }
     }
 
+}
+
+private struct PinConversationAnchor: View {
+    let annotation: PageAnnotation
+    let conversation: PinConversation
+    let projectAnchor: (PageNormalizedPoint) -> CGPoint
+    let onSend: (String) -> Void
+    let onCancel: () -> Void
+    let onRetry: () -> Void
+    let onDismiss: () -> Void
+
+    var body: some View {
+        GeometryReader { proxy in
+            let anchor = projectAnchor(annotation.target)
+            let panelSize = CGSize(
+                width: min(390, max(0, proxy.size.width - 24)),
+                height: min(420, max(0, proxy.size.height - 24))
+            )
+            let panelFrame = frame(for: panelSize, anchor: anchor, in: proxy.size)
+
+            ZStack(alignment: .topLeading) {
+                Path { path in
+                    path.move(to: anchor)
+                    path.addLine(to: closestPoint(on: panelFrame, to: anchor))
+                }
+                .stroke(
+                    .indigo.opacity(0.72),
+                    style: StrokeStyle(lineWidth: 2, lineCap: .round)
+                )
+                .accessibilityHidden(true)
+
+                PinConversationPanel(
+                    title: annotation.teaser,
+                    conversation: conversation,
+                    onSend: onSend,
+                    onCancel: onCancel,
+                    onRetry: onRetry,
+                    onDismiss: onDismiss
+                )
+                .frame(width: panelFrame.width, height: panelFrame.height)
+                .position(x: panelFrame.midX, y: panelFrame.midY)
+            }
+        }
+        .accessibilityIdentifier("pin-conversation-anchor")
+    }
+
+    private func frame(for size: CGSize, anchor: CGPoint, in container: CGSize) -> CGRect {
+        let horizontalGap: CGFloat = 30
+        let proposedX = anchor.x <= container.width / 2
+            ? anchor.x + horizontalGap
+            : anchor.x - horizontalGap - size.width
+        let proposedY = anchor.y - size.height / 2
+        let x = min(max(proposedX, 12), max(12, container.width - size.width - 12))
+        let y = min(max(proposedY, 12), max(12, container.height - size.height - 12))
+        return CGRect(x: x, y: y, width: size.width, height: size.height)
+    }
+
+    private func closestPoint(on rect: CGRect, to point: CGPoint) -> CGPoint {
+        CGPoint(
+            x: min(max(point.x, rect.minX), rect.maxX),
+            y: min(max(point.y, rect.minY), rect.maxY)
+        )
+    }
+}
+
+private struct PinConversationPanel: View {
+    let title: String
+    let conversation: PinConversation
+    let onSend: (String) -> Void
+    let onCancel: () -> Void
+    let onRetry: () -> Void
+    let onDismiss: () -> Void
+
+    @State private var question = ""
+    @FocusState private var questionIsFocused: Bool
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                Image(systemName: "bubble.left.and.bubble.right.fill")
+                    .foregroundStyle(.indigo)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.headline)
+                        .lineLimit(1)
+                    Text("Follow-up thread")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button(action: onDismiss) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.title3)
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Close follow-up thread")
+                .accessibilityIdentifier("pin-conversation-close")
+            }
+            .padding(14)
+
+            Divider()
+
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 10) {
+                        ForEach(conversation.turns) { turn in
+                            PinConversationBubble(turn: turn)
+                                .id(turn.id)
+                        }
+                    }
+                    .padding(14)
+                }
+                .onChange(of: conversation.turns) { _, turns in
+                    guard let lastID = turns.last?.id else { return }
+                    withAnimation(.easeOut(duration: 0.18)) {
+                        proxy.scrollTo(lastID, anchor: .bottom)
+                    }
+                }
+            }
+
+            Divider()
+
+            HStack(spacing: 8) {
+                if conversation.activeRequestID != nil {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+                Text(conversation.status)
+                    .font(.caption)
+                    .foregroundStyle(conversation.canRetry ? .orange : .secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .lineLimit(2)
+                if conversation.activeRequestID != nil {
+                    Button("Cancel", role: .cancel, action: onCancel)
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .accessibilityIdentifier("pin-conversation-cancel")
+                } else if conversation.canRetry {
+                    Button("Retry", action: onRetry)
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .accessibilityIdentifier("pin-conversation-retry")
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 10)
+
+            HStack(spacing: 8) {
+                TextField("Ask about this Pin", text: $question, axis: .vertical)
+                    .textFieldStyle(.roundedBorder)
+                    .lineLimit(1 ... 3)
+                    .focused($questionIsFocused)
+                    .submitLabel(.send)
+                    .onSubmit(send)
+                    .disabled(conversation.activeRequestID != nil)
+                    .accessibilityIdentifier("pin-conversation-input")
+                Button(action: send) {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .font(.title2)
+                }
+                .buttonStyle(.plain)
+                .disabled(trimmedQuestion.isEmpty || conversation.activeRequestID != nil)
+                .accessibilityLabel("Send follow-up")
+                .accessibilityIdentifier("pin-conversation-send")
+            }
+            .padding(14)
+        }
+        .background(.thickMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(.indigo.opacity(0.45), lineWidth: 1.5)
+        }
+        .shadow(color: .black.opacity(0.18), radius: 14, y: 7)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("pin-conversation-panel")
+    }
+
+    private var trimmedQuestion: String {
+        question.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func send() {
+        guard !trimmedQuestion.isEmpty,
+              conversation.activeRequestID == nil else { return }
+        onSend(trimmedQuestion)
+        question = ""
+        questionIsFocused = false
+    }
+}
+
+private struct PinConversationBubble: View {
+    let turn: PinConversationTurn
+
+    var body: some View {
+        HStack {
+            if turn.role == .user { Spacer(minLength: 42) }
+            VStack(alignment: .leading, spacing: 6) {
+                Text(turn.role == .user ? "You" : "TuberNotes")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Text(turn.text.isEmpty && turn.isStreaming ? "Thinking…" : turn.text)
+                    .font(.body)
+                    .textSelection(.enabled)
+                if turn.isStreaming {
+                    HStack(spacing: 6) {
+                        ProgressView()
+                            .controlSize(.mini)
+                        Text("Streaming")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .padding(10)
+            .background(
+                turn.role == .user ? Color.indigo.opacity(0.14) : Color.secondary.opacity(0.10),
+                in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+            )
+            if turn.role == .assistant { Spacer(minLength: 42) }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(turn.role == .user ? "You" : "TuberNotes")
+        .accessibilityValue(turn.text)
+    }
 }
 
 private struct InvestigationActionStrip: View {

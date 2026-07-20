@@ -63,7 +63,7 @@ End user-visible tasks with the evidence packet in `Docs/templates/EvidencePacke
 | Pin layout | `fake-pin`, `multi-pin`, and `edge-pins` | Check deterministic positions, overlap, and edge clipping |
 | App composition / root chrome | `blank-canvas`, `fake-pin`, and `multi-pin` | All three DEBUG states |
 | Coordinate / transform work | `pin-drift` before and after viewport change | Use the deterministic `Change viewport` control and the `spatial-debugging` Skill |
-| Investigation UI / agent event handling | `agent-recorded-success`, `agent-recorded-failure`, `hero-recorded`; add `agent-recorded-retrieval` when retrieval presentation changed | Recorded-path truthfulness plus the hero composition |
+| Investigation / Pin conversation UI and agent event handling | `agent-recorded-success`, `agent-recorded-failure`, `hero-recorded`; add `pin-conversation` when conversation behavior changed and `agent-recorded-retrieval` when retrieval presentation changed | Recorded-path truthfulness plus the hero and Pin-tethered conversation compositions |
 | Persistence / document store | `persistence-relaunch` plus the surface scenario of the changed document type | Fixture-driven scenarios must stay deterministic |
 | Human feel / taste / interaction quality | scenario that exposes the change | Mechanical verify first, then create a feedback thread; use the morning queue for human-only checks |
 | Non-UI / pure contract text | none required | Still avoid product/runtime vs tooling confusion |
@@ -90,9 +90,9 @@ context.
 `persistence-relaunch` joins a sweep only once WL-C's acceptance gate has
 passed; before that it is WL-C's own gate, not regression baseline.
 
-M0 verifier values are `blank-canvas`, `fake-pin`, `multi-pin`, `pdf-pages`, `blank-notebook`, `notebook-pages`, `ink-pages`, `pin-drift`, `edge-pins`, `persistence-relaunch`, and the explicitly partial `hero-recorded` stub. Default is `blank-canvas`.
+Runnable verifier values are `blank-canvas`, `fake-pin`, `multi-pin`, `pdf-pages`, `blank-notebook`, `notebook-pages`, `ink-pages`, `lasso-crop`, `pin-drift`, `edge-pins`, `persistence-relaunch`, `agent-recorded-success`, `agent-recorded-retrieval`, `agent-recorded-failure`, `hero-recorded`, and `pin-conversation`. Default is `blank-canvas`.
 
-`DevelopmentScenario.fixture` owns stable documents, page IDs, page-specific `PenFixture` values, canned `PageAnnotation` values, expected state, and integration readiness. `blank-canvas`, `fake-pin`, and `multi-pin` are rendered by the current scaffold. `pdf-pages`, `blank-notebook`, `notebook-pages`, `ink-pages`, `pin-drift`, and `edge-pins` are rendered through the coordinator App integration seam. `hero-recorded` is only a bounded offline recorded agent-to-Pin **stub**; genuine SpatialCanvas lasso capture and crop remain pending, so it is not App-wired acceptance evidence. Other selections remain **ready for coordinator App wiring** or later milestones; a verifier PASS for those states does not accept pending UI behavior.
+`DevelopmentScenario.fixture` owns stable documents, page IDs, page-specific `PenFixture` values, canned `PageAnnotation` values, expected state, and integration readiness. `blank-canvas`, `fake-pin`, and `multi-pin` are rendered by the current scaffold. The remaining runnable scenarios are rendered through the coordinator App integration seam. `hero-recorded` proves the real SpatialCanvas lasso/crop → recorded Check → Pin path; `pin-conversation` continues that retained selection through the recorded follow-up path and verifies the App-owned thread after a page-away/page-return cycle. A verifier PASS proves only the named mechanical runtime contract, not interaction taste or human-only gesture discoverability.
 
 ## Manual loop
 

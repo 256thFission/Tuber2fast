@@ -18,6 +18,7 @@ enum DevelopmentScenario: String, CaseIterable {
     case agentRecordedRetrieval = "agent-recorded-retrieval"
     case agentRecordedFailure = "agent-recorded-failure"
     case heroRecorded = "hero-recorded"
+    case pinConversation = "pin-conversation"
 
     static var current: Self {
 #if DEBUG
@@ -129,7 +130,13 @@ enum DevelopmentRuntimeEvidence {
         heroStatus: String? = nil,
         selectionArtifact: SelectionArtifact? = nil,
         renderedInkReference: String? = nil,
-        restoredFromPersistence: Bool = false
+        restoredFromPersistence: Bool = false,
+        conversationPanelOpen: Bool = false,
+        conversationID: String? = nil,
+        conversationTurnCount: Int? = nil,
+        conversationReplyStatus: String? = nil,
+        conversationPageReturnVerified: Bool = false,
+        conversationSourcePinID: UUID? = nil
     ) {
         let verificationNonce = ProcessInfo.processInfo.environment["TUBER_VERIFY_NONCE"]
         let value: [String: Any] = [
@@ -151,6 +158,12 @@ enum DevelopmentRuntimeEvidence {
             "selectionPathPointCount": (selectionArtifact?.lassoPath.count as Any?) ?? NSNull(),
             "renderedInkReference": (renderedInkReference as Any?) ?? NSNull(),
             "restoredFromPersistence": restoredFromPersistence,
+            "conversationPanelOpen": conversationPanelOpen,
+            "conversationID": (conversationID as Any?) ?? NSNull(),
+            "conversationTurnCount": (conversationTurnCount as Any?) ?? NSNull(),
+            "conversationReplyStatus": (conversationReplyStatus as Any?) ?? NSNull(),
+            "conversationPageReturnVerified": conversationPageReturnVerified,
+            "conversationSourcePinID": (conversationSourcePinID?.uuidString as Any?) ?? NSNull(),
             "recordedAt": ISO8601DateFormatter().string(from: Date())
         ]
         guard JSONSerialization.isValidJSONObject(value),
@@ -181,6 +194,7 @@ struct DevelopmentScenarioFixture {
         case selection
         case agent
         case hero
+        case conversation
         case persistence
     }
 
@@ -419,6 +433,15 @@ private enum DevelopmentScenarioFixtures {
                 document: blankDocument(),
                 penFixtures: [ID.blankPage: recordedSelectionFixture()],
                 lassoPaths: [ID.blankPage: recordedLassoPath]
+            )
+        case .pinConversation:
+            return make(
+                family: .conversation,
+                expectedState: "real hero Pin with a Pin-anchored streamed follow-up thread retained across page away and return",
+                readiness: .appWired,
+                document: notebookDocument(pageCount: 3, currentPageID: ID.notebookPage2),
+                penFixtures: [ID.notebookPage2: recordedSelectionFixture()],
+                lassoPaths: [ID.notebookPage2: recordedLassoPath]
             )
         }
     }

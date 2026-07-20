@@ -1,6 +1,6 @@
 # WL-F — Long-press Pin conversation UI (Track I)
 
-Status: not-started — starts after WL-B step 3
+Status: in-progress — recorded continuation fixture complete; Pin-anchored UI under verification
 Owner subsystem: coordinator `App` + `AgentHarness` (recorded conversation
 turns); `Pins` consumed as-is
 Depends on: WL-B step 3 (real hero loop). Independent of Track N.
@@ -82,4 +82,8 @@ content, timing/feel of the streamed reply.
 
 ## Session log
 
-- (none yet)
+- 2026-07-19 — Step 1 complete: `RecordedAgentClient` continues the hero
+  Check for the matching `recorded-hero` conversation ID, preserves selection
+  and event ordering, rejects unknown continuation IDs, and cancels mid-turn
+  without late completion. Focused strict-concurrency checks pass. Steps 2–3
+  are implemented on the work-line branch and await pinned-device evidence.
