@@ -117,6 +117,7 @@ enum DevelopmentRuntimeEvidence {
     enum SurfaceKind: String {
         case spatialCanvas = "spatial-canvas"
         case standalonePins = "standalone-pin-surface"
+        case pointBackKit = "pointback-kit"
     }
 
     static func record(
@@ -401,7 +402,7 @@ private enum DevelopmentScenarioFixtures {
         case .agentRecordedSuccess:
             return make(
                 family: .agent,
-                expectedState: "complete recorded agent event sequence ending in one proposed Pin",
+                expectedState: "PointBackKit host snapshot feeding a complete recorded agent sequence and one Pin",
                 readiness: .appWired,
                 document: blankDocument(),
                 penFixtures: [ID.blankPage: recordedSelectionFixture()],
@@ -410,7 +411,7 @@ private enum DevelopmentScenarioFixtures {
         case .agentRecordedRetrieval:
             return make(
                 family: .agent,
-                expectedState: "recorded textbook retrieval tool sequence ending in one cited Pin",
+                expectedState: "PointBackKit recorded retrieval sequence ending in one cited Pin",
                 readiness: .appWired,
                 document: blankDocument(),
                 penFixtures: [ID.blankPage: recordedSelectionFixture()],
@@ -419,7 +420,7 @@ private enum DevelopmentScenarioFixtures {
         case .agentRecordedFailure:
             return make(
                 family: .agent,
-                expectedState: "recoverable recorded provider failure with no proposed Pin",
+                expectedState: "PointBackKit recoverable recorded provider failure with no Pin",
                 readiness: .appWired,
                 document: blankDocument(),
                 penFixtures: [ID.blankPage: recordedSelectionFixture()],
@@ -428,7 +429,7 @@ private enum DevelopmentScenarioFixtures {
         case .heroRecorded:
             return make(
                 family: .hero,
-                expectedState: "real SpatialCanvas lasso crop feeding recorded Check and one proposed Pin",
+                expectedState: "PointBackKit portable lasso plus CanvasHost snapshot feeding recorded Check and one Pin",
                 readiness: .appWired,
                 document: blankDocument(),
                 penFixtures: [ID.blankPage: recordedSelectionFixture()],
@@ -437,7 +438,7 @@ private enum DevelopmentScenarioFixtures {
         case .pinConversation:
             return make(
                 family: .conversation,
-                expectedState: "real hero Pin with a Pin-anchored streamed follow-up thread retained across page away and return",
+                expectedState: "PointBackKit hero Pin with tethered streamed conversation retained across page away and return",
                 readiness: .appWired,
                 document: notebookDocument(pageCount: 3, currentPageID: ID.notebookPage2),
                 penFixtures: [ID.notebookPage2: recordedSelectionFixture()],

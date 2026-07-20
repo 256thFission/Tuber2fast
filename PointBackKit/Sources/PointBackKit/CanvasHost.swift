@@ -48,6 +48,7 @@ public struct PointBackSnapshot: Equatable, Sendable {
     public let conversationTurnCount: Int?
     public let conversationReplyStatus: String?
     public let conversationSourcePinID: UUID?
+    public let archive: PointBackArchive
 
     public init(
         status: String,
@@ -57,7 +58,8 @@ public struct PointBackSnapshot: Equatable, Sendable {
         conversationID: String?,
         conversationTurnCount: Int?,
         conversationReplyStatus: String?,
-        conversationSourcePinID: UUID?
+        conversationSourcePinID: UUID?,
+        archive: PointBackArchive
     ) {
         self.status = status
         self.selection = selection
@@ -67,6 +69,7 @@ public struct PointBackSnapshot: Equatable, Sendable {
         self.conversationTurnCount = conversationTurnCount
         self.conversationReplyStatus = conversationReplyStatus
         self.conversationSourcePinID = conversationSourcePinID
+        self.archive = archive
     }
 }
 
@@ -74,14 +77,17 @@ public struct PointBackConfiguration: Equatable, Sendable {
     public var seededLassoPath: [PagePoint]?
     public var automaticIntent: InvestigationIntent?
     public var automaticFollowUpQuestion: String?
+    public var restoredArchive: PointBackArchive?
 
     public init(
         seededLassoPath: [PagePoint]? = nil,
         automaticIntent: InvestigationIntent? = nil,
-        automaticFollowUpQuestion: String? = nil
+        automaticFollowUpQuestion: String? = nil,
+        restoredArchive: PointBackArchive? = nil
     ) {
         self.seededLassoPath = seededLassoPath
         self.automaticIntent = automaticIntent
         self.automaticFollowUpQuestion = automaticFollowUpQuestion
+        self.restoredArchive = restoredArchive
     }
 }

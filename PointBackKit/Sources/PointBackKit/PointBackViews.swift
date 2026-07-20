@@ -64,6 +64,9 @@ private struct PointBackModifier: ViewModifier {
             }
         }
         .task {
+            if let archive = configuration.restoredArchive {
+                controller.restore(archive)
+            }
             guard !didSeed, let path = configuration.seededLassoPath else { return }
             didSeed = true
             try? await Task.sleep(for: .milliseconds(300))

@@ -118,3 +118,11 @@ native capture (reference host's SpatialCanvas) may inject a ready
   Explain/Check/Ask, recorded and live clients, Pins, conversation state, and
   the Pin-tethered sidebar. Five focused package tests pass. Reference-host
   conformance, scenario rewrites, iPad evidence, and human re-test remain.
+- 2026-07-20 — Reference integration now routes every `agent-recorded-*`,
+  `hero-recorded`, and `pin-conversation` fixture through the package modifier.
+  Native SpatialCanvas lasso is disabled on those surfaces. The adapter's crop
+  was mechanically inspected and contains dot-grid background plus PencilKit
+  ink. Added a stranger-oriented `PointBackKit/README.md` and a codable archive
+  seam for host-owned Pin/thread persistence. Scenario contracts now emit
+  `surfaceKind=pointback-kit`. Final post-contract device rerun and unaided
+  human discoverability/screenshot review remain.

@@ -33,12 +33,12 @@ M0 scenarios:
   lasso-crop      PDF + ink Magic Lasso selection with retained PNG crop
   pin-drift       Stable Pin before/after deterministic viewport transition
   edge-pins       Four Pins near the page edges
-  agent-recorded-success    Recorded success sequence ending in one Pin
-  agent-recorded-retrieval  Recorded retrieval sequence ending in one cited Pin
-  agent-recorded-failure    Recorded recoverable failure with no Pin
+  agent-recorded-success    PointBackKit snapshot and recorded success ending in one Pin
+  agent-recorded-retrieval  PointBackKit recorded retrieval ending in one cited Pin
+  agent-recorded-failure    PointBackKit recorded recoverable failure with no Pin
   persistence-relaunch  Persisted page, ink reference, and Pin IDs survive relaunch
-  hero-recorded   Real SpatialCanvas lasso/crop through recorded Check to one Pin
-  pin-conversation  Pin-anchored streamed follow-up retained across page return
+  hero-recorded   PointBackKit portable lasso/snapshot through recorded Check to one Pin
+  pin-conversation  PointBackKit tethered streamed follow-up retained across page return
 
 Environment:
   SKIP_BUILD=1                Reuse an existing DerivedData build
@@ -176,11 +176,11 @@ scenario_metadata() {
             ;;
         agent-recorded-success)
             FAMILY="agent"
-            EXPECTED_STATE="complete recorded agent event sequence ending in one proposed Pin"
+            EXPECTED_STATE="PointBackKit host snapshot feeding a complete recorded agent sequence and one Pin"
             INTEGRATION_READINESS="app-wired"
             EXPECTED_PEN_FIXTURE_COUNT=1
             REQUIRES_RUNTIME_EVIDENCE=true
-            EXPECTED_RUNTIME_SURFACE="spatial-canvas"
+            EXPECTED_RUNTIME_SURFACE="pointback-kit"
             EXPECTED_RUNTIME_PEN_FIXTURE="recorded-selection-ink"
             EXPECTED_RUNTIME_ANNOTATION_IDS="70000000-0000-0000-0000-000000000001"
             EXPECTED_RUNTIME_HERO_STATUS="Proposed Pin ready"
@@ -188,11 +188,11 @@ scenario_metadata() {
             ;;
         agent-recorded-retrieval)
             FAMILY="agent"
-            EXPECTED_STATE="recorded textbook retrieval tool sequence ending in one cited Pin"
+            EXPECTED_STATE="PointBackKit recorded retrieval sequence ending in one cited Pin"
             INTEGRATION_READINESS="app-wired"
             EXPECTED_PEN_FIXTURE_COUNT=1
             REQUIRES_RUNTIME_EVIDENCE=true
-            EXPECTED_RUNTIME_SURFACE="spatial-canvas"
+            EXPECTED_RUNTIME_SURFACE="pointback-kit"
             EXPECTED_RUNTIME_PEN_FIXTURE="recorded-selection-ink"
             EXPECTED_RUNTIME_ANNOTATION_IDS="70000000-0000-0000-0000-000000000003"
             EXPECTED_RUNTIME_HERO_STATUS="Proposed Pin ready"
@@ -200,11 +200,11 @@ scenario_metadata() {
             ;;
         agent-recorded-failure)
             FAMILY="agent"
-            EXPECTED_STATE="recoverable recorded provider failure with no proposed Pin"
+            EXPECTED_STATE="PointBackKit recoverable recorded provider failure with no Pin"
             INTEGRATION_READINESS="app-wired"
             EXPECTED_PEN_FIXTURE_COUNT=1
             REQUIRES_RUNTIME_EVIDENCE=true
-            EXPECTED_RUNTIME_SURFACE="spatial-canvas"
+            EXPECTED_RUNTIME_SURFACE="pointback-kit"
             EXPECTED_RUNTIME_PEN_FIXTURE="recorded-selection-ink"
             EXPECTED_RUNTIME_HERO_STATUS="The recorded provider is temporarily unavailable."
             REQUIRES_SELECTION_CROP=true
@@ -224,11 +224,11 @@ scenario_metadata() {
             ;;
         hero-recorded)
             FAMILY="hero"
-            EXPECTED_STATE="real SpatialCanvas lasso crop feeding recorded Check and one proposed Pin"
+            EXPECTED_STATE="PointBackKit portable lasso plus CanvasHost snapshot feeding recorded Check and one Pin"
             INTEGRATION_READINESS="app-wired"
             EXPECTED_PEN_FIXTURE_COUNT=1
             REQUIRES_RUNTIME_EVIDENCE=true
-            EXPECTED_RUNTIME_SURFACE="spatial-canvas"
+            EXPECTED_RUNTIME_SURFACE="pointback-kit"
             EXPECTED_RUNTIME_PEN_FIXTURE="recorded-selection-ink"
             EXPECTED_RUNTIME_ANNOTATION_IDS="70000000-0000-0000-0000-000000000001"
             EXPECTED_RUNTIME_HERO_STATUS="Proposed Pin ready"
@@ -236,14 +236,14 @@ scenario_metadata() {
             ;;
         pin-conversation)
             FAMILY="conversation"
-            EXPECTED_STATE="real hero Pin with a Pin-anchored streamed follow-up thread retained across page away and return"
+            EXPECTED_STATE="PointBackKit hero Pin with tethered streamed conversation retained across page away and return"
             INTEGRATION_READINESS="app-wired"
             EXPECTED_PAGE_COUNT=3
             EXPECTED_PAGE_INDEX=1
             EXPECTED_PAGE_ID="30000000-0000-0000-0000-000000000012"
             EXPECTED_PEN_FIXTURE_COUNT=1
             REQUIRES_RUNTIME_EVIDENCE=true
-            EXPECTED_RUNTIME_SURFACE="spatial-canvas"
+            EXPECTED_RUNTIME_SURFACE="pointback-kit"
             EXPECTED_RUNTIME_PEN_FIXTURE="recorded-selection-ink"
             EXPECTED_RUNTIME_ANNOTATION_IDS="70000000-0000-0000-0000-000000000001,70000000-0000-0000-0000-000000000006"
             EXPECTED_RUNTIME_HERO_STATUS="Proposed Pin ready"

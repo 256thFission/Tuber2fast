@@ -173,7 +173,7 @@ struct PointBackReferenceExperience: View {
         }
         DevelopmentRuntimeEvidence.record(
             scenario: scenario,
-            surfaceKind: .spatialCanvas,
+            surfaceKind: .pointBackKit,
             pageCount: document.pages.count,
             currentPageID: currentPageID,
             currentPageIndex: currentIndex,

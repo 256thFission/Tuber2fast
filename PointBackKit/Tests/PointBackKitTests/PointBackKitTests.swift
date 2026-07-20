@@ -88,6 +88,8 @@ final class PointBackControllerTests: XCTestCase {
         try await eventually { controller.snapshot.conversationReplyStatus == "Follow-up reply ready" }
         XCTAssertEqual(controller.snapshot.conversationID, "recorded-hero")
         XCTAssertEqual(controller.snapshot.conversationTurnCount, 3)
+        XCTAssertEqual(controller.snapshot.archive.pins.count, 2)
+        XCTAssertEqual(controller.snapshot.archive.conversations.count, 1)
     }
 
     private func eventually(

@@ -66,8 +66,22 @@ public final class PointBackController: ObservableObject {
             conversationID: conversation?.conversationID,
             conversationTurnCount: conversation?.turns.count,
             conversationReplyStatus: presentedConversationID.flatMap { conversationStatus[$0] },
-            conversationSourcePinID: conversation?.sourcePinID
+            conversationSourcePinID: conversation?.sourcePinID,
+            archive: PointBackArchive(
+                pins: pins,
+                conversations: conversations.values.sorted { $0.id.uuidString < $1.id.uuidString }
+            )
         )
+    }
+
+    public func restore(_ archive: PointBackArchive) {
+        guard pins.isEmpty, conversations.isEmpty else { return }
+        pins = archive.pins
+        conversations = Dictionary(uniqueKeysWithValues: archive.conversations.map { ($0.id, $0) })
+        for conversation in archive.conversations {
+            conversationStatus[conversation.id] = "Ask a follow-up about this Pin"
+        }
+        publishState()
     }
 
     public func receiveWindowPath(_ windowPoints: [CGPoint]) async {
@@ -170,10 +184,30 @@ public final class PointBackController: ObservableObject {
             )
             liveSelectionsByThread[pin.threadID] = selection
             conversationStatus[pin.threadID] = "Ask a follow-up about this Pin"
+        } else if liveSelectionsByThread[pin.threadID] == nil,
+                  let record = conversations[pin.threadID]?.selection {
+            rehydrateSelection(record, threadID: pin.threadID)
         }
         presentedConversationID = pin.threadID
         expandedPinID = nil
         publish(.conversationOpened(pinID: pin.id))
+    }
+
+    private func rehydrateSelection(_ record: SelectionArtifactRecord, threadID: UUID) {
+        Task { @MainActor [weak self] in
+            guard let self,
+                  let crop = await host.snapshot(record.pageBounds, on: record.pageID),
+                  crop.isValid else { return }
+            liveSelectionsByThread[threadID] = SelectionArtifact(
+                documentID: record.documentID,
+                pageID: record.pageID,
+                pageIndex: record.pageIndex,
+                lassoPath: record.lassoPath,
+                pageBounds: record.pageBounds,
+                crop: crop,
+                context: record.context
+            )
+        }
     }
 
     public func dismissConversation() {

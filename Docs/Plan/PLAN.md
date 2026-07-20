@@ -238,3 +238,12 @@ Append one line per meaningful state change: date, line, what changed.
   their view hierarchy. PointBackKit now builds standalone with public spatial,
   agent, Pin, conversation, recorded-client, live-client, and overlay APIs;
   focused package tests are green. Reference-host integration remains open.
+- 2026-07-20 — WL-G reference-host integration landed. The recorded hero,
+  retrieval, failure, and Pin-conversation surfaces now mount PointBackKit over
+  SpatialCanvas with native lasso capture disabled; `ReferenceCanvasHost`
+  supplies window-space projection, inverse hit testing, change events, and
+  composed background+ink snapshots. CONTRACT: `PointBackArchive` and
+  `PointBackConfiguration.restoredArchive` define the host persistence seam for
+  Pins and threads, and verifier `surfaceKind=pointback-kit` now distinguishes
+  package execution from the legacy spatial surface. WL-H implementation and
+  the WL-F visible Follow Up affordance are therefore folded into WL-G.

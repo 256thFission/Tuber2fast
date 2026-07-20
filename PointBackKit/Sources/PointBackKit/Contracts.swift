@@ -373,6 +373,17 @@ public struct PinConversation: Identifiable, Codable, Equatable, Sendable {
     }
 }
 
+/// Host-persistable PointBack state. The host decides storage lifetime and namespace.
+public struct PointBackArchive: Codable, Equatable, Sendable {
+    public var pins: [Pin]
+    public var conversations: [PinConversation]
+
+    public init(pins: [Pin] = [], conversations: [PinConversation] = []) {
+        self.pins = pins
+        self.conversations = conversations
+    }
+}
+
 /// Codable host-persistence form. Image bytes stay host-owned and are restored separately.
 public struct SelectionArtifactRecord: Codable, Equatable, Sendable {
     public let documentID: UUID

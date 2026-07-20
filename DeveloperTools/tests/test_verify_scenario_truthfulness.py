@@ -55,7 +55,7 @@ class VerifyScenarioTruthfulnessTests(unittest.TestCase):
         args = [
             str(evidence_path), "edge-pins", "standalone-pin-surface", "1", "0",
             "10000000-0000-0000-0000-000000000002", "", "pin-a,pin-b", "",
-            "", "false", "fresh-launch-nonce", "false",
+            "", "false", "fresh-launch-nonce", "false", "", "", "", "", "", "",
         ]
         accepted = subprocess.run(
             ["python3", "-c", python_source, *args], capture_output=True, text=True
