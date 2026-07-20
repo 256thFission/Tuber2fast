@@ -136,6 +136,10 @@ struct PDFExportResult {
 
 /// The sole PDF-emission seam for note ink. Every stroke is compressed and
 /// independently validated immediately before its vector path is written.
+///
+/// Privacy contract: PDF export is intentionally drawing-only. Pin annotations,
+/// conversation layers, citations, and their text must never be accepted here or
+/// emitted as PDF annotations, metadata, or page content.
 enum NotePDFExporter {
     /// A sub-pixel default at standard PDF scale. Callers can choose a larger
     /// tolerance for smaller files, but validation always enforces that value.

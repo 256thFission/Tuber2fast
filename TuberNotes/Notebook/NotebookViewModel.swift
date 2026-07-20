@@ -4,7 +4,8 @@ import PencilKit
 import SwiftUI
 import UIKit
 
-/// One assistant observation shown in the sidebar.
+/// A recent agent answer shown in the layer-side panel. The durable copy is the
+/// Pin appended to the active Agentic Layer.
 struct AgentObservation: Identifiable {
     let id = UUID()
     let summary: String
@@ -26,7 +27,7 @@ final class NotebookViewModel: ObservableObject {
     @Published var markerWidth: CGFloat = WritingTool.marker.defaultWidth
     @Published var eraserWidth: CGFloat = WritingTool.eraser.defaultWidth
 
-    // Lasso selection for the assistant
+    // Lasso selection and stroke movement
     @Published var isLassoActive = false
     @Published var lassoRect: CGRect?   // normalized (0...1) page-space rect
 
@@ -44,12 +45,12 @@ final class NotebookViewModel: ObservableObject {
     // Layers (agentic conversation layers + per-page drawing layers)
     @Published var isAgenticLayersActive = false
     @Published var selectedLayerID: UUID?        // selected agentic layer
-    @Published var currentDrawingLayerID: UUID?  // active drawing layer on the current page
+    @Published var currentDrawingLayerID: UUID   // active drawing layer on the current page
 
     // Export
     @Published var exportError: String?
 
-    // Assistant
+    // Agentic Layer questions
     @Published var observations: [AgentObservation] = []
     @Published var isAnalyzing = false
     @Published var agentError: String?
@@ -63,7 +64,7 @@ final class NotebookViewModel: ObservableObject {
         self.lastTemplate = notebook.pages.first?.template ?? .linedMedium
         self.settings = notebook.settings ?? NotebookSettings()
         self.selectedLayerID = notebook.agenticLayers.first?.id
-        self.currentDrawingLayerID = notebook.pages.first?.drawingLayers.first?.id
+        self.currentDrawingLayerID = notebook.pages[0].drawingLayers[0].id
     }
 
     // MARK: Derived
@@ -75,6 +76,24 @@ final class NotebookViewModel: ObservableObject {
     var canGoBack: Bool { currentIndex > 0 }
     var canGoForward: Bool { currentIndex < notebook.pages.count - 1 }
     var pageLabel: String { "\(currentIndex + 1) / \(pageCount)" }
+    var currentDrawingLayer: DrawingLayer {
+        currentPage.drawingLayers.first { $0.id == currentDrawingLayerID }
+            ?? currentPage.drawingLayers[0]
+    }
+    var backgroundDrawingData: Data {
+        let strokes = currentPage.drawingLayers
+            .filter { $0.isVisible && $0.id != currentDrawingLayerID }
+            .flatMap { $0.drawing.strokes }
+        return PKDrawing(strokes: strokes).dataRepresentation()
+    }
+    var activeAgenticPins: [Pin] {
+        guard isAgenticLayersActive,
+              let layer = notebook.agenticLayers.first(where: {
+                  $0.id == selectedLayerID && $0.isVisible
+              })
+        else { return [] }
+        return layer.conversations.filter { $0.pageID == currentPageID }
+    }
 
     // MARK: Tool state
 
@@ -92,11 +111,15 @@ final class NotebookViewModel: ObservableObject {
         tool = newTool
         isLassoActive = false
         isArrangingImages = false
+        isAgenticLayersActive = false
     }
 
     func toggleLasso() {
         isLassoActive.toggle()
-        if isLassoActive { isArrangingImages = false }
+        if isLassoActive {
+            isArrangingImages = false
+            isAgenticLayersActive = false
+        }
     }
     func clearLasso() { lassoRect = nil }
 
@@ -209,7 +232,11 @@ final class NotebookViewModel: ObservableObject {
     }
 
     func selectAgenticLayer(_ id: UUID) {
+        guard notebook.agenticLayers.contains(where: { $0.id == id && $0.isVisible }) else { return }
         selectedLayerID = id
+        isAgenticLayersActive = true
+        isLassoActive = false
+        isArrangingImages = false
     }
 
     func addAgenticLayer(named rawName: String) {
@@ -222,17 +249,26 @@ final class NotebookViewModel: ObservableObject {
         )
         notebook.agenticLayers.append(layer)
         selectedLayerID = layer.id
+        isAgenticLayersActive = true
         persistNow()
     }
 
     func toggleAgenticLayerVisibility(_ id: UUID) {
         guard let idx = notebook.agenticLayers.firstIndex(where: { $0.id == id }) else { return }
         notebook.agenticLayers[idx].isVisible.toggle()
+        if !notebook.agenticLayers[idx].isVisible, selectedLayerID == id {
+            selectedLayerID = notebook.agenticLayers.first(where: \.isVisible)?.id
+            if selectedLayerID == nil {
+                isAgenticLayersActive = false
+            }
+        }
         persistNow()
     }
 
     func selectDrawingLayer(_ id: UUID) {
+        guard currentPage.drawingLayers.contains(where: { $0.id == id }) else { return }
         currentDrawingLayerID = id
+        isAgenticLayersActive = false
     }
 
     func addDrawingLayer(named rawName: String) {
@@ -242,6 +278,7 @@ final class NotebookViewModel: ObservableObject {
         let layer = DrawingLayer(name: name.isEmpty ? "Drawing \(count + 1)" : name)
         notebook.pages[currentIndex].drawingLayers.append(layer)
         currentDrawingLayerID = layer.id
+        isAgenticLayersActive = false
         persistNow()
     }
 
@@ -250,6 +287,13 @@ final class NotebookViewModel: ObservableObject {
               let idx = notebook.pages[currentIndex].drawingLayers.firstIndex(where: { $0.id == id })
         else { return }
         notebook.pages[currentIndex].drawingLayers[idx].isVisible.toggle()
+        if !notebook.pages[currentIndex].drawingLayers[idx].isVisible, currentDrawingLayerID == id {
+            if let replacement = notebook.pages[currentIndex].drawingLayers.first(where: \.isVisible) {
+                currentDrawingLayerID = replacement.id
+            } else {
+                notebook.pages[currentIndex].drawingLayers[idx].isVisible = true
+            }
+        }
         persistNow()
     }
 
@@ -301,10 +345,41 @@ final class NotebookViewModel: ObservableObject {
     // MARK: Drawing
 
     func updateCurrentDrawing(_ data: Data) {
-        guard notebook.pages.indices.contains(currentIndex) else { return }
-        guard notebook.pages[currentIndex].drawingData != data else { return }
-        notebook.pages[currentIndex].drawingData = data
+        guard notebook.pages.indices.contains(currentIndex),
+              let layerIndex = notebook.pages[currentIndex].drawingLayers.firstIndex(where: {
+                  $0.id == currentDrawingLayerID
+              })
+        else { return }
+        guard notebook.pages[currentIndex].drawingLayers[layerIndex].drawingData != data else { return }
+        notebook.pages[currentIndex].drawingLayers[layerIndex].drawingData = data
         scheduleSave()
+    }
+
+    /// Commits a raster refinement into the page and removes source strokes
+    /// intersecting the refined region. Refinement is document state, never an
+    /// Agentic Layer or Pin.
+    func applyDrawingRefinement(imageData: Data, normalizedRect: CGRect) {
+        guard notebook.pages.indices.contains(currentIndex),
+              let layerIndex = notebook.pages[currentIndex].drawingLayers.firstIndex(where: {
+                  $0.id == currentDrawingLayerID
+              })
+        else { return }
+
+        let pageSize = NotebookPageLayout.size
+        let pageRect = CGRect(
+            x: normalizedRect.minX * pageSize.width,
+            y: normalizedRect.minY * pageSize.height,
+            width: normalizedRect.width * pageSize.width,
+            height: normalizedRect.height * pageSize.height
+        )
+        var drawing = notebook.pages[currentIndex].drawingLayers[layerIndex].drawing
+        drawing.strokes = drawing.strokes.filter { !$0.renderBounds.intersects(pageRect) }
+        notebook.pages[currentIndex].drawingLayers[layerIndex].drawingData = drawing.dataRepresentation()
+        notebook.pages[currentIndex].images.append(
+            PlacedImage(imageData: imageData, rect: normalizedRect)
+        )
+        lassoRect = nil
+        persistNow()
     }
 
     // MARK: Pages
@@ -313,6 +388,7 @@ final class NotebookViewModel: ObservableObject {
         let insertAt = min(currentIndex + 1, notebook.pages.count)
         notebook.pages.insert(NotebookPage(template: lastTemplate), at: insertAt)
         currentIndex = insertAt
+        selectFirstDrawingLayerForCurrentPage()
         resetZoom()
         persistNow()
     }
@@ -321,6 +397,7 @@ final class NotebookViewModel: ObservableObject {
         guard notebook.pages.count > 1 else { return }
         notebook.pages.remove(at: currentIndex)
         currentIndex = min(currentIndex, notebook.pages.count - 1)
+        selectFirstDrawingLayerForCurrentPage()
         resetZoom()
         persistNow()
     }
@@ -336,6 +413,7 @@ final class NotebookViewModel: ObservableObject {
             currentIndex = min(index, notebook.pages.count - 1)
             resetZoom()
         }
+        selectFirstDrawingLayerForCurrentPage()
         persistNow()
     }
 
@@ -356,81 +434,173 @@ final class NotebookViewModel: ObservableObject {
     func go(to index: Int) {
         guard notebook.pages.indices.contains(index) else { return }
         currentIndex = index
+        selectFirstDrawingLayerForCurrentPage()
         resetZoom()
         persistNow()
     }
 
-    func goForward() { guard canGoForward else { return }; currentIndex += 1; resetZoom(); persistNow() }
-    func goBack()    { guard canGoBack else { return }; currentIndex -= 1; resetZoom(); persistNow() }
+    func goForward() {
+        guard canGoForward else { return }
+        currentIndex += 1
+        selectFirstDrawingLayerForCurrentPage()
+        resetZoom()
+        persistNow()
+    }
 
-    // MARK: Assistant
+    func goBack() {
+        guard canGoBack else { return }
+        currentIndex -= 1
+        selectFirstDrawingLayerForCurrentPage()
+        resetZoom()
+        persistNow()
+    }
 
-    /// Render the current page (white paper + ink) as JPEG for the vision model.
-    /// If a lasso region is selected, crop to it so the model focuses there.
-    func makeSelectionSnapshot() -> SpatialSelection? {
+    private func selectFirstDrawingLayerForCurrentPage() {
+        currentDrawingLayerID = currentPage.drawingLayers[0].id
+        lassoRect = nil
+    }
+
+    // MARK: Agentic Layer questions
+
+    /// Render the current page as a canonical selection artifact. A lasso limits
+    /// the crop; without one, the complete page is used.
+    func makeSelectionSnapshot() -> SelectionArtifact? {
         let drawing = currentPage.drawing
         let images = currentPage.images
         guard !drawing.bounds.isNull || !images.isEmpty else { return nil }
 
         let pageRect = CGRect(origin: .zero, size: NotebookPageLayout.size)
         let format = UIGraphicsImageRendererFormat.default()
-        format.scale = 1   // points == pixels, so cropping is straightforward
+        format.scale = 1
         let renderer = UIGraphicsImageRenderer(size: pageRect.size, format: format)
-        let full = renderer.image { ctx in
+        let full = renderer.image { context in
             UIColor.white.setFill()
-            ctx.fill(pageRect)
+            context.fill(pageRect)
             for placed in images {
-                guard let ui = placed.image else { continue }
-                let r = CGRect(x: placed.rect.minX * pageRect.width, y: placed.rect.minY * pageRect.height,
-                               width: placed.rect.width * pageRect.width, height: placed.rect.height * pageRect.height)
-                ui.draw(in: r)
+                guard let image = placed.image else { continue }
+                let rect = CGRect(
+                    x: placed.rect.minX * pageRect.width,
+                    y: placed.rect.minY * pageRect.height,
+                    width: placed.rect.width * pageRect.width,
+                    height: placed.rect.height * pageRect.height
+                )
+                image.draw(in: rect)
             }
             drawing.image(from: pageRect, scale: 1).draw(in: pageRect)
         }
 
-        var normalized = CGRect(x: 0, y: 0, width: 1, height: 1)
+        var normalized = lassoRect ?? CGRect(x: 0, y: 0, width: 1, height: 1)
+        normalized = normalized.intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
         var output = full
-
-        if let lasso = lassoRect {
-            let denorm = CGRect(
-                x: lasso.minX * pageRect.width,
-                y: lasso.minY * pageRect.height,
-                width: lasso.width * pageRect.width,
-                height: lasso.height * pageRect.height
+        if lassoRect != nil {
+            let cropRect = CGRect(
+                x: normalized.minX * pageRect.width,
+                y: normalized.minY * pageRect.height,
+                width: normalized.width * pageRect.width,
+                height: normalized.height * pageRect.height
             ).insetBy(dx: -14, dy: -14).intersection(pageRect).integral
-
-            if denorm.width > 10, denorm.height > 10, let cg = full.cgImage?.cropping(to: denorm) {
-                output = UIImage(cgImage: cg)
-                normalized = lasso
+            if cropRect.width > 10,
+               cropRect.height > 10,
+               let image = full.cgImage?.cropping(to: cropRect) {
+                output = UIImage(cgImage: image)
             }
         }
 
         guard let data = output.jpegData(compressionQuality: 0.8) else { return nil }
-        return SpatialSelection(pageID: currentPageID, normalizedBounds: normalized, imageData: data)
+        let pageBounds = PageNormalizedRect(
+            x: Double(normalized.minX),
+            y: Double(normalized.minY),
+            width: Double(normalized.width),
+            height: Double(normalized.height)
+        )
+        let corners = [
+            PageNormalizedPoint(x: Double(normalized.minX), y: Double(normalized.minY)),
+            PageNormalizedPoint(x: Double(normalized.maxX), y: Double(normalized.minY)),
+            PageNormalizedPoint(x: Double(normalized.maxX), y: Double(normalized.maxY)),
+            PageNormalizedPoint(x: Double(normalized.minX), y: Double(normalized.maxY)),
+        ]
+        return SelectionArtifact(
+            id: UUID(),
+            documentID: notebook.id,
+            pageID: currentPageID,
+            pageIndex: currentIndex,
+            lassoPath: corners,
+            pageBounds: pageBounds,
+            crop: SelectionCrop(
+                imageData: data,
+                mediaType: "image/jpeg",
+                pixelWidth: Int(output.size.width),
+                pixelHeight: Int(output.size.height),
+                pageBounds: pageBounds
+            ),
+            context: SelectionContext(
+                documentTitle: notebook.title,
+                sourceDocumentID: notebook.id,
+                pageNumber: currentIndex + 1,
+                nearbyText: nil
+            )
+        )
     }
 
     func analyzeCurrentPage(apiKey: String, question: String? = nil) {
         guard !isAnalyzing else { return }
-        guard let selection = makeSelectionSnapshot() else {
-            agentError = "Draw or circle something first, then analyze."
+        guard isAgenticLayersActive,
+              let layerIndex = notebook.agenticLayers.firstIndex(where: {
+                  $0.id == selectedLayerID && $0.isVisible
+              })
+        else {
+            agentError = "Choose a visible Agentic Layer first."
             return
         }
-        let thumbnail = UIImage(data: selection.imageData)
+        guard let selection = makeSelectionSnapshot() else {
+            agentError = "Draw or add something first, then ask about it."
+            return
+        }
+
+        let thumbnail = UIImage(data: selection.crop.imageData)
         isAnalyzing = true
         agentError = nil
         let client = AgentClientFactory.make(apiKey: apiKey)
 
         Task { [weak self] in
+            guard let self else { return }
             do {
                 let insight = try await client.analyze(selection, question: question)
-                self?.observations.insert(
-                    AgentObservation(summary: insight.summary, items: insight.items, thumbnail: thumbnail, date: Date()),
+                observations.insert(
+                    AgentObservation(
+                        summary: insight.summary,
+                        items: insight.items,
+                        thumbnail: thumbnail,
+                        date: Date()
+                    ),
                     at: 0
                 )
-                self?.isAnalyzing = false
+                let target = PageNormalizedPoint(
+                    x: selection.pageBounds.x + selection.pageBounds.width / 2,
+                    y: selection.pageBounds.y + selection.pageBounds.height / 2
+                )
+                let body = ([insight.summary] + insight.items.map { "• \($0)" })
+                    .joined(separator: "\n")
+                notebook.agenticLayers[layerIndex].conversations.append(
+                    PageAnnotation(
+                        id: UUID(),
+                        pageID: selection.pageID,
+                        threadID: UUID(),
+                        target: target,
+                        targetRegion: selection.pageBounds,
+                        kind: .explanation,
+                        teaser: question?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+                            ?? "Agent insight",
+                        body: body,
+                        citations: [],
+                        status: .complete
+                    )
+                )
+                isAnalyzing = false
+                persistNow()
             } catch {
-                self?.agentError = error.localizedDescription
-                self?.isAnalyzing = false
+                agentError = error.localizedDescription
+                isAnalyzing = false
             }
         }
     }
@@ -460,4 +630,8 @@ extension Array {
     subscript(safe index: Int) -> Element? {
         indices.contains(index) ? self[index] : nil
     }
+}
+
+private extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
 }

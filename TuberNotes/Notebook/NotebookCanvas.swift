@@ -6,11 +6,11 @@ import UIKit
 /// PencilKit canvas, and the lasso overlay share one zooming content view.
 ///
 /// The lasso works like a traditional lasso: loop around strokes to select them,
-/// then drag inside to move them. The selection's region is also what the
-/// assistant analyzes when you tap "Analyze selection".
+/// then drag inside to move them.
 struct NotebookCanvas: UIViewRepresentable {
     let pageID: UUID
     let drawingData: Data
+    let backgroundDrawingData: Data
     let tool: WritingTool
     let color: UIColor
     let width: CGFloat
@@ -23,12 +23,14 @@ struct NotebookCanvas: UIViewRepresentable {
     let images: [PlacedImage]
     let isArrangingImages: Bool
     let selectedImageID: UUID?
+    let isPageLocked: Bool
     var onChange: (Data) -> Void
     var onLongPress: () -> Void
     var onZoomChanged: (CGFloat) -> Void
     var onLassoChanged: (CGRect?) -> Void
     var onImagesChanged: ([PlacedImage]) -> Void
     var onSelectImage: (UUID?) -> Void
+    var onPageViewportChange: (CGRect) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -38,6 +40,8 @@ struct NotebookCanvas: UIViewRepresentable {
         view.canvasView.delegate = context.coordinator
         view.canvasView.tool = tool.pkTool(color: color, width: width)
         view.paperView.template = template
+        view.setBackgroundDrawingData(backgroundDrawingData)
+        view.onPageViewportChange = onPageViewportChange
 
         let c = context.coordinator
         view.lassoView.onLoopComplete = { [weak c, weak view] points in c?.completeLasso(points, view) }
@@ -65,6 +69,7 @@ struct NotebookCanvas: UIViewRepresentable {
         applyMode(to: view)
         context.coordinator.load(drawingData, pageID: pageID, into: view)
         view.scrollView.setZoomScale(zoomScale, animated: false)
+        DispatchQueue.main.async { view.reportPageViewport() }
         return view
     }
 
@@ -76,12 +81,15 @@ struct NotebookCanvas: UIViewRepresentable {
             view.paperView.setNeedsDisplay()
         }
         view.imageLayer.setImages(images)
+        view.setBackgroundDrawingData(backgroundDrawingData)
+        view.onPageViewportChange = onPageViewportChange
         applyMode(to: view)
         if !isLassoActive || lassoRect == nil {
             view.lassoView.clear()
             context.coordinator.clearLassoSelection()
         }
-        if context.coordinator.loadedPageID != pageID {
+        if context.coordinator.loadedPageID != pageID
+            || context.coordinator.loadedDrawingData != drawingData {
             context.coordinator.load(drawingData, pageID: pageID, into: view)
         }
         if abs(view.scrollView.zoomScale - zoomScale) > 0.001 {
@@ -101,7 +109,8 @@ struct NotebookCanvas: UIViewRepresentable {
 
         let interacting = isLassoActive || isArrangingImages
         view.canvasView.isUserInteractionEnabled = !interacting
-        view.scrollView.isScrollEnabled = !interacting
+        view.scrollView.isScrollEnabled = !interacting && !isPageLocked
+        view.scrollView.pinchGestureRecognizer?.isEnabled = !interacting && !isPageLocked
 
         view.straightenRecognizer.acceptsFinger = fingerDrawing
         view.straightenRecognizer.isEnabled = snapStraight && !interacting && tool != .eraser
@@ -111,6 +120,7 @@ struct NotebookCanvas: UIViewRepresentable {
         var parent: NotebookCanvas
         weak var view: ZoomablePageView?
         private(set) var loadedPageID: UUID?
+        private(set) var loadedDrawingData = Data()
         private var isLoading = false
         private var isProgrammatic = false
         private var lassoSelection: [Int] = []
@@ -124,13 +134,16 @@ struct NotebookCanvas: UIViewRepresentable {
             isLoading = true
             view.canvasView.drawing = (try? PKDrawing(data: data)) ?? PKDrawing()
             loadedPageID = pageID
+            loadedDrawingData = data
             lassoSelection = []
             DispatchQueue.main.async { self.isLoading = false }
         }
 
         func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
             guard !isLoading, !isProgrammatic else { return }
-            parent.onChange(canvasView.drawing.dataRepresentation())
+            let data = canvasView.drawing.dataRepresentation()
+            loadedDrawingData = data
+            parent.onChange(data)
         }
 
         // MARK: Lasso (select + move)
@@ -269,7 +282,11 @@ struct NotebookCanvas: UIViewRepresentable {
         // MARK: Zoom
 
         func viewForZooming(in scrollView: UIScrollView) -> UIView? { view?.contentView }
-        func scrollViewDidZoom(_ scrollView: UIScrollView) { view?.recenter() }
+        func scrollViewDidScroll(_ scrollView: UIScrollView) { view?.reportPageViewport() }
+        func scrollViewDidZoom(_ scrollView: UIScrollView) {
+            view?.recenter()
+            view?.reportPageViewport()
+        }
         func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) {
             parent.onZoomChanged(scale)
         }
@@ -487,10 +504,13 @@ final class ZoomablePageView: UIView {
     let contentView = UIView()
     let paperView = PaperSheetView()
     let imageLayer = ImageLayerView()
+    let backgroundCanvasView = PKCanvasView()
     let canvasView = PKCanvasView()
     let moveImageView = UIImageView()
     let lassoView = LassoOverlayView()
     let straightenRecognizer = HoldStraightenRecognizer()
+    var onPageViewportChange: ((CGRect) -> Void)?
+    private var loadedBackgroundDrawingData = Data()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -525,6 +545,14 @@ final class ZoomablePageView: UIView {
         imageLayer.frame = contentView.bounds
         contentView.addSubview(imageLayer)
 
+        backgroundCanvasView.frame = contentView.bounds
+        backgroundCanvasView.backgroundColor = .clear
+        backgroundCanvasView.isOpaque = false
+        backgroundCanvasView.isScrollEnabled = false
+        backgroundCanvasView.isUserInteractionEnabled = false
+        backgroundCanvasView.overrideUserInterfaceStyle = .light
+        contentView.addSubview(backgroundCanvasView)
+
         canvasView.frame = contentView.bounds
         canvasView.backgroundColor = .clear
         canvasView.isOpaque = false
@@ -552,6 +580,7 @@ final class ZoomablePageView: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         recenter()
+        DispatchQueue.main.async { [weak self] in self?.reportPageViewport() }
     }
 
     func recenter() {
@@ -561,6 +590,18 @@ final class ZoomablePageView: UIView {
         let hInset = max(0, (scrollView.bounds.width - scaledW) / 2)
         let vInset = max(16, (scrollView.bounds.height - scaledH) / 2)
         scrollView.contentInset = UIEdgeInsets(top: vInset, left: hInset, bottom: 140, right: hInset)
+    }
+
+    func setBackgroundDrawingData(_ data: Data) {
+        guard loadedBackgroundDrawingData != data else { return }
+        loadedBackgroundDrawingData = data
+        backgroundCanvasView.drawing = (try? PKDrawing(data: data)) ?? PKDrawing()
+    }
+
+    func reportPageViewport() {
+        let frame = convert(contentView.bounds, from: contentView)
+        guard frame.width > 0, frame.height > 0 else { return }
+        onPageViewportChange?(frame)
     }
 }
 

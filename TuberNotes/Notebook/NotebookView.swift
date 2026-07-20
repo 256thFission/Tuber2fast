@@ -11,8 +11,9 @@ struct NotebookView: View {
     @AppStorage("tuber.snapStraight") private var snapStraight = true
     @State private var showPages = false
     @State private var showStrip = false
-    @State private var showSidebar = false
+    @State private var showAgentSidebar = false
     @State private var showKeyPopup = false
+    @State private var isRefinementActive = false
     @State private var showPDFOptions = false
     @State private var showFileExporter = false
     @State private var exportContentType = UTType.pdf
@@ -42,19 +43,18 @@ struct NotebookView: View {
 
             // Passthrough observer: feeds ripples from touches over the page
             // (finger or Pencil) without intercepting them. Sits above the page
-            // but below the chrome, so buttons/sidebar don't spawn ripples.
+            // but below the chrome, so chrome buttons don't spawn ripples.
             AmbientTouchLayer { point in rippleModel.add(at: point) }
                 .ignoresSafeArea()
                 .allowsHitTesting(true)
                 .zIndex(1)
 
-            // Assistant floats OVER the page (doesn't shrink it).
-            if showSidebar {
+            if showAgentSidebar {
                 HStack(spacing: 0) {
                     Spacer(minLength: 0)
                     AgentSidebarView(
                         vm: vm,
-                        onClose: { withAnimation { showSidebar = false } },
+                        onClose: { withAnimation { showAgentSidebar = false } },
                         onEditKey: { withAnimation { showKeyPopup = true } }
                     )
                 }
@@ -72,13 +72,15 @@ struct NotebookView: View {
                     vm: vm,
                     isPageLocked: $isPageLocked,
                     isLassoActive: $vm.isLassoActive,
+                    isRefinementActive: $isRefinementActive,
                     onHome: { vm.persistNow(); dismiss() },
                     onShowPages: { withAnimation { showPages = true } },
                     onExportPDF: { showPDFOptions = true },
-                    onExportArchive: prepareSPUDExport
+                    onExportArchive: prepareSPUDExport,
+                    onAskAgent: { withAnimation { showAgentSidebar = true } }
                 )
                 .padding(.bottom, 14)
-                .padding(.trailing, showSidebar ? 348 : 0)
+                .padding(.trailing, showAgentSidebar ? 348 : 0)
                 .popover(isPresented: $showPDFOptions) {
                     pdfOptions
                         .presentationCompactAdaptation(.popover)
@@ -95,6 +97,7 @@ struct NotebookView: View {
                     .transition(.opacity.combined(with: .scale(scale: 0.96)))
                     .zIndex(10)
             }
+
         }
         .navigationTitle(vm.notebook.title)
         .navigationBarTitleDisplayMode(.inline)
@@ -120,11 +123,6 @@ struct NotebookView: View {
                 }
                 .accessibilityIdentifier("nav-add-image")
                 .accessibilityLabel("Add image")
-
-                Button { withAnimation { showSidebar.toggle() } } label: {
-                    Image(systemName: showSidebar ? "sparkles.rectangle.stack.fill" : "sparkles")
-                }
-                .accessibilityIdentifier("nav-assistant")
             }
         }
         .fileExporter(
@@ -150,6 +148,10 @@ struct NotebookView: View {
                 }
                 pickerItem = nil
             }
+        }
+        .onChange(of: vm.isAgenticLayersActive) { _, isActive in
+            guard !isActive, showAgentSidebar else { return }
+            withAnimation { showAgentSidebar = false }
         }
         .onDisappear { vm.persistNow() }
     }
@@ -319,10 +321,28 @@ struct NotebookView: View {
             onSelectImage: { vm.selectImage($0) },
             onPageViewportChange: { pageViewportFrame = $0 }
         )
-        .background(alignment: .topLeading) {
-            AgenticModeGlow(isActive: vm.isAgenticLayersActive)
-                .frame(width: pageViewportFrame.width, height: pageViewportFrame.height)
-                .position(x: pageViewportFrame.midX, y: pageViewportFrame.midY)
+        .overlay(alignment: .topLeading) {
+            ZStack {
+                if vm.isAgenticLayersActive {
+                    AgenticModeGlow(isActive: true)
+                    PinOverlayView(pins: vm.activeAgenticPins)
+                }
+
+                if isRefinementActive {
+                    DrawingRefinementOverlay(
+                        drawing: vm.currentDrawingLayer.drawing,
+                        client: DrawingRefinementClientFactory.make(),
+                        initialSelection: vm.lassoRect,
+                        pageSize: NotebookPageLayout.size,
+                        onApply: { data, rect in
+                            vm.applyDrawingRefinement(imageData: data, normalizedRect: rect)
+                        },
+                        onClose: { isRefinementActive = false }
+                    )
+                }
+            }
+            .frame(width: pageViewportFrame.width, height: pageViewportFrame.height)
+            .position(x: pageViewportFrame.midX, y: pageViewportFrame.midY)
         }
         .clipped()
         .padding(.horizontal, 12)

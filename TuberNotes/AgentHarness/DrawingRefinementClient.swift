@@ -14,6 +14,20 @@ protocol DrawingRefinementClient: Sendable {
     func refine(_ request: DrawingRefinementRequest) async throws -> RefinedDrawing
 }
 
+enum DrawingRefinementClientFactory {
+    static func make() -> any DrawingRefinementClient {
+#if DEBUG
+        let backend = BackendDrawingRefinementClient()
+        if backend.endpoint == nil {
+            return PreviewDrawingRefinementClient()
+        }
+        return backend
+#else
+        return BackendDrawingRefinementClient()
+#endif
+    }
+}
+
 enum DrawingRefinementError: LocalizedError {
     case notConfigured
     case invalidResponse
@@ -90,7 +104,7 @@ struct PreviewDrawingRefinementClient: DrawingRefinementClient {
         }
         let renderer = UIGraphicsImageRenderer(size: source.size)
         let image = renderer.image { context in
-            UIColor.systemBackground.setFill()
+            UIColor.white.setFill()
             context.cgContext.fill(CGRect(origin: .zero, size: source.size))
             source.draw(in: CGRect(origin: .zero, size: source.size))
 

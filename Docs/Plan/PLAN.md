@@ -45,7 +45,7 @@ States: `not-started` → `in-progress` → `mechanically-accepted` →
 | Line | Child doc | Owner subsystem | Status |
 |---|---|---|---|
 | WL-A — Lasso capture + crop | [WL-A-LassoCrop.md](WL-A-LassoCrop.md) | SpatialCanvas | mechanically-accepted — merged; human Pencil review queued |
-| WL-C — Documents + persistence | [WL-C-DocumentsPersistence.md](WL-C-DocumentsPersistence.md) | App(Persistence) + DeveloperSupport | in-progress — merged by direction; notebook acceptance blocked by device-service timeouts |
+| WL-C — Documents + persistence | [WL-C-DocumentsPersistence.md](WL-C-DocumentsPersistence.md) | App(Persistence) + DeveloperSupport | in-progress — `.spud`/PDF contracts + notebook UI consistency locally checked; device acceptance open (Linux host) |
 | WL-E(N) — Notebook device reviews | [WL-E-VerificationReview.md](WL-E-VerificationReview.md) §Track N | DeveloperTools | not-started |
 
 ### Track I — Intelligence layer (Phillip)
@@ -209,3 +209,25 @@ Append one line per meaningful state change: date, line, what changed.
   affordance (not another timing tweak), then run a two-minute unaided re-test
   that also re-exercises screenshot send. The dangling device prompt was
   explicitly resolved before its closed-watch transcript was exported.
+- 2026-07-20 — WL-C notebook branch rebased onto current `main`. Conflict
+  resolution preserved the canonical contracts, Debug harness, and Pin UI while
+  keeping the branch's library/editor, layered ink, ambience, and file tools.
+  Branch features were consolidated rather than deleted: questions enter through
+  Agentic Layers and persist answers as Pins; refinement is a separate
+  sparkle-lasso that commits to page drawing/image state. Pins remain owned only
+  by `ConversationLayer.conversations` inside `Notebook.agenticLayers` and are
+  visible only when an Agentic Layer is active. Current Linux host lacks Xcode
+  and a pinned-device session, so build/device acceptance remains open.
+- 2026-07-20 — WL-C CONTRACT: `TuberNoteArchive` advanced to version 2 because
+  full canonical `PageAnnotation` values and Agentic Layer visibility now round-trip,
+  with version 1 decoding retained. Compressed PDF remains drawing-only and has
+  no annotation/conversation input seam. Three focused Linux contract checks
+  pass; Xcode/device verification was unavailable on this Linux host.
+- 2026-07-20 — WL-C Linux-safe UI consistency pass fixed live-canvas refresh
+  after applied refinement, synchronized the Agentic sidebar with layer-mode
+  exit, made the expanded bottom toolbar horizontally reachable without
+  clipping, and restored the Xcode workspace descriptor. Focused WL-C/archive
+  and device-session/review-harness checks pass, source references and diff
+  hygiene are clean. Exact-iPad preflight remains blocked because this Linux
+  host has no `xcrun`; no build, launch, screenshot, or human visual judgment
+  is claimed. A stale pre-existing WL-E verifier unit test remains out of scope.

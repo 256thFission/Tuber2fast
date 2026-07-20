@@ -6,7 +6,8 @@ import UIKit
 /// Native, lossless interchange format. Unlike PDF, this archive favors editing
 /// fidelity and extensibility over compactness or presentation compatibility.
 struct TuberNoteArchive: Codable {
-    static let currentFormatVersion = 1
+    static let oldestSupportedFormatVersion = 1
+    static let currentFormatVersion = 2
     static let formatIdentifier = "com.tubernotes.note"
     static let fileExtension = "spud"
 
@@ -93,15 +94,74 @@ struct TuberNoteArchive: Codable {
         let id: UUID
         var name: String
         var symbolName: String
+        var isVisible: Bool
         var conversations: [ConversationRecord]
+
+        private enum CodingKeys: String, CodingKey {
+            case id, name, symbolName, isVisible, conversations
+        }
+
+        init(
+            id: UUID,
+            name: String,
+            symbolName: String,
+            isVisible: Bool,
+            conversations: [ConversationRecord]
+        ) {
+            self.id = id
+            self.name = name
+            self.symbolName = symbolName
+            self.isVisible = isVisible
+            self.conversations = conversations
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            id = try container.decode(UUID.self, forKey: .id)
+            name = try container.decode(String.self, forKey: .name)
+            symbolName = try container.decode(String.self, forKey: .symbolName)
+            isVisible = try container.decodeIfPresent(Bool.self, forKey: .isVisible) ?? true
+            conversations = try container.decode([ConversationRecord].self, forKey: .conversations)
+        }
     }
 
     struct ConversationRecord: Codable {
-        let id: UUID
-        let pageX: Double
-        let pageY: Double
-        var title: String
-        var detail: String
+        let annotation: PageAnnotation
+
+        private enum CodingKeys: String, CodingKey {
+            case annotation
+
+            // Version 1 compatibility. New archives encode only `annotation`.
+            case id, pageX, pageY, title, detail
+        }
+
+        init(annotation: PageAnnotation) {
+            self.annotation = annotation
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            if let annotation = try container.decodeIfPresent(PageAnnotation.self, forKey: .annotation) {
+                self.annotation = annotation
+                return
+            }
+
+            let id = try container.decode(UUID.self, forKey: .id)
+            self.annotation = PageAnnotation(
+                id: id,
+                pagePosition: CGPoint(
+                    x: try container.decode(CGFloat.self, forKey: .pageX),
+                    y: try container.decode(CGFloat.self, forKey: .pageY)
+                ),
+                title: try container.decode(String.self, forKey: .title),
+                detail: try container.decode(String.self, forKey: .detail)
+            )
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(annotation, forKey: .annotation)
+        }
     }
 }
 
@@ -242,7 +302,9 @@ enum TuberNoteArchiveCodec {
         guard archive.format == TuberNoteArchive.formatIdentifier else {
             throw ArchiveError.wrongFormat(archive.format)
         }
-        guard archive.formatVersion == TuberNoteArchive.currentFormatVersion else {
+        guard (TuberNoteArchive.oldestSupportedFormatVersion...TuberNoteArchive.currentFormatVersion)
+            .contains(archive.formatVersion)
+        else {
             throw ArchiveError.unsupportedVersion(archive.formatVersion)
         }
         guard archive.compression == .none else {
@@ -349,14 +411,9 @@ enum TuberNoteArchiveCodec {
             id: layer.id,
             name: layer.name,
             symbolName: layer.symbolName,
+            isVisible: layer.isVisible,
             conversations: layer.conversations.map { conversation in
-                .init(
-                    id: conversation.id,
-                    pageX: Double(conversation.pagePosition.x),
-                    pageY: Double(conversation.pagePosition.y),
-                    title: conversation.title,
-                    detail: conversation.detail
-                )
+                .init(annotation: conversation)
             }
         )
     }
@@ -367,16 +424,9 @@ enum TuberNoteArchiveCodec {
             name: layer.name,
             symbolName: layer.symbolName,
             conversations: layer.conversations.map { conversation in
-                Pin(
-                    id: conversation.id,
-                    pagePosition: CGPoint(
-                        x: CGFloat(conversation.pageX),
-                        y: CGFloat(conversation.pageY)
-                    ),
-                    title: conversation.title,
-                    detail: conversation.detail
-                )
-            }
+                conversation.annotation
+            },
+            isVisible: layer.isVisible
         )
     }
 }

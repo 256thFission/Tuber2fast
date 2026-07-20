@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// Toggleable frosted assistant panel. Analyzes either the whole page or the
-/// lassoed region, with an optional prompt ("talk about this molecule").
+/// Frosted question panel for the active Agentic Layer. Answers are persisted
+/// as spatial Pins; this panel only keeps a convenient recent-answer history.
 struct AgentSidebarView: View {
     @ObservedObject var vm: NotebookViewModel
     @AppStorage("tuber.openaiKey") private var apiKey = ""
@@ -39,7 +39,12 @@ struct AgentSidebarView: View {
 
     private var header: some View {
         HStack {
-            Label("Assistant", systemImage: "sparkles").font(.headline)
+            VStack(alignment: .leading, spacing: 2) {
+                Label("Ask Agentic Layer", systemImage: "sparkles").font(.headline)
+                if let layer = vm.notebook.agenticLayers.first(where: { $0.id == vm.selectedLayerID }) {
+                    Text(layer.name).font(.caption).foregroundStyle(.secondary)
+                }
+            }
             Spacer()
             Button { onEditKey() } label: { Image(systemName: "key") }
                 .accessibilityLabel("API key")
@@ -98,7 +103,7 @@ struct AgentSidebarView: View {
                 ObservationCard(observation: observation).padding(.top, 12)
             }
             if !vm.observations.isEmpty {
-                Button("Clear results", role: .destructive) { vm.clearObservations() }
+                Button("Clear panel history", role: .destructive) { vm.clearObservations() }
                     .font(.caption).padding(.top, 8)
             }
         }
@@ -130,7 +135,7 @@ struct AgentSidebarView: View {
     private var emptyState: some View {
         VStack(alignment: .leading, spacing: 10) {
             Image(systemName: "scribble.variable").font(.title2).foregroundStyle(.secondary)
-            Text("Tap the **lasso** tool, loop around something (a molecule, a diagram), then ask about it here. Or analyze the whole page.")
+            Text("Select a region with the **lasso** before opening this Agentic Layer, or ask about the whole page. The answer becomes a Pin on this layer.")
                 .font(.subheadline).foregroundStyle(.secondary)
         }
     }

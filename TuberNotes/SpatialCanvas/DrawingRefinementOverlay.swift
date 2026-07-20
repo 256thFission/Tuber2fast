@@ -1,15 +1,20 @@
 import PencilKit
 import SwiftUI
+import UIKit
 
 struct DrawingRefinementOverlay: View {
     let drawing: PKDrawing
     let client: any DrawingRefinementClient
     let initialSelection: CGRect?
+    let pageSize: CGSize
+    let onApply: (Data, CGRect) -> Void
+    let onClose: () -> Void
 
     @State private var isLassoActive = false
     @State private var lassoPoints: [CGPoint] = []
     @State private var selection: CGRect?
     @State private var refinedImage: UIImage?
+    @State private var refinedImageData: Data?
     @State private var isRefining = false
     @State private var errorMessage: String?
 
@@ -39,7 +44,7 @@ struct DrawingRefinementOverlay: View {
                 }
 
                 if let selection {
-                    selectionView(selection)
+                    selectionView(selection, in: proxy.size)
                 }
 
                 controls
@@ -70,26 +75,40 @@ struct DrawingRefinementOverlay: View {
                     if isLassoActive {
                         selection = nil
                         refinedImage = nil
+                        refinedImageData = nil
                     }
                     lassoPoints = []
                 } label: {
-                    Label(isLassoActive ? "Drawing lasso…" : "AI Lasso", systemImage: "lasso.badge.sparkles")
+                    Label(isLassoActive ? "Drawing lasso…" : "Refinement lasso", systemImage: "lasso.badge.sparkles")
                         .font(.subheadline.weight(.semibold))
                         .padding(.horizontal, 13)
                         .padding(.vertical, 10)
-                        .foregroundStyle(isLassoActive ? .white : .indigo)
-                        .background(isLassoActive ? Color.indigo : Color.white.opacity(0.94), in: Capsule())
+                        .foregroundStyle(isLassoActive ? Color.white : Color.primary)
+                        .background(.ultraThinMaterial, in: Capsule())
+                        .background(isLassoActive ? Color.indigo : Color.clear, in: Capsule())
+                        .overlay(Capsule().strokeBorder(.primary.opacity(0.10)))
                         .shadow(color: .black.opacity(0.12), radius: 7, y: 3)
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("ai-lasso-button")
+
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .font(.subheadline.weight(.bold))
+                        .frame(width: 38, height: 38)
+                        .foregroundStyle(.primary)
+                        .background(.ultraThinMaterial, in: Circle())
+                        .overlay(Circle().strokeBorder(.primary.opacity(0.10)))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Close refinement tool")
             }
             Spacer()
         }
         .padding(16)
     }
 
-    private func selectionView(_ rect: CGRect) -> some View {
+    private func selectionView(_ rect: CGRect, in canvasSize: CGSize) -> some View {
         ZStack(alignment: .bottomTrailing) {
             RoundedRectangle(cornerRadius: 12)
                 .fill(Color.indigo.opacity(0.07))
@@ -98,23 +117,34 @@ struct DrawingRefinementOverlay: View {
                         .stroke(.indigo, style: StrokeStyle(lineWidth: 3, dash: [8, 5]))
                 }
 
-            Button {
-                refine(rect)
-            } label: {
-                Group {
-                    if isRefining {
-                        ProgressView()
-                            .tint(.white)
-                    } else {
-                        Label(refinedImage == nil ? "Refine with AI" : "Refine again", systemImage: "sparkles")
+            HStack(spacing: 8) {
+                if let refinedImageData {
+                    Button {
+                        onApply(refinedImageData, normalized(rect, in: canvasSize))
+                        onClose()
+                    } label: {
+                        Label("Apply", systemImage: "checkmark")
+                    }
+                    .accessibilityIdentifier("apply-refinement-button")
+                }
+
+                Button {
+                    refine(rect, in: canvasSize)
+                } label: {
+                    Group {
+                        if isRefining {
+                            ProgressView().tint(.white)
+                        } else {
+                            Label(refinedImage == nil ? "Refine with AI" : "Refine again", systemImage: "sparkles")
+                        }
                     }
                 }
-                .font(.caption.weight(.bold))
-                .foregroundStyle(.white)
-                .padding(.horizontal, 11)
-                .padding(.vertical, 8)
-                .background(.indigo, in: Capsule())
             }
+            .font(.caption.weight(.bold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 11)
+            .padding(.vertical, 8)
+            .background(.indigo, in: Capsule())
             .buttonStyle(.plain)
             .disabled(isRefining)
             .padding(8)
@@ -125,7 +155,7 @@ struct DrawingRefinementOverlay: View {
         .contentShape(Rectangle())
         .contextMenu {
             Button {
-                refine(rect)
+                refine(rect, in: canvasSize)
             } label: {
                 Label("Refine with AI", systemImage: "sparkles")
             }
@@ -134,6 +164,7 @@ struct DrawingRefinementOverlay: View {
             if refinedImage != nil {
                 Button(role: .destructive) {
                     refinedImage = nil
+                    refinedImageData = nil
                 } label: {
                     Label("Undo refinement", systemImage: "arrow.uturn.backward")
                 }
@@ -181,10 +212,23 @@ struct DrawingRefinementOverlay: View {
         return padded
     }
 
-    private func refine(_ rect: CGRect) {
+    private func refine(_ rect: CGRect, in canvasSize: CGSize) {
         guard !isRefining else { return }
+        let normalizedRect = normalized(rect, in: canvasSize)
+        let sourceRect = CGRect(
+            x: normalizedRect.minX * pageSize.width,
+            y: normalizedRect.minY * pageSize.height,
+            width: normalizedRect.width * pageSize.width,
+            height: normalizedRect.height * pageSize.height
+        )
         let scale = UIScreen.main.scale
-        let image = drawing.image(from: rect, scale: scale)
+        let inkImage = drawing.image(from: sourceRect, scale: scale)
+        let renderer = UIGraphicsImageRenderer(size: inkImage.size)
+        let image = renderer.image { context in
+            UIColor.white.setFill()
+            context.fill(CGRect(origin: .zero, size: inkImage.size))
+            inkImage.draw(in: CGRect(origin: .zero, size: inkImage.size))
+        }
         guard let imageData = image.pngData() else {
             errorMessage = DrawingRefinementError.invalidResponse.localizedDescription
             return
@@ -201,6 +245,7 @@ struct DrawingRefinementOverlay: View {
                 }
                 await MainActor.run {
                     refinedImage = image
+                    refinedImageData = result.imageData
                     isRefining = false
                 }
             } catch {
@@ -210,6 +255,16 @@ struct DrawingRefinementOverlay: View {
                 }
             }
         }
+    }
+
+    private func normalized(_ rect: CGRect, in canvasSize: CGSize) -> CGRect {
+        guard rect.width > 0, rect.height > 0 else { return .zero }
+        return CGRect(
+            x: rect.minX / max(canvasSize.width, 1),
+            y: rect.minY / max(canvasSize.height, 1),
+            width: rect.width / max(canvasSize.width, 1),
+            height: rect.height / max(canvasSize.height, 1)
+        )
     }
 
     private var errorIsPresented: Binding<Bool> {

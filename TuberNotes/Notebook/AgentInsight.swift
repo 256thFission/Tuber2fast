@@ -8,10 +8,10 @@ struct AgentInsight: Equatable {
 }
 
 /// Boundary for "look at what I circled and tell me what you see". Complements the
-/// existing `AgentClient`/`SpatialSelection` boundary (which returns `[Pin]`); this
-/// one returns human-readable text for the toggleable assistant sidebar.
+/// existing `AgentClient`/`SelectionArtifact` boundary (which returns Pin events);
+/// this one returns human-readable text that is persisted as an Agentic Layer Pin.
 protocol AgentInsightClient {
-    func analyze(_ selection: SpatialSelection, question: String?) async throws -> AgentInsight
+    func analyze(_ selection: SelectionArtifact, question: String?) async throws -> AgentInsight
 }
 
 enum AgentError: LocalizedError {
@@ -30,7 +30,7 @@ enum AgentError: LocalizedError {
 
 /// Runs with no network/key so the app is fully functional out of the box.
 struct MockAgentInsightClient: AgentInsightClient {
-    func analyze(_ selection: SpatialSelection, question: String?) async throws -> AgentInsight {
+    func analyze(_ selection: SelectionArtifact, question: String?) async throws -> AgentInsight {
         try? await Task.sleep(nanoseconds: 700_000_000)
         return AgentInsight(
             summary: "Demo mode. Add an OpenAI API key in the assistant settings to get real descriptions. I can see you've drawn on the page and marked a region.",
@@ -52,8 +52,8 @@ struct OpenAIVisionClient: AgentInsightClient {
     let apiKey: String
     var model: String = "gpt-4o-mini"
 
-    func analyze(_ selection: SpatialSelection, question: String?) async throws -> AgentInsight {
-        let dataURL = "data:image/jpeg;base64,\(selection.imageData.base64EncodedString())"
+    func analyze(_ selection: SelectionArtifact, question: String?) async throws -> AgentInsight {
+        let dataURL = "data:image/jpeg;base64,\(selection.crop.imageData.base64EncodedString())"
         let prompt = question ?? """
         This is a page from a handwritten notebook. The user has drawn on it and may have \
         circled or marked something. Describe what you see, focusing on anything circled or \

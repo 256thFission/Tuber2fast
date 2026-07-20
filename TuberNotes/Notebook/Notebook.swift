@@ -22,7 +22,7 @@ struct Notebook: Identifiable, Codable, Equatable {
         agenticLayers: [ConversationLayer] = [
             ConversationLayer(
                 id: UUID(),
-                name: "Assistant",
+                name: "Agent",
                 symbolName: "sparkles",
                 conversations: []
             )
@@ -39,6 +39,25 @@ struct Notebook: Identifiable, Codable, Equatable {
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.settings = settings
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, title, cover, pages, agenticLayers, createdAt, updatedAt, settings
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        title = try container.decode(String.self, forKey: .title)
+        cover = try container.decode(NotebookCover.self, forKey: .cover)
+        let decodedPages = try container.decodeIfPresent([NotebookPage].self, forKey: .pages) ?? []
+        pages = decodedPages.isEmpty ? [NotebookPage()] : decodedPages
+        agenticLayers = try container.decodeIfPresent([ConversationLayer].self, forKey: .agenticLayers)
+            ?? [ConversationLayer(id: UUID(), name: "Agent", symbolName: "sparkles", conversations: [])]
+        createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+        updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? createdAt
+        settings = try container.decodeIfPresent(NotebookSettings.self, forKey: .settings)
+            ?? NotebookSettings()
     }
 }
 
