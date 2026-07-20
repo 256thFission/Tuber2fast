@@ -47,9 +47,10 @@ final class RecordedAgentClientTests: XCTestCase {
         let followUpEvents = try await collect(client.investigate(followUp))
         XCTAssertEqual(followUpEvents.last, .completed(conversationID: "recorded-hero"))
         XCTAssertTrue(followUpEvents.contains { event in
-            guard case let .pinCompleted(pin) = event else { return false }
-            return pin.teaser == "Why the sign changes"
+            guard case let .messageCompleted(_, text) = event else { return false }
+            return text.contains("Adding 7 to both sides")
         })
+        XCTAssertFalse(followUpEvents.contains { if case .pinCompleted = $0 { true } else { false } })
     }
 
     func testInvalidRecordedCoordinatesFailBeforePinDelivery() async throws {
@@ -88,8 +89,15 @@ final class PointBackControllerTests: XCTestCase {
         try await eventually { controller.snapshot.conversationReplyStatus == "Follow-up reply ready" }
         XCTAssertEqual(controller.snapshot.conversationID, "recorded-hero")
         XCTAssertEqual(controller.snapshot.conversationTurnCount, 3)
-        XCTAssertEqual(controller.snapshot.archive.pins.count, 2)
+        XCTAssertEqual(controller.snapshot.archive.pins.count, 1)
         XCTAssertEqual(controller.snapshot.archive.conversations.count, 1)
+
+        let completed = controller.snapshot
+        await controller.receiveNormalizedPath([
+            PagePoint(x: 0.3, y: 0.3),
+            PagePoint(x: 0.31, y: 0.31)
+        ])
+        XCTAssertEqual(controller.snapshot, completed, "A degenerate overlay gesture must preserve established state")
     }
 
     private func eventually(

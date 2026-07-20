@@ -126,3 +126,10 @@ native capture (reference host's SpatialCanvas) may inject a ready
   seam for host-owned Pin/thread persistence. Scenario contracts now emit
   `surfaceKind=pointback-kit`. Final post-contract device rerun and unaided
   human discoverability/screenshot review remain.
+- 2026-07-20 — On the explicitly requested human-review restart, a degenerate
+  tap was found to overwrite completed hero status; fixed with a regression
+  assertion so invalid paths leave established state untouched. Phillip also
+  directed that ordinary Pin-thread responses must not create a new Pin. Added
+  transcript-only `AgentEvent` cases and changed the recorded continuation plus
+  verifier expectation to retain exactly the source Pin and three transcript
+  turns. This public event-contract change is CONTRACT-flagged.

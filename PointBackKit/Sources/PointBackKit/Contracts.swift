@@ -324,6 +324,10 @@ public enum AgentEvent: Equatable, Sendable {
     case pinStarted(PinDraft)
     case pinDelta(id: UUID, bodyDelta: String)
     case pinCompleted(PinDraft)
+    /// A transcript-only response. Unlike Pin events, these never mutate canvas annotations.
+    case messageStarted(id: UUID)
+    case messageDelta(id: UUID, textDelta: String)
+    case messageCompleted(id: UUID, text: String)
     case completed(conversationID: String?)
     case failed(AgentFailure)
 }

@@ -38,7 +38,7 @@ M0 scenarios:
   agent-recorded-failure    PointBackKit recorded recoverable failure with no Pin
   persistence-relaunch  Persisted page, ink reference, and Pin IDs survive relaunch
   hero-recorded   PointBackKit portable lasso/snapshot through recorded Check to one Pin
-  pin-conversation  PointBackKit tethered streamed follow-up retained across page return
+  pin-conversation  PointBackKit transcript-only streamed follow-up retained across page return
 
 Environment:
   SKIP_BUILD=1                Reuse an existing DerivedData build
@@ -236,7 +236,7 @@ scenario_metadata() {
             ;;
         pin-conversation)
             FAMILY="conversation"
-            EXPECTED_STATE="PointBackKit hero Pin with tethered streamed conversation retained across page away and return"
+            EXPECTED_STATE="PointBackKit hero Pin with transcript-only streamed conversation retained across page away and return"
             INTEGRATION_READINESS="app-wired"
             EXPECTED_PAGE_COUNT=3
             EXPECTED_PAGE_INDEX=1
@@ -245,7 +245,7 @@ scenario_metadata() {
             REQUIRES_RUNTIME_EVIDENCE=true
             EXPECTED_RUNTIME_SURFACE="pointback-kit"
             EXPECTED_RUNTIME_PEN_FIXTURE="recorded-selection-ink"
-            EXPECTED_RUNTIME_ANNOTATION_IDS="70000000-0000-0000-0000-000000000001,70000000-0000-0000-0000-000000000006"
+            EXPECTED_RUNTIME_ANNOTATION_IDS="70000000-0000-0000-0000-000000000001"
             EXPECTED_RUNTIME_HERO_STATUS="Proposed Pin ready"
             EXPECTED_RUNTIME_CONVERSATION_PANEL_OPEN="true"
             EXPECTED_RUNTIME_CONVERSATION_ID="recorded-hero"

@@ -438,7 +438,7 @@ private enum DevelopmentScenarioFixtures {
         case .pinConversation:
             return make(
                 family: .conversation,
-                expectedState: "PointBackKit hero Pin with tethered streamed conversation retained across page away and return",
+                expectedState: "PointBackKit hero Pin with transcript-only streamed conversation retained across page away and return",
                 readiness: .appWired,
                 document: notebookDocument(pageCount: 3, currentPageID: ID.notebookPage2),
                 penFixtures: [ID.notebookPage2: recordedSelectionFixture()],

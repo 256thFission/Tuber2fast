@@ -247,3 +247,11 @@ Append one line per meaningful state change: date, line, what changed.
   Pins and threads, and verifier `surfaceKind=pointback-kit` now distinguishes
   package execution from the legacy spatial surface. WL-H implementation and
   the WL-F visible Follow Up affordance are therefore folded into WL-G.
+- 2026-07-20 — WL-G human-review restart found and fixed two narrow product
+  issues before presenting another action. Degenerate overlay gestures now
+  preserve an established investigation instead of overwriting its status.
+  CONTRACT: `AgentEvent` gained transcript-only message start/delta/completion
+  events; the recorded Pin continuation now streams its reply into the thread
+  without creating a new canvas Pin on every response. Additional Pins remain
+  available only when a client explicitly emits Pin events. Package and
+  verifier tests are green; physical conversation re-verification follows.

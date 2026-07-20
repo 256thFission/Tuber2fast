@@ -120,7 +120,9 @@ does not hand PointBackKit a native selection artifact.
 an explicit `LiveAgentConfiguration`; the host injects its endpoint, model, bearer token, and any
 required headers at runtime. PointBackKit never reads a secret from source or stores a credential.
 The current live adapter supports first-turn Responses-compatible `place_pins`; recorded mode is
-the conformance and demo baseline, including conversation continuation.
+the conformance and demo baseline, including conversation continuation. Ordinary thread replies
+use transcript-only message events. A client adds another canvas Pin only by explicitly emitting
+`pinStarted` / `pinCompleted` during that turn.
 
 ## Persistence boundary
 

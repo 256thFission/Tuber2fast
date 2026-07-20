@@ -87,7 +87,7 @@ public struct RecordedAgentClient: AgentClient {
     }
 
     private static let pinID = UUID(uuidString: "70000000-0000-0000-0000-000000000001")!
-    private static let followUpPinID = UUID(uuidString: "70000000-0000-0000-0000-000000000006")!
+    private static let followUpMessageID = UUID(uuidString: "70000000-0000-0000-0000-000000000006")!
     private static let retrievalPinID = UUID(uuidString: "70000000-0000-0000-0000-000000000003")!
     private static let heroConversationID = "recorded-hero"
     private static let completedBody = "The sign changes when the negative term moves across the equals sign."
@@ -104,20 +104,6 @@ public struct RecordedAgentClient: AgentClient {
     private static var completedPin: PinDraft {
         var pin = basePin
         pin.body = completedBody
-        return pin
-    }
-
-    private static let followUpPin = PinDraft(
-        id: followUpPinID,
-        target: CropPoint(x: 0.64, y: 0.54),
-        kind: .explanation,
-        teaser: "Why the sign changes",
-        body: ""
-    )
-
-    private static var completedFollowUpPin: PinDraft {
-        var pin = followUpPin
-        pin.body = followUpBody
         return pin
     }
 
@@ -159,9 +145,11 @@ public struct RecordedAgentClient: AgentClient {
         .toolFinished(placePins), .completed(conversationID: heroConversationID)
     ]
     private static let heroFollowUpEvents: [AgentEvent] = [
-        .accepted, .inspectingSelection, .pinStarted(followUpPin),
-        .pinDelta(id: followUpPinID, bodyDelta: followUpBody),
-        .pinCompleted(completedFollowUpPin), .completed(conversationID: heroConversationID)
+        .accepted, .inspectingSelection, .messageStarted(id: followUpMessageID),
+        .messageDelta(id: followUpMessageID, textDelta: "It does not change merely because the term moves. "),
+        .messageDelta(id: followUpMessageID, textDelta: "Adding 7 to both sides cancels -7 on the left, leaving +7 on the right."),
+        .messageCompleted(id: followUpMessageID, text: followUpBody),
+        .completed(conversationID: heroConversationID)
     ]
     private static let retrievalEvents: [AgentEvent] = [
         .accepted, .inspectingSelection, .toolStarted(searchTextbook), .toolFinished(searchTextbook),

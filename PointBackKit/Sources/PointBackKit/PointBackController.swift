@@ -260,6 +260,13 @@ public final class PointBackController: ObservableObject {
     }
 
     private func rejectSelection() {
+        // A tap, short stroke, or path that crosses outside the visible page must not destroy an
+        // established investigation. Portable input sits above arbitrary host canvases, so such
+        // gestures are expected even after a Pin exists.
+        guard selection == nil else {
+            eventHandler(.selectionRejected)
+            return
+        }
         phase = .idle
         status = "Close the lasso around a visible part of one page"
         publish(.selectionRejected)
@@ -303,6 +310,12 @@ public final class PointBackController: ObservableObject {
         case let .pinDelta(id, delta):
             if let index = pins.firstIndex(where: { $0.id == id }) { pins[index].body += delta }
         case let .pinCompleted(draft): upsert(draft, status: .complete)
+        case .messageStarted:
+            status = "Receiving response…"
+        case .messageDelta:
+            break
+        case .messageCompleted:
+            status = "Response ready"
         case let .completed(conversationID):
             retainedConversationID = conversationID
             phase = .completed(investigationID)
@@ -402,6 +415,24 @@ public final class PointBackController: ObservableObject {
             if let index = conversation.turns.lastIndex(where: { $0.role == .assistant && $0.isStreaming }) {
                 conversation.turns[index].text = draft.body
                 conversation.turns[index].isStreaming = false
+            }
+        case let .messageStarted(id):
+            conversation.turns.append(
+                ConversationTurn(id: id, role: .assistant, text: "", isStreaming: true)
+            )
+            conversationStatus[threadID] = "Streaming reply…"
+        case let .messageDelta(id, textDelta):
+            if let index = conversation.turns.firstIndex(where: { $0.id == id }) {
+                conversation.turns[index].text += textDelta
+            }
+        case let .messageCompleted(id, text):
+            if let index = conversation.turns.firstIndex(where: { $0.id == id }) {
+                conversation.turns[index].text = text
+                conversation.turns[index].isStreaming = false
+            } else {
+                conversation.turns.append(
+                    ConversationTurn(id: id, role: .assistant, text: text, isStreaming: false)
+                )
             }
         case let .completed(conversationID):
             conversation.conversationID = conversationID ?? conversation.conversationID
