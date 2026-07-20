@@ -31,6 +31,8 @@ class ReviewHarnessUISourceTests(unittest.TestCase):
         self.assertIn("displayedScenario = requestedScenario", source)
         self.assertIn("document = displayedScenario.fixture.document", source)
         self.assertIn("surfaceGeneration += 1", source)
+        self.assertIn("!isDevelopmentReviewBound", source)
+        self.assertIn("feedbackSession.activeFeedbackThread != nil", source)
 
     def test_feedback_threads_use_backend_wire_layout_and_explicit_identity(self):
         source = (ROOT / "TuberNotes/DeveloperSupport/FeedbackThread.swift").read_text()

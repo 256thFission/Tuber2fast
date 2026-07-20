@@ -453,7 +453,9 @@ struct RootView: View {
     }
 
     private func resetScenarioSurface() {
-        if usesPersistentProductState, let restored = documentStore.loadDocument() {
+        if usesPersistentProductState,
+           !isDevelopmentReviewBound,
+           let restored = documentStore.loadDocument() {
             document = restored
             currentPageID = restored.currentPageID
             initialDrawingData = documentStore.drawingData(for: restored)
@@ -466,6 +468,14 @@ struct RootView: View {
         }
         selectionArtifact = nil
         surfaceGeneration += 1
+    }
+
+    private var isDevelopmentReviewBound: Bool {
+#if DEBUG
+        agentSession.activeRequest != nil || feedbackSession.activeFeedbackThread != nil
+#else
+        false
+#endif
     }
 
 #if DEBUG
