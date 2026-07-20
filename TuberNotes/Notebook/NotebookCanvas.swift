@@ -11,7 +11,6 @@ import UIKit
 struct NotebookCanvas: UIViewRepresentable {
     let pageID: UUID
     let drawingData: Data
-    let backgroundDrawingData: Data
     let tool: WritingTool
     let color: UIColor
     let width: CGFloat
@@ -24,14 +23,12 @@ struct NotebookCanvas: UIViewRepresentable {
     let images: [PlacedImage]
     let isArrangingImages: Bool
     let selectedImageID: UUID?
-    let isPageLocked: Bool
     var onChange: (Data) -> Void
     var onLongPress: () -> Void
     var onZoomChanged: (CGFloat) -> Void
     var onLassoChanged: (CGRect?) -> Void
     var onImagesChanged: ([PlacedImage]) -> Void
     var onSelectImage: (UUID?) -> Void
-    var onPageViewportChange: (CGRect) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -41,12 +38,10 @@ struct NotebookCanvas: UIViewRepresentable {
         view.canvasView.delegate = context.coordinator
         view.canvasView.tool = tool.pkTool(color: color, width: width)
         view.paperView.template = template
-        view.backgroundDrawingData = backgroundDrawingData
-        view.onPageViewportChange = onPageViewportChange
 
         let c = context.coordinator
         view.lassoView.onLoopComplete = { [weak c, weak view] points in c?.completeLasso(points, view) }
-        view.lassoView.beginMoveIfInside = { [weak c] p in c?.canMove(at: p) ?? false }
+        view.lassoView.beginMoveIfInside = { [weak c, weak view] p in c?.beginMove(at: p, view) ?? false }
         view.lassoView.onMove = { [weak c, weak view] delta in c?.moveSelection(by: delta, view) }
         view.lassoView.onMoveEnded = { [weak c, weak view] in c?.commitMove(view) }
 
@@ -81,8 +76,6 @@ struct NotebookCanvas: UIViewRepresentable {
             view.paperView.setNeedsDisplay()
         }
         view.imageLayer.setImages(images)
-        view.backgroundDrawingData = backgroundDrawingData
-        view.onPageViewportChange = onPageViewportChange
         applyMode(to: view)
         if !isLassoActive || lassoRect == nil {
             view.lassoView.clear()
@@ -91,12 +84,7 @@ struct NotebookCanvas: UIViewRepresentable {
         if context.coordinator.loadedPageID != pageID {
             context.coordinator.load(drawingData, pageID: pageID, into: view)
         }
-        // Viewport updates are published while a pinch is in progress. The
-        // model only receives the final scale in scrollViewDidEndZooming, so
-        // synchronizing here during the gesture would animate back toward the
-        // stale model value on every SwiftUI update.
-        if !view.scrollView.isZooming && !view.scrollView.isTracking,
-           abs(view.scrollView.zoomScale - zoomScale) > 0.001 {
+        if abs(view.scrollView.zoomScale - zoomScale) > 0.001 {
             view.scrollView.setZoomScale(zoomScale, animated: true)
         }
     }
@@ -113,8 +101,7 @@ struct NotebookCanvas: UIViewRepresentable {
 
         let interacting = isLassoActive || isArrangingImages
         view.canvasView.isUserInteractionEnabled = !interacting
-        view.scrollView.isScrollEnabled = !interacting && !isPageLocked
-        view.scrollView.pinchGestureRecognizer?.isEnabled = !interacting && !isPageLocked
+        view.scrollView.isScrollEnabled = !interacting
 
         view.straightenRecognizer.acceptsFinger = fingerDrawing
         view.straightenRecognizer.isEnabled = snapStraight && !interacting && tool != .eraser
@@ -127,6 +114,8 @@ struct NotebookCanvas: UIViewRepresentable {
         private var isLoading = false
         private var isProgrammatic = false
         private var lassoSelection: [Int] = []
+        private var movingStrokes: [PKStroke] = []
+        private var moveTranslation: CGPoint = .zero
 
         init(_ parent: NotebookCanvas) { self.parent = parent }
 
@@ -167,23 +156,63 @@ struct NotebookCanvas: UIViewRepresentable {
             parent.onLassoChanged(normalize(rect))
         }
 
-        func canMove(at point: CGPoint) -> Bool { !lassoSelection.isEmpty }
+        /// Lift the selected strokes into a lightweight image so dragging is cheap.
+        func beginMove(at point: CGPoint, _ view: ZoomablePageView?) -> Bool {
+            guard let view, !lassoSelection.isEmpty else { return false }
+            let drawing = view.canvasView.drawing
+            let selected = lassoSelection.compactMap { drawing.strokes.indices.contains($0) ? drawing.strokes[$0] : nil }
+            guard !selected.isEmpty else { return false }
+
+            let temp = PKDrawing(strokes: selected)
+            let bounds = temp.bounds
+            guard !bounds.isNull else { return false }
+
+            var image: UIImage?
+            UITraitCollection(userInterfaceStyle: .light).performAsCurrent {
+                image = temp.image(from: bounds, scale: UIScreen.main.scale)
+            }
+            view.moveImageView.image = image
+            view.moveImageView.frame = bounds
+            view.moveImageView.isHidden = false
+
+            var remaining = drawing
+            remaining.strokes = drawing.strokes.enumerated()
+                .filter { !lassoSelection.contains($0.offset) }
+                .map { $0.element }
+            isProgrammatic = true
+            view.canvasView.drawing = remaining
+            isProgrammatic = false
+
+            movingStrokes = selected
+            moveTranslation = .zero
+            return true
+        }
 
         func moveSelection(by delta: CGPoint, _ view: ZoomablePageView?) {
-            guard let view, !lassoSelection.isEmpty else { return }
-            var drawing = view.canvasView.drawing
-            let translate = CGAffineTransform(translationX: delta.x, y: delta.y)
-            for i in lassoSelection where drawing.strokes.indices.contains(i) {
-                drawing.strokes[i].transform = drawing.strokes[i].transform.concatenating(translate)
-            }
-            isProgrammatic = true
-            view.canvasView.drawing = drawing
-            isProgrammatic = false
+            guard let view, !movingStrokes.isEmpty else { return }
+            moveTranslation.x += delta.x
+            moveTranslation.y += delta.y
+            view.moveImageView.center = CGPoint(x: view.moveImageView.center.x + delta.x,
+                                                y: view.moveImageView.center.y + delta.y)
         }
 
         func commitMove(_ view: ZoomablePageView?) {
-            guard let view else { return }
-            let drawing = view.canvasView.drawing
+            guard let view, !movingStrokes.isEmpty else { return }
+            let translate = CGAffineTransform(translationX: moveTranslation.x, y: moveTranslation.y)
+            var drawing = view.canvasView.drawing
+            let baseCount = drawing.strokes.count
+            var moved = movingStrokes
+            for i in moved.indices { moved[i].transform = moved[i].transform.concatenating(translate) }
+            drawing.strokes.append(contentsOf: moved)
+
+            isProgrammatic = true
+            view.canvasView.drawing = drawing
+            isProgrammatic = false
+
+            lassoSelection = Array(baseCount..<drawing.strokes.count)
+            view.moveImageView.isHidden = true
+            view.moveImageView.image = nil
+            movingStrokes = []
             parent.onChange(drawing.dataRepresentation())
 
             var rect = CGRect.null
@@ -240,11 +269,7 @@ struct NotebookCanvas: UIViewRepresentable {
         // MARK: Zoom
 
         func viewForZooming(in scrollView: UIScrollView) -> UIView? { view?.contentView }
-        func scrollViewDidScroll(_ scrollView: UIScrollView) { view?.reportPageViewportIfNeeded() }
-        func scrollViewDidZoom(_ scrollView: UIScrollView) {
-            view?.recenter()
-            view?.reportPageViewportIfNeeded()
-        }
+        func scrollViewDidZoom(_ scrollView: UIScrollView) { view?.recenter() }
         func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) {
             parent.onZoomChanged(scale)
         }
@@ -462,19 +487,10 @@ final class ZoomablePageView: UIView {
     let contentView = UIView()
     let paperView = PaperSheetView()
     let imageLayer = ImageLayerView()
-    let backgroundInkView = UIImageView()
     let canvasView = PKCanvasView()
+    let moveImageView = UIImageView()
     let lassoView = LassoOverlayView()
     let straightenRecognizer = HoldStraightenRecognizer()
-    var onPageViewportChange: ((CGRect) -> Void)?
-    private var lastReportedPageViewportFrame = CGRect.null
-    private var lastContentInset: UIEdgeInsets = .zero
-    var backgroundDrawingData = Data() {
-        didSet {
-            guard oldValue != backgroundDrawingData else { return }
-            updateBackgroundInk()
-        }
-    }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -509,11 +525,6 @@ final class ZoomablePageView: UIView {
         imageLayer.frame = contentView.bounds
         contentView.addSubview(imageLayer)
 
-        backgroundInkView.frame = contentView.bounds
-        backgroundInkView.backgroundColor = .clear
-        backgroundInkView.isUserInteractionEnabled = false
-        contentView.addSubview(backgroundInkView)
-
         canvasView.frame = contentView.bounds
         canvasView.backgroundColor = .clear
         canvasView.isOpaque = false
@@ -526,6 +537,11 @@ final class ZoomablePageView: UIView {
         straightenRecognizer.delaysTouchesEnded = false
         canvasView.addGestureRecognizer(straightenRecognizer)
 
+        moveImageView.isHidden = true
+        moveImageView.isUserInteractionEnabled = false
+        moveImageView.contentMode = .scaleToFill
+        contentView.addSubview(moveImageView)
+
         lassoView.frame = contentView.bounds
         lassoView.isHidden = true
         contentView.addSubview(lassoView)
@@ -536,7 +552,6 @@ final class ZoomablePageView: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         recenter()
-        reportPageViewportIfNeeded()
     }
 
     func recenter() {
@@ -545,23 +560,7 @@ final class ZoomablePageView: UIView {
         let scaledH = page.height * scrollView.zoomScale
         let hInset = max(0, (scrollView.bounds.width - scaledW) / 2)
         let vInset = max(16, (scrollView.bounds.height - scaledH) / 2)
-        let inset = UIEdgeInsets(top: vInset, left: hInset, bottom: 140, right: hInset)
-        guard inset != lastContentInset else { return }
-        lastContentInset = inset
-        scrollView.contentInset = inset
-    }
-
-    func reportPageViewportIfNeeded() {
-        let frame = contentView.convert(contentView.bounds, to: self)
-        guard frame != lastReportedPageViewportFrame else { return }
-        lastReportedPageViewportFrame = frame
-        onPageViewportChange?(frame)
-    }
-
-    private func updateBackgroundInk() {
-        let drawing = (try? PKDrawing(data: backgroundDrawingData)) ?? PKDrawing()
-        let pageRect = CGRect(origin: .zero, size: NotebookPageLayout.size)
-        backgroundInkView.image = drawing.strokes.isEmpty ? nil : drawing.image(from: pageRect, scale: 1)
+        scrollView.contentInset = UIEdgeInsets(top: vInset, left: hInset, bottom: 140, right: hInset)
     }
 }
 

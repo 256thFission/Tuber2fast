@@ -17,6 +17,21 @@ struct PageStripView: View {
                         .buttonStyle(.plain)
                         .id(index)
                         .accessibilityIdentifier("strip-page-\(index + 1)")
+                        .contextMenu {
+                            Button {
+                                withAnimation { vm.movePage(from: index, to: index - 1) }
+                            } label: { Label("Move left", systemImage: "arrow.left") }
+                                .disabled(index == 0)
+                            Button {
+                                withAnimation { vm.movePage(from: index, to: index + 1) }
+                            } label: { Label("Move right", systemImage: "arrow.right") }
+                                .disabled(index == vm.pageCount - 1)
+                            Divider()
+                            Button(role: .destructive) {
+                                withAnimation { vm.deletePage(at: index) }
+                            } label: { Label("Delete page", systemImage: "trash") }
+                                .disabled(vm.pageCount <= 1)
+                        }
                     }
 
                     Button {

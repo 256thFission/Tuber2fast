@@ -1,3 +1,24 @@
+# This round — lasso perf, stronger ambience, page reordering
+
+## Lasso latency fixed
+Dragging a lasso selection no longer rebuilds the whole drawing every frame. On
+grab, the selected strokes are lifted into a lightweight image that moves with
+your finger (cheap); the actual strokes are only rewritten once, on release. Much
+smoother, especially with lots of ink.
+
+## More noticeable ambience
+Bumped the breathing blotches — higher opacity, a touch more breath, slightly
+tighter blur — so the background motion actually reads. Still soft and minimal.
+
+## Reorder / delete pages from the top strip
+Long-press a page in the top preview strip for a context menu: Move left, Move
+right, or Delete page. The currently-viewed page stays in view after a move, and
+delete is disabled when only one page remains.
+
+No new files this round — all edits are in existing `Notebook/` files.
+
+---
+
 # This round — real lasso, living background, unified frost
 
 ## Lasso now selects & moves
