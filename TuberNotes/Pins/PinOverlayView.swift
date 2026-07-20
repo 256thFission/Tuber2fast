@@ -7,19 +7,23 @@ struct PinOverlayView: View {
     let projectAnchor: AnchorProjector
     let onEvent: ((PinOverlayEvent) -> Void)?
     private let usesNormalizedFitProjection: Bool
+    private let allowsConversationRequests: Bool
 
     @State private var expandedAnnotationID: UUID?
+    @State private var draggedTargets: [UUID: PageNormalizedPoint] = [:]
 
     init(
         annotations: [PageAnnotation],
         projectAnchor: @escaping AnchorProjector,
         initiallyExpandedAnnotationID: UUID? = nil,
+        allowsConversationRequests: Bool = true,
         onEvent: ((PinOverlayEvent) -> Void)? = nil
     ) {
         self.annotations = annotations
         self.projectAnchor = projectAnchor
         self.onEvent = onEvent
         self.usesNormalizedFitProjection = false
+        self.allowsConversationRequests = allowsConversationRequests
         _expandedAnnotationID = State(initialValue: initiallyExpandedAnnotationID)
     }
 
@@ -33,8 +37,14 @@ struct PinOverlayView: View {
                     )
                 }
                 : projectAnchor
+            let displayedAnnotations = annotations.map { annotation in
+                guard let target = draggedTargets[annotation.id] else { return annotation }
+                var displayed = annotation
+                displayed.target = target
+                return displayed
+            }
             let placements = PinOverlayLayout.placements(
-                for: annotations,
+                for: displayedAnnotations,
                 expandedAnnotationID: expandedAnnotationID,
                 in: proxy.size,
                 projectAnchor: effectiveProjector
@@ -47,15 +57,32 @@ struct PinOverlayView: View {
                         PinAnchor(
                             annotation: annotation,
                             isExpanded: annotation.id == expandedAnnotationID,
+                            canMove: canMovePins,
                             onToggle: { toggle(annotation) },
-                            onConversationRequested: {
-                                onEvent?(.conversationRequested(annotationID: annotation.id))
-                            }
+                            onMoveChanged: { translation in
+                                updateDraggedTarget(
+                                    for: annotation,
+                                    translation: translation,
+                                    in: proxy.size,
+                                    projectAnchor: effectiveProjector
+                                )
+                            },
+                            onMoveEnded: { translation in
+                                commitMove(
+                                    of: annotation,
+                                    translation: translation,
+                                    in: proxy.size,
+                                    projectAnchor: effectiveProjector
+                                )
+                            },
+                            onConversationRequested: conversationAction(for: annotation)
                         )
                             .position(placement.anchor)
                         PinCard(
                             annotation: annotation,
                             isExpanded: annotation.id == expandedAnnotationID,
+                            canMove: canMovePins,
+                            onConversationRequested: conversationAction(for: annotation),
                             onCitationSelected: { citation in
                                 onEvent?(.citationSelected(annotationID: annotation.id, citationID: citation.id))
                             }
@@ -72,6 +99,7 @@ struct PinOverlayView: View {
         }
         .allowsHitTesting(!annotations.isEmpty)
         .onChange(of: annotations.map(\.id)) { _, annotationIDs in
+            draggedTargets = draggedTargets.filter { annotationIDs.contains($0.key) }
             guard let expandedAnnotationID, !annotationIDs.contains(expandedAnnotationID) else { return }
             self.expandedAnnotationID = nil
         }
@@ -86,17 +114,69 @@ struct PinOverlayView: View {
             onEvent?(.expanded(annotationID: annotation.id))
         }
     }
+
+    private var canMovePins: Bool {
+        usesNormalizedFitProjection && onEvent != nil
+    }
+
+    private func conversationAction(for annotation: PageAnnotation) -> (() -> Void)? {
+        guard allowsConversationRequests,
+              annotation.status == .complete,
+              onEvent != nil
+        else { return nil }
+        return { onEvent?(.conversationRequested(annotationID: annotation.id)) }
+    }
+
+    private func updateDraggedTarget(
+        for annotation: PageAnnotation,
+        translation: CGSize,
+        in size: CGSize,
+        projectAnchor: AnchorProjector
+    ) {
+        let original = projectAnchor(annotation.target)
+        draggedTargets[annotation.id] = PinOverlayLayout.pageNormalizedPoint(
+            forOverlayPoint: CGPoint(
+                x: original.x + translation.width,
+                y: original.y + translation.height
+            ),
+            in: size
+        )
+    }
+
+    private func commitMove(
+        of annotation: PageAnnotation,
+        translation: CGSize,
+        in size: CGSize,
+        projectAnchor: AnchorProjector
+    ) {
+        let original = projectAnchor(annotation.target)
+        let target = draggedTargets[annotation.id] ?? PinOverlayLayout.pageNormalizedPoint(
+            forOverlayPoint: CGPoint(
+                x: original.x + translation.width,
+                y: original.y + translation.height
+            ),
+            in: size
+        )
+        draggedTargets[annotation.id] = nil
+        guard let target else { return }
+        onEvent?(.moved(annotationID: annotation.id, target: target))
+    }
 }
 
 extension PinOverlayView {
     /// Temporary adapter for the coordinator-owned scaffold. It still uses canonical annotations and
     /// performs only the scaffold's normalized-fit projection.
     @available(*, deprecated, message: "Supply PageAnnotation values and a host-owned anchor projector")
-    init(pins: [Pin], onEvent: ((PinOverlayEvent) -> Void)? = nil) {
+    init(
+        pins: [Pin],
+        allowsConversationRequests: Bool = false,
+        onEvent: ((PinOverlayEvent) -> Void)? = nil
+    ) {
         self.annotations = pins
         self.projectAnchor = { point in CGPoint(x: point.x, y: point.y) }
         self.onEvent = onEvent
         self.usesNormalizedFitProjection = true
+        self.allowsConversationRequests = allowsConversationRequests
         _expandedAnnotationID = State(initialValue: nil)
     }
 }
@@ -125,10 +205,14 @@ private struct PinConnector: View {
 private struct PinAnchor: View {
     let annotation: PageAnnotation
     let isExpanded: Bool
+    let canMove: Bool
     let onToggle: () -> Void
-    let onConversationRequested: () -> Void
+    let onMoveChanged: (CGSize) -> Void
+    let onMoveEnded: (CGSize) -> Void
+    let onConversationRequested: (() -> Void)?
     @State private var isHoldingForConversation = false
-    @State private var touchExceededHoldDistance = false
+    @State private var touchExceededTapDistance = false
+    @State private var isDraggingPin = false
     @State private var isTrackingTouch = false
     @State private var didCompleteHold = false
     @State private var holdTask: Task<Void, Never>?
@@ -156,7 +240,8 @@ private struct PinAnchor: View {
                 holdTask?.cancel()
                 holdTask = nil
                 isHoldingForConversation = false
-                touchExceededHoldDistance = false
+                touchExceededTapDistance = false
+                isDraggingPin = false
                 isTrackingTouch = false
                 didCompleteHold = false
             }
@@ -165,7 +250,7 @@ private struct PinAnchor: View {
         .accessibilityAddTraits(.isButton)
         .accessibilityLabel(annotation.teaser)
         .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
-        .accessibilityHint(isExpanded ? "Tap to collapse, or touch and hold for follow-up" : "Expands this Pin")
+        .accessibilityHint(accessibilityHint)
         .accessibilityAddTraits(isExpanded ? .isSelected : [])
         .accessibilityAction {
             onToggle()
@@ -181,46 +266,71 @@ private struct PinAnchor: View {
             .onChanged { value in
                 beginTouchIfNeeded()
                 let distance = hypot(value.translation.width, value.translation.height)
-                if distance > 12 {
-                    touchExceededHoldDistance = true
+                if isDraggingPin {
+                    onMoveChanged(value.translation)
+                } else if distance > 12 {
+                    touchExceededTapDistance = true
                     isHoldingForConversation = false
                     holdTask?.cancel()
-                } else if !touchExceededHoldDistance {
-                    isHoldingForConversation = isExpanded
+                    if canMove {
+                        isDraggingPin = true
+                        onMoveChanged(value.translation)
+                    }
+                } else if !touchExceededTapDistance {
+                    isHoldingForConversation = isExpanded && onConversationRequested != nil
                 }
             }
-            .onEnded { _ in
-                endTouch()
+            .onEnded { value in
+                endTouch(translation: value.translation)
             }
     }
 
     private func beginTouchIfNeeded() {
         guard !isTrackingTouch else { return }
         isTrackingTouch = true
-        touchExceededHoldDistance = false
+        touchExceededTapDistance = false
+        isDraggingPin = false
         didCompleteHold = false
-        guard isExpanded else { return }
+        guard isExpanded, let onConversationRequested else { return }
         isHoldingForConversation = true
         holdTask = Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(350))
-            guard !Task.isCancelled, isExpanded, isTrackingTouch, !touchExceededHoldDistance else { return }
+            guard !Task.isCancelled,
+                  isExpanded,
+                  isTrackingTouch,
+                  !touchExceededTapDistance
+            else { return }
             didCompleteHold = true
             isHoldingForConversation = false
             onConversationRequested()
         }
     }
 
-    private func endTouch() {
-        let shouldToggle = !didCompleteHold && !touchExceededHoldDistance
+    private func endTouch(translation: CGSize) {
+        let completedDrag = isDraggingPin
+        let shouldToggle = !didCompleteHold && !touchExceededTapDistance
         holdTask?.cancel()
         holdTask = nil
         isHoldingForConversation = false
         isTrackingTouch = false
-        touchExceededHoldDistance = false
+        touchExceededTapDistance = false
+        isDraggingPin = false
         didCompleteHold = false
-        if shouldToggle {
+        if completedDrag {
+            onMoveEnded(translation)
+        } else if shouldToggle {
             onToggle()
         }
+    }
+
+    private var accessibilityHint: String {
+        let tapAction = isExpanded ? "Tap to collapse" : "Tap to expand"
+        if canMove, onConversationRequested != nil {
+            return "\(tapAction), drag to move, or hold for follow-up"
+        }
+        if canMove { return "\(tapAction), or drag to move" }
+        if onConversationRequested != nil { return "\(tapAction), or hold for follow-up" }
+        return tapAction
     }
 
     private var accessibilityID: String { "pin-anchor-\(annotation.id.uuidString)" }
@@ -258,6 +368,8 @@ private struct PinHoldProgressCue: View {
 private struct PinCard: View {
     let annotation: PageAnnotation
     let isExpanded: Bool
+    let canMove: Bool
+    let onConversationRequested: (() -> Void)?
     let onCitationSelected: (Citation) -> Void
 
     var body: some View {
@@ -280,6 +392,28 @@ private struct PinCard: View {
             .accessibilityIdentifier("pin-card-\(annotation.id.uuidString)")
 
             if isExpanded {
+                if canMove || onConversationRequested != nil {
+                    Divider()
+                    HStack(spacing: 10) {
+                        if canMove {
+                            Label("Drag the Pin dot to move", systemImage: "arrow.up.and.down.and.arrow.left.and.right")
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 4)
+                        if let onConversationRequested {
+                            Button(action: onConversationRequested) {
+                                Label("Continue", systemImage: "bubble.left.and.bubble.right.fill")
+                                    .font(.caption.weight(.semibold))
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .accessibilityLabel("Continue conversation")
+                        }
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                }
                 Divider()
                 ScrollView {
                     VStack(alignment: .leading, spacing: 10) {

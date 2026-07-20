@@ -16,6 +16,7 @@ struct NotebookView: View {
     @State private var showPages = false
     @State private var showStrip = false
     @State private var showAgentSidebar = false
+    @State private var selectedAgentParentThreadID: UUID?
     @State private var showProviderAccessPopup = false
     @State private var showToolbarSettings = false
     @State private var isRefinementActive = false
@@ -63,6 +64,7 @@ struct NotebookView: View {
                     Spacer(minLength: 0)
                     AgentSidebarView(
                         vm: vm,
+                        selectedParentThreadID: $selectedAgentParentThreadID,
                         onClose: { withAnimation { showAgentSidebar = false } },
                         onEditProviderAccess: { withAnimation { showProviderAccessPopup = true } }
                     )
@@ -699,7 +701,24 @@ struct NotebookView: View {
             ZStack {
                 if vm.isAgenticLayersActive {
                     AgenticModeGlow(isActive: true)
-                    PinOverlayView(pins: vm.activeAgenticPins)
+                    PinOverlayView(
+                        pins: vm.activeAgenticPins,
+                        allowsConversationRequests: true,
+                        onEvent: { event in
+                            switch event {
+                            case let .moved(annotationID, target):
+                                vm.moveAgenticPin(annotationID, to: target)
+                            case let .conversationRequested(annotationID):
+                                guard let pin = vm.activeAgenticPins.first(where: { $0.id == annotationID }) else {
+                                    return
+                                }
+                                selectedAgentParentThreadID = pin.threadID
+                                withAnimation { showAgentSidebar = true }
+                            case .expanded(_), .collapsed(_), .citationSelected(_, _):
+                                break
+                            }
+                        }
+                    )
                 }
 
                 if isRefinementActive {

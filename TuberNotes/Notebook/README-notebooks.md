@@ -23,14 +23,23 @@ Pins are persisted only inside `Notebook.agenticLayers` through
 `ConversationLayer.conversations`. They are not stored on `NotebookPage` or
 exposed as a separate global canvas tool.
 
-Selecting a visible Agentic Layer in the toolbar activates that layer and shows
-only its Pins for the current page. Selecting a drawing tool or drawing layer
-leaves Agentic Layer mode and hides those Pins. The animated edge glow is the
-visual cue that an Agentic Layer is active.
+Each Agentic Layer chip is an explicit hidden/active toggle. Activating one
+shows only its Pins for the current page; tapping the active chip, selecting a
+drawing tool, or selecting a drawing layer fully hides Agentic Layer content.
+The toolbar's filled gradient and the animated page-edge glow appear only while
+an Agentic Layer is active, not merely while the layer picker is open.
 
 “Ask on this layer” opens the frosted question panel. Its answer is persisted as
 a Pin at the selection center on the active Agentic Layer, so closing the panel
 does not discard the visual result.
+
+The question panel derives a cycle-safe conversation tree from those same
+persisted Pins. Selecting a node makes it the parent of the next response; the
+child reuses the parent's page region and bounded answer context and persists
+an optional parent-thread link. This is Pin branching, not a second transcript
+store. Expand a completed Pin to Continue from it directly. Drag the Pin dot to
+move its page-normalized anchor; the original semantic selection region stays
+unchanged.
 
 ## Visual character
 

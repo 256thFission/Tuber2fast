@@ -14,7 +14,10 @@ struct ConversationLayerOverlayView: View {
 
     var body: some View {
         ZStack {
-            PinOverlayView(pins: selectedLayer?.conversations ?? [])
+            PinOverlayView(
+                pins: selectedLayer?.conversations ?? [],
+                onEvent: handlePinEvent
+            )
 
             VStack {
                 ConversationLayerPickerView(
@@ -29,6 +32,16 @@ struct ConversationLayerOverlayView: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("conversation-layer-overlay")
+    }
+
+    private func handlePinEvent(_ event: PinOverlayEvent) {
+        guard case let .moved(annotationID, target) = event,
+              let layerIndex = layers.firstIndex(where: { layer in
+                  layer.conversations.contains(where: { $0.id == annotationID })
+              }),
+              let pinIndex = layers[layerIndex].conversations.firstIndex(where: { $0.id == annotationID })
+        else { return }
+        layers[layerIndex].conversations[pinIndex].target = target
     }
 }
 

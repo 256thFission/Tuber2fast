@@ -193,10 +193,7 @@ struct NotebookToolbar: View {
             && !vm.isAgenticLayersActive
         let fill: Color = tool == .eraser ? .secondary : vm.inkColor
         return Button {
-            pressedTool = nil
-            isLassoActive = false
-            isRefinementActive = false
-            vm.selectTool(tool)
+            activateToolbarTool(tool)
         } label: {
             Image(systemName: tool.symbol)
                 .font(.system(size: 17, weight: .medium))
@@ -212,6 +209,12 @@ struct NotebookToolbar: View {
                 .animation(.spring(response: 0.22, dampingFraction: 0.62), value: selected)
         }
         .highPriorityGesture(widthAdjustmentGesture(for: tool))
+        // The high-priority hold protects width adjustment from the horizontal
+        // ScrollView, but it can consume the Button's short tap. Observe that
+        // tap simultaneously; the shared action is intentionally idempotent.
+        .simultaneousGesture(
+            TapGesture().onEnded { _ in activateToolbarTool(tool) }
+        )
         .accessibilityIdentifier("tool-\(tool.rawValue)")
         .accessibilityLabel(tool.label)
         .accessibilityValue("\(Int(vm.width(for: tool).rounded())) point width")
@@ -220,6 +223,13 @@ struct NotebookToolbar: View {
         .accessibilityAdjustableAction { direction in
             adjustWidth(for: tool, direction: direction)
         }
+    }
+
+    private func activateToolbarTool(_ tool: WritingTool) {
+        pressedTool = nil
+        isLassoActive = false
+        isRefinementActive = false
+        vm.selectTool(tool)
     }
 
     private var lassoButton: some View {
@@ -396,16 +406,16 @@ struct NotebookToolbar: View {
     }
 
     private var agenticLayersButton: some View {
-        let isHighlighted = showLayers || vm.isAgenticLayersActive
+        let isActive = vm.isAgenticLayersActive
         return Button {
             showLayers.toggle()
         } label: {
             Image(systemName: "square.3.layers.3d")
                 .font(.system(size: 17, weight: .medium))
                 .frame(width: 34, height: 34)
-                .foregroundStyle(isHighlighted ? Color.white : Color.primary)
+                .foregroundStyle(isActive ? Color.white : (showLayers ? Color.indigo : Color.primary))
                 .background {
-                    if isHighlighted {
+                    if isActive {
                         Circle()
                             .fill(
                                 LinearGradient(
@@ -420,8 +430,8 @@ struct NotebookToolbar: View {
                 .animation(.spring(response: 0.24, dampingFraction: 0.65), value: showLayers)
         }
         .accessibilityIdentifier("toolbar-agentic-layers")
-        .accessibilityLabel(showLayers ? "Close layers" : "Open layers")
-        .accessibilityValue(vm.isAgenticLayersActive ? "Agentic layer active" : "Drawing layer active")
+        .accessibilityLabel(showLayers ? "Close layer picker" : "Open layer picker")
+        .accessibilityValue(isActive ? "Agentic layer active" : "Agentic layers hidden")
         .accessibilityAddTraits(vm.isAgenticLayersActive ? [.isSelected] : [])
         .popover(isPresented: $showLayers) {
             NotebookLayersPopover(vm: vm) {
@@ -484,20 +494,23 @@ private struct NotebookLayersPopover: View {
             Button {
                 let layers = vm.conversationLayers.layers
                 guard let layerID = layers.first(where: {
-                    $0.id == vm.selectedLayerID && $0.isVisible
-                })?.id ?? layers.first(where: \.isVisible)?.id
+                    $0.id == vm.selectedLayerID
+                })?.id ?? layers.first?.id
                 else { return }
                 vm.selectAgenticLayer(layerID)
                 onAskAgent()
             } label: {
-                Label("Ask on this layer", systemImage: "text.bubble.fill")
+                Label(
+                    vm.isAgenticLayersActive ? "Ask on active layer" : "Activate & ask",
+                    systemImage: "text.bubble.fill"
+                )
                     .font(.subheadline.weight(.semibold))
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 10)
             }
             .buttonStyle(.borderedProminent)
             .tint(.indigo)
-            .disabled(!vm.conversationLayers.layers.contains(where: \.isVisible))
+            .disabled(vm.conversationLayers.layers.isEmpty)
             .accessibilityHint("Adds the answer as a Pin on the selected Agentic Layer")
 
             Divider()
@@ -564,16 +577,35 @@ private struct NotebookLayersPopover: View {
     }
 
     private func agenticLayerChip(_ layer: ConversationLayer) -> some View {
-        let selected = vm.isAgenticLayersActive && vm.selectedLayerID == layer.id
-        return layerChip(
-            name: layer.name,
-            detail: "\(layer.conversations.count)",
-            symbol: layer.symbolName,
-            isSelected: selected,
-            isVisible: layer.isVisible,
-            select: { vm.selectAgenticLayer(layer.id) },
-            toggleVisibility: { vm.toggleAgenticLayerVisibility(layer.id) }
-        )
+        let isActive = vm.isAgenticLayersActive
+            && vm.selectedLayerID == layer.id
+            && layer.isVisible
+        return Button {
+            vm.toggleAgenticLayerActivation(layer.id)
+        } label: {
+            HStack(spacing: 7) {
+                Image(systemName: layer.symbolName)
+                Text(layer.name).lineLimit(1)
+                Text("\(layer.conversations.count)")
+                    .font(.caption2.monospacedDigit().weight(.bold))
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .foregroundStyle(isActive ? Color.indigo : Color.secondary)
+                    .background(.white.opacity(isActive ? 0.86 : 0.65), in: Capsule())
+                Image(systemName: isActive ? "eye.fill" : "eye.slash")
+                    .font(.caption.weight(.semibold))
+            }
+            .font(.subheadline.weight(.semibold))
+            .padding(.horizontal, 11)
+            .padding(.vertical, 9)
+            .foregroundStyle(isActive ? Color.white : Color.secondary)
+            .background(isActive ? Color.indigo : Color.secondary.opacity(0.10), in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(layer.name) Agentic Layer")
+        .accessibilityValue(isActive ? "Active" : "Hidden")
+        .accessibilityHint(isActive ? "Hides this layer and its Pins" : "Activates this layer and shows its Pins")
+        .accessibilityAddTraits(isActive ? .isSelected : [])
         .accessibilityIdentifier("agentic-layer-\(layer.id.uuidString)")
     }
 

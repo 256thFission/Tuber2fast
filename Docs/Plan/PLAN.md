@@ -470,3 +470,52 @@ Host implementation and scoped checks pass. Canonical Swift/Xcode build,
 physical-iPad scenarios, normal-product visual inspection, and separately
 authorized live-provider evidence remain blocked because this host exposes no
 Apple or Swift toolchain.
+
+## Active line — PC-7: Agentic Layer, conversation-tree, and movable-Pin interaction cleanup
+
+Status: **implementation complete — host-checked; physical-device verification blocked**
+
+Target branch: `sive/dev`
+
+Child work-line: [`PC-7-AgentLayerPinInteraction.md`](PC-7-AgentLayerPinInteraction.md)
+
+Summary: make the normal notebook's Agentic Layer read as one of two honest
+user-visible states—hidden or active—without conflating an open layer picker
+with active page content. Reuse the existing page-normalized Pin contract to
+make conversation Pins draggable and persisted; render those durable Pins as
+a branchable tree in the normal Agent sidebar; remove dead follow-up
+affordances; and route supported Pin follow-ups into the matching tree node.
+
+Shared-contract log — 2026-07-20: `CONTRACT:` add
+`PinOverlayEvent.moved(annotationID:target:)` so the Pins-owned drag gesture can
+hand one page-normalized final anchor to its coordinator-owned persistence
+path. No persisted type, page identity, provider/runtime boundary, or
+coordinate representation changes.
+
+Shared-contract log — 2026-07-20: `CONTRACT:` add optional
+`PageAnnotation.parentThreadID` so existing persisted Pin annotations can
+express branch topology without a second conversation store. Older notebook
+and SPUD payloads decode the missing optional value as a root; page identity,
+annotation identity, and existing thread IDs are unchanged.
+
+Host implementation and scoped checks pass. Canonical build, the named Pin
+scenarios, normal-product tree/drag inspection, screenshots, console/crash
+evidence, and human interaction judgment remain blocked because this Linux
+workspace has no Apple/Swift toolchain or explicitly pinned physical-iPad
+session.
+
+## Active line — PC-8: drawing tool recovery after erasing
+
+Status: **implemented — host-checked; physical-device verification blocked**
+
+Target branch: `sive/dev`
+
+Child work-line: [`PC-8-DrawingToolRecovery.md`](PC-8-DrawingToolRecovery.md)
+
+Summary: the main toolbar now observes a short tool tap simultaneously with its
+existing high-priority hold-and-drag width gesture, routing both the button and
+tap paths through one idempotent selection helper. The focused contract plus
+the four nearby notebook/Pencil checks pass (5/5), as does `git diff --check`;
+evidence is under `tmp/verify/pc-8-drawing-tool-recovery/`. Canonical build,
+`blank-canvas`, and physical eraser-to-drawing interaction proof remain blocked
+because this Linux host has no Xcode or explicitly pinned iPad session.

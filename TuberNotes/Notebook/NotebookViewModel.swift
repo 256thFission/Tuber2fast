@@ -4,16 +4,6 @@ import PencilKit
 import SwiftUI
 import UIKit
 
-/// A recent agent answer shown in the layer-side panel. The durable copy is the
-/// Pin appended to the active Agentic Layer.
-struct AgentObservation: Identifiable {
-    let id = UUID()
-    let summary: String
-    let items: [String]
-    let thumbnail: UIImage?
-    let date: Date
-}
-
 enum NotebookPageTurnDirection {
     case forward
     case backward
@@ -61,9 +51,9 @@ final class NotebookViewModel: ObservableObject {
     @Published var exportError: String?
 
     // Agentic Layer questions
-    @Published var observations: [AgentObservation] = []
     @Published var isAnalyzing = false
     @Published var agentError: String?
+    @Published private(set) var newestAgentThreadID: UUID?
 
     private let store: NotebookStore
     private var saveTask: Task<Void, Never>?
@@ -274,11 +264,14 @@ final class NotebookViewModel: ObservableObject {
     }
 
     func selectAgenticLayer(_ id: UUID) {
-        guard notebook.agenticLayers.contains(where: { $0.id == id && $0.isVisible }) else { return }
+        guard let index = notebook.agenticLayers.firstIndex(where: { $0.id == id }) else { return }
+        let restoredVisibility = !notebook.agenticLayers[index].isVisible
+        notebook.agenticLayers[index].isVisible = true
         selectedLayerID = id
         isAgenticLayersActive = true
         isLassoActive = false
         isArrangingImages = false
+        if restoredVisibility { persistNow() }
     }
 
     func addAgenticLayer(named rawName: String) {
@@ -295,16 +288,36 @@ final class NotebookViewModel: ObservableObject {
         persistNow()
     }
 
-    func toggleAgenticLayerVisibility(_ id: UUID) {
-        guard let idx = notebook.agenticLayers.firstIndex(where: { $0.id == id }) else { return }
-        notebook.agenticLayers[idx].isVisible.toggle()
-        if !notebook.agenticLayers[idx].isVisible, selectedLayerID == id {
-            selectedLayerID = notebook.agenticLayers.first(where: \.isVisible)?.id
-            if selectedLayerID == nil {
-                isAgenticLayersActive = false
-            }
+    func toggleAgenticLayerActivation(_ id: UUID) {
+        guard let index = notebook.agenticLayers.firstIndex(where: { $0.id == id }) else { return }
+        let isActive = isAgenticLayersActive
+            && selectedLayerID == id
+            && notebook.agenticLayers[index].isVisible
+
+        if isActive {
+            notebook.agenticLayers[index].isVisible = false
+            isAgenticLayersActive = false
+        } else {
+            notebook.agenticLayers[index].isVisible = true
+            selectedLayerID = id
+            isAgenticLayersActive = true
+            isLassoActive = false
+            isArrangingImages = false
         }
         persistNow()
+    }
+
+    func moveAgenticPin(_ id: UUID, to target: PageNormalizedPoint) {
+        guard target.isFiniteAndInUnitBounds else { return }
+        for layerIndex in notebook.agenticLayers.indices {
+            guard let pinIndex = notebook.agenticLayers[layerIndex].conversations.firstIndex(where: {
+                $0.id == id && $0.pageID == currentPageID
+            }) else { continue }
+            guard notebook.agenticLayers[layerIndex].conversations[pinIndex].target != target else { return }
+            notebook.agenticLayers[layerIndex].conversations[pinIndex].target = target
+            persistNow()
+            return
+        }
     }
 
     func selectDrawingLayer(_ id: UUID) {
@@ -514,9 +527,9 @@ final class NotebookViewModel: ObservableObject {
 
     // MARK: Agentic Layer questions
 
-    /// Render the current page as a canonical selection artifact. A lasso limits
-    /// the crop; without one, the complete page is used.
-    func makeSelectionSnapshot() -> SelectionArtifact? {
+    /// Render the current page as a canonical selection artifact. A live lasso
+    /// wins; otherwise a conversation branch can reuse its parent's persisted region.
+    func makeSelectionSnapshot(preferredBounds: PageNormalizedRect? = nil) -> SelectionArtifact? {
         let drawing = currentPage.drawing
         let images = currentPage.images
         guard !drawing.bounds.isNull || !images.isEmpty else { return nil }
@@ -541,10 +554,20 @@ final class NotebookViewModel: ObservableObject {
             drawing.image(from: pageRect, scale: 1).draw(in: pageRect)
         }
 
-        var normalized = lassoRect ?? CGRect(x: 0, y: 0, width: 1, height: 1)
+        let inheritedBounds = preferredBounds.flatMap { bounds -> CGRect? in
+            guard bounds.isFiniteAndInUnitBounds else { return nil }
+            return CGRect(
+                x: CGFloat(bounds.x),
+                y: CGFloat(bounds.y),
+                width: CGFloat(bounds.width),
+                height: CGFloat(bounds.height)
+            )
+        }
+        let usesFocusedCrop = lassoRect != nil || inheritedBounds != nil
+        var normalized = lassoRect ?? inheritedBounds ?? CGRect(x: 0, y: 0, width: 1, height: 1)
         normalized = normalized.intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
         var output = full
-        if lassoRect != nil {
+        if usesFocusedCrop {
             let cropRect = CGRect(
                 x: normalized.minX * pageRect.width,
                 y: normalized.minY * pageRect.height,
@@ -596,7 +619,8 @@ final class NotebookViewModel: ObservableObject {
 
     func analyzeCurrentPage(
         providerAccess: AgentProviderAccess?,
-        question: String? = nil
+        question: String? = nil,
+        parentThreadID: UUID? = nil
     ) {
         guard !isAnalyzing else { return }
         guard isAgenticLayersActive,
@@ -607,12 +631,26 @@ final class NotebookViewModel: ObservableObject {
             agentError = "Choose a visible Agentic Layer first."
             return
         }
-        guard let selection = makeSelectionSnapshot() else {
+        let layerID = notebook.agenticLayers[layerIndex].id
+        let parentPin = parentThreadID.flatMap { threadID in
+            notebook.agenticLayers[layerIndex].conversations.first(where: { $0.threadID == threadID })
+        }
+        if parentThreadID != nil, parentPin == nil {
+            agentError = "That conversation branch is no longer available on this layer."
+            return
+        }
+        if let parentPin, parentPin.pageID != currentPageID {
+            agentError = "Open the parent Pin's page before continuing this branch."
+            return
+        }
+        guard let selection = makeSelectionSnapshot(preferredBounds: parentPin?.targetRegion) else {
             agentError = "Draw or add something first, then ask about it."
             return
         }
 
-        let thumbnail = UIImage(data: selection.crop.imageData)
+        let trimmedQuestion = question?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        let submittedQuestion = branchQuestion(trimmedQuestion, parent: parentPin)
+        let childThreadID = UUID()
         isAnalyzing = true
         agentError = nil
         let client = AgentInsightClientFactory.make(access: providerAccess)
@@ -620,37 +658,41 @@ final class NotebookViewModel: ObservableObject {
         Task { [weak self] in
             guard let self else { return }
             do {
-                let insight = try await client.analyze(selection, question: question)
-                observations.insert(
-                    AgentObservation(
-                        summary: insight.summary,
-                        items: insight.items,
-                        thumbnail: thumbnail,
-                        date: Date()
-                    ),
-                    at: 0
-                )
-                let target = PageNormalizedPoint(
-                    x: selection.pageBounds.x + selection.pageBounds.width / 2,
-                    y: selection.pageBounds.y + selection.pageBounds.height / 2
+                let insight = try await client.analyze(selection, question: submittedQuestion)
+                guard let destinationLayerIndex = notebook.agenticLayers.firstIndex(where: {
+                    $0.id == layerID
+                }) else {
+                    agentError = "That Agentic Layer was removed before the response completed."
+                    isAnalyzing = false
+                    return
+                }
+                let target = branchTarget(
+                    parent: parentPin,
+                    in: notebook.agenticLayers[destinationLayerIndex].conversations,
+                    fallback: PageNormalizedPoint(
+                        x: selection.pageBounds.x + selection.pageBounds.width / 2,
+                        y: selection.pageBounds.y + selection.pageBounds.height / 2
+                    )
                 )
                 let body = ([insight.summary] + insight.items.map { "• \($0)" })
                     .joined(separator: "\n")
-                notebook.agenticLayers[layerIndex].conversations.append(
+                notebook.agenticLayers[destinationLayerIndex].conversations.append(
                     PageAnnotation(
                         id: UUID(),
                         pageID: selection.pageID,
-                        threadID: UUID(),
+                        threadID: childThreadID,
+                        parentThreadID: parentPin?.threadID,
                         target: target,
                         targetRegion: selection.pageBounds,
                         kind: .explanation,
-                        teaser: question?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
-                            ?? "Agent insight",
+                        teaser: trimmedQuestion
+                            ?? (parentPin == nil ? "Agent insight" : "Follow-up branch"),
                         body: body,
                         citations: [],
                         status: .complete
                     )
                 )
+                newestAgentThreadID = childThreadID
                 isAnalyzing = false
                 persistNow()
             } catch {
@@ -660,7 +702,37 @@ final class NotebookViewModel: ObservableObject {
         }
     }
 
-    func clearObservations() { observations.removeAll() }
+    private func branchQuestion(_ question: String?, parent: PageAnnotation?) -> String? {
+        guard let parent else { return question }
+        let followUp = question ?? "Explain this further."
+        let boundedAnswer = String(parent.body.prefix(2_000))
+        return """
+        Continue this notebook conversation as a branch from the selected Pin.
+        Parent prompt: \(parent.teaser)
+        Parent answer: \(boundedAnswer)
+        Follow-up: \(followUp)
+        """
+    }
+
+    private func branchTarget(
+        parent: PageAnnotation?,
+        in conversations: [PageAnnotation],
+        fallback: PageNormalizedPoint
+    ) -> PageNormalizedPoint {
+        guard let parent else { return fallback }
+        let siblingCount = conversations.filter { $0.parentThreadID == parent.threadID }.count
+        let offsets: [(Double, Double)] = [
+            (0.055, 0.035),
+            (-0.055, 0.035),
+            (0.055, -0.035),
+            (-0.055, -0.035),
+        ]
+        let offset = offsets[siblingCount % offsets.count]
+        return PageNormalizedPoint(
+            x: min(max(parent.target.x + offset.0, 0.035), 0.965),
+            y: min(max(parent.target.y + offset.1, 0.035), 0.965)
+        )
+    }
 
     // MARK: Persistence
 

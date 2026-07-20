@@ -1,9 +1,10 @@
 import SwiftUI
 
-/// Frosted question panel for the active Agentic Layer. Answers are persisted
-/// as spatial Pins; this panel only keeps a convenient recent-answer history.
+/// Frosted question panel for the active Agentic Layer. Its hierarchy is derived
+/// directly from persisted spatial Pins, so the tree and page never diverge.
 struct AgentSidebarView: View {
     @ObservedObject var vm: NotebookViewModel
+    @Binding var selectedParentThreadID: UUID?
     @AppStorage(AgentProviderAccess.credentialStorageKey) private var credential = ""
     @AppStorage(AgentProviderAccess.providerStorageKey) private var providerRaw = AgentProvider.openAI.rawValue
     @AppStorage(AgentProviderAccess.modelStorageKey) private var model = ""
@@ -22,6 +23,19 @@ struct AgentSidebarView: View {
 #else
         false
 #endif
+    }
+    private var activeLayer: ConversationLayer? {
+        guard vm.isAgenticLayersActive else { return nil }
+        return vm.notebook.agenticLayers.first {
+            $0.id == vm.selectedLayerID && $0.isVisible
+        }
+    }
+    private var treeItems: [AgentConversationTreeItem] {
+        AgentConversationTreeBuilder.items(from: activeLayer?.conversations ?? [])
+    }
+    private var selectedParent: PageAnnotation? {
+        guard let selectedParentThreadID else { return nil }
+        return activeLayer?.conversations.first { $0.threadID == selectedParentThreadID }
     }
     private var sidebarShape: UnevenRoundedRectangle {
         UnevenRoundedRectangle(topLeadingRadius: 24, bottomLeadingRadius: 24, style: .continuous)
@@ -48,14 +62,22 @@ struct AgentSidebarView: View {
         .padding(.trailing, 8)
         .environment(\.colorScheme, .dark)
         .accessibilityIdentifier("assistant-sidebar")
+        .onAppear { validateSelectedParent() }
+        .onChange(of: vm.selectedLayerID) { _, _ in validateSelectedParent() }
+        .onChange(of: vm.newestAgentThreadID) { _, threadID in
+            guard let threadID,
+                  activeLayer?.conversations.contains(where: { $0.threadID == threadID }) == true
+            else { return }
+            selectedParentThreadID = threadID
+        }
     }
 
     private var header: some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Label("Ask Agentic Layer", systemImage: "sparkles").font(.headline)
+                Label("Agentic Layer", systemImage: "sparkles").font(.headline)
                 if let layer = vm.notebook.agenticLayers.first(where: { $0.id == vm.selectedLayerID }) {
-                    Text(layer.name).font(.caption).foregroundStyle(.secondary)
+                    Text("\(layer.name) · Active").font(.caption).foregroundStyle(.secondary)
                 }
             }
             Spacer()
@@ -70,8 +92,13 @@ struct AgentSidebarView: View {
     @ViewBuilder
     private var content: some View {
         selectionChip
+        branchContextChip
 
-        TextField("Ask about it… (optional)", text: $prompt, axis: .vertical)
+        TextField(
+            selectedParent == nil ? "Ask about this page…" : "Ask a follow-up branch…",
+            text: $prompt,
+            axis: .vertical
+        )
             .textFieldStyle(.plain)
             .lineLimit(1...3)
             .padding(10)
@@ -81,7 +108,8 @@ struct AgentSidebarView: View {
         Button {
             vm.analyzeCurrentPage(
                 providerAccess: providerAccess,
-                question: prompt.isEmpty ? nil : prompt
+                question: prompt.isEmpty ? nil : prompt,
+                parentThreadID: selectedParentThreadID
             )
         } label: {
             Label(analyzeTitle, systemImage: hasSelection ? "lasso" : "eye")
@@ -112,22 +140,129 @@ struct AgentSidebarView: View {
             Text(error).font(.caption).foregroundStyle(.red).padding(.top, 8)
         }
 
-        if vm.observations.isEmpty && !vm.isAnalyzing {
+        if treeItems.isEmpty && !vm.isAnalyzing {
             emptyState.padding(.top, 20)
         } else {
-            ForEach(vm.observations) { observation in
-                ObservationCard(observation: observation).padding(.top, 12)
-            }
-            if !vm.observations.isEmpty {
-                Button("Clear panel history", role: .destructive) { vm.clearObservations() }
-                    .font(.caption).padding(.top, 8)
-            }
+            conversationTree.padding(.top, 16)
         }
     }
 
     private var analyzeTitle: String {
         if vm.isAnalyzing { return "Analyzing…" }
+        if selectedParent != nil { return "Create follow-up branch" }
         return hasSelection ? "Analyze selection" : "Analyze page"
+    }
+
+    @ViewBuilder
+    private var branchContextChip: some View {
+        if let selectedParent {
+            HStack(spacing: 8) {
+                Image(systemName: "arrow.triangle.branch")
+                    .font(.caption)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Branching from")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    Text(selectedParent.teaser)
+                        .font(.caption.weight(.semibold))
+                        .lineLimit(1)
+                }
+                Spacer()
+                Button {
+                    selectedParentThreadID = nil
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                }
+                .foregroundStyle(.secondary)
+                .accessibilityLabel("Start a new conversation root")
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Color.indigo.opacity(0.20), in: RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.indigo.opacity(0.45)))
+            .padding(.bottom, 8)
+        }
+    }
+
+    private var conversationTree: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Label("Conversation tree", systemImage: "list.bullet.indent")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Text("\(treeItems.count)")
+                    .font(.caption.monospacedDigit().weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+
+            ForEach(treeItems) { item in
+                conversationNode(item)
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("agent-conversation-tree")
+    }
+
+    private func conversationNode(_ item: AgentConversationTreeItem) -> some View {
+        let selected = item.annotation.threadID == selectedParentThreadID
+        let pageNumber = vm.notebook.pages.firstIndex { $0.id == item.annotation.pageID }.map { $0 + 1 }
+        let pageAccessibilityValue = pageNumber.map { "Page \($0), " } ?? ""
+        return Button {
+            if let pageIndex = vm.notebook.pages.firstIndex(where: { $0.id == item.annotation.pageID }) {
+                vm.go(to: pageIndex)
+            }
+            selectedParentThreadID = item.annotation.threadID
+        } label: {
+            HStack(alignment: .top, spacing: 8) {
+                if item.depth > 0 {
+                    Rectangle()
+                        .fill(Color.indigo.opacity(0.45))
+                        .frame(width: 2)
+                }
+                Image(systemName: item.childCount == 0 ? "bubble.left" : "point.3.connected.trianglepath.dotted")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(selected ? Color.white : Color.indigo)
+                    .frame(width: 18, height: 18)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(item.annotation.teaser)
+                        .font(.caption.weight(.semibold))
+                        .lineLimit(2)
+                    Text(item.annotation.body)
+                        .font(.caption2)
+                        .foregroundStyle(selected ? Color.white.opacity(0.78) : Color.secondary)
+                        .lineLimit(selected ? 3 : 1)
+                    HStack(spacing: 5) {
+                        if let pageNumber { Text("Page \(pageNumber)") }
+                        if item.childCount > 0 {
+                            Text("·")
+                            Text("\(item.childCount) branch\(item.childCount == 1 ? "" : "es")")
+                        }
+                    }
+                    .font(.caption2)
+                    .foregroundStyle(selected ? Color.white.opacity(0.72) : Color.secondary)
+                }
+                Spacer(minLength: 4)
+                Image(systemName: "arrow.triangle.branch")
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(selected ? Color.white : Color.secondary)
+            }
+            .padding(9)
+            .background(selected ? Color.indigo : Color.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 10))
+        }
+        .buttonStyle(.plain)
+        .padding(.leading, CGFloat(min(item.depth, 5)) * 14)
+        .accessibilityLabel(item.annotation.teaser)
+        .accessibilityValue("\(pageAccessibilityValue)depth \(item.depth), \(item.childCount) branches")
+        .accessibilityHint("Uses this conversation as the parent of the next response")
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityIdentifier("agent-conversation-node-\(item.annotation.id.uuidString)")
+    }
+
+    private func validateSelectedParent() {
+        guard let selectedParentThreadID else { return }
+        if activeLayer?.conversations.contains(where: { $0.threadID == selectedParentThreadID }) != true {
+            self.selectedParentThreadID = nil
+        }
     }
 
     @ViewBuilder
@@ -151,43 +286,48 @@ struct AgentSidebarView: View {
     private var emptyState: some View {
         VStack(alignment: .leading, spacing: 10) {
             Image(systemName: "scribble.variable").font(.title2).foregroundStyle(.secondary)
-            Text("Select a region with the **lasso** before opening this Agentic Layer, or ask about the whole page. The answer becomes a Pin on this layer.")
+            Text("Ask about the page to create a root Pin. Then select any Pin here—or use Continue on the page—to grow a follow-up branch.")
                 .font(.subheadline).foregroundStyle(.secondary)
         }
     }
 }
 
-private struct ObservationCard: View {
-    let observation: AgentObservation
+private struct AgentConversationTreeItem: Identifiable {
+    let annotation: PageAnnotation
+    let depth: Int
+    let childCount: Int
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if let image = observation.thumbnail {
-                Image(uiImage: image)
-                    .resizable().scaledToFit()
-                    .frame(maxHeight: 150)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.white.opacity(0.12)))
-            }
-            Text(observation.summary).font(.subheadline)
-            if !observation.items.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
-                    ForEach(observation.items, id: \.self) { item in
-                        HStack(alignment: .firstTextBaseline, spacing: 6) {
-                            Circle().fill(.secondary).frame(width: 4, height: 4)
-                            Text(item)
-                        }
-                        .font(.caption)
-                    }
-                }
-            }
-            Text(observation.date, style: .time)
-                .font(.caption2).foregroundStyle(.secondary)
+    var id: UUID { annotation.id }
+}
+
+private enum AgentConversationTreeBuilder {
+    static func items(from annotations: [PageAnnotation]) -> [AgentConversationTreeItem] {
+        let knownThreads = Set(annotations.map(\.threadID))
+        let roots = annotations.filter { annotation in
+            guard let parent = annotation.parentThreadID else { return true }
+            return !knownThreads.contains(parent)
         }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.white.opacity(0.1)))
+        var visited = Set<UUID>()
+        var result: [AgentConversationTreeItem] = []
+
+        func append(_ annotation: PageAnnotation, depth: Int) {
+            guard visited.insert(annotation.id).inserted else { return }
+            let children = annotations.filter { $0.parentThreadID == annotation.threadID }
+            result.append(AgentConversationTreeItem(
+                annotation: annotation,
+                depth: depth,
+                childCount: children.count
+            ))
+            for child in children {
+                append(child, depth: depth + 1)
+            }
+        }
+
+        for root in roots { append(root, depth: 0) }
+        for orphanedCycle in annotations where !visited.contains(orphanedCycle.id) {
+            append(orphanedCycle, depth: 0)
+        }
+        return result
     }
 }
 

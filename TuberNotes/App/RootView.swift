@@ -779,6 +779,9 @@ private struct RecordedInvestigationView: View {
             if expandedAnnotationID == annotationID {
                 expandedAnnotationID = nil
             }
+        case let .moved(annotationID, target):
+            guard let index = annotations.firstIndex(where: { $0.id == annotationID }) else { return }
+            annotations[index].target = target
         case let .conversationRequested(annotationID):
             guard let annotation = annotations.first(where: { $0.id == annotationID }) else { return }
             openConversation(for: annotation)
