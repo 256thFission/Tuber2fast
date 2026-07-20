@@ -1,6 +1,6 @@
 # WL-B — Investigation UI and hero integration
 
-Status: in-progress — steps 1–2 mechanically complete
+Status: mechanically-accepted — steps 1–3 complete; human hero review queued
 Owner subsystem: coordinator `App`, consuming `AgentHarness` and `Pins` as-is
 Depends on: P0. Step 3 depends on WL-A.
 Subagent-eligible: **no** — this is coordinator integration work.
@@ -104,3 +104,49 @@ timing. Never ask the human to judge mechanical facts.
   exposed one stale `hero-recorded` verifier expectation from the already
   accepted step-1 UI; after the narrow metadata correction, all 14 runnable
   scenarios passed on the pinned iPad. Step 3 remains unstarted.
+- 2026-07-19 — Step 3 mechanically accepted on pinned physical iPad
+  `2DD98ECC-A26A-5730-943B-01DD63DC4117`. Deleted the synthetic
+  `RecordedHeroView` canvas/crop path and embedded the recorded investigation
+  in `SpatialCanvasView`; WL-A's genuine compositor-produced
+  `SelectionArtifact` now drives requests, crop-to-page Pin projection,
+  progress, Cancel, recoverable Retry without redraw, and invalid/late-event
+  rejection. Promoted `hero-recorded` from `partial-stub` to `app-wired` and
+  required real spatial runtime/crop evidence for all four recorded scenarios.
+  Generic iOS build and four verifier-truthfulness tests passed; the focused
+  four-scenario physical run and complete 14-scenario post-edit sweep passed.
+  Human hero-quality review was created as one guided session but remains
+  queued behind an existing device review; its one-response bridge is armed.
+
+## Evidence packet — 2026-07-19 step 3
+
+- Objective / changed files: real WL-A lasso artifact into recorded
+  investigation and Pins; `TuberNotes/App/RootView.swift`,
+  `TuberNotes/DeveloperSupport/DevelopmentScenario.swift`,
+  `DeveloperTools/verify-scenario.sh`, and plan docs.
+- Diff / scope: synthetic hero renderer and fixed bitmap crop removed; real
+  spatial surface, lasso callback, recorded state machine, and truthful
+  scenario expectations added. WL-C implementation, AgentHarness,
+  SpatialCanvas, Pins, and contracts under `TuberNotes/App/Contracts/` were not
+  changed. Pre-existing WL-C-oriented `RootView.swift` workspace hunks are
+  excluded from the WL-B commit.
+- Build: PASS, generic log `tmp/wl-b-step3/post-edit-generic-build.log`; fresh
+  physical-device build passed in
+  `tmp/verify/20260719-193120-hero-recorded/`.
+- Verification: focused hero/success/retrieval/failure PASS in
+  `tmp/verify/20260719-193120-hero-recorded/` through
+  `tmp/verify/20260719-193142-agent-recorded-failure/`; final 14-scenario PASS
+  wrappers in `tmp/wl-b-step3/post-edit-sweep/`, ending with
+  `tmp/verify/20260719-193400-hero-recorded/`. The hero bundle contains the
+  pulled real PNG crop, five-point lasso metadata, real spatial surface,
+  terminal status, and expected Pin ID.
+- Mechanical checks: intended runtime state present; build/install/launch and
+  nonce-matched evidence PASS; selection PNG header/dimensions PASS; no
+  immediate exit. Physical-screen clipping/overlap, attached console, device
+  crash diagnostics, screenshots, and Pin-drift measurement were not
+  collected by the verifier and are not claimed.
+- Human review: guided `hero-recorded` feedback session
+  `feedback-5dd52780662b45bda97af7f19f0a9f14` queued; watch bridge armed after
+  sequence 1, no verdict or attachment yet. Remaining judgments: Pencil feel,
+  action/status clarity, Pin readability/obstruction, and interaction timing.
+- Stop reason: WL-B step 3 mechanical evidence collected; human acceptance is
+  pending the queued on-device review.

@@ -37,7 +37,7 @@ M0 scenarios:
   agent-recorded-retrieval  Recorded retrieval sequence ending in one cited Pin
   agent-recorded-failure    Recorded recoverable failure with no Pin
   persistence-relaunch  Persisted page, ink reference, and Pin IDs survive relaunch
-  hero-recorded   Recorded agent-to-Pin stub; genuine lasso/crop pending
+  hero-recorded   Real SpatialCanvas lasso/crop through recorded Check to one Pin
 
 Environment:
   SKIP_BUILD=1                Reuse an existing DerivedData build
@@ -171,30 +171,36 @@ scenario_metadata() {
             FAMILY="agent"
             EXPECTED_STATE="complete recorded agent event sequence ending in one proposed Pin"
             INTEGRATION_READINESS="app-wired"
+            EXPECTED_PEN_FIXTURE_COUNT=1
             REQUIRES_RUNTIME_EVIDENCE=true
-            EXPECTED_RUNTIME_SURFACE="recorded-hero-stub"
-            EXPECTED_RUNTIME_PAGE_ID="70000000-0000-0000-0000-000000000011"
+            EXPECTED_RUNTIME_SURFACE="spatial-canvas"
+            EXPECTED_RUNTIME_PEN_FIXTURE="recorded-selection-ink"
             EXPECTED_RUNTIME_ANNOTATION_IDS="70000000-0000-0000-0000-000000000001"
             EXPECTED_RUNTIME_HERO_STATUS="Proposed Pin ready"
+            REQUIRES_SELECTION_CROP=true
             ;;
         agent-recorded-retrieval)
             FAMILY="agent"
             EXPECTED_STATE="recorded textbook retrieval tool sequence ending in one cited Pin"
             INTEGRATION_READINESS="app-wired"
+            EXPECTED_PEN_FIXTURE_COUNT=1
             REQUIRES_RUNTIME_EVIDENCE=true
-            EXPECTED_RUNTIME_SURFACE="recorded-hero-stub"
-            EXPECTED_RUNTIME_PAGE_ID="70000000-0000-0000-0000-000000000011"
+            EXPECTED_RUNTIME_SURFACE="spatial-canvas"
+            EXPECTED_RUNTIME_PEN_FIXTURE="recorded-selection-ink"
             EXPECTED_RUNTIME_ANNOTATION_IDS="70000000-0000-0000-0000-000000000003"
             EXPECTED_RUNTIME_HERO_STATUS="Proposed Pin ready"
+            REQUIRES_SELECTION_CROP=true
             ;;
         agent-recorded-failure)
             FAMILY="agent"
             EXPECTED_STATE="recoverable recorded provider failure with no proposed Pin"
             INTEGRATION_READINESS="app-wired"
+            EXPECTED_PEN_FIXTURE_COUNT=1
             REQUIRES_RUNTIME_EVIDENCE=true
-            EXPECTED_RUNTIME_SURFACE="recorded-hero-stub"
-            EXPECTED_RUNTIME_PAGE_ID="70000000-0000-0000-0000-000000000011"
+            EXPECTED_RUNTIME_SURFACE="spatial-canvas"
+            EXPECTED_RUNTIME_PEN_FIXTURE="recorded-selection-ink"
             EXPECTED_RUNTIME_HERO_STATUS="The recorded provider is temporarily unavailable."
+            REQUIRES_SELECTION_CROP=true
             ;;
         persistence-relaunch)
             FAMILY="persistence"
@@ -211,14 +217,15 @@ scenario_metadata() {
             ;;
         hero-recorded)
             FAMILY="hero"
-            EXPECTED_STATE="fixture selection and action strip; genuine lasso integration remains pending"
-            INTEGRATION_READINESS="partial-stub"
+            EXPECTED_STATE="real SpatialCanvas lasso crop feeding recorded Check and one proposed Pin"
+            INTEGRATION_READINESS="app-wired"
+            EXPECTED_PEN_FIXTURE_COUNT=1
             REQUIRES_RUNTIME_EVIDENCE=true
-            EXPECTED_RUNTIME_SURFACE="recorded-hero-stub"
-            EXPECTED_RUNTIME_PAGE_COUNT=1
-            EXPECTED_RUNTIME_PAGE_INDEX=0
-            EXPECTED_RUNTIME_PAGE_ID="70000000-0000-0000-0000-000000000011"
-            EXPECTED_RUNTIME_HERO_STATUS="Selection ready"
+            EXPECTED_RUNTIME_SURFACE="spatial-canvas"
+            EXPECTED_RUNTIME_PEN_FIXTURE="recorded-selection-ink"
+            EXPECTED_RUNTIME_ANNOTATION_IDS="70000000-0000-0000-0000-000000000001"
+            EXPECTED_RUNTIME_HERO_STATUS="Proposed Pin ready"
+            REQUIRES_SELECTION_CROP=true
             ;;
         *)
             return 1

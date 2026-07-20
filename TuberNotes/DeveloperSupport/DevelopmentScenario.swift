@@ -116,8 +116,6 @@ enum DevelopmentRuntimeEvidence {
     enum SurfaceKind: String {
         case spatialCanvas = "spatial-canvas"
         case standalonePins = "standalone-pin-surface"
-        /// The current recorded hero bypasses genuine SpatialCanvas lasso/crop work.
-        case recordedHeroStub = "recorded-hero-stub"
     }
 
     static func record(
@@ -391,28 +389,36 @@ private enum DevelopmentScenarioFixtures {
                 family: .agent,
                 expectedState: "complete recorded agent event sequence ending in one proposed Pin",
                 readiness: .appWired,
-                document: blankDocument()
+                document: blankDocument(),
+                penFixtures: [ID.blankPage: recordedSelectionFixture()],
+                lassoPaths: [ID.blankPage: recordedLassoPath]
             )
         case .agentRecordedRetrieval:
             return make(
                 family: .agent,
                 expectedState: "recorded textbook retrieval tool sequence ending in one cited Pin",
                 readiness: .appWired,
-                document: blankDocument()
+                document: blankDocument(),
+                penFixtures: [ID.blankPage: recordedSelectionFixture()],
+                lassoPaths: [ID.blankPage: recordedLassoPath]
             )
         case .agentRecordedFailure:
             return make(
                 family: .agent,
                 expectedState: "recoverable recorded provider failure with no proposed Pin",
                 readiness: .appWired,
-                document: blankDocument()
+                document: blankDocument(),
+                penFixtures: [ID.blankPage: recordedSelectionFixture()],
+                lassoPaths: [ID.blankPage: recordedLassoPath]
             )
         case .heroRecorded:
             return make(
                 family: .hero,
-                expectedState: "fixture selection and action strip; genuine lasso integration remains pending",
-                readiness: .partialStub,
-                document: blankDocument()
+                expectedState: "real SpatialCanvas lasso crop feeding recorded Check and one proposed Pin",
+                readiness: .appWired,
+                document: blankDocument(),
+                penFixtures: [ID.blankPage: recordedSelectionFixture()],
+                lassoPaths: [ID.blankPage: recordedLassoPath]
             )
         }
     }
@@ -542,5 +548,19 @@ private enum DevelopmentScenarioFixtures {
             requestID: nil,
             recordedAt: nil
         )
+    }
+
+    private static var recordedLassoPath: [PageNormalizedPoint] {
+        [
+            PageNormalizedPoint(x: 0.18, y: 0.24),
+            PageNormalizedPoint(x: 0.76, y: 0.24),
+            PageNormalizedPoint(x: 0.76, y: 0.62),
+            PageNormalizedPoint(x: 0.18, y: 0.62),
+            PageNormalizedPoint(x: 0.18, y: 0.24)
+        ]
+    }
+
+    private static func recordedSelectionFixture() -> PenFixture {
+        diagonalFixture(name: "recorded-selection-ink", descending: false)
     }
 }

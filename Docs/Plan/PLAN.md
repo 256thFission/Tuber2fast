@@ -52,7 +52,7 @@ States: `not-started` → `in-progress` → `mechanically-accepted` →
 
 | Line | Child doc | Owner subsystem | Status |
 |---|---|---|---|
-| WL-B — Investigation UI | [WL-B-InvestigationUI.md](WL-B-InvestigationUI.md) | App | in-progress — steps 1–2 merged; step 3 (real lasso hookup) unblocked by WL-A |
+| WL-B — Investigation UI | [WL-B-InvestigationUI.md](WL-B-InvestigationUI.md) | App | mechanically-accepted — M1 real lasso-to-recorded-Pin loop complete; human hero review queued |
 | WL-F — Conversation UI | [WL-F-ConversationUI.md](WL-F-ConversationUI.md) | App + AgentHarness | not-started — starts after WL-B step 3 |
 | WL-D — Live adapter [stretch] | [WL-D-LiveAdapter.md](WL-D-LiveAdapter.md) | AgentHarness | not-started; gated |
 | WL-E(I) — Agent-side verification | [WL-E-VerificationReview.md](WL-E-VerificationReview.md) §Track I | DeveloperTools | not-started |
@@ -161,3 +161,12 @@ Append one line per meaningful state change: date, line, what changed.
   `verify-scenario.sh`, contender detection + `--reclaim` to preflight, and
   `DeveloperTools/device-recover.sh`; documented in `Docs/DeviceWorkflow.md`
   §2a. 15 focused tests pass.
+- 2026-07-19 — WL-B step 3 mechanically accepted on the pinned iPad. Replaced
+  the synthetic recorded hero with the real `SpatialCanvasView` lasso/crop →
+  recorded events → page-normalized Pin loop; focused recorded scenarios and
+  the complete 14-scenario regression sweep passed. Scenario-contract change:
+  `DevelopmentScenarioFixture.IntegrationReadiness` for `hero-recorded` is now
+  `app-wired`, and `DevelopmentRuntimeEvidence.SurfaceKind.recordedHeroStub`
+  was removed because all recorded scenarios now prove the real spatial
+  surface and retained crop. Human hero-quality review remains queued with its
+  event bridge armed.

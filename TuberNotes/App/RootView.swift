@@ -194,7 +194,7 @@ struct RootView: View {
         case .blankCanvas, .pdfPages, .blankNotebook, .notebookPages, .inkPages, .pinDrift, .lassoCrop, .persistenceRelaunch:
             standaloneSpatialSurface
         case .heroRecorded, .agentRecordedSuccess, .agentRecordedRetrieval, .agentRecordedFailure:
-            RecordedHeroView(scenario: displayedScenario)
+            recordedInvestigationSurface
         default:
             ContentUnavailableView(
                 "Later milestone",
@@ -228,6 +228,23 @@ struct RootView: View {
                 onDrawingSnapshot: drawingSnapshotHandler,
                 onSelectionChanged: handleSelectionChanged,
                 allowsDeterministicViewportTransition: displayedScenario == .pinDrift
+            )
+        }
+    }
+
+    @ViewBuilder
+    private var recordedInvestigationSurface: some View {
+        if let document {
+            RecordedInvestigationView(
+                scenario: displayedScenario,
+                document: document,
+                currentPageID: $currentPageID,
+                pdfDocument: pdfDocument(for: document),
+                initialDrawingData: initialDrawingData,
+                penFixturesByPageID: displayedScenario.fixture.penFixturesByPageID,
+                initialLassoPathsByPageID: displayedScenario.fixture.lassoPathsByPageID,
+                onDrawingChanged: drawingChangedHandler,
+                onDrawingSnapshot: drawingSnapshotHandler
             )
         }
     }
@@ -543,102 +560,108 @@ struct RootView: View {
     }
 }
 
-private struct RecordedHeroView: View {
+private struct RecordedInvestigationView: View {
     private let scenario: DevelopmentScenario
+    private let document: NotebookDocument
+    @Binding private var currentPageID: UUID?
+    private let pdfDocument: PDFDocument?
+    private let initialDrawingData: [UUID: Data]
+    private let penFixturesByPageID: [UUID: PenFixture]
+    private let initialLassoPathsByPageID: [UUID: [PageNormalizedPoint]]
+    private let onDrawingChanged: (UUID, Data) -> Void
+    private let onDrawingSnapshot: (UUID, PKDrawing, CGSize) -> Void
     private let agent: any AgentClient
-    private let documentID = UUID(uuidString: "70000000-0000-0000-0000-000000000010")!
-    private let pageID = UUID(uuidString: "70000000-0000-0000-0000-000000000011")!
     private let threadID = UUID(uuidString: "70000000-0000-0000-0000-000000000013")!
-    private let selectionBounds = PageNormalizedRect(x: 0.18, y: 0.24, width: 0.58, height: 0.38)
 
-    @State private var lassoState: LassoState
+    @State private var lassoState = LassoState.idle
+    @State private var selectionArtifact: SelectionArtifact?
     @State private var submittedIntent: InvestigationIntent?
     @State private var annotations: [PageAnnotation] = []
-    @State private var status = "Selection ready"
+    @State private var status = "Draw a lasso to investigate"
     @State private var investigationTask: Task<Void, Never>?
+    @State private var canvasGeneration = 0
+    @State private var permitsDeterministicSelection = true
 
-    init(scenario: DevelopmentScenario) {
+    init(
+        scenario: DevelopmentScenario,
+        document: NotebookDocument,
+        currentPageID: Binding<UUID?>,
+        pdfDocument: PDFDocument?,
+        initialDrawingData: [UUID: Data],
+        penFixturesByPageID: [UUID: PenFixture],
+        initialLassoPathsByPageID: [UUID: [PageNormalizedPoint]],
+        onDrawingChanged: @escaping (UUID, Data) -> Void,
+        onDrawingSnapshot: @escaping (UUID, PKDrawing, CGSize) -> Void
+    ) {
         self.scenario = scenario
+        self.document = document
+        _currentPageID = currentPageID
+        self.pdfDocument = pdfDocument
+        self.initialDrawingData = initialDrawingData
+        self.penFixturesByPageID = penFixturesByPageID
+        self.initialLassoPathsByPageID = initialLassoPathsByPageID
+        self.onDrawingChanged = onDrawingChanged
+        self.onDrawingSnapshot = onDrawingSnapshot
         agent = RecordedAgentClient(scenario: Self.recordedScenario(for: scenario))
-        _lassoState = State(initialValue: .selected(selectionID: Self.selectionID))
     }
 
     var body: some View {
-        GeometryReader { proxy in
-            ZStack {
-                Color(red: 0.992, green: 0.978, blue: 0.936)
-                recordedWork
-                selectionGlow
+        SpatialCanvasView(
+            document: document,
+            currentPageID: $currentPageID,
+            pdfDocument: pdfDocument,
+            toolMode: .magicLasso,
+            initialDrawingData: initialDrawingData,
+            penFixturesByPageID: penFixturesByPageID,
+            initialLassoPathsByPageID: seededLassoPathsByPageID,
+            pageOverlay: { page, projection in
+                AnyView(pageOverlay(for: page, projection: projection))
+            },
+            onDrawingChanged: onDrawingChanged,
+            onDrawingSnapshot: onDrawingSnapshot,
+            onSelectionChanged: receiveSelection
+        )
+        .id(canvasGeneration)
+        .accessibilityIdentifier("recorded-investigation-surface")
+        .onChange(of: currentPageID) { _, newPageID in
+            guard selectionArtifact?.pageID != newPageID else { return }
+            dismissSelection()
+        }
+        .onDisappear {
+            investigationTask?.cancel()
+        }
+    }
 
-                PinOverlayView(
-                    annotations: annotations,
-                    projectAnchor: { point in
-                        CGPoint(x: point.x * proxy.size.width, y: point.y * proxy.size.height)
-                    },
-                    initiallyExpandedAnnotationID: annotations.first?.id
-                )
+    private func pageOverlay(
+        for page: PageRecord,
+        projection: PageAnchorProjection
+    ) -> some View {
+        ZStack {
+            PinOverlayView(
+                annotations: annotations.filter { $0.pageID == page.id },
+                projectAnchor: { projection($0) },
+                initiallyExpandedAnnotationID: annotations.first?.id
+            )
 
+            if selectionArtifact?.pageID == page.id {
                 if case .selected = lassoState {
                     InvestigationActionStrip(
                         onInvestigate: submit,
                         onCancel: cancelSelection
                     )
-                    .position(
-                        x: proxy.size.width / 2,
-                        y: max(42, selectionBounds.y * proxy.size.height - 34)
-                    )
+                    .position(controlPosition(using: projection))
                 } else if isInvestigationActive {
                     progressStatus
+                        .position(controlPosition(using: projection))
                 } else if case .failed(_, let recoverable) = lassoState {
                     terminalStatus(showRetry: recoverable)
+                        .position(controlPosition(using: projection))
                 } else if case .completed = lassoState {
                     terminalStatus(showRetry: true)
-                }
-
-                if case .idle = lassoState {
-                    Button("Restore fixture selection", action: restoreSelection)
-                        .buttonStyle(.borderedProminent)
-                        .accessibilityIdentifier("restore-fixture-selection")
+                        .position(controlPosition(using: projection))
                 }
             }
-            .accessibilityIdentifier("recorded-hero-surface")
         }
-        .padding(20)
-        .background(Color(uiColor: .systemGroupedBackground))
-        .onAppear(perform: startRecordedScenarioIfNeeded)
-        .onDisappear { investigationTask?.cancel() }
-    }
-
-    private var recordedWork: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            Text("Check the first incorrect step")
-                .font(.title2.bold())
-            Text("3x − 7 = 11")
-            Text("3x = 11 − 7")
-            Text("x = 6")
-        }
-        .font(.title.monospaced())
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .foregroundStyle(.primary)
-    }
-
-    private var selectionGlow: some View {
-        GeometryReader { proxy in
-            RoundedRectangle(cornerRadius: 18)
-                .stroke(.indigo, style: StrokeStyle(lineWidth: 4, dash: [10, 7]))
-                .shadow(color: .indigo.opacity(0.5), radius: 8)
-                .frame(
-                    width: selectionBounds.width * proxy.size.width,
-                    height: selectionBounds.height * proxy.size.height
-                )
-                .position(
-                    x: (selectionBounds.x + selectionBounds.width / 2) * proxy.size.width,
-                    y: (selectionBounds.y + selectionBounds.height / 2) * proxy.size.height
-                )
-                .accessibilityLabel("Recorded lasso selection")
-                .accessibilityIdentifier("recorded-lasso-selection")
-        }
-        .allowsHitTesting(false)
     }
 
     private var isInvestigationActive: Bool {
@@ -674,7 +697,8 @@ private struct RecordedHeroView: View {
     }
 
     private func submit(_ intent: InvestigationIntent) {
-        guard case let .selected(selectionID) = lassoState,
+        guard let selectionArtifact,
+              case let .selected(selectionID) = lassoState,
               selectionID == selectionArtifact.id else { return }
         let request = InvestigationRequest(
             id: UUID(),
@@ -691,7 +715,11 @@ private struct RecordedHeroView: View {
     private func cancelSelection() {
         guard case .selected = lassoState else { return }
         submittedIntent = nil
+        selectionArtifact = nil
         lassoState = .idle
+        status = "Selection cancelled"
+        permitsDeterministicSelection = false
+        canvasGeneration += 1
     }
 
     private func cancelInvestigation() {
@@ -703,16 +731,16 @@ private struct RecordedHeroView: View {
         investigationTask?.cancel()
         Task { await agent.cancel(investigationID: investigationID) }
         status = "Investigation cancelled"
-        lassoState = .selected(selectionID: selectionArtifact.id)
-    }
-
-    private func restoreSelection() {
-        lassoState = .selected(selectionID: selectionArtifact.id)
-        status = "Selection ready"
+        if let selectionArtifact {
+            lassoState = .selected(selectionID: selectionArtifact.id)
+        } else {
+            lassoState = .idle
+        }
+        recordRuntimeEvidence()
     }
 
     private func retryInvestigation() {
-        guard let submittedIntent else { return }
+        guard let submittedIntent, let selectionArtifact else { return }
         lassoState = .selected(selectionID: selectionArtifact.id)
         submit(submittedIntent)
     }
@@ -725,14 +753,6 @@ private struct RecordedHeroView: View {
         }
     }
 
-    private func startRecordedScenarioIfNeeded() {
-        guard scenario != .heroRecorded else {
-            recordRuntimeEvidence()
-            return
-        }
-        submit(.check)
-    }
-
     private func run(_ request: InvestigationRequest) {
         investigationTask?.cancel()
         investigationTask = Task { @MainActor in
@@ -742,6 +762,7 @@ private struct RecordedHeroView: View {
                     consume(event, investigationID: request.id)
                 }
             } catch {
+                guard activeInvestigationID == request.id else { return }
                 status = "Recorded investigation failed"
                 lassoState = .failed(investigationID: request.id, recoverable: true)
                 recordRuntimeEvidence()
@@ -750,6 +771,7 @@ private struct RecordedHeroView: View {
     }
 
     private func consume(_ event: AgentEvent, investigationID: UUID) {
+        guard activeInvestigationID == investigationID else { return }
         switch event {
         case .accepted:
             status = "Request accepted"
@@ -774,7 +796,12 @@ private struct RecordedHeroView: View {
             guard let index = annotations.firstIndex(where: { $0.id == id }) else { return }
             annotations[index].body += bodyDelta
         case let .pinCompleted(draft):
-            guard let annotation = annotation(from: draft, status: .complete) else { return }
+            guard let annotation = annotation(from: draft, status: .complete) else {
+                status = "The response contained an invalid Pin location."
+                lassoState = .failed(investigationID: investigationID, recoverable: true)
+                recordRuntimeEvidence()
+                return
+            }
             annotations.removeAll { $0.id == annotation.id }
             annotations.append(annotation)
             status = "Proposed Pin ready"
@@ -790,15 +817,16 @@ private struct RecordedHeroView: View {
     }
 
     private func annotation(from draft: PinDraft, status: AnnotationStatus) -> PageAnnotation? {
+        guard let selectionArtifact else { return nil }
         guard draft.target.isFiniteAndInUnitBounds else { return nil }
         let target = SpatialCoordinateTransform.cropPointToPage(
             draft.target,
-            cropPageBounds: selectionBounds
+            cropPageBounds: selectionArtifact.pageBounds
         )
         guard target.isFiniteAndInUnitBounds else { return nil }
         return PageAnnotation(
             id: draft.id,
-            pageID: pageID,
+            pageID: selectionArtifact.pageID,
             threadID: threadID,
             target: target,
             targetRegion: nil,
@@ -812,45 +840,91 @@ private struct RecordedHeroView: View {
 
     private func recordRuntimeEvidence() {
 #if DEBUG
+        let currentIndex = currentPageID.flatMap { selectedID in
+            document.pages.firstIndex(where: { $0.id == selectedID })
+        }
         DevelopmentRuntimeEvidence.record(
             scenario: scenario,
-            surfaceKind: .recordedHeroStub,
-            pageCount: 1,
-            currentPageID: pageID,
-            currentPageIndex: 0,
-            renderedPenFixtureName: nil,
+            surfaceKind: .spatialCanvas,
+            pageCount: document.pages.count,
+            currentPageID: currentPageID,
+            currentPageIndex: currentIndex,
+            renderedPenFixtureName: currentPageID.flatMap { penFixturesByPageID[$0]?.name },
             renderedAnnotationIDs: annotations.map(\.id),
-            heroStatus: status
+            heroStatus: status,
+            selectionArtifact: selectionArtifact
         )
 #endif
     }
 
-    private var selectionArtifact: SelectionArtifact {
-        let crop = Self.makeSelectionCrop(pageBounds: selectionBounds)
-        return SelectionArtifact(
-            id: Self.selectionID,
-            documentID: documentID,
-            pageID: pageID,
-            pageIndex: 0,
-            lassoPath: [
-                PageNormalizedPoint(x: 0.18, y: 0.24),
-                PageNormalizedPoint(x: 0.76, y: 0.24),
-                PageNormalizedPoint(x: 0.76, y: 0.62),
-                PageNormalizedPoint(x: 0.18, y: 0.62),
-                PageNormalizedPoint(x: 0.18, y: 0.24)
-            ],
-            pageBounds: selectionBounds,
-            crop: crop,
-            context: SelectionContext(
-                documentTitle: "Recorded algebra check",
-                sourceDocumentID: documentID,
-                pageNumber: 1,
-                nearbyText: "3x − 7 = 11; 3x = 11 − 7; x = 6"
-            )
-        )
+    private func receiveSelection(_ artifact: SelectionArtifact) {
+        guard artifact.pageID == currentPageID else { return }
+        investigationTask?.cancel()
+        selectionArtifact = artifact
+        submittedIntent = nil
+        lassoState = .selected(selectionID: artifact.id)
+        status = "Selection ready"
+        persistSelectionCrop(artifact)
+        recordRuntimeEvidence()
+        if shouldAutomateCheck {
+            submit(.check)
+        }
     }
 
-    private static let selectionID = UUID(uuidString: "70000000-0000-0000-0000-000000000014")!
+    private func dismissSelection() {
+        investigationTask?.cancel()
+        selectionArtifact = nil
+        submittedIntent = nil
+        lassoState = .idle
+        status = "Draw a lasso to investigate"
+        permitsDeterministicSelection = false
+    }
+
+    private func persistSelectionCrop(_ artifact: SelectionArtifact) {
+#if DEBUG
+        let fileManager = FileManager.default
+        guard let documents = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first else { return }
+        let directory = documents.appendingPathComponent("developer-evidence", isDirectory: true)
+        try? fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        try? artifact.crop.imageData.write(
+            to: directory.appendingPathComponent("lasso-selection-crop.png"),
+            options: .atomic
+        )
+#endif
+    }
+
+    private var activeInvestigationID: UUID? {
+        switch lassoState {
+        case let .submitting(id), let .receiving(id): id
+        default: nil
+        }
+    }
+
+    private var seededLassoPathsByPageID: [UUID: [PageNormalizedPoint]] {
+        permitsDeterministicSelection && shouldAutomateCheck
+            ? initialLassoPathsByPageID
+            : [:]
+    }
+
+    private var shouldAutomateCheck: Bool {
+#if DEBUG
+        scenario != .heroRecorded
+            || ProcessInfo.processInfo.environment["TUBER_VERIFY_NONCE"] != nil
+#else
+        false
+#endif
+    }
+
+    private func controlPosition(using projection: PageAnchorProjection) -> CGPoint {
+        guard let bounds = selectionArtifact?.pageBounds else {
+            return projection(PageNormalizedPoint(x: 0.5, y: 0.12))
+        }
+        let centerX = min(max(bounds.x + bounds.width / 2, 0.24), 0.76)
+        let y = bounds.y >= 0.14
+            ? bounds.y - 0.075
+            : min(bounds.y + bounds.height + 0.075, 0.92)
+        return projection(PageNormalizedPoint(x: centerX, y: y))
+    }
 
     private static func recordedScenario(for scenario: DevelopmentScenario) -> RecordedAgentScenario {
         switch scenario {
@@ -867,40 +941,6 @@ private struct RecordedHeroView: View {
         }
     }
 
-    private static func makeSelectionCrop(pageBounds: PageNormalizedRect) -> SelectionCrop {
-        let size = CGSize(width: 580, height: 380)
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = 1
-        format.opaque = true
-        let image = UIGraphicsImageRenderer(size: size, format: format).image { context in
-            context.cgContext.setFillColor(UIColor(red: 0.992, green: 0.978, blue: 0.936, alpha: 1).cgColor)
-            context.cgContext.fill(CGRect(origin: .zero, size: size))
-            let heading = "Check the first incorrect step" as NSString
-            heading.draw(
-                at: CGPoint(x: 34, y: 28),
-                withAttributes: [
-                    .font: UIFont.systemFont(ofSize: 27, weight: .bold),
-                    .foregroundColor: UIColor.label
-                ]
-            )
-            let work = "3x − 7 = 11\n\n3x = 11 − 7\n\nx = 6" as NSString
-            work.draw(
-                in: CGRect(x: 70, y: 100, width: 440, height: 250),
-                withAttributes: [
-                    .font: UIFont.monospacedSystemFont(ofSize: 32, weight: .regular),
-                    .foregroundColor: UIColor.label
-                ]
-            )
-        }
-        guard let data = image.pngData() else { preconditionFailure("Failed to encode the fixed hero selection") }
-        return SelectionCrop(
-            imageData: data,
-            mediaType: "image/png",
-            pixelWidth: Int(size.width),
-            pixelHeight: Int(size.height),
-            pageBounds: pageBounds
-        )
-    }
 }
 
 private struct InvestigationActionStrip: View {
