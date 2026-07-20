@@ -2,6 +2,7 @@
 .cursor/
 DerivedData*/
 build/
+PointBackKit/.build/
 *.xcuserstate
 xcuserdata/
 .pencil-fixtures/

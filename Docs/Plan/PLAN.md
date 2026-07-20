@@ -56,9 +56,9 @@ States: `not-started` → `in-progress` → `mechanically-accepted` →
 
 | Line | Child doc | Status |
 |---|---|---|
-| WL-G — Package extraction + CanvasHost API | [WL-G-PackageExtraction.md](WL-G-PackageExtraction.md) | not-started — **start here** |
-| WL-H — Portable selection overlay | [WL-H-PortableSelection.md](WL-H-PortableSelection.md) | not-started — after WL-G skeleton |
-| WL-F follow-up — long-press discoverability affordance + unaided re-test | [WL-F-ConversationUI.md](WL-F-ConversationUI.md) | open finding; implement inside the package post-WL-G |
+| WL-G — PointBackKit reshape | [WL-G-PackageExtraction.md](WL-G-PackageExtraction.md) | in-progress — absorbs WL-H and WL-F follow-up |
+| WL-H — Portable selection overlay | [WL-H-PortableSelection.md](WL-H-PortableSelection.md) | absorbed into WL-G reshape |
+| WL-F follow-up — discoverability affordance + unaided re-test | [WL-F-ConversationUI.md](WL-F-ConversationUI.md) | implementation absorbed into WL-G; human re-test pending |
 | WL-D — Live adapter [stretch] | [WL-D-LiveAdapter.md](WL-D-LiveAdapter.md) | not-started; gated; becomes a package `AgentClient` implementation |
 | WL-E — Verification | [WL-E-VerificationReview.md](WL-E-VerificationReview.md) | continuous — package unit tests + reference-host scenarios + host-conformance checklist |
 
@@ -231,3 +231,10 @@ Append one line per meaningful state change: date, line, what changed.
   rules suspended for that line; full authority over structure, contracts,
   scenarios, tooling, and docs. Hard rails only: no secrets, honest evidence,
   coherent rollback-able commits, push at the end.
+- 2026-07-20 — WL-G reshape began and absorbed WL-H plus the WL-F follow-up.
+  CONTRACT: the draft `CanvasHost` sketch was replaced by a window-space,
+  page-aware protocol (`CanvasHost`, `PageDescriptor`, `CanvasHostChange`) so
+  arbitrary zooming/panning hosts can project and snapshot without exposing
+  their view hierarchy. PointBackKit now builds standalone with public spatial,
+  agent, Pin, conversation, recorded-client, live-client, and overlay APIs;
+  focused package tests are green. Reference-host integration remains open.

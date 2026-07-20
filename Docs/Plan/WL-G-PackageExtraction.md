@@ -1,6 +1,6 @@
 # WL-G — PointBackKit package extraction + CanvasHost adapter API
 
-Status: not-started
+Status: in-progress — standalone package/API complete; reference-host integration and device proof pending; WL-H and WL-F follow-up absorbed
 Owner: coordinator (this is THE architecture move; subagents only for
 mechanical file moves after the API is settled)
 Depends on: WL-F correction branch merged to `main`. Blocks everything else.
@@ -110,4 +110,11 @@ native capture (reference host's SpatialCanvas) may inject a ready
 
 ## Session log
 
-- (none yet)
+- 2026-07-20 — Free-reshape cut chosen: WL-G now owns the full package,
+  portable overlay, and visible follow-up affordance. Introduced the standalone
+  Swift package and replaced the advisory adapter sketch with a window-space
+  `CanvasHost` projection/unprojection API plus host snapshots and change
+  events. The package owns lasso geometry/input, selection construction,
+  Explain/Check/Ask, recorded and live clients, Pins, conversation state, and
+  the Pin-tethered sidebar. Five focused package tests pass. Reference-host
+  conformance, scenario rewrites, iPad evidence, and human re-test remain.
