@@ -6,113 +6,124 @@ child doc = one bounded task.
 Authority chain: `SPEC.md` (product contracts) → `AGENTS.md` (operating
 contract) → this plan (current execution) → child docs (per-line detail).
 
-## Decisions locked (Phillip, July 19, 2026)
+## PIVOT (Phillip, July 20, 2026)
 
-1. **Horizon:** ~1 week+ to demo-ready.
-2. **Demo agent:** deterministic **recorded** agent on stage (M1 loop). Live
-   provider (M2) is a gated stretch, never a demo dependency.
-3. **Live-provider spike is retained** and becomes WL-D, behind the
-   `AgentClient` protocol. It must never leak into the M1 path.
-4. **Persistence/relaunch, PDF import, and notebook creation are in scope.**
-5. **Two-human split:** Phillip's friend owns the **notebook substrate**
-   (Track N: SpatialCanvas, documents, ink, persistence, Pin projection).
-   Phillip owns the **intelligence layer** (Track I: AgentHarness, Knowledge,
-   investigation/conversation UI). **Phillip keeps coordination**: merges to
-   `main`, `RootView.swift` integration, and final judgment. Track N never
-   edits `RootView.swift` or Track I subsystems, and vice versa.
-6. **Long-press Pin conversation UI is promoted into the main spec**
-   (SPEC §1 Confirmed #11) — it is Track I's headline deliverable after M1.
-7. **Contracts are soft:** any agent may change `TuberNotes/App/Contracts/`
-   or scenario contracts when the work requires it, without stopping.
-   Every contract-touching commit carries a `CONTRACT:` prefix and a plan-log
-   entry here naming the changed type and why. Phillip reviews after the fact
-   and rolls back if needed. Architecture-*ownership* changes still need
-   Phillip first.
+The product of THIS repository is now **PointBackKit**: a standalone Swift
+package implementing the intelligence layer — Magic Lasso selection, the
+Explain/Check/Ask hero interaction, recorded + live agent clients, Pins, and
+the Pin-tethered conversation sidebar — usable by **any** Swift canvas that
+conforms to a small host adapter protocol.
+
+- The notebook substrate (canvas, pages, ink, persistence) is Phillip's
+  friend's, on their better branch. This repo no longer competes with it.
+- The existing TuberNotes app here shrinks into the **reference host**: it
+  proves the package works, keeps the scenario verifier meaningful, and serves
+  as the adapter's living documentation.
+- The frozen contracts evolve into the package's public API.
+
+Packaging decisions (locked):
+
+1. **SPM package inside this repo** (`PointBackKit/`); extraction to its own
+   repo is a later one-move operation. Name is provisional — renaming is a
+   find/replace, not a design decision.
+2. **Page-aware adapter.** The host provides page identity and page-normalized
+   coordinates (the existing contract shape). A single-canvas host is the
+   degenerate one-page case.
+3. **The layer owns the lasso gesture; the host owns snapshots.** Any host
+   view gets the gesture/glow overlay from the package; the host implements
+   one rendering method ("visible content in this page-normalized rect →
+   image"). Hosts with native capture (the reference host's SpatialCanvas)
+   may bypass the overlay and deliver a `SelectionArtifact` directly.
+
+## Prior decisions still in force
+
+- ~1 week horizon; recorded agent demos, live provider (WL-D) is a gated
+  stretch behind `AgentClient`.
+- Contracts are soft: `CONTRACT:`-prefixed commits + a plan-log entry;
+  Phillip reviews after the fact. Architecture-*ownership* changes still need
+  Phillip first.
+- Phillip coordinates and merges everything in this repo. The friend's repo
+  is out of bounds for agents here; the seam is the adapter API.
+- Long-press Pin conversation is critical path (delivered by WL-F; one open
+  discoverability finding).
 
 ## Status board
 
 States: `not-started` → `in-progress` → `mechanically-accepted` →
 `human-accepted`. Blockers get named inline.
 
-### Coordination (Phillip)
+### Active — PointBackKit
 
 | Line | Child doc | Status |
 |---|---|---|
-| P0 — Stabilize tree | [Phase0-Stabilize.md](Phase0-Stabilize.md) | mechanically accepted; overnight-branch cleanup deferred (ignored by direction) |
+| WL-G — Package extraction + CanvasHost API | [WL-G-PackageExtraction.md](WL-G-PackageExtraction.md) | not-started — **start here** |
+| WL-H — Portable selection overlay | [WL-H-PortableSelection.md](WL-H-PortableSelection.md) | not-started — after WL-G skeleton |
+| WL-F follow-up — long-press discoverability affordance + unaided re-test | [WL-F-ConversationUI.md](WL-F-ConversationUI.md) | open finding; implement inside the package post-WL-G |
+| WL-D — Live adapter [stretch] | [WL-D-LiveAdapter.md](WL-D-LiveAdapter.md) | not-started; gated; becomes a package `AgentClient` implementation |
+| WL-E — Verification | [WL-E-VerificationReview.md](WL-E-VerificationReview.md) | continuous — package unit tests + reference-host scenarios + host-conformance checklist |
 
-### Track N — Notebook substrate (friend)
+### Later — host integration (joint with the friend)
 
-| Line | Child doc | Owner subsystem | Status |
-|---|---|---|---|
-| WL-A — Lasso capture + crop | [WL-A-LassoCrop.md](WL-A-LassoCrop.md) | SpatialCanvas | mechanically-accepted — merged; human Pencil review queued |
-| WL-C — Documents + persistence | [WL-C-DocumentsPersistence.md](WL-C-DocumentsPersistence.md) | App(Persistence) + DeveloperSupport | in-progress — merged by direction; notebook acceptance blocked by device-service timeouts |
-| WL-E(N) — Notebook device reviews | [WL-E-VerificationReview.md](WL-E-VerificationReview.md) §Track N | DeveloperTools | not-started |
+| Line | Status |
+|---|---|
+| WL-I — Friend's canvas adopts `CanvasHost` | blocked on WL-G API + their branch readiness; joint session, no agent solo work |
 
-### Track I — Intelligence layer (Phillip)
+### Retired / transferred by the pivot
 
-| Line | Child doc | Owner subsystem | Status |
-|---|---|---|---|
-| WL-B — Investigation UI | [WL-B-InvestigationUI.md](WL-B-InvestigationUI.md) | App | mechanically-accepted — M1 real lasso-to-recorded-Pin loop complete; human hero review queued |
-| WL-F — Conversation UI | [WL-F-ConversationUI.md](WL-F-ConversationUI.md) | App + AgentHarness + Pins | mechanically-accepted — composition/feel accepted directly in Codex; open discoverability finding requires a visible first-expansion affordance + two-minute re-test |
-| WL-D — Live adapter [stretch] | [WL-D-LiveAdapter.md](WL-D-LiveAdapter.md) | AgentHarness | not-started; gated |
-| WL-E(I) — Agent-side verification | [WL-E-VerificationReview.md](WL-E-VerificationReview.md) §Track I | DeveloperTools | not-started |
+| Line | Disposition |
+|---|---|
+| P0, WL-A, WL-B, WL-C | Complete or transferred. WL-A/WL-B live on inside the reference host and their logic moves into the package via WL-G/WL-H. WL-C (persistence) is host-side — the friend's problem space; the package only defines what it asks a host to persist (annotations, threads). WL-C's open notebook acceptance gate applies to the reference host only and no longer blocks anything. |
 
 Dependency shape:
 
 ```text
-Track N (friend)              Track I (Phillip)
-  WL-A ✓ ────────────────────→ WL-B step 3 → M1 demo core
-  WL-C (device gate) ─→ repeatable demo      │
-                                             ├→ WL-F conversation UI
-                                             └→ WL-D live flex [gated]
-  Contracts (TuberNotes/App/Contracts/) are the interface.
-  WL-E rides both tracks → truthful scenarios + human review → M4
+WL-G package skeleton + CanvasHost API
+    ├── WL-H portable selection overlay (any-canvas lasso)
+    ├── WL-F discoverability follow-up (inside package UI)
+    ├── WL-D live AgentClient [gated stretch]
+    └── WL-E package tests + reference-host scenarios
+              ↓
+WL-I friend's canvas conforms to CanvasHost → the actual demo
 ```
-
-Merge policy: **Phillip merges everything.** Track N delivers branches/PRs
-against the contracts; a line merges when its device-verified evidence bar
-passes — a device outage pauses the merge, it doesn't waive the gate (WL-C's
-pending notebook acceptance is the standing exception, by explicit direction,
-and gates further Track N merges until cleared).
 
 ## Session rules
 
-- Every session works **one** child doc. Before long-running work, restate its
-  acceptance evidence, files in scope, non-goals, and stop point (AGENTS.md).
+- Every session works **one** child doc. Restate acceptance evidence, files in
+  scope, non-goals, and stop point before long work (AGENTS.md).
 - Subagents only when Phillip explicitly requests them, and only for lines
   marked subagent-eligible. Integration and merge judgment stay with the
   coordinating agent.
-- End each session by: updating the child doc's Status + Session log, the
-  status board here, and an Evidence Packet for user-visible changes.
-- Device work follows `Docs/DeviceWorkflow.md` — one pinned iPad, sessions
-  serialize device access across BOTH tracks; never simulator-fallback.
-- Verification is tiered (`Docs/Development.md` § Verification tiers): per-edit
-  runs use only the change-map scenarios; the last plan-logged green sweep at
-  the current commit is the baseline — do not re-sweep before editing. Full
-  sweeps are reserved for tooling changes, multi-line merge days, and the M4
-  gate.
-- Push `main` to origin after every merged work line — Track N and Track I
-  sync through origin, not through this Mac.
-- Contract changes: allowed, `CONTRACT:`-flagged, plan-logged (decision 7).
-- Never modify `.cursor/`; never commit `__pycache__/`, `DerivedData*/`,
-  `tmp/`, or `.tubernotes-device-session.json`.
-- Do not create standalone handoff docs; append here.
+- End each session: update child doc Status + Session log, this board, the
+  plan log; Evidence Packet for user-visible changes; push `main` after every
+  merged line (the friend syncs through origin).
+- Device work: `Docs/DeviceWorkflow.md` (pinned iPad, lock, recover script).
+  Verification tiers per `Docs/Development.md` — no default full sweeps.
+  Reference-host scenarios remain the runtime proof for package changes.
+- Contract/API changes: allowed, `CONTRACT:`-flagged, plan-logged. The
+  CanvasHost protocol is THE contract now — changes to it after WL-I starts
+  need the friend's ack too.
+- Never modify `.cursor/`; never commit generated/runtime files.
+- No standalone handoff docs; append here.
 
-## Definition of done for the week
+## Definition of done (reframed)
 
-1. **M1 gate passes** (SPEC §16) on the demo iPad: real lasso → crop → Check →
-   recorded events → real Pins; Retry without redraw; cancel/invalid safe.
-   (WL-A ✓ + WL-B step 3)
-2. **Repeatable demo state:** create/import, draw, get Pins, relaunch —
-   everything restored. (WL-C, pending device gate)
-3. **Conversation:** long-press an existing Pin → follow-up turn reusing the
-   retained selection → threaded reply renders. (WL-F)
-4. **All runnable scenarios PASS** with rendered-runtime evidence; no
-   scenario overstates readiness. (WL-E)
-5. **Human sign-off** on Pencil feel, spatial taste, hero + conversation
-   timing via human-device-loop. (WL-E / M4 gate)
-6. **Stretch, only if 1–5 green:** one live provider hero run behind the
-   DEBUG gate. (WL-D)
+1. **`PointBackKit` builds standalone** (SPM, no app target dependency) with
+   the recorded agent, Pins, action strip, and conversation sidebar inside it,
+   and focused tests green. (WL-G)
+2. **Reference host runs entirely through the package**: hero + conversation
+   scenarios (`hero-recorded`, `pin-conversation`, `agent-recorded-*`) pass
+   unchanged on the pinned iPad. (WL-G / WL-E)
+3. **Any-canvas selection works**: the package lasso overlay + host snapshot
+   path produces a valid `SelectionArtifact` on the reference host WITHOUT
+   using SpatialCanvas's native capture. (WL-H)
+4. **Adapter documented**: `CanvasHost` conformance guide with the reference
+   host as the worked example, sufficient for the friend to adopt without
+   Phillip present. (WL-G)
+5. **Long-press discoverability finding closed** by a visible affordance and
+   an unaided 2-minute human re-test (also re-exercises screenshot send).
+   (WL-F follow-up)
+6. **Stretch:** live provider `AgentClient` smoke behind the DEBUG gate.
+   (WL-D)
 
 ## Plan log
 
@@ -209,3 +220,10 @@ Append one line per meaningful state change: date, line, what changed.
   affordance (not another timing tweak), then run a two-minute unaided re-test
   that also re-exercises screenshot send. The dangling device prompt was
   explicitly resolved before its closed-watch transcript was exported.
+- 2026-07-20 — PIVOT: this repo's product is now the standalone PointBackKit
+  package (intelligence layer for any Swift canvas); the friend's branch owns
+  the notebook substrate. TuberNotes app becomes the reference host. WL-G
+  (package extraction + CanvasHost API) and WL-H (portable selection overlay)
+  created; WL-A/WL-B/WL-C retired or transferred; DoD reframed around a
+  standalone-building package, an unchanged-passing reference host, and a
+  host-conformance guide.

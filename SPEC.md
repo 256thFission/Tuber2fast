@@ -34,6 +34,7 @@ This document is both a product specification and the coordination contract for 
 10. Persistent spatial data is never stored in screen coordinates.
 11. (July 19, 2026) The long-press Pin conversation UI is promoted from deferred to critical-path scope. Follow-up turns reuse the retained selection and the `conversationID` hook on `InvestigationRequest`; no new contract surface is assumed.
 12. (July 19, 2026) Development splits into two human-owned tracks: the notebook substrate (SpatialCanvas, documents, ink, persistence) and the intelligence layer (AgentHarness, Knowledge, investigation/conversation UI). Phillip coordinates integration. The shared contracts in `TuberNotes/App/Contracts/` are the interface between tracks.
+13. (July 20, 2026) **Pivot:** this repository's product is the standalone `PointBackKit` SPM package — the complete intelligence layer (selection, hero interaction, agent clients, Pins, conversation) for ANY Swift canvas conforming to a page-aware `CanvasHost` adapter (layer owns the lasso gesture; host owns rect-snapshot rendering). The notebook substrate ships from the friend's branch; the app in this repo is the reference host. Execution: `Docs/Plan/PLAN.md`.
 
 ### Explicitly unresolved
 
