@@ -150,7 +150,7 @@ private struct PinAnchor: View {
         }
         .buttonStyle(.plain)
         .onLongPressGesture(
-            minimumDuration: 0.65,
+            minimumDuration: 0.35,
             maximumDistance: 12,
             perform: {
                 guard isExpanded else { return }
@@ -189,7 +189,7 @@ private struct PinHoldProgressCue: View {
         .shadow(color: .indigo.opacity(0.35), radius: 4)
         .accessibilityHidden(true)
         .onAppear {
-            withAnimation(.linear(duration: 0.65)) {
+            withAnimation(.linear(duration: 0.35)) {
                 traceProgress = 1
             }
             withAnimation(.easeInOut(duration: 0.12).repeatForever(autoreverses: true)) {

@@ -152,7 +152,7 @@ class ReviewHarnessUISourceTests(unittest.TestCase):
         pin = (ROOT / "TuberNotes/Pins/PinOverlayView.swift").read_text()
         root = (ROOT / "TuberNotes/App/RootView.swift").read_text()
 
-        self.assertIn("minimumDuration: 0.65", pin)
+        self.assertIn("minimumDuration: 0.35", pin)
         self.assertIn("maximumDistance: 12", pin)
         self.assertIn("onEvent?(.conversationRequested(annotationID: annotation.id))", pin)
         self.assertNotIn(".simultaneousGesture(\n                LongPressGesture", root)
