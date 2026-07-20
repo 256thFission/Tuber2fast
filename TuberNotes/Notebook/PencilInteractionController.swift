@@ -23,7 +23,10 @@ final class PencilInteractionController: NSObject, UIPencilInteractionDelegate {
     }()
 
     static var prefersHoverPreview: Bool {
-        UIPencilInteraction.prefersHoverToolPreview
+        if #available(iOS 17.5, *) {
+            return UIPencilInteraction.prefersHoverToolPreview
+        }
+        return false
     }
 
     private func handlePreferredTap(at point: CGPoint) {
