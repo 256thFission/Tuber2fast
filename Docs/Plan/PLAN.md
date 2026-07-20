@@ -53,7 +53,7 @@ States: `not-started` → `in-progress` → `mechanically-accepted` →
 | Line | Child doc | Owner subsystem | Status |
 |---|---|---|---|
 | WL-B — Investigation UI | [WL-B-InvestigationUI.md](WL-B-InvestigationUI.md) | App | mechanically-accepted — M1 real lasso-to-recorded-Pin loop complete; human hero review queued |
-| WL-F — Conversation UI | [WL-F-ConversationUI.md](WL-F-ConversationUI.md) | App + AgentHarness | in-progress — recorded continuation fixture complete; Pin-anchored UI under verification |
+| WL-F — Conversation UI | [WL-F-ConversationUI.md](WL-F-ConversationUI.md) | App + AgentHarness | mechanically-accepted — Pin-anchored continuation and page-return retention pass; human review queue blocked by feedback ownership divergence |
 | WL-D — Live adapter [stretch] | [WL-D-LiveAdapter.md](WL-D-LiveAdapter.md) | AgentHarness | not-started; gated |
 | WL-E(I) — Agent-side verification | [WL-E-VerificationReview.md](WL-E-VerificationReview.md) §Track I | DeveloperTools | not-started |
 
@@ -174,3 +174,12 @@ Append one line per meaningful state change: date, line, what changed.
   `DevelopmentScenario.pinConversation` plus additive
   `DevelopmentRuntimeEvidence` conversation fields so the verifier can prove a
   Pin-tethered recorded follow-up and in-session page-away/page-return survival.
+- 2026-07-19 — WL-F mechanically accepted on physical iPad
+  `2DD98ECC-A26A-5730-943B-01DD63DC4117`: focused continuation/cancellation
+  checks and `pin-conversation`, `hero-recorded`, `agent-recorded-success`, and
+  `agent-recorded-failure` all pass. The Pin-anchored thread reuses the real
+  hero selection and `recorded-hero` conversation ID, streams a reply through
+  the existing event path, and survives page-away/page-return in App-owned
+  session state. The non-blocking human journey was not queued because the
+  feedback system reported divergent device-slot ownership; existing review
+  sessions were left untouched.

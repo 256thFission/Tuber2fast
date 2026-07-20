@@ -1,6 +1,6 @@
 # WL-F — Long-press Pin conversation UI (Track I)
 
-Status: in-progress — recorded continuation fixture complete; Pin-anchored UI under verification
+Status: mechanically-accepted — steps 1–3 pass on the pinned iPad; human conversation-quality review remains unqueued because the feedback queue reports divergent device-slot ownership
 Owner subsystem: coordinator `App` + `AgentHarness` (recorded conversation
 turns); `Pins` consumed as-is
 Depends on: WL-B step 3 (real hero loop). Independent of Track N.
@@ -87,3 +87,18 @@ content, timing/feel of the streamed reply.
   and event ordering, rejects unknown continuation IDs, and cancels mid-turn
   without late completion. Focused strict-concurrency checks pass. Steps 2–3
   are implemented on the work-line branch and await pinned-device evidence.
+- 2026-07-19 — Steps 2–3 mechanically accepted on physical iPad
+  `2DD98ECC-A26A-5730-943B-01DD63DC4117`. `pin-conversation` proves the real
+  lasso → recorded Check → Pin path, a Pin-tethered three-turn transcript,
+  `recorded-hero` continuity, a streamed follow-up Pin, and the same open
+  thread after page-away/page-return. `hero-recorded`,
+  `agent-recorded-success`, and `agent-recorded-failure` also pass from the
+  same build. The first `pin-conversation` attempt exposed an already-active
+  feedback thread rebinding an explicit verifier launch; the narrow App guard
+  now isolates explicit scenarios, and the next run passed. Artifacts:
+  `tmp/verify/20260719-200836-pin-conversation/`,
+  `tmp/verify/20260719-200905-hero-recorded/`,
+  `tmp/verify/20260719-200916-agent-recorded-success/`, and
+  `tmp/verify/20260719-200941-agent-recorded-failure/`. The requested guided
+  human journey was not created because the feedback queue reported multiple
+  device-slot owners; no existing review session was reset or cancelled.
