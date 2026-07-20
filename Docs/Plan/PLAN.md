@@ -53,7 +53,7 @@ States: `not-started` → `in-progress` → `mechanically-accepted` →
 | Line | Child doc | Owner subsystem | Status |
 |---|---|---|---|
 | WL-B — Investigation UI | [WL-B-InvestigationUI.md](WL-B-InvestigationUI.md) | App | mechanically-accepted — M1 real lasso-to-recorded-Pin loop complete; human hero review queued |
-| WL-F — Conversation UI | [WL-F-ConversationUI.md](WL-F-ConversationUI.md) | App + AgentHarness | mechanically-accepted — human needs-work: long-press undiscoverable and stale Retry card z-fights the thread panel |
+| WL-F — Conversation UI | [WL-F-ConversationUI.md](WL-F-ConversationUI.md) | App + AgentHarness + Pins | mechanically-accepted — composition/feel accepted directly in Codex; open discoverability finding requires a visible first-expansion affordance + two-minute re-test |
 | WL-D — Live adapter [stretch] | [WL-D-LiveAdapter.md](WL-D-LiveAdapter.md) | AgentHarness | not-started; gated |
 | WL-E(I) — Agent-side verification | [WL-E-VerificationReview.md](WL-E-VerificationReview.md) §Track I | DeveloperTools | not-started |
 
@@ -197,3 +197,15 @@ Append one line per meaningful state change: date, line, what changed.
   submission now encodes captures sequentially and destructive Block actions
   require confirmation after Phillip's screenshot attempt crashed and was
   incorrectly recorded as a human block.
+- 2026-07-20 — WL-F correction branch closeout: physical-iPad
+  `pin-conversation`, `hero-recorded`, `agent-recorded-success`, and
+  `agent-recorded-failure` are green after the Pin-tethered sidebar, mutually
+  exclusive tap/hold handling, keyboard-stable canvas, and feedback capture
+  safeguards. Phillip accepted composition/feel as "Excellent" directly in
+  the originating Codex task; there is no thread-side final verdict. Because
+  he could not reliably trigger the final long-press and needed the sidebar
+  opened remotely, WL-F remains mechanically accepted with an open
+  discoverability finding. Follow-up: add one visible first-expansion
+  affordance (not another timing tweak), then run a two-minute unaided re-test
+  that also re-exercises screenshot send. The dangling device prompt was
+  explicitly resolved before its closed-watch transcript was exported.
