@@ -1,6 +1,6 @@
 # WL-F — Long-press Pin conversation UI (Track I)
 
-Status: mechanically-accepted — steps 1–3 pass on the pinned iPad; human conversation-quality review remains unqueued because the feedback queue reports divergent device-slot ownership
+Status: mechanically-accepted — steps 1–3 pass on the pinned iPad; human review needs work because long-press was not discoverable and the completed-investigation Retry card z-fights the thread panel
 Owner subsystem: coordinator `App` + `AgentHarness` (recorded conversation
 turns); `Pins` consumed as-is
 Depends on: WL-B step 3 (real hero loop). Independent of Track N.
@@ -102,3 +102,12 @@ content, timing/feel of the streamed reply.
   `tmp/verify/20260719-200941-agent-recorded-failure/`. The requested guided
   human journey was not created because the feedback queue reported multiple
   device-slot owners; no existing review session was reset or cancelled.
+- 2026-07-19 — Phillip authorized clearing the divergent feedback queue and
+  completed the guided Pin conversation journey. Human verdict: the long-press
+  was not discoverable, and the persistent `Proposed Pin ready` / Retry card
+  visually fights the conversation panel. The attached screenshot confirms
+  the App `ZStack` renders the completed-investigation terminal control after
+  `PinConversationAnchor`, leaving it above the thread. Phillip suggested a
+  subtle shake plus a slowly tracing outline around the Pin as a discoverability
+  cue. The review stopped at this first failure and was exported under the
+  gitignored `.feedback-threads/collected/` evidence directory.

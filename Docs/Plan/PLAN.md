@@ -53,7 +53,7 @@ States: `not-started` → `in-progress` → `mechanically-accepted` →
 | Line | Child doc | Owner subsystem | Status |
 |---|---|---|---|
 | WL-B — Investigation UI | [WL-B-InvestigationUI.md](WL-B-InvestigationUI.md) | App | mechanically-accepted — M1 real lasso-to-recorded-Pin loop complete; human hero review queued |
-| WL-F — Conversation UI | [WL-F-ConversationUI.md](WL-F-ConversationUI.md) | App + AgentHarness | mechanically-accepted — Pin-anchored continuation and page-return retention pass; human review queue blocked by feedback ownership divergence |
+| WL-F — Conversation UI | [WL-F-ConversationUI.md](WL-F-ConversationUI.md) | App + AgentHarness | mechanically-accepted — human needs-work: long-press undiscoverable and stale Retry card z-fights the thread panel |
 | WL-D — Live adapter [stretch] | [WL-D-LiveAdapter.md](WL-D-LiveAdapter.md) | AgentHarness | not-started; gated |
 | WL-E(I) — Agent-side verification | [WL-E-VerificationReview.md](WL-E-VerificationReview.md) §Track I | DeveloperTools | not-started |
 
@@ -183,3 +183,10 @@ Append one line per meaningful state change: date, line, what changed.
   session state. The non-blocking human journey was not queued because the
   feedback system reported divergent device-slot ownership; existing review
   sessions were left untouched.
+- 2026-07-19 — WL-F guided human review completed after Phillip authorized
+  clearing the divergent feedback queue. Human result is needs-work: long-press
+  was not discoverable, and the completed-investigation Retry card remains
+  above and visually competes with the Pin conversation panel. Screenshot
+  evidence confirms the App overlay ordering. Suggested direction: a subtle
+  Pin shake with a slowly tracing circular outline; no UI fix was made in this
+  review-only session.
