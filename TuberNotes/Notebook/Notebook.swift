@@ -124,6 +124,21 @@ struct NotebookPage: Identifiable, Codable, Equatable {
         PKDrawing(strokes: drawingLayers.filter(\.isVisible).flatMap { $0.drawing.strokes })
     }
 
+    /// Bridges the layered model back to the single-drawing consumers (the canvas
+    /// and view model still speak one `PKDrawing`-as-`Data`). Reads/writes the first
+    /// drawing layer in place, so the layered on-disk format and legacy migration
+    /// are preserved and layer name/visibility aren't clobbered.
+    var drawingData: Data {
+        get { drawingLayers.first?.drawingData ?? PKDrawing().dataRepresentation() }
+        set {
+            if drawingLayers.isEmpty {
+                drawingLayers = [DrawingLayer(name: "Drawing 1", drawingData: newValue)]
+            } else {
+                drawingLayers[0].drawingData = newValue
+            }
+        }
+    }
+
     /// Small white-backed render (images under ink), for strips and thumbnails.
     func renderThumbnail(maxWidth: CGFloat = 120) -> UIImage? {
         let page = NotebookPageLayout.size
