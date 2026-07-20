@@ -12,6 +12,8 @@ struct DrawingRefinementOverlay: View {
 
     @State private var isLassoActive = false
     @State private var lassoPoints: [CGPoint] = []
+    /// Page-normalized selection. Keeping this out of transient view pixels
+    /// lets it follow the paper continuously through zoom and pan.
     @State private var selection: CGRect?
     @State private var refinedImage: UIImage?
     @State private var refinedImageData: Data?
@@ -24,6 +26,7 @@ struct DrawingRefinementOverlay: View {
         GeometryReader { proxy in
             ZStack {
                 if let refinedImage, let selection {
+                    let selection = denormalized(selection, in: proxy.size)
                     Image(uiImage: refinedImage)
                         .resizable()
                         .interpolation(.high)
@@ -44,19 +47,14 @@ struct DrawingRefinementOverlay: View {
                 }
 
                 if let selection {
-                    selectionView(selection, in: proxy.size)
+                    selectionView(denormalized(selection, in: proxy.size), in: proxy.size)
                 }
 
                 controls
             }
             .onAppear {
                 guard selection == nil, let initialSelection else { return }
-                selection = CGRect(
-                    x: initialSelection.minX * proxy.size.width,
-                    y: initialSelection.minY * proxy.size.height,
-                    width: initialSelection.width * proxy.size.width,
-                    height: initialSelection.height * proxy.size.height
-                )
+                selection = initialSelection
             }
         }
         .alert("Couldn’t refine drawing", isPresented: errorIsPresented) {
@@ -196,7 +194,7 @@ struct DrawingRefinementOverlay: View {
                     lassoPoints = []
                     return
                 }
-                selection = bounds
+                selection = normalized(bounds, in: canvasSize)
                 lassoPoints = []
                 isLassoActive = false
             }
@@ -264,6 +262,15 @@ struct DrawingRefinementOverlay: View {
             y: rect.minY / max(canvasSize.height, 1),
             width: rect.width / max(canvasSize.width, 1),
             height: rect.height / max(canvasSize.height, 1)
+        )
+    }
+
+    private func denormalized(_ rect: CGRect, in canvasSize: CGSize) -> CGRect {
+        CGRect(
+            x: rect.minX * canvasSize.width,
+            y: rect.minY * canvasSize.height,
+            width: rect.width * canvasSize.width,
+            height: rect.height * canvasSize.height
         )
     }
 

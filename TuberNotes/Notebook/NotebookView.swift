@@ -16,9 +16,10 @@ struct NotebookView: View {
     @State private var showKeyPopup = false
     @State private var showToolbarSettings = false
     @State private var isRefinementActive = false
-    @State private var showPDFOptions = false
+    @State private var showExportOptions = false
     @State private var showFileExporter = false
     @State private var exportContentType = UTType.pdf
+    @State private var pendingExportPresentation: PendingExportPresentation?
     @State private var isPageLocked = false
     @State private var pickerItem: PhotosPickerItem?
     @State private var pdfTolerance = Double(NotePDFExporter.defaultTolerance)
@@ -74,7 +75,6 @@ struct NotebookView: View {
                     vm: vm,
                     isLassoActive: $vm.isLassoActive,
                     isRefinementActive: $isRefinementActive,
-                    onHome: { vm.persistNow(); dismiss() },
                     onShowPages: { withAnimation { showPages = true } },
                     onAskAgent: { withAnimation { showAgentSidebar = true } }
                 )
@@ -124,12 +124,16 @@ struct NotebookView: View {
                 }
 
                 if vm.settings.showsExport {
-                    exportMenu
+                    exportButton
                 }
 
-                aiAccessButton
                 toolbarSettingsButton
             }
+        }
+        .sheet(isPresented: $showExportOptions, onDismiss: presentPendingExport) {
+            exportOptions
+                .presentationDetents([.height(380)])
+                .presentationDragIndicator(.visible)
         }
         .fileExporter(
             isPresented: $showFileExporter,
@@ -172,10 +176,11 @@ struct NotebookView: View {
             Toggle("Finger drawing", isOn: $fingerDrawing)
             Divider()
             Button("Zoom out", systemImage: "minus.magnifyingglass") { vm.zoomOut() }
-                .disabled(vm.zoomScale <= 0.5)
+                .disabled(isPageLocked || vm.zoomScale <= 0.5)
             Button("Reset zoom (\(vm.zoomLabel))", systemImage: "1.magnifyingglass") { vm.resetZoom() }
+                .disabled(isPageLocked)
             Button("Zoom in", systemImage: "plus.magnifyingglass") { vm.zoomIn() }
-                .disabled(vm.zoomScale >= 5)
+                .disabled(isPageLocked || vm.zoomScale >= 5)
             if !vm.currentPage.images.isEmpty {
                 Button(vm.isArrangingImages ? "Finish arranging images" : "Arrange images") {
                     withAnimation { vm.toggleArrangeImages() }
@@ -202,41 +207,56 @@ struct NotebookView: View {
         .accessibilityValue(isPageLocked ? "Locked" : "Unlocked")
     }
 
-    private var exportMenu: some View {
-        Menu {
-            Button {
-                showPDFOptions = true
-            } label: {
-                Label("Export PDF", systemImage: "doc.richtext")
+    private var zoomControls: some View {
+        HStack(spacing: 4) {
+            Button { vm.zoomOut() } label: {
+                Image(systemName: "minus")
+                    .frame(width: 30, height: 30)
             }
-            Button(action: prepareSPUDExport) {
-                Label("Export SPUD", systemImage: "archivebox")
+            .disabled(vm.zoomScale <= 0.5)
+            .accessibilityLabel("Zoom out")
+            .accessibilityIdentifier("notebook-zoom-out")
+
+            Button { vm.resetZoom() } label: {
+                VStack(spacing: 0) {
+                    Text(vm.zoomLabel)
+                        .font(.caption.monospacedDigit().weight(.semibold))
+                    Text("Pinch to zoom · Unlocked")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(.secondary)
+                }
+                .frame(minWidth: 68, minHeight: 30)
             }
+            .accessibilityLabel("Reset zoom")
+            .accessibilityValue(vm.zoomLabel)
+            .accessibilityHint("You can also pinch the unlocked page to zoom")
+            .accessibilityIdentifier("notebook-zoom-reset")
+
+            Button { vm.zoomIn() } label: {
+                Image(systemName: "plus")
+                    .frame(width: 30, height: 30)
+            }
+            .disabled(vm.zoomScale >= 5)
+            .accessibilityLabel("Zoom in")
+            .accessibilityIdentifier("notebook-zoom-in")
+        }
+        .buttonStyle(.plain)
+        .padding(4)
+        .background(.ultraThinMaterial, in: Capsule())
+        .overlay(Capsule().strokeBorder(.primary.opacity(0.10)))
+        .shadow(color: .black.opacity(0.10), radius: 7, y: 3)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("notebook-zoom-controls")
+    }
+
+    private var exportButton: some View {
+        Button {
+            showExportOptions = true
         } label: {
             Image(systemName: "square.and.arrow.up")
         }
         .accessibilityIdentifier("toolbar-export")
         .accessibilityLabel("Export note")
-        .popover(isPresented: $showPDFOptions) {
-            pdfOptions
-                .presentationCompactAdaptation(.popover)
-        }
-    }
-
-    private var aiAccessButton: some View {
-        Button {
-            withAnimation { showKeyPopup = true }
-        } label: {
-            Image(systemName: apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                ? "key"
-                : "key.fill")
-        }
-        .accessibilityIdentifier("nav-ai-access")
-        .accessibilityLabel("Notebook analysis access")
-        .accessibilityValue(apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? "Demo mode"
-            : "OpenAI API key configured")
-        .accessibilityHint("Configure the on-device OpenAI API key used for notebook analysis")
     }
 
     private var toolbarSettingsButton: some View {
@@ -246,9 +266,20 @@ struct NotebookView: View {
             Image(systemName: "gearshape")
         }
         .accessibilityIdentifier("toolbar-settings")
-        .accessibilityLabel("Notebook toolbar settings")
+        .accessibilityLabel("Notebook controls settings")
         .popover(isPresented: $showToolbarSettings) {
-            NotebookToolbarSettingsView(vm: vm)
+            NotebookToolbarSettingsView(
+                vm: vm,
+                isAnalysisAccessConfigured: !apiKey
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .isEmpty,
+                onEditAnalysisAccess: {
+                    showToolbarSettings = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                        withAnimation { showKeyPopup = true }
+                    }
+                }
+            )
                 .presentationCompactAdaptation(.popover)
         }
     }
@@ -274,10 +305,25 @@ struct NotebookView: View {
         }
     }
 
-    private var pdfOptions: some View {
+    private var exportOptions: some View {
         VStack(alignment: .leading, spacing: 18) {
+            HStack {
+                Text("Export Note")
+                    .font(.headline)
+                Spacer()
+                Button {
+                    dismissExportOptions()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Close export options")
+                .accessibilityIdentifier("export-options-close")
+            }
+
             Text("PDF Compression")
-                .font(.headline)
+                .font(.subheadline.weight(.semibold))
 
             Slider(value: $pdfTolerance, in: 0.05...2, step: 0.05) {
                 Text("Compression")
@@ -300,6 +346,15 @@ struct NotebookView: View {
             }
             .buttonStyle(.borderedProminent)
             .accessibilityIdentifier("pdf-export-confirm")
+
+            Divider()
+
+            Button(action: prepareSPUDExport) {
+                Label("Export SPUD", systemImage: "archivebox")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .accessibilityIdentifier("spud-export-confirm")
         }
         .padding(20)
         .frame(width: 330)
@@ -312,13 +367,7 @@ struct NotebookView: View {
             pageBounds: CGRect(origin: .zero, size: NotebookPageLayout.size),
             tolerance: CGFloat(pdfTolerance)
         ).data)
-        exportContentType = .pdf
-        showPDFOptions = false
-        // Presenting the file exporter while the compression popover is still
-        // dismissing can cause SwiftUI to discard the second presentation.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-            showFileExporter = true
-        }
+        queueExportPresentation(.pdf)
     }
 
     private func prepareSPUDExport() {
@@ -336,10 +385,43 @@ struct NotebookView: View {
                 canvasSize: NotebookPageLayout.size,
                 conversationLayers: vm.conversationLayers
             ))
-            exportContentType = .tuberNoteArchive
-            showFileExporter = true
+            queueExportPresentation(.spud)
         } catch {
-            exportError = error.localizedDescription
+            queueExportPresentation(.error(error.localizedDescription))
+        }
+    }
+
+    private func queueExportPresentation(_ presentation: PendingExportPresentation) {
+        pendingExportPresentation = presentation
+        switch presentation {
+        case .pdf:
+            exportContentType = .pdf
+        case .spud:
+            exportContentType = .tuberNoteArchive
+        case .error:
+            break
+        }
+        showExportOptions = false
+    }
+
+    private func dismissExportOptions() {
+        showExportOptions = false
+    }
+
+    private func presentPendingExport() {
+        guard let presentation = pendingExportPresentation else { return }
+        pendingExportPresentation = nil
+
+        Task { @MainActor in
+            // The sheet's onDismiss callback establishes the presentation order;
+            // yielding once lets SwiftUI commit that dismissal before the exporter.
+            await Task.yield()
+            switch presentation {
+            case .pdf, .spud:
+                showFileExporter = true
+            case .error(let message):
+                exportError = message
+            }
         }
     }
 
@@ -356,6 +438,10 @@ struct NotebookView: View {
 
     private func handleExportCompletion(_ result: Result<URL, Error>) {
         if case .failure(let error) = result {
+            let nsError = error as NSError
+            guard !(nsError.domain == NSCocoaErrorDomain && nsError.code == NSUserCancelledError) else {
+                return
+            }
             exportError = error.localizedDescription
         }
     }
@@ -416,10 +502,17 @@ struct NotebookView: View {
             .frame(width: pageViewportFrame.width, height: pageViewportFrame.height)
             .position(x: pageViewportFrame.midX, y: pageViewportFrame.midY)
         }
+        .overlay(alignment: .topTrailing) {
+            if !isPageLocked {
+                zoomControls
+                    .padding(12)
+                    .transition(.opacity.combined(with: .scale(scale: 0.92)))
+            }
+        }
         .clipped()
         .padding(.horizontal, 12)
         .padding(.top, 8)
-        .padding(.bottom, 74) // room for the floating toolbar
+        .padding(.bottom, showsWorkingToolbar ? 74 : 12)
         // New identity per page → clean canvas + page-turn transition.
         .id(vm.currentDrawingLayerID)
         .transition(.asymmetric(
@@ -428,6 +521,18 @@ struct NotebookView: View {
         ))
         .accessibilityIdentifier("notebook-page-area")
     }
+
+    private var showsWorkingToolbar: Bool {
+        vm.settings.showsWritingTools
+            || vm.settings.showsLayers
+            || vm.settings.showsPageNavigation
+    }
+}
+
+private enum PendingExportPresentation {
+    case pdf
+    case spud
+    case error(String)
 }
 
 private struct AgenticModeGlow: View {

@@ -247,3 +247,184 @@ Stop and report when any of these is true:
   Historical `WL-*` documents remain provenance only. Initial known constraint:
   this Linux host has no Xcode/device execution, so physical-device acceptance
   will require continuation from the named Apple/iPad environment.
+
+## Active line — PC-2: adaptive notebook toolbars
+
+Status: **implemented — host-checked; awaiting pinned-iPad verification**
+
+Target branch: `sive/dev`
+
+Owner: App integration, preserving `SpatialCanvas` ownership of Pencil and
+coordinate behavior.
+
+### Objective and user-visible outcome
+
+Make the normal notebook chrome feel ordered and proportional: the top bar
+keeps navigation, page/document actions, and configuration in a predictable
+sequence; the working toolbar hugs the controls that are currently enabled,
+scrolls only when space is genuinely constrained, fades its overflow edges,
+and presents a visible compact pen-width editor above the bar. Notebook
+analysis API-key access belongs inside settings rather than as top-bar chrome.
+
+### Scope
+
+- `TuberNotes/Notebook/NotebookView.swift`
+- `TuberNotes/Notebook/NotebookToolbar.swift`
+- this PC-2 plan section and session log
+
+### Non-goals and dependencies
+
+- No changes to PencilKit tools, width ranges, persisted notebook settings,
+  canvas coordinates, page identity, or subsystem ownership.
+- No new toolbar preferences or broad visual redesign.
+- Physical launch and inspection depend on an explicitly named, pinned iPad.
+
+### Work and verification
+
+1. Order top-bar actions as navigation, page setup/content, page state/export,
+   then configuration.
+2. Order working controls as instruments, appearance, working modes/layers,
+   then page navigation; remove duplicated navigation chrome.
+3. Use a content-hugging layout with a bounded scroll fallback, edge fades,
+   unclipped long-press feedback, and a compact proportional hold editor;
+   retire the separate line-weight button once the hold gesture has priority.
+4. Inspect the final diff and run host-safe source/hygiene checks.
+5. On the explicitly pinned iPad, build and inspect the normal notebook path
+   at wide and compact widths; check clipping, overlap, scrolling, width
+   adjustment, popover sizing, and active-group resizing.
+
+### Acceptance evidence and stop conditions
+
+- The working toolbar shrinks when page navigation, writing tools, or layers
+  are disabled and never grows beyond the available width.
+- Overflow is discoverable without permanently fading controls that fit.
+- Long-press width feedback is reachable, proportionate, and unclipped; the
+  redundant explicit size button is absent and adjustable accessibility
+  actions preserve non-drag width control.
+- API-key access is available from settings and absent from the top bar.
+- Both bars retain every existing capability in a coherent order.
+- Stop after evidence is collected, after two failed device verifications
+  without a narrower repair, or when the exact-device prerequisite is absent.
+
+### Session log
+
+- 2026-07-20 — Started from clean `sive/dev` at `74d69db`. Confirmed the
+  working toolbar's unconditional `maxWidth: 820` and scroll clipping made the
+  bar oversized and hid its offset long-press width indicator. Began the
+  bounded adaptive-layout repair; device verification remains dependent on an
+  explicitly pinned iPad.
+- 2026-07-20 — Implemented the adaptive working bar and ordered controls as
+  instruments → color → selection/refinement → layers → page navigation. The
+  bar now hugs visible groups and uses a faded horizontal scroll fallback only
+  when constrained. Promoted the 0.45-second hold-then-drag width gesture above
+  scrolling, moved its proportional feedback outside the clipped viewport,
+  faded it on release, removed the redundant line-weight button, and retained
+  VoiceOver adjustable width actions. Moved notebook-analysis API-key access
+  from top-bar chrome into Notebook Controls settings and separated working-
+  versus top-toolbar visibility settings. `git diff --check` and the three
+  archive/export contract tests pass. No Xcode/Swift compiler or pinned device
+  session is available on this host, so build, launch, compact/wide layout,
+  Pencil hold, screenshot, console, and crash checks remain open.
+
+## Active line — PC-4: synchronized unlocked zoom
+
+Status: **implementation complete — physical-device verification blocked**
+
+Target branch: `sive/dev`
+
+Child work-line: [`PC-4-SynchronizedZoom.md`](PC-4-SynchronizedZoom.md)
+
+Summary: the bounded implementation is complete and host hygiene/coordinate
+checks pass. Canonical build, `pin-drift`/`fake-pin`/`multi-pin`, live pinch,
+and visual inspection remain blocked because this Linux host has no Swift/Xcode
+toolchain or explicitly pinned physical iPad session.
+
+## Active line — PC-3: reliable notebook export presentation
+
+Status: **implementation complete — host-checked; awaiting pinned-iPad verification**
+
+Target branch: `sive/dev`
+
+Owner: App integration; archive encoding remains with the existing notebook
+and persistence implementation.
+
+### Objective and user-visible outcome
+
+Restore both notebook export tools after their toolbar move: choosing PDF must
+reliably show compression options, and confirming PDF or choosing SPUD must
+reliably open the system file exporter.
+
+### Scope
+
+- `TuberNotes/Notebook/NotebookView.swift`
+- `DeveloperTools/tests/test_archive_export_contract.py`
+- this PC-3 plan section and session log
+
+### Non-goals and dependencies
+
+- No changes to PDF rendering, SPUD format/contents, persistence contracts,
+  filenames, import behavior, or toolbar layout beyond export presentation.
+- Physical launch and inspection depend on an explicitly named, pinned iPad.
+
+### Work and verification
+
+1. Trace the PDF and SPUD actions through their SwiftUI presentation states.
+2. Remove the competing menu-to-popover/file-exporter transitions with the
+   smallest shared presentation repair.
+3. Run host-safe source and diff hygiene checks.
+4. On the explicitly pinned iPad, build and open both export paths from a
+   normal notebook; confirm the PDF options and both system file exporters
+   appear without clipping, overlap, crash, or presentation warnings.
+
+### Acceptance evidence and stop conditions
+
+- The export control exposes both PDF and SPUD.
+- PDF options open every time; PDF confirmation opens a `.pdf` save page.
+- SPUD opens a `.spud` save page every time.
+- Cancellation returns to the notebook without an error or stuck state.
+- Stop after evidence is collected, after two failed device verifications
+  without a narrower repair, or when the exact-device prerequisite is absent.
+
+### Session log
+
+- 2026-07-20 — At `74d69db`, traced the regression to the export controls'
+  move from direct working-toolbar actions to a top-bar `Menu`: PDF now asks
+  SwiftUI to present a popover while the menu is still dismissing, and SPUD
+  similarly asks for the system file exporter during that dismissal.
+- 2026-07-20 — Replaced the competing menu transition with one export popover
+  containing PDF compression and SPUD actions. Both formats now use a shared
+  delayed handoff from popover dismissal to `fileExporter`; archive failures
+  use the same guarded handoff to the error alert. `git diff --check`, project
+  membership, state-reference, UTType, and `.spud` extension checks passed.
+  Build and interaction verification are blocked on this Linux workspace:
+  Xcode is unavailable and no physical-device session is pinned.
+- 2026-07-20 — Reopened after export remained unstable at `bf62422`. The prior
+  repair still depends on a fixed 0.35-second delay between dismissing the
+  export popover and presenting `fileExporter`. An earlier stable implementation
+  also kept separate PDF and SPUD exporter states. This session is restoring
+  that separation and sequencing the current options sheet through its
+  `onDismiss` completion plus one main-actor yield, without a guessed delay.
+- 2026-07-20 — Restored independent, statically typed PDF and SPUD
+  `fileExporter` presentations. Export preparation now records the requested
+  presentation before dismissing the options sheet; the sheet's `onDismiss`
+  callback and one `Task.yield()` commit dismissal before the selected exporter
+  is activated. File-picker cancellation no longer produces an export-failure
+  alert. All four focused archive/export contract tests and `git diff --check`
+  pass, and the final diff is limited to `NotebookView`, that focused test, and
+  this PC-3 log. This Linux host has no `xcodebuild` or pinned device session,
+  so canonical build, both save-page interactions, repeated export/cancel,
+  screenshot, console, and crash checks remain open.
+- 2026-07-20 — Reopened after the PDF path still failed in use. The supposedly
+  independent repair still stacked two `fileExporter` modifiers on the same
+  `NotebookView`, leaving a remaining competing-presentation risk despite their
+  separate Boolean bindings. Collapsed both formats onto exactly one exporter
+  while retaining the options sheet's lifecycle-ordered `onDismiss` handoff. The
+  selected content type is now committed before sheet dismissal, the exporter
+  has one activation site after that dismissal, and no clock delay is used.
+  The focused contract check now proves those ordering and uniqueness
+  invariants; all four archive/export tests and `git diff --check` pass. Apple
+  documents that `FileDocument` defaults writable types to its declared
+  readable types, which already include PDF and SPUD here. Canonical build and
+  interaction verification remain blocked because this Linux workspace has no
+  Swift/Xcode toolchain or explicitly pinned physical-iPad session; no runtime
+  success claim is made from host evidence alone.

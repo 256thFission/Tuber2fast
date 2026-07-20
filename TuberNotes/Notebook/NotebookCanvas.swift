@@ -92,9 +92,10 @@ struct NotebookCanvas: UIViewRepresentable {
             || context.coordinator.loadedDrawingData != drawingData {
             context.coordinator.load(drawingData, pageID: pageID, into: view)
         }
-        if abs(view.scrollView.zoomScale - zoomScale) > 0.001 {
-            view.scrollView.setZoomScale(zoomScale, animated: true)
-        }
+        // Viewport reporting re-enters this update on every pinch frame. The
+        // bound scale intentionally settles when the gesture ends, so never
+        // feed that temporarily stale value back into the active UIKit zoom.
+        context.coordinator.applyBoundZoomScale(zoomScale, to: view)
     }
 
     private func applyMode(to view: ZoomablePageView) {
@@ -123,6 +124,8 @@ struct NotebookCanvas: UIViewRepresentable {
         private(set) var loadedDrawingData = Data()
         private var isLoading = false
         private var isProgrammatic = false
+        private(set) var isUserZooming = false
+        private var programmaticZoomTarget: CGFloat?
         private var lassoSelection: [Int] = []
         private var movingStrokes: [PKStroke] = []
         private var moveTranslation: CGPoint = .zero
@@ -281,13 +284,38 @@ struct NotebookCanvas: UIViewRepresentable {
 
         // MARK: Zoom
 
+        func applyBoundZoomScale(_ scale: CGFloat, to view: ZoomablePageView) {
+            guard !isUserZooming,
+                  abs(view.scrollView.zoomScale - scale) > 0.001 else { return }
+            if let programmaticZoomTarget,
+               abs(programmaticZoomTarget - scale) <= 0.001 {
+                return
+            }
+            programmaticZoomTarget = scale
+            view.scrollView.setZoomScale(scale, animated: true)
+        }
+
         func viewForZooming(in scrollView: UIScrollView) -> UIView? { view?.contentView }
+        func scrollViewWillBeginZooming(_ scrollView: UIScrollView, with view: UIView?) {
+            programmaticZoomTarget = nil
+            isUserZooming = true
+        }
         func scrollViewDidScroll(_ scrollView: UIScrollView) { view?.reportPageViewport() }
         func scrollViewDidZoom(_ scrollView: UIScrollView) {
-            view?.recenter()
+            // Do not mutate contentInset while UIKit is actively zooming.  The
+            // inset participates in the scroll view's geometry, so changing it
+            // on every pinch frame makes the page and its layers visibly jump.
+            // Insets are refreshed at layout/gesture boundaries instead.
             view?.reportPageViewport()
+            if let programmaticZoomTarget,
+               abs(scrollView.zoomScale - programmaticZoomTarget) <= 0.001 {
+                self.programmaticZoomTarget = nil
+            }
         }
         func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) {
+            programmaticZoomTarget = nil
+            isUserZooming = false
+            self.view?.recenter()
             parent.onZoomChanged(scale)
         }
 
@@ -511,6 +539,7 @@ final class ZoomablePageView: UIView {
     let straightenRecognizer = HoldStraightenRecognizer()
     var onPageViewportChange: ((CGRect) -> Void)?
     private var loadedBackgroundDrawingData = Data()
+    private var lastReportedPageViewport: CGRect?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -601,6 +630,8 @@ final class ZoomablePageView: UIView {
     func reportPageViewport() {
         let frame = convert(contentView.bounds, from: contentView)
         guard frame.width > 0, frame.height > 0 else { return }
+        guard frame != lastReportedPageViewport else { return }
+        lastReportedPageViewport = frame
         onPageViewportChange?(frame)
     }
 }

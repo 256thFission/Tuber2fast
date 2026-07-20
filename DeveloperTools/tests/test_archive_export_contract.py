@@ -56,6 +56,54 @@ class ArchiveExportContractTests(unittest.TestCase):
         self.assertNotIn("conversation", export_call.group(1).lower())
         self.assertNotIn("annotation", export_call.group(1).lower())
 
+    def test_export_presentation_has_one_ordered_file_exporter(self):
+        source = NOTEBOOK_VIEW_SOURCE.read_text()
+
+        self.assertNotIn(".popover(isPresented: $showExportOptions)", source)
+        self.assertIn(
+            ".sheet(isPresented: $showExportOptions, onDismiss: presentPendingExport)",
+            source,
+        )
+        self.assertIn("await Task.yield()", source)
+        self.assertNotIn("asyncAfter(deadline: .now() + 0.35)", source)
+        self.assertEqual(source.count(".fileExporter("), 1)
+        self.assertIn("isPresented: $showFileExporter", source)
+        self.assertIn("contentType: exportContentType", source)
+        self.assertIn("exportContentType = .pdf", source)
+        self.assertIn("exportContentType = .tuberNoteArchive", source)
+        self.assertNotIn("showPDFExporter", source)
+        self.assertNotIn("showSPUDExporter", source)
+        self.assertIn("nsError.code == NSUserCancelledError", source)
+
+        queue_body = re.search(
+            r"private func queueExportPresentation\(.*?\) \{(.*?)\n    \}\n\n"
+            r"    private func dismissExportOptions",
+            source,
+            flags=re.DOTALL,
+        )
+        self.assertIsNotNone(queue_body)
+        self.assertLess(
+            queue_body.group(1).index("exportContentType = .pdf"),
+            queue_body.group(1).index("showExportOptions = false"),
+        )
+        self.assertLess(
+            queue_body.group(1).index("exportContentType = .tuberNoteArchive"),
+            queue_body.group(1).index("showExportOptions = false"),
+        )
+
+        handoff_body = re.search(
+            r"private func presentPendingExport\(\) \{(.*?)\n    \}\n\n"
+            r"    private func exportFilename",
+            source,
+            flags=re.DOTALL,
+        )
+        self.assertIsNotNone(handoff_body)
+        self.assertLess(
+            handoff_body.group(1).index("await Task.yield()"),
+            handoff_body.group(1).index("showFileExporter = true"),
+        )
+        self.assertEqual(source.count("showFileExporter = true"), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

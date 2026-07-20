@@ -8,88 +8,40 @@ struct NotebookToolbar: View {
     @Binding var isLassoActive: Bool
     @Binding var isRefinementActive: Bool
     @Environment(\.colorScheme) private var colorScheme
-    var onHome: () -> Void
     var onShowPages: () -> Void
     var onAskAgent: () -> Void
 
     @State private var showColors = false
-    @State private var showSize = false
     @State private var showLayers = false
     @State private var pressedTool: WritingTool?
     @State private var isLassoHeld = false
     @State private var pressStartWidth: CGFloat = 0
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 12) {
-                iconButton("house", label: "Back to notebooks", action: onHome)
-                    .accessibilityIdentifier("toolbar-home")
-
-                if vm.settings.showsPageNavigation {
-                    divider
-
-                    iconButton("chevron.left", label: "Previous page", enabled: vm.canGoBack) {
-                        withAnimation(.easeInOut) { vm.goBack() }
+        Group {
+            if hasVisibleControls {
+                adaptiveToolbar
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .overlay(Capsule().strokeBorder(.primary.opacity(0.08), lineWidth: 1))
+                    .overlay(alignment: .top) {
+                        holdIndicator
+                            .offset(y: -64)
+                            .allowsHitTesting(false)
                     }
-                    .accessibilityIdentifier("toolbar-prev-page")
-
-                    if vm.canGoForward {
-                        iconButton("chevron.right", label: "Next page") {
-                            withAnimation(.easeInOut) { vm.goForward() }
-                        }
-                        .accessibilityIdentifier("toolbar-next-page")
-                    } else {
-                        iconButton("plus", label: "Add page") {
-                            withAnimation(.easeInOut) { vm.addPage() }
-                        }
-                        .accessibilityIdentifier("toolbar-add-page")
-                    }
-                }
-
-                if vm.settings.showsWritingTools {
-                    divider
-
-                    ForEach(WritingTool.allCases) { tool in
-                        toolButton(tool)
-                    }
-                    lassoButton
-                    refinementButton
-
-                    colorButton
-                    if vm.tool.usesWidth { sizeButton }
-                }
-
-                if vm.settings.showsLayers {
-                    divider
-                    agenticLayersButton
-                }
-
-                Button(action: onShowPages) {
-                    Text(vm.pageLabel)
-                        .font(.caption.monospacedDigit().weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 4)
-                }
-                .accessibilityLabel("Show pages")
-                .accessibilityValue(vm.pageLabel)
-                .accessibilityIdentifier("toolbar-page-indicator")
+                    .shadow(color: .black.opacity(0.12), radius: 10, y: 4)
+                    .buttonStyle(TactileGlyphButtonStyle())
+                    .sensoryFeedback(.selection, trigger: vm.tool.rawValue)
+                    .sensoryFeedback(.selection, trigger: isLassoActive)
+                    .accessibilityIdentifier("notebook-toolbar")
+                    .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .bottom)))
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
         }
-        .scrollDisabled(pressedTool != nil || isLassoHeld)
-        .frame(maxWidth: 820)
-        .background(.ultraThinMaterial, in: Capsule())
-        .overlay(Capsule().strokeBorder(.primary.opacity(0.08), lineWidth: 1))
-        .shadow(color: .black.opacity(0.12), radius: 10, y: 4)
-        .buttonStyle(TactileGlyphButtonStyle())
-        .sensoryFeedback(.selection, trigger: vm.tool.rawValue)
-        .sensoryFeedback(.selection, trigger: isLassoActive)
-        .accessibilityIdentifier("notebook-toolbar")
+        .animation(.easeInOut(duration: 0.18), value: visibleGroupCount)
         .onChange(of: vm.settings.showsWritingTools) { _, isVisible in
             if !isVisible {
                 isLassoActive = false
                 isRefinementActive = false
+                pressedTool = nil
             }
         }
         .onChange(of: vm.settings.showsLayers) { _, isVisible in
@@ -101,6 +53,115 @@ struct NotebookToolbar: View {
         .onChange(of: vm.isAgenticLayersActive) { _, isActive in
             if isActive { isRefinementActive = false }
         }
+    }
+
+    private var adaptiveToolbar: some View {
+        ViewThatFits(in: .horizontal) {
+            toolbarContent
+                .fixedSize(horizontal: true, vertical: true)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                toolbarContent
+                    .fixedSize(horizontal: true, vertical: true)
+            }
+            .scrollDisabled(pressedTool != nil || isLassoHeld)
+            .mask {
+                LinearGradient(
+                    stops: [
+                        .init(color: .clear, location: 0),
+                        .init(color: .black, location: 0.035),
+                        .init(color: .black, location: 0.965),
+                        .init(color: .clear, location: 1),
+                    ],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+            }
+        }
+    }
+
+    private var toolbarContent: some View {
+        HStack(spacing: 8) {
+            if vm.settings.showsWritingTools {
+                ForEach(WritingTool.allCases) { tool in
+                    toolButton(tool)
+                }
+                colorButton
+                lassoButton
+                refinementButton
+            }
+
+            if vm.settings.showsLayers {
+                if vm.settings.showsWritingTools { divider }
+                agenticLayersButton
+            }
+
+            if vm.settings.showsPageNavigation {
+                if vm.settings.showsWritingTools || vm.settings.showsLayers { divider }
+                pageNavigationControls
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+    }
+
+    @ViewBuilder
+    private var pageNavigationControls: some View {
+        iconButton("chevron.left", label: "Previous page", enabled: vm.canGoBack) {
+            withAnimation(.easeInOut) { vm.goBack() }
+        }
+        .accessibilityIdentifier("toolbar-prev-page")
+
+        Button(action: onShowPages) {
+            Text(vm.pageLabel)
+                .font(.caption.monospacedDigit().weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(minWidth: 46, minHeight: 34)
+        }
+        .accessibilityLabel("Show pages")
+        .accessibilityValue(vm.pageLabel)
+        .accessibilityIdentifier("toolbar-page-indicator")
+
+        if vm.canGoForward {
+            iconButton("chevron.right", label: "Next page") {
+                withAnimation(.easeInOut) { vm.goForward() }
+            }
+            .accessibilityIdentifier("toolbar-next-page")
+        } else {
+            iconButton("plus", label: "Add page") {
+                withAnimation(.easeInOut) { vm.addPage() }
+            }
+            .accessibilityIdentifier("toolbar-add-page")
+        }
+    }
+
+    @ViewBuilder
+    private var holdIndicator: some View {
+        if let tool = pressedTool {
+            ToolWidthHoldIndicator(
+                tool: tool,
+                width: vm.width(for: tool),
+                color: tool == .eraser ? .secondary : vm.inkColor
+            )
+            .transition(.opacity.combined(with: .scale(scale: 0.94, anchor: .bottom)))
+        } else if isLassoHeld {
+            LassoHoldIndicator()
+                .transition(.opacity.combined(with: .scale(scale: 0.94, anchor: .bottom)))
+        }
+    }
+
+    private var hasVisibleControls: Bool {
+        vm.settings.showsWritingTools
+            || vm.settings.showsLayers
+            || vm.settings.showsPageNavigation
+    }
+
+    private var visibleGroupCount: Int {
+        [
+            vm.settings.showsWritingTools,
+            vm.settings.showsLayers,
+            vm.settings.showsPageNavigation,
+        ].filter { $0 }.count
     }
 
     // MARK: Pieces
@@ -134,25 +195,15 @@ struct NotebookToolbar: View {
                 .symbolEffect(.bounce, options: .speed(1.55), value: selected)
                 .animation(.spring(response: 0.22, dampingFraction: 0.62), value: selected)
         }
-        .overlay(alignment: .bottom) {
-            if pressedTool == tool {
-                ToolWidthHoldIndicator(
-                    tool: tool,
-                    width: vm.width(for: tool),
-                    color: fill
-                )
-                .offset(y: -48)
-                .allowsHitTesting(false)
-                .transition(.scale(scale: 0.9, anchor: .bottom).combined(with: .opacity))
-            }
-        }
-        .simultaneousGesture(widthAdjustmentGesture(for: tool))
-        .zIndex(pressedTool == tool ? 2 : 0)
+        .highPriorityGesture(widthAdjustmentGesture(for: tool))
         .accessibilityIdentifier("tool-\(tool.rawValue)")
         .accessibilityLabel(tool.label)
         .accessibilityValue("\(Int(vm.width(for: tool).rounded())) point width")
         .accessibilityHint("Long press, then slide left or right to adjust width")
         .accessibilityAddTraits(selected ? [.isSelected] : [])
+        .accessibilityAdjustableAction { direction in
+            adjustWidth(for: tool, direction: direction)
+        }
     }
 
     private var lassoButton: some View {
@@ -174,16 +225,7 @@ struct NotebookToolbar: View {
                 .symbolEffect(.pulse, options: .speed(1.5), value: isLassoActive)
                 .animation(.spring(response: 0.22, dampingFraction: 0.62), value: isLassoActive)
         }
-        .overlay(alignment: .bottom) {
-            if isLassoHeld {
-                LassoHoldIndicator()
-                    .offset(y: -48)
-                    .allowsHitTesting(false)
-                    .transition(.scale(scale: 0.9, anchor: .bottom).combined(with: .opacity))
-            }
-        }
-        .simultaneousGesture(lassoHoldGesture)
-        .zIndex(isLassoHeld ? 2 : 0)
+        .highPriorityGesture(lassoHoldGesture)
         .accessibilityIdentifier("tool-lasso")
         .accessibilityLabel("Selection lasso")
         .accessibilityHint("Draw around strokes to select and move them")
@@ -191,7 +233,7 @@ struct NotebookToolbar: View {
     }
 
     private var lassoHoldGesture: some Gesture {
-        LongPressGesture(minimumDuration: 0.55, maximumDistance: 24)
+        LongPressGesture(minimumDuration: 0.45, maximumDistance: 24)
             .sequenced(before: DragGesture(minimumDistance: 0))
             .onChanged { value in
                 guard case .second(true, _) = value, !isLassoHeld else { return }
@@ -234,7 +276,7 @@ struct NotebookToolbar: View {
     }
 
     private func widthAdjustmentGesture(for tool: WritingTool) -> some Gesture {
-        LongPressGesture(minimumDuration: 0.55, maximumDistance: 24)
+        LongPressGesture(minimumDuration: 0.45, maximumDistance: 24)
             .sequenced(before: DragGesture(minimumDistance: 0))
             .onChanged { value in
                 switch value {
@@ -248,7 +290,7 @@ struct NotebookToolbar: View {
                 }
             }
             .onEnded { _ in
-                withAnimation(.easeOut(duration: 0.12)) {
+                withAnimation(.easeInOut(duration: 0.2)) {
                     pressedTool = nil
                 }
             }
@@ -262,6 +304,25 @@ struct NotebookToolbar: View {
         withAnimation(.easeOut(duration: 0.12)) {
             pressedTool = tool
         }
+    }
+
+    private func adjustWidth(
+        for tool: WritingTool,
+        direction: AccessibilityAdjustmentDirection
+    ) {
+        let range = tool.widthRange
+        let step = max(1, (range.upperBound - range.lowerBound) / 10)
+        let delta: CGFloat
+        switch direction {
+        case .increment:
+            delta = step
+        case .decrement:
+            delta = -step
+        @unknown default:
+            return
+        }
+        vm.selectTool(tool)
+        vm.setWidth(vm.width(for: tool) + delta, for: tool)
     }
 
     private func selectedToolForeground(for tool: WritingTool) -> Color {
@@ -314,22 +375,6 @@ struct NotebookToolbar: View {
         .accessibilityLabel("Ink color")
         .popover(isPresented: $showColors) {
             ColorPalettePopover(vm: vm)
-                .presentationCompactAdaptation(.popover)
-        }
-    }
-
-    private var sizeButton: some View {
-        Button { showSize = true } label: {
-            Image(systemName: "lineweight")
-                .font(.system(size: 17, weight: .medium))
-                .frame(width: 34, height: 34)
-                .foregroundStyle(.primary)
-                .symbolEffect(.bounce, options: .speed(1.4), value: showSize)
-        }
-        .accessibilityIdentifier("toolbar-size")
-        .accessibilityLabel("Stroke size")
-        .popover(isPresented: $showSize) {
-            ToolSizePopover(vm: vm)
                 .presentationCompactAdaptation(.popover)
         }
     }
@@ -610,14 +655,19 @@ private struct TactileGlyphButtonStyle: ButtonStyle {
 
 struct NotebookToolbarSettingsView: View {
     @ObservedObject var vm: NotebookViewModel
+    let isAnalysisAccessConfigured: Bool
+    let onEditAnalysisAccess: () -> Void
 
     private let columns = Array(repeating: GridItem(.fixed(34), spacing: 12), count: 6)
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                Text("Notebook Toolbar")
+                Text("Notebook Controls")
                     .font(.headline)
+
+                Text("Working toolbar")
+                    .font(.subheadline.weight(.semibold))
 
                 Group {
                     Toggle("Page navigation", isOn: $vm.settings.showsPageNavigation)
@@ -626,12 +676,51 @@ struct NotebookToolbarSettingsView: View {
                         .accessibilityIdentifier("settings-writing-tools")
                     Toggle("Layers", isOn: $vm.settings.showsLayers)
                         .accessibilityIdentifier("settings-agentic-layers")
+                }
+                .font(.subheadline)
+
+                Divider()
+
+                Text("Top toolbar")
+                    .font(.subheadline.weight(.semibold))
+
+                Group {
                     Toggle("Export", isOn: $vm.settings.showsExport)
                         .accessibilityIdentifier("settings-export")
                     Toggle("Page lock", isOn: $vm.settings.showsPageLock)
                         .accessibilityIdentifier("settings-page-lock")
                 }
                 .font(.subheadline)
+
+                Divider()
+
+                Text("Analysis")
+                    .font(.headline)
+
+                Button(action: onEditAnalysisAccess) {
+                    HStack(spacing: 12) {
+                        Image(systemName: isAnalysisAccessConfigured ? "key.fill" : "key")
+                            .frame(width: 24)
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Notebook analysis access")
+                                .foregroundStyle(.primary)
+                            Text(isAnalysisAccessConfigured ? "API key configured" : "Demo mode")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Spacer()
+
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.tertiary)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("settings-analysis-access")
+                .accessibilityHint("Configure the on-device OpenAI API key used for notebook analysis")
 
                 Divider()
 
@@ -754,48 +843,18 @@ private struct ColorPalettePopover: View {
     }
 }
 
-// MARK: - Size popover
-
-private struct ToolSizePopover: View {
-    @ObservedObject var vm: NotebookViewModel
-
-    var body: some View {
-        VStack(spacing: 14) {
-            Text("\(vm.tool.label) size")
-                .font(.subheadline.weight(.semibold))
-
-            ZStack {
-                RoundedRectangle(cornerRadius: 6).fill(.white)
-                Capsule()
-                    .fill((vm.tool == .eraser ? Color.secondary : vm.inkColor)
-                        .opacity(vm.tool == .marker ? 0.4 : 1))
-                    .frame(width: 170, height: max(2, min(vm.activeWidth, 44)))
-            }
-            .frame(width: 200, height: 52)
-            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.primary.opacity(0.1)))
-
-            Slider(
-                value: Binding(get: { vm.activeWidth }, set: { vm.activeWidth = $0 }),
-                in: vm.widthRange
-            )
-
-            Text(String(format: "%.0f pt", vm.activeWidth))
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.secondary)
-        }
-        .padding(16)
-        .frame(width: 232)
-    }
-}
-
 private struct ToolWidthHoldIndicator: View {
     let tool: WritingTool
     let width: CGFloat
     let color: Color
 
+    private let trackWidth: CGFloat = 136
+    private let thumbDiameter: CGFloat = 16
+
     private var progress: CGFloat {
         let range = tool.widthRange
-        return (width - range.lowerBound) / (range.upperBound - range.lowerBound)
+        let raw = (width - range.lowerBound) / (range.upperBound - range.lowerBound)
+        return min(max(raw, 0), 1)
     }
 
     var body: some View {
@@ -806,17 +865,18 @@ private struct ToolWidthHoldIndicator: View {
             ZStack(alignment: .leading) {
                 Capsule()
                     .fill(.primary.opacity(0.14))
+                    .frame(height: 6)
                 Capsule()
                     .fill(color.opacity(tool == .marker ? 0.55 : 1))
-                    .frame(width: max(8, 140 * progress))
+                    .frame(width: max(8, trackWidth * progress), height: 6)
                 Circle()
                     .fill(.background)
                     .overlay(Circle().strokeBorder(color, lineWidth: 2))
                     .shadow(color: .black.opacity(0.18), radius: 2, y: 1)
-                    .frame(width: 18, height: 18)
-                    .offset(x: 131 * progress)
+                    .frame(width: thumbDiameter, height: thumbDiameter)
+                    .offset(x: (trackWidth - thumbDiameter) * progress)
             }
-            .frame(width: 140, height: 18)
+            .frame(width: trackWidth, height: thumbDiameter)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
