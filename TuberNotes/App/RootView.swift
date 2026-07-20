@@ -1,5 +1,6 @@
 import PDFKit
 import PencilKit
+import PointBackKit
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -235,7 +236,7 @@ struct RootView: View {
     @ViewBuilder
     private var recordedInvestigationSurface: some View {
         if let document {
-            RecordedInvestigationView(
+            PointBackReferenceExperience(
                 scenario: displayedScenario,
                 document: document,
                 currentPageID: $currentPageID,

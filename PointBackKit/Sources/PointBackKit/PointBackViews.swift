@@ -96,9 +96,6 @@ private struct PointBackCanvasOverlay: View {
         GeometryReader { proxy in
             let globalFrame = proxy.frame(in: .global)
             ZStack(alignment: .topLeading) {
-                selectedGlow(globalFrame: globalFrame)
-                pins(globalFrame: globalFrame, size: proxy.size)
-                controls(globalFrame: globalFrame, size: proxy.size)
                 PortableLassoInput { localPath in
                     let windowPath = localPath.map {
                         CGPoint(x: $0.x + globalFrame.minX, y: $0.y + globalFrame.minY)
@@ -108,6 +105,9 @@ private struct PointBackCanvasOverlay: View {
                 }
                 .allowsHitTesting(controller.presentedConversationID == nil)
                 .accessibilityIdentifier("pointback-lasso-overlay")
+                selectedGlow(globalFrame: globalFrame)
+                pins(globalFrame: globalFrame, size: proxy.size)
+                controls(globalFrame: globalFrame, size: proxy.size)
             }
             .clipped()
         }

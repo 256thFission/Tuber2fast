@@ -32,6 +32,9 @@
 		A00000000000000000000017 /* ResponsesSSEDecoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000117 /* ResponsesSSEDecoder.swift */; };
 		A00000000000000000000018 /* DebugCodexTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000118 /* DebugCodexTransport.swift */; };
 		A00000000000000000000019 /* DebugCodexAgentClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000119 /* DebugCodexAgentClient.swift */; };
+		A00000000000000000000020 /* ReferenceCanvasHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000120 /* ReferenceCanvasHost.swift */; };
+		A00000000000000000000021 /* PointBackReferenceExperience.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000121 /* PointBackReferenceExperience.swift */; };
+		A00000000000000000000022 /* PointBackKit in Frameworks */ = {isa = PBXBuildFile; productRef = A00000000000000000000902 /* PointBackKit */; };
 		C00000000000000000000001 /* DocumentStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00000000000000000000101 /* DocumentStore.swift */; };
 /* End PBXBuildFile section */
 
@@ -62,6 +65,8 @@
 		A00000000000000000000117 /* ResponsesSSEDecoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResponsesSSEDecoder.swift; sourceTree = "<group>"; };
 		A00000000000000000000118 /* DebugCodexTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugCodexTransport.swift; sourceTree = "<group>"; };
 		A00000000000000000000119 /* DebugCodexAgentClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugCodexAgentClient.swift; sourceTree = "<group>"; };
+		A00000000000000000000120 /* ReferenceCanvasHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReferenceCanvasHost.swift; sourceTree = "<group>"; };
+		A00000000000000000000121 /* PointBackReferenceExperience.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PointBackReferenceExperience.swift; sourceTree = "<group>"; };
 		C00000000000000000000101 /* DocumentStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentStore.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -70,6 +75,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A00000000000000000000022 /* PointBackKit in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -102,6 +108,8 @@
 			children = (
 				A00000000000000000000101 /* TuberNotesApp.swift */,
 				A00000000000000000000102 /* RootView.swift */,
+				A00000000000000000000120 /* ReferenceCanvasHost.swift */,
+				A00000000000000000000121 /* PointBackReferenceExperience.swift */,
 				A0000000000000000000020A /* Contracts */,
 				C00000000000000000000201 /* Persistence */,
 			);
@@ -205,6 +213,9 @@
 			dependencies = (
 			);
 			name = TuberNotes;
+			packageProductDependencies = (
+				A00000000000000000000902 /* PointBackKit */,
+			);
 			productName = TuberNotes;
 			productReference = A0000000000000000000010B /* TuberNotes.app */;
 			productType = "com.apple.product-type.application";
@@ -234,6 +245,9 @@
 			);
 			mainGroup = A00000000000000000000201;
 			productRefGroup = A00000000000000000000208 /* Products */;
+			packageReferences = (
+				A00000000000000000000901 /* XCLocalSwiftPackageReference "PointBackKit" */,
+			);
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
@@ -282,6 +296,8 @@
 				A00000000000000000000017 /* ResponsesSSEDecoder.swift in Sources */,
 				A00000000000000000000018 /* DebugCodexTransport.swift in Sources */,
 				A00000000000000000000019 /* DebugCodexAgentClient.swift in Sources */,
+				A00000000000000000000020 /* ReferenceCanvasHost.swift in Sources */,
+				A00000000000000000000021 /* PointBackReferenceExperience.swift in Sources */,
 				C00000000000000000000001 /* DocumentStore.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -406,6 +422,21 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		A00000000000000000000901 /* XCLocalSwiftPackageReference "PointBackKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = PointBackKit;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		A00000000000000000000902 /* PointBackKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A00000000000000000000901 /* XCLocalSwiftPackageReference "PointBackKit" */;
+			productName = PointBackKit;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = A00000000000000000000501 /* Project object */;
 }

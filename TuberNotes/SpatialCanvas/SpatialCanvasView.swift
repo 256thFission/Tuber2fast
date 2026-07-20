@@ -613,7 +613,9 @@ private struct ZoomableSpatialPage: UIViewRepresentable {
         private func emitViewport() {
             guard let scrollView, let pageView = host?.view,
                   pageView.bounds.width > 0, pageView.bounds.height > 0 else { return }
-            let origin = pageView.convert(CGPoint.zero, to: scrollView)
+            // CanvasHost projection is intentionally window-space so PointBackKit can mount over
+            // any SwiftUI hierarchy without knowing this scroll view's local nesting.
+            let origin = pageView.convert(CGPoint.zero, to: nil)
             let transform = PageViewportTransform(
                 pageCanvasSize: PageCanvasSize(
                     width: Double(pageView.bounds.width),
