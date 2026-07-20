@@ -63,8 +63,32 @@ End user-visible tasks with the evidence packet in `Docs/templates/EvidencePacke
 | Pin layout | `fake-pin`, `multi-pin`, and `edge-pins` | Check deterministic positions, overlap, and edge clipping |
 | App composition / root chrome | `blank-canvas`, `fake-pin`, and `multi-pin` | All three DEBUG states |
 | Coordinate / transform work | `pin-drift` before and after viewport change | Use the deterministic `Change viewport` control and the `spatial-debugging` Skill |
+| Investigation UI / agent event handling | `agent-recorded-success`, `agent-recorded-failure`, `hero-recorded`; add `agent-recorded-retrieval` when retrieval presentation changed | Recorded-path truthfulness plus the hero composition |
+| Persistence / document store | `persistence-relaunch` plus the surface scenario of the changed document type | Fixture-driven scenarios must stay deterministic |
 | Human feel / taste / interaction quality | scenario that exposes the change | Mechanical verify first, then create a feedback thread; use the morning queue for human-only checks |
 | Non-UI / pure contract text | none required | Still avoid product/runtime vs tooling confusion |
+
+## Verification tiers — never run the full sweep by default
+
+The full 14/15-scenario sweep is a gate, not a loop. Costs are real: each run
+is an install/launch cycle on the one pinned iPad, and each summary is agent
+context.
+
+1. **Per-edit (the default):** only the change-map scenarios for the files you
+   touched — typically 1–3 runs, one build then `SKIP_BUILD=1`.
+2. **Pre-edit baseline:** do not re-sweep. The last green sweep recorded in
+   `Docs/Plan/PLAN.md` at the current commit IS the baseline; its artifacts
+   are under `tmp/verify/`. If HEAD moved since, run only the change-map
+   scenarios you are about to rely on.
+3. **Merge gate to `main`:** the union of change-map scenarios for everything
+   the branch touched, plus `blank-canvas` as smoke. Record the result and
+   commit hash in the plan log.
+4. **Full sweep:** only when the verifier/tooling itself changed, before the
+   M4 demo-candidate gate, or after a multi-line merge day — at most once per
+   day. Never as a per-session ritual.
+
+`persistence-relaunch` joins a sweep only once WL-C's acceptance gate has
+passed; before that it is WL-C's own gate, not regression baseline.
 
 M0 verifier values are `blank-canvas`, `fake-pin`, `multi-pin`, `pdf-pages`, `blank-notebook`, `notebook-pages`, `ink-pages`, `pin-drift`, `edge-pins`, `persistence-relaunch`, and the explicitly partial `hero-recorded` stub. Default is `blank-canvas`.
 

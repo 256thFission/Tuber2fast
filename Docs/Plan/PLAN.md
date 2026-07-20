@@ -86,6 +86,13 @@ and gates further Track N merges until cleared).
   status board here, and an Evidence Packet for user-visible changes.
 - Device work follows `Docs/DeviceWorkflow.md` — one pinned iPad, sessions
   serialize device access across BOTH tracks; never simulator-fallback.
+- Verification is tiered (`Docs/Development.md` § Verification tiers): per-edit
+  runs use only the change-map scenarios; the last plan-logged green sweep at
+  the current commit is the baseline — do not re-sweep before editing. Full
+  sweeps are reserved for tooling changes, multi-line merge days, and the M4
+  gate.
+- Push `main` to origin after every merged work line — Track N and Track I
+  sync through origin, not through this Mac.
 - Contract changes: allowed, `CONTRACT:`-flagged, plan-logged (decision 7).
 - Never modify `.cursor/`; never commit `__pycache__/`, `DerivedData*/`,
   `tmp/`, or `.tubernotes-device-session.json`.
