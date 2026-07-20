@@ -132,6 +132,31 @@ class ReviewHarnessUISourceTests(unittest.TestCase):
         self.assertNotIn('@State private var quickReply', views)
         self.assertNotIn('@State private var reply', views)
 
+    def test_capture_submission_bounds_png_memory_and_block_requires_confirmation(self):
+        session = (ROOT / "TuberNotes/DeveloperSupport/FeedbackThreadSession.swift").read_text()
+        views = (ROOT / "TuberNotes/DeveloperSupport/FeedbackThreadViews.swift").read_text()
+
+        append_body = session.split("private func appendHumanMessage", 1)[1].split(
+            "private func writePNG", 1
+        )[0]
+        self.assertIn("try writePNG(capture.cleanImage, to: cleanURL)", append_body)
+        self.assertIn("try writePNG(capture.annotatedImage, to: annotatedURL)", append_body)
+        self.assertNotIn("let cleanData", append_body)
+        self.assertIn("autoreleasepool", session)
+        self.assertIn('confirmationDialog("Mark this review blocked?"', views)
+        self.assertNotIn('Button("Blocked") { session.setState(.blocked) }', views)
+
+    def test_pin_conversation_uses_pin_owned_hold_and_tethered_sidebar(self):
+        pin = (ROOT / "TuberNotes/Pins/PinOverlayView.swift").read_text()
+        root = (ROOT / "TuberNotes/App/RootView.swift").read_text()
+
+        self.assertIn(".onLongPressGesture(minimumDuration: 0.65, maximumDistance: 12)", pin)
+        self.assertIn("onEvent?(.conversationRequested(annotationID: annotation.id))", pin)
+        self.assertNotIn(".simultaneousGesture(\n                LongPressGesture", root)
+        self.assertIn('accessibilityIdentifier("pin-conversation-sidebar")', root)
+        self.assertIn("PinConversationTether(anchor:", root)
+        self.assertNotIn("PinConversationAnchor", root)
+
     def test_live_ab_seam_is_bounded_and_pen_fixture_path_stays_separate(self):
         views = (ROOT / "TuberNotes/DeveloperSupport/FeedbackThreadViews.swift").read_text()
         session = (ROOT / "TuberNotes/DeveloperSupport/FeedbackThreadSession.swift").read_text()

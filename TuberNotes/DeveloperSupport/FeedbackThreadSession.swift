@@ -5,6 +5,12 @@ import SwiftUI
 #if DEBUG
 @MainActor
 final class FeedbackThreadSession: ObservableObject {
+    private enum FeedbackCaptureEncodingError: LocalizedError {
+        case pngEncodingFailed
+
+        var errorDescription: String? { "Could not encode viewport capture." }
+    }
+
     private struct ComposerDraft {
         var reply = ""
         var selectedOptionID: String?
@@ -542,12 +548,8 @@ final class FeedbackThreadSession: ObservableObject {
         value.state = .awaitingModel
         do {
             if let capture, let cleanURL, let annotatedURL {
-                guard let cleanData = capture.cleanImage.pngData(), let annotatedData = capture.annotatedImage.pngData() else {
-                    statusMessage = "Could not encode viewport capture."
-                    return false
-                }
-                try cleanData.write(to: cleanURL, options: .atomic)
-                try annotatedData.write(to: annotatedURL, options: .atomic)
+                try writePNG(capture.cleanImage, to: cleanURL)
+                try writePNG(capture.annotatedImage, to: annotatedURL)
             }
             try FeedbackThreadStore.appendMessage(message, to: &value)
             FeedbackThreadStore.appendEvent("message-posted", feedbackThreadID: value.id, values: ["messageID": message.id, "author": "human"])
@@ -563,6 +565,19 @@ final class FeedbackThreadSession: ObservableObject {
             statusMessage = error.localizedDescription
             return false
         }
+    }
+
+    private func writePNG(_ image: UIImage, to url: URL) throws {
+        var result: Result<Void, Error>!
+        autoreleasepool {
+            result = Result {
+                guard let data = image.pngData() else {
+                    throw FeedbackCaptureEncodingError.pngEncodingFailed
+                }
+                try data.write(to: url, options: .atomic)
+            }
+        }
+        try result.get()
     }
 }
 

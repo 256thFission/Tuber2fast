@@ -190,3 +190,10 @@ Append one line per meaningful state change: date, line, what changed.
   evidence confirms the App overlay ordering. Suggested direction: a subtle
   Pin shake with a slowly tracing circular outline; no UI fix was made in this
   review-only session.
+- 2026-07-20 — WL-F human-review correction in progress. Contract seam:
+  `PinOverlayEvent` gained additive `conversationRequested(annotationID:)` so
+  `Pins` owns precise hold recognition while `App` retains conversation state.
+  The page popup is being replaced by a Pin-tethered right sidebar; screenshot
+  submission now encodes captures sequentially and destructive Block actions
+  require confirmation after Phillip's screenshot attempt crashed and was
+  incorrectly recorded as a human block.

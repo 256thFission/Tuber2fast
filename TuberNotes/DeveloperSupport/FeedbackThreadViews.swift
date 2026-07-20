@@ -6,6 +6,7 @@ struct FeedbackThreadBar: View {
     @ObservedObject var session: FeedbackThreadSession
     @State private var isCollapsed = false
     @State private var settledOffset: CGSize = .zero
+    @State private var isConfirmingBlocked = false
     @GestureState private var dragOffset: CGSize = .zero
 
     var body: some View {
@@ -51,6 +52,12 @@ struct FeedbackThreadBar: View {
             .accessibilityValue(isCollapsed ? "collapsed" : "expanded")
             .fullScreenCover(isPresented: $session.isPresentingFullThread) {
                 FeedbackThreadView(session: session)
+            }
+            .confirmationDialog("Mark this review blocked?", isPresented: $isConfirmingBlocked) {
+                Button("Mark Blocked", role: .destructive) { session.setState(.blocked) }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Use this only when you cannot continue the review.")
             }
         }
     }
@@ -127,7 +134,7 @@ struct FeedbackThreadBar: View {
                     .buttonStyle(.borderedProminent)
                     .tint(.indigo)
                 Spacer()
-                Button("Blocked") { session.setState(.blocked) }
+                Button("Blocked") { isConfirmingBlocked = true }
                     .buttonStyle(.borderedProminent)
                     .tint(.orange)
                 Button("Resolve") { session.setState(.resolved) }
@@ -166,6 +173,7 @@ struct FeedbackThreadBar: View {
 struct FeedbackThreadView: View {
     @ObservedObject var session: FeedbackThreadSession
     @Environment(\.dismiss) private var dismiss
+    @State private var isConfirmingBlocked = false
 
     var body: some View {
         NavigationStack {
@@ -212,6 +220,12 @@ struct FeedbackThreadView: View {
                     )
                 }
             }
+        }
+        .confirmationDialog("Mark this review blocked?", isPresented: $isConfirmingBlocked) {
+            Button("Mark Blocked", role: .destructive) { session.setState(.blocked) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Use this only when you cannot continue the review.")
         }
         .accessibilityIdentifier("feedback-thread-view")
     }
@@ -335,7 +349,7 @@ struct FeedbackThreadView: View {
 
     private var threadActions: some View {
         HStack {
-            Button("Blocked") { session.setState(.blocked) }.buttonStyle(.bordered)
+            Button("Blocked") { isConfirmingBlocked = true }.buttonStyle(.bordered)
             Button("Resolve") { session.setState(.resolved) }.buttonStyle(.borderedProminent)
         }
     }

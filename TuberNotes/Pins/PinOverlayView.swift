@@ -47,7 +47,10 @@ struct PinOverlayView: View {
                         PinAnchor(
                             annotation: annotation,
                             isExpanded: annotation.id == expandedAnnotationID,
-                            onToggle: { toggle(annotation) }
+                            onToggle: { toggle(annotation) },
+                            onConversationRequested: {
+                                onEvent?(.conversationRequested(annotationID: annotation.id))
+                            }
                         )
                             .position(placement.anchor)
                         PinCard(
@@ -123,6 +126,7 @@ private struct PinAnchor: View {
     let annotation: PageAnnotation
     let isExpanded: Bool
     let onToggle: () -> Void
+    let onConversationRequested: () -> Void
 
     var body: some View {
         Button(action: onToggle) {
@@ -141,10 +145,14 @@ private struct PinAnchor: View {
             .contentShape(Circle())
         }
         .buttonStyle(.plain)
+        .onLongPressGesture(minimumDuration: 0.65, maximumDistance: 12) {
+            guard isExpanded else { return }
+            onConversationRequested()
+        }
         .shadow(color: style.color.opacity(0.30), radius: 4, y: 2)
         .accessibilityLabel(annotation.teaser)
         .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
-        .accessibilityHint(isExpanded ? "Collapses this Pin" : "Expands this Pin")
+        .accessibilityHint(isExpanded ? "Tap to collapse, or touch and hold for follow-up" : "Expands this Pin")
         .accessibilityAddTraits(isExpanded ? .isSelected : [])
         .accessibilityIdentifier("pin-anchor-\(annotation.id.uuidString)")
     }

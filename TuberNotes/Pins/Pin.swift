@@ -5,6 +5,7 @@ import Foundation
 enum PinOverlayEvent: Equatable {
     case expanded(annotationID: UUID)
     case collapsed(annotationID: UUID)
+    case conversationRequested(annotationID: UUID)
     case citationSelected(annotationID: UUID, citationID: UUID)
 }
 

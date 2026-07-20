@@ -642,23 +642,40 @@ private struct RecordedInvestigationView: View {
     }
 
     var body: some View {
-        SpatialCanvasView(
-            document: document,
-            currentPageID: $currentPageID,
-            pdfDocument: pdfDocument,
-            toolMode: .magicLasso,
-            initialDrawingData: initialDrawingData,
-            penFixturesByPageID: penFixturesByPageID,
-            initialLassoPathsByPageID: seededLassoPathsByPageID,
-            pageOverlay: { page, projection in
-                AnyView(pageOverlay(for: page, projection: projection))
-            },
-            onDrawingChanged: onDrawingChanged,
-            onDrawingSnapshot: onDrawingSnapshot,
-            onSelectionChanged: receiveSelection
-        )
-        .id(canvasGeneration)
-        .accessibilityIdentifier("recorded-investigation-surface")
+        HStack(spacing: 0) {
+            SpatialCanvasView(
+                document: document,
+                currentPageID: $currentPageID,
+                pdfDocument: pdfDocument,
+                toolMode: .magicLasso,
+                initialDrawingData: initialDrawingData,
+                penFixturesByPageID: penFixturesByPageID,
+                initialLassoPathsByPageID: seededLassoPathsByPageID,
+                pageOverlay: { page, projection in
+                    AnyView(pageOverlay(for: page, projection: projection))
+                },
+                onDrawingChanged: onDrawingChanged,
+                onDrawingSnapshot: onDrawingSnapshot,
+                onSelectionChanged: receiveSelection
+            )
+            .id(canvasGeneration)
+            .accessibilityIdentifier("recorded-investigation-surface")
+
+            if let sidebar = presentedConversationSidebar {
+                Divider()
+                PinConversationPanel(
+                    title: sidebar.annotation.teaser,
+                    conversation: sidebar.conversation,
+                    onSend: { submitFollowUp($0, threadID: sidebar.annotation.threadID) },
+                    onCancel: { cancelFollowUp(threadID: sidebar.annotation.threadID) },
+                    onRetry: { retryFollowUp(threadID: sidebar.annotation.threadID) },
+                    onDismiss: dismissConversation
+                )
+                .frame(width: 410)
+                .background(Color(uiColor: .secondarySystemBackground))
+                .accessibilityIdentifier("pin-conversation-sidebar")
+            }
+        }
         .onChange(of: currentPageID) { _, _ in
             recordRuntimeEvidence()
         }
@@ -682,12 +699,6 @@ private struct RecordedInvestigationView: View {
                 onEvent: handlePinOverlayEvent
             )
             .id("\(page.id.uuidString)-\(pinOverlayGeneration)")
-            .simultaneousGesture(
-                LongPressGesture(minimumDuration: 0.55)
-                    .onEnded { _ in
-                        openExpandedConversation(in: pageAnnotations)
-                    }
-            )
 
             if let cueAnnotationID = conversationCueAnnotationID,
                presentedConversationID == nil,
@@ -697,17 +708,8 @@ private struct RecordedInvestigationView: View {
                     .allowsHitTesting(false)
             }
 
-            if let annotation = presentedConversationAnnotation(in: pageAnnotations),
-               let conversation = conversations[annotation.threadID] {
-                PinConversationAnchor(
-                    annotation: annotation,
-                    conversation: conversation,
-                    projectAnchor: { projection($0) },
-                    onSend: { submitFollowUp($0, threadID: annotation.threadID) },
-                    onCancel: { cancelFollowUp(threadID: annotation.threadID) },
-                    onRetry: { retryFollowUp(threadID: annotation.threadID) },
-                    onDismiss: dismissConversation
-                )
+            if let annotation = presentedConversationAnnotation(in: pageAnnotations) {
+                PinConversationTether(anchor: projection(annotation.target))
             }
 
             if presentedConversationID == nil, selectionArtifact?.pageID == page.id {
@@ -772,15 +774,12 @@ private struct RecordedInvestigationView: View {
             if expandedAnnotationID == annotationID {
                 expandedAnnotationID = nil
             }
+        case let .conversationRequested(annotationID):
+            guard let annotation = annotations.first(where: { $0.id == annotationID }) else { return }
+            openConversation(for: annotation)
         case .citationSelected:
             break
         }
-    }
-
-    private func openExpandedConversation(in pageAnnotations: [PageAnnotation]) {
-        guard let expandedAnnotationID,
-              let annotation = pageAnnotations.first(where: { $0.id == expandedAnnotationID }) else { return }
-        openConversation(for: annotation)
     }
 
     private func openConversation(for annotation: PageAnnotation) {
@@ -821,6 +820,15 @@ private struct RecordedInvestigationView: View {
     private func presentedConversationAnnotation(in pageAnnotations: [PageAnnotation]) -> PageAnnotation? {
         guard let presentedConversationID else { return nil }
         return pageAnnotations.first { $0.threadID == presentedConversationID }
+    }
+
+    private var presentedConversationSidebar: (annotation: PageAnnotation, conversation: PinConversation)? {
+        guard let presentedConversationID,
+              let conversation = conversations[presentedConversationID],
+              let annotation = annotations.first(where: {
+                  $0.id == conversation.sourcePinID && $0.pageID == currentPageID
+              }) else { return nil }
+        return (annotation, conversation)
     }
 
     private func dismissConversation() {
@@ -1366,66 +1374,23 @@ private struct PinConversationDiscoveryCue: View {
     }
 }
 
-private struct PinConversationAnchor: View {
-    let annotation: PageAnnotation
-    let conversation: PinConversation
-    let projectAnchor: (PageNormalizedPoint) -> CGPoint
-    let onSend: (String) -> Void
-    let onCancel: () -> Void
-    let onRetry: () -> Void
-    let onDismiss: () -> Void
+private struct PinConversationTether: View {
+    let anchor: CGPoint
 
     var body: some View {
         GeometryReader { proxy in
-            let anchor = projectAnchor(annotation.target)
-            let panelSize = CGSize(
-                width: min(390, max(0, proxy.size.width - 24)),
-                height: min(420, max(0, proxy.size.height - 24))
-            )
-            let panelFrame = frame(for: panelSize, anchor: anchor, in: proxy.size)
-
-            ZStack(alignment: .topLeading) {
-                Path { path in
-                    path.move(to: anchor)
-                    path.addLine(to: closestPoint(on: panelFrame, to: anchor))
-                }
-                .stroke(
-                    .indigo.opacity(0.72),
-                    style: StrokeStyle(lineWidth: 2, lineCap: .round)
+            Path { path in
+                path.move(to: anchor)
+                path.addCurve(
+                    to: CGPoint(x: proxy.size.width, y: anchor.y),
+                    control1: CGPoint(x: min(anchor.x + 80, proxy.size.width), y: anchor.y),
+                    control2: CGPoint(x: max(proxy.size.width - 80, anchor.x), y: anchor.y)
                 )
-                .accessibilityHidden(true)
-
-                PinConversationPanel(
-                    title: annotation.teaser,
-                    conversation: conversation,
-                    onSend: onSend,
-                    onCancel: onCancel,
-                    onRetry: onRetry,
-                    onDismiss: onDismiss
-                )
-                .frame(width: panelFrame.width, height: panelFrame.height)
-                .position(x: panelFrame.midX, y: panelFrame.midY)
             }
+            .stroke(.indigo.opacity(0.72), style: StrokeStyle(lineWidth: 2, lineCap: .round))
         }
-        .accessibilityIdentifier("pin-conversation-anchor")
-    }
-
-    private func frame(for size: CGSize, anchor: CGPoint, in container: CGSize) -> CGRect {
-        let horizontalGap: CGFloat = 30
-        let proposedX = anchor.x <= container.width / 2
-            ? anchor.x + horizontalGap
-            : anchor.x - horizontalGap - size.width
-        let proposedY = anchor.y - size.height / 2
-        let x = min(max(proposedX, 12), max(12, container.width - size.width - 12))
-        let y = min(max(proposedY, 12), max(12, container.height - size.height - 12))
-        return CGRect(x: x, y: y, width: size.width, height: size.height)
-    }
-
-    private func closestPoint(on rect: CGRect, to point: CGPoint) -> CGPoint {
-        CGPoint(
-            x: min(max(point.x, rect.minX), rect.maxX),
-            y: min(max(point.y, rect.minY), rect.maxY)
-        )
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }
 
@@ -1532,12 +1497,7 @@ private struct PinConversationPanel: View {
             }
             .padding(14)
         }
-        .background(.thickMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .stroke(.indigo.opacity(0.45), lineWidth: 1.5)
-        }
-        .shadow(color: .black.opacity(0.18), radius: 14, y: 7)
+        .background(Color(uiColor: .secondarySystemBackground))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("pin-conversation-panel")
     }
