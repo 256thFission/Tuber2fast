@@ -38,6 +38,17 @@ final class NotebookViewModel: ObservableObject {
     @Published var zoomScale: CGFloat = 1
     @Published var lastTemplate: PageTemplate = .linedMedium
 
+    // Toolbar settings (mirrored to notebook.settings on save)
+    @Published var settings: NotebookSettings
+
+    // Layers (agentic conversation layers + per-page drawing layers)
+    @Published var isAgenticLayersActive = false
+    @Published var selectedLayerID: UUID?        // selected agentic layer
+    @Published var currentDrawingLayerID: UUID?  // active drawing layer on the current page
+
+    // Export
+    @Published var exportError: String?
+
     // Assistant
     @Published var observations: [AgentObservation] = []
     @Published var isAnalyzing = false
@@ -50,6 +61,9 @@ final class NotebookViewModel: ObservableObject {
         self.notebook = notebook
         self.store = store
         self.lastTemplate = notebook.pages.first?.template ?? .linedMedium
+        self.settings = notebook.settings ?? NotebookSettings()
+        self.selectedLayerID = notebook.agenticLayers.first?.id
+        self.currentDrawingLayerID = notebook.pages.first?.drawingLayers.first?.id
     }
 
     // MARK: Derived
@@ -150,6 +164,122 @@ final class NotebookViewModel: ObservableObject {
     }
 
     var widthRange: ClosedRange<CGFloat> { tool.widthRange }
+
+    /// Per-tool width read/write (used by the toolbar's press-and-slide sizing).
+    func width(for tool: WritingTool) -> CGFloat {
+        switch tool {
+        case .pen:    penWidth
+        case .pencil: pencilWidth
+        case .marker: markerWidth
+        case .eraser: eraserWidth
+        }
+    }
+
+    func setWidth(_ value: CGFloat, for tool: WritingTool) {
+        let clamped = min(max(value, tool.widthRange.lowerBound), tool.widthRange.upperBound)
+        switch tool {
+        case .pen:    penWidth = clamped
+        case .pencil: pencilWidth = clamped
+        case .marker: markerWidth = clamped
+        case .eraser: eraserWidth = clamped
+        }
+    }
+
+    // MARK: Favorite colors (stored in settings)
+
+    func isFavoriteColor(_ hex: String) -> Bool {
+        settings.favoriteColors.contains { $0.caseInsensitiveCompare(hex) == .orderedSame }
+    }
+
+    func toggleFavoriteColor(_ hex: String) {
+        if let idx = settings.favoriteColors.firstIndex(where: { $0.caseInsensitiveCompare(hex) == .orderedSame }) {
+            settings.favoriteColors.remove(at: idx)
+        } else {
+            settings.favoriteColors.append(hex)
+        }
+        persistNow()
+    }
+
+    // MARK: Layers
+
+    /// Agentic conversation layers, wrapped for the toolbar's layer popover.
+    var conversationLayers: NoteConversationLayers {
+        get { NoteConversationLayers(noteID: notebook.id, layers: notebook.agenticLayers) }
+        set { notebook.agenticLayers = newValue.layers }
+    }
+
+    func selectAgenticLayer(_ id: UUID) {
+        selectedLayerID = id
+    }
+
+    func addAgenticLayer(named rawName: String) {
+        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let layer = ConversationLayer(
+            id: UUID(),
+            name: name.isEmpty ? "Layer \(notebook.agenticLayers.count + 1)" : name,
+            symbolName: "sparkles",
+            conversations: []
+        )
+        notebook.agenticLayers.append(layer)
+        selectedLayerID = layer.id
+        persistNow()
+    }
+
+    func toggleAgenticLayerVisibility(_ id: UUID) {
+        guard let idx = notebook.agenticLayers.firstIndex(where: { $0.id == id }) else { return }
+        notebook.agenticLayers[idx].isVisible.toggle()
+        persistNow()
+    }
+
+    func selectDrawingLayer(_ id: UUID) {
+        currentDrawingLayerID = id
+    }
+
+    func addDrawingLayer(named rawName: String) {
+        guard notebook.pages.indices.contains(currentIndex) else { return }
+        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let count = notebook.pages[currentIndex].drawingLayers.count
+        let layer = DrawingLayer(name: name.isEmpty ? "Drawing \(count + 1)" : name)
+        notebook.pages[currentIndex].drawingLayers.append(layer)
+        currentDrawingLayerID = layer.id
+        persistNow()
+    }
+
+    func toggleDrawingLayerVisibility(_ id: UUID) {
+        guard notebook.pages.indices.contains(currentIndex),
+              let idx = notebook.pages[currentIndex].drawingLayers.firstIndex(where: { $0.id == id })
+        else { return }
+        notebook.pages[currentIndex].drawingLayers[idx].isVisible.toggle()
+        persistNow()
+    }
+
+    // MARK: Export
+
+    /// Vector PDF of the current page's ink.
+    func exportPDF() -> Data? {
+        let pageRect = CGRect(origin: .zero, size: NotebookPageLayout.size)
+        let result = NotePDFExporter.makePDF(from: currentPage.drawing, pageBounds: pageRect)
+        return result.data
+    }
+
+    /// SPUD archive (ink layers + conversation layers) for the whole note's current page.
+    func exportArchive() -> Data? {
+        let inkLayers = currentPage.drawingLayers.map {
+            TuberNoteArchiveCodec.InkLayerInput(
+                id: $0.id, name: $0.name, isVisible: $0.isVisible, drawing: $0.drawing
+            )
+        }
+        do {
+            return try TuberNoteArchiveCodec.encode(
+                inkLayers: inkLayers,
+                canvasSize: NotebookPageLayout.size,
+                conversationLayers: conversationLayers
+            )
+        } catch {
+            exportError = error.localizedDescription
+            return nil
+        }
+    }
 
     // MARK: Zoom
 
@@ -314,12 +444,14 @@ final class NotebookViewModel: ObservableObject {
         saveTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 600_000_000)
             guard let self, !Task.isCancelled else { return }
+            self.notebook.settings = self.settings
             self.store.save(self.notebook)
         }
     }
 
     func persistNow() {
         saveTask?.cancel()
+        notebook.settings = settings
         store.save(notebook)
     }
 }
