@@ -66,6 +66,40 @@ class DeviceSessionTests(unittest.TestCase):
                     device_session.load_session(validate_live=False)
 
 
+class TunnelNudgeTests(unittest.TestCase):
+    def test_stale_tunnel_is_nudged_once_then_passes(self):
+        stale = physical_ipad()
+        stale["connectionProperties"]["tunnelState"] = "disconnected"
+        healthy = physical_ipad()
+        responses = [
+            {"result": {"devices": [stale]}},
+            {"result": {"devices": [healthy]}},
+        ]
+        with mock.patch.object(device_session, "_run_json", side_effect=responses), \
+                mock.patch.object(device_session, "_nudge_tunnel") as nudge:
+            device = device_session.inspect_device("device-1")
+        nudge.assert_called_once_with("device-1")
+        self.assertEqual(device["connectionProperties"]["tunnelState"], "connected")
+
+    def test_persistent_disconnect_fails_after_single_nudge(self):
+        stale = physical_ipad()
+        stale["connectionProperties"]["tunnelState"] = "disconnected"
+        with mock.patch.object(device_session, "_run_json", return_value={"result": {"devices": [stale]}}), \
+                mock.patch.object(device_session, "_nudge_tunnel") as nudge:
+            with self.assertRaisesRegex(device_session.DeviceSessionError, "transport is not connected"):
+                device_session.inspect_device("device-1")
+        nudge.assert_called_once()
+
+    def test_non_tunnel_failures_are_not_nudged(self):
+        unbooted = physical_ipad()
+        unbooted["deviceProperties"]["bootState"] = "shutdown"
+        with mock.patch.object(device_session, "_run_json", return_value={"result": {"devices": [unbooted]}}), \
+                mock.patch.object(device_session, "_nudge_tunnel") as nudge:
+            with self.assertRaisesRegex(device_session.DeviceSessionError, "not booted"):
+                device_session.inspect_device("device-1")
+        nudge.assert_not_called()
+
+
 class DeviceLockTests(unittest.TestCase):
     def setUp(self):
         self._directory = tempfile.TemporaryDirectory()

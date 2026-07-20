@@ -78,12 +78,41 @@ def _validate_physical_ipad(device: dict[str, Any], requested_id: str) -> None:
         raise DeviceSessionError("; ".join(failures))
 
 
-def inspect_device(device_id: str) -> dict[str, Any]:
+# CoreDevice re-establishes the device tunnel lazily: after idle time or a
+# daemon restart, `list devices` reports a stale disconnected tunnelState until
+# something makes one direct device query. These failures deserve exactly one
+# nudge-and-retry before being reported as real.
+_NUDGEABLE_FAILURES = (
+    "transport is not connected",
+    "developer services are unavailable",
+)
+
+
+def _nudge_tunnel(device_id: str) -> None:
+    import time
+
+    subprocess.run(
+        ["xcrun", "devicectl", "device", "info", "details", "--device", device_id],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    time.sleep(2)
+
+
+def inspect_device(device_id: str, *, allow_nudge: bool = True) -> dict[str, Any]:
     payload = _run_json(["xcrun", "devicectl", "list", "devices"])
     device = next((item for item in _listed_devices(payload) if item.get("identifier") == device_id), None)
     if device is None:
         raise DeviceSessionError(f"physical iPad {device_id} is not currently available")
-    _validate_physical_ipad(device, device_id)
+    try:
+        _validate_physical_ipad(device, device_id)
+    except DeviceSessionError as exc:
+        if allow_nudge and any(marker in str(exc) for marker in _NUDGEABLE_FAILURES):
+            _nudge_tunnel(device_id)
+            return inspect_device(device_id, allow_nudge=False)
+        raise
     return device
 
 
