@@ -127,10 +127,14 @@ private struct PinAnchor: View {
     let isExpanded: Bool
     let onToggle: () -> Void
     let onConversationRequested: () -> Void
+    @State private var isHoldingForConversation = false
 
     var body: some View {
         Button(action: onToggle) {
             ZStack {
+                if isExpanded && isHoldingForConversation {
+                    PinHoldProgressCue()
+                }
                 Circle()
                     .fill(style.color.opacity(0.20))
                     .frame(width: 30, height: 30)
@@ -145,10 +149,17 @@ private struct PinAnchor: View {
             .contentShape(Circle())
         }
         .buttonStyle(.plain)
-        .onLongPressGesture(minimumDuration: 0.65, maximumDistance: 12) {
-            guard isExpanded else { return }
-            onConversationRequested()
-        }
+        .onLongPressGesture(
+            minimumDuration: 0.65,
+            maximumDistance: 12,
+            perform: {
+                guard isExpanded else { return }
+                onConversationRequested()
+            },
+            onPressingChanged: { isPressing in
+                isHoldingForConversation = isExpanded && isPressing
+            }
+        )
         .shadow(color: style.color.opacity(0.30), radius: 4, y: 2)
         .accessibilityLabel(annotation.teaser)
         .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
@@ -158,6 +169,34 @@ private struct PinAnchor: View {
     }
 
     private var style: PinVisualStyle { PinVisualStyle(kind: annotation.kind) }
+}
+
+private struct PinHoldProgressCue: View {
+    @State private var traceProgress: CGFloat = 0.06
+    @State private var horizontalNudge: CGFloat = -2
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(.indigo.opacity(0.20), lineWidth: 3)
+            Circle()
+                .trim(from: 0, to: traceProgress)
+                .stroke(.indigo, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+        }
+        .frame(width: 42, height: 42)
+        .offset(x: horizontalNudge)
+        .shadow(color: .indigo.opacity(0.35), radius: 4)
+        .accessibilityHidden(true)
+        .onAppear {
+            withAnimation(.linear(duration: 0.65)) {
+                traceProgress = 1
+            }
+            withAnimation(.easeInOut(duration: 0.12).repeatForever(autoreverses: true)) {
+                horizontalNudge = 2
+            }
+        }
+    }
 }
 
 private struct PinCard: View {
