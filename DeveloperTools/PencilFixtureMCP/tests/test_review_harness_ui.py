@@ -157,6 +157,11 @@ class ReviewHarnessUISourceTests(unittest.TestCase):
         self.assertNotIn(".simultaneousGesture(\n                LongPressGesture", root)
         self.assertIn('accessibilityIdentifier("pin-conversation-sidebar")', root)
         self.assertIn("PinConversationTether(anchor:", root)
+        self.assertIn(
+            '.accessibilityIdentifier("recorded-investigation-surface")\n'
+            '            .ignoresSafeArea(.keyboard, edges: .bottom)',
+            root,
+        )
         self.assertNotIn("PinConversationAnchor", root)
         self.assertIn("private func beginTouchIfNeeded()", pin)
         self.assertIn("Task.sleep(for: .milliseconds(350))", pin)

@@ -668,6 +668,7 @@ private struct RecordedInvestigationView: View {
             )
             .id(canvasGeneration)
             .accessibilityIdentifier("recorded-investigation-surface")
+            .ignoresSafeArea(.keyboard, edges: .bottom)
 
             if let sidebar = presentedConversationSidebar {
                 Divider()
