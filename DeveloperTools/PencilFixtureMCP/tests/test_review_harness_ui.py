@@ -152,15 +152,18 @@ class ReviewHarnessUISourceTests(unittest.TestCase):
         pin = (ROOT / "TuberNotes/Pins/PinOverlayView.swift").read_text()
         root = (ROOT / "TuberNotes/App/RootView.swift").read_text()
 
-        self.assertIn("minimumDuration: 0.35", pin)
-        self.assertIn("maximumDistance: 12", pin)
+        self.assertIn("if distance > 12", pin)
         self.assertIn("onEvent?(.conversationRequested(annotationID: annotation.id))", pin)
         self.assertNotIn(".simultaneousGesture(\n                LongPressGesture", root)
         self.assertIn('accessibilityIdentifier("pin-conversation-sidebar")', root)
         self.assertIn("PinConversationTether(anchor:", root)
         self.assertNotIn("PinConversationAnchor", root)
-        self.assertIn("onPressingChanged: { isPressing in", pin)
-        self.assertIn("isHoldingForConversation = isExpanded && isPressing", pin)
+        self.assertIn("private func beginTouchIfNeeded()", pin)
+        self.assertIn("Task.sleep(for: .milliseconds(350))", pin)
+        self.assertIn("let shouldToggle = !didCompleteHold", pin)
+        self.assertIn("guard !Task.isCancelled, isExpanded, isTrackingTouch", pin)
+        self.assertNotIn("Button(action: onToggle)", pin)
+        self.assertIn("isHoldingForConversation = false", pin)
         self.assertNotIn("conversationCueTask", root)
 
     def test_live_ab_seam_is_bounded_and_pen_fixture_path_stays_separate(self):

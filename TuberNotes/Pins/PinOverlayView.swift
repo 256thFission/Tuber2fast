@@ -128,46 +128,102 @@ private struct PinAnchor: View {
     let onToggle: () -> Void
     let onConversationRequested: () -> Void
     @State private var isHoldingForConversation = false
+    @State private var touchExceededHoldDistance = false
+    @State private var isTrackingTouch = false
+    @State private var didCompleteHold = false
+    @State private var holdTask: Task<Void, Never>?
 
     var body: some View {
-        Button(action: onToggle) {
-            ZStack {
-                if isExpanded && isHoldingForConversation {
-                    PinHoldProgressCue()
-                }
-                Circle()
-                    .fill(style.color.opacity(0.20))
-                    .frame(width: 30, height: 30)
-                Circle()
-                    .fill(style.color)
-                    .frame(width: 18, height: 18)
-                Image(systemName: style.symbol)
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(.white)
+        ZStack {
+            if isExpanded && isHoldingForConversation {
+                PinHoldProgressCue()
             }
-            .frame(width: 44, height: 44)
-            .contentShape(Circle())
+            Circle()
+                .fill(style.color.opacity(0.20))
+                .frame(width: 30, height: 30)
+            Circle()
+                .fill(style.color)
+                .frame(width: 18, height: 18)
+            Image(systemName: style.symbol)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(.white)
         }
-        .buttonStyle(.plain)
-        .onLongPressGesture(
-            minimumDuration: 0.35,
-            maximumDistance: 12,
-            perform: {
-                guard isExpanded else { return }
-                onConversationRequested()
-            },
-            onPressingChanged: { isPressing in
-                isHoldingForConversation = isExpanded && isPressing
+        .frame(width: 44, height: 44)
+        .contentShape(Circle())
+        .gesture(touchGesture)
+        .onChange(of: isExpanded) { _, expanded in
+            if !expanded {
+                holdTask?.cancel()
+                holdTask = nil
+                isHoldingForConversation = false
+                touchExceededHoldDistance = false
+                isTrackingTouch = false
+                didCompleteHold = false
             }
-        )
+        }
         .shadow(color: style.color.opacity(0.30), radius: 4, y: 2)
+        .accessibilityAddTraits(.isButton)
         .accessibilityLabel(annotation.teaser)
         .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
         .accessibilityHint(isExpanded ? "Tap to collapse, or touch and hold for follow-up" : "Expands this Pin")
         .accessibilityAddTraits(isExpanded ? .isSelected : [])
-        .accessibilityIdentifier("pin-anchor-\(annotation.id.uuidString)")
+        .accessibilityAction {
+            onToggle()
+        }
+        .accessibilityIdentifier(accessibilityID)
+        .onDisappear {
+            holdTask?.cancel()
+        }
     }
 
+    private var touchGesture: some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onChanged { value in
+                beginTouchIfNeeded()
+                let distance = hypot(value.translation.width, value.translation.height)
+                if distance > 12 {
+                    touchExceededHoldDistance = true
+                    isHoldingForConversation = false
+                    holdTask?.cancel()
+                } else if !touchExceededHoldDistance {
+                    isHoldingForConversation = isExpanded
+                }
+            }
+            .onEnded { _ in
+                endTouch()
+            }
+    }
+
+    private func beginTouchIfNeeded() {
+        guard !isTrackingTouch else { return }
+        isTrackingTouch = true
+        touchExceededHoldDistance = false
+        didCompleteHold = false
+        guard isExpanded else { return }
+        isHoldingForConversation = true
+        holdTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(350))
+            guard !Task.isCancelled, isExpanded, isTrackingTouch, !touchExceededHoldDistance else { return }
+            didCompleteHold = true
+            isHoldingForConversation = false
+            onConversationRequested()
+        }
+    }
+
+    private func endTouch() {
+        let shouldToggle = !didCompleteHold && !touchExceededHoldDistance
+        holdTask?.cancel()
+        holdTask = nil
+        isHoldingForConversation = false
+        isTrackingTouch = false
+        touchExceededHoldDistance = false
+        didCompleteHold = false
+        if shouldToggle {
+            onToggle()
+        }
+    }
+
+    private var accessibilityID: String { "pin-anchor-\(annotation.id.uuidString)" }
     private var style: PinVisualStyle { PinVisualStyle(kind: annotation.kind) }
 }
 
