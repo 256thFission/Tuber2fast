@@ -5,6 +5,16 @@ Owner: coordinator (this is THE architecture move; subagents only for
 mechanical file moves after the API is settled)
 Depends on: WL-F correction branch merged to `main`. Blocks everything else.
 
+> **MANDATE (Phillip, July 20, 2026): reshape freely.** For this line, the
+> AGENTS.md smallest-change/no-rewrite rules and the step boundaries below are
+> ADVISORY, not binding. The session has full authority over structure, file
+> layout, contracts, scenario definitions, verifier expectations, tooling, and
+> docs — anything that serves the PointBackKit vision and the reframed DoD.
+> The only hard rails: no secrets in source/fixtures/logs; report reality
+> (failing tests are failing tests); commit in coherent reviewable increments
+> so Phillip can roll back any of them; push when done. The steps and API
+> sketch below are a starting shape, not a cage.
+
 ## Objective
 
 Create the standalone SPM package and move the intelligence layer into it,

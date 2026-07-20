@@ -227,3 +227,7 @@ Append one line per meaningful state change: date, line, what changed.
   created; WL-A/WL-B/WL-C retired or transferred; DoD reframed around a
   standalone-building package, an unchanged-passing reference host, and a
   host-conformance guide.
+- 2026-07-20 — Phillip granted WL-G a free-reshape mandate: smallest-change
+  rules suspended for that line; full authority over structure, contracts,
+  scenarios, tooling, and docs. Hard rails only: no secrets, honest evidence,
+  coherent rollback-able commits, push at the end.
