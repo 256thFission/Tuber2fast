@@ -87,8 +87,10 @@ struct AgentSidebarView: View {
                 sidebarBody
             }
         }
-        .frame(width: isFullChatTab ? nil : 340)
-        .frame(maxWidth: isFullChatTab ? .infinity : nil)
+        // Pin Chat is always a narrow, non-modal sidebar. Keeping this width
+        // independent of transcript mode prevents conversation from becoming
+        // a page-blocking surface.
+        .frame(width: 340)
         .frame(maxHeight: .infinity)
         .background(.ultraThinMaterial, in: sidebarShape)
         // Opaque near-black base beneath the frost so page content never
@@ -102,8 +104,8 @@ struct AgentSidebarView: View {
             )
         )
         .shadow(color: .black.opacity(0.4), radius: 26, x: -8, y: 0)
-        .padding(.vertical, isFullChatTab ? 0 : 8)
-        .padding(.trailing, isFullChatTab ? 0 : 8)
+        .padding(.vertical, 8)
+        .padding(.trailing, 8)
         .environment(\.colorScheme, .dark)
         .accessibilityIdentifier("assistant-sidebar")
         .onAppear { validateSelectedParent() }
@@ -112,11 +114,6 @@ struct AgentSidebarView: View {
             guard let threadID,
                   let annotation = activeLayer?.conversations.first(where: { $0.threadID == threadID })
             else { return }
-            if isFullChatTab,
-               let pageIndex = vm.notebook.pages.firstIndex(where: { $0.id == annotation.pageID }),
-               pageIndex != vm.currentIndex {
-                vm.go(to: pageIndex)
-            }
             selectedParentThreadID = threadID
         }
     }
@@ -178,13 +175,55 @@ struct AgentSidebarView: View {
             vm.notebook.pages.firstIndex { $0.id == annotation.pageID }.map { $0 + 1 }
         } ?? (vm.currentIndex + 1)
         let alternatives = selectedParent.map(branchAlternatives) ?? []
-        return PinChatContextHeader(
-            layerName: activeLayer?.name ?? "Agentic Layer",
-            pageLabel: "Page \(pageNumber)",
-            pinContext: selectedParent.map { previewText($0.teaser, limit: 100) },
-            branchCount: alternatives.count,
-            onClose: onClose
-        )
+        return VStack(spacing: 0) {
+            PinChatContextHeader(
+                layerName: activeLayer?.name ?? "Agentic Layer",
+                pageLabel: "Page \(pageNumber)",
+                pinContext: selectedParent.map { previewText($0.teaser, limit: 100) },
+                branchCount: alternatives.count,
+                onClose: onClose
+            )
+            HStack(spacing: 8) {
+                Text("Model")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Menu {
+                    ForEach(OpenAICodexConstants.supportedModels, id: \.self) { choice in
+                        Button {
+                            model = choice
+                        } label: {
+                            if choice == selectedModel {
+                                Label(choice, systemImage: "checkmark")
+                            } else {
+                                Text(choice)
+                            }
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 5) {
+                        Text(selectedModel)
+                            .lineLimit(1)
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.caption2)
+                    }
+                    .font(.caption.weight(.semibold))
+                }
+                .disabled(vm.isAnalyzing)
+                .accessibilityLabel("Chat model")
+                .accessibilityValue(selectedModel)
+                .accessibilityIdentifier("sidebar-model-selector")
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 7)
+            .background(.white.opacity(0.035))
+        }
+    }
+
+    private var selectedModel: String {
+        OpenAICodexConstants.supportedModels.contains(model)
+            ? model
+            : OpenAICodexConstants.defaultModel
     }
 
     private var fullChatTranscript: some View {
@@ -357,7 +396,6 @@ struct AgentSidebarView: View {
             descendantCount: descendants,
             isSelected: annotation.threadID == selectedParentThreadID,
             onSelect: {
-                if let pageNumber { vm.go(to: pageNumber - 1) }
                 selectedParentThreadID = annotation.threadID
             }
         )
@@ -521,9 +559,6 @@ struct AgentSidebarView: View {
         let pageNumber = vm.notebook.pages.firstIndex { $0.id == item.annotation.pageID }.map { $0 + 1 }
         let pageAccessibilityValue = pageNumber.map { "Page \($0), " } ?? ""
         return Button {
-            if let pageIndex = vm.notebook.pages.firstIndex(where: { $0.id == item.annotation.pageID }) {
-                vm.go(to: pageIndex)
-            }
             selectedParentThreadID = item.annotation.threadID
             onOpenFullChat()
         } label: {

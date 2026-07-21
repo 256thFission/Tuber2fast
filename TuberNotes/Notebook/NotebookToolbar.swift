@@ -1,5 +1,24 @@
+import PhotosUI
 import SwiftUI
 import UIKit
+
+enum NotebookToolbarDock: String, CaseIterable {
+    case top
+    case bottom
+    case leading
+    case trailing
+
+    var isVertical: Bool { self == .leading || self == .trailing }
+
+    var alignment: Alignment {
+        switch self {
+        case .top: .top
+        case .bottom: .bottom
+        case .leading: .leading
+        case .trailing: .trailing
+        }
+    }
+}
 
 /// Floating control bar for page navigation, writing tools, agentic layers,
 /// and the page navigator. Page-level utilities live in the top navigation bar.
@@ -9,8 +28,12 @@ struct NotebookToolbar: View {
     @Binding var isLassoActive: Bool
     @Binding var isRefinementActive: Bool
     @Binding var isRefinementLassoActive: Bool
-    var onShowPages: () -> Void
+    @Binding var imagePickerItem: PhotosPickerItem?
+    let dock: NotebookToolbarDock
+    var onDockDragChanged: (CGSize) -> Void
+    var onDockDragEnded: (DragGesture.Value) -> Void
     var onAskAgent: () -> Void
+    var onRefinementChatModeChanged: (Bool) -> Void = { _ in }
 
     @State private var showColors = false
     @State private var showLayers = false
@@ -83,13 +106,13 @@ struct NotebookToolbar: View {
     }
 
     private var adaptiveToolbar: some View {
-        ViewThatFits(in: .horizontal) {
+        ViewThatFits(in: dock.isVertical ? .vertical : .horizontal) {
             toolbarContent
-                .fixedSize(horizontal: true, vertical: true)
+                .fixedSize()
 
-            ScrollView(.horizontal, showsIndicators: false) {
+            ScrollView(dock.isVertical ? .vertical : .horizontal, showsIndicators: false) {
                 toolbarContent
-                    .fixedSize(horizontal: true, vertical: true)
+                    .fixedSize()
             }
             .scrollDisabled(pressedTool != nil || isLassoHeld || isColorScrubbing)
             .mask {
@@ -108,67 +131,37 @@ struct NotebookToolbar: View {
     }
 
     private var toolbarContent: some View {
-        HStack(spacing: 8) {
+        toolbarLayout {
+            dockGrip
+
+            divider
+
             if vm.settings.showsWritingTools {
-                ForEach(WritingTool.allCases) { tool in
-                    toolButton(tool)
-                }
-                colorButton
+                toolButton(.pen)
+                toolButton(.marker)
+                toolButton(.eraser)
                 divider
                 lassoControls
                 divider
-                undoControls
             }
+
+            imagePickerButton
+            divider
+            undoControls
 
             if vm.settings.showsLayers {
-                if vm.settings.showsWritingTools { divider }
+                divider
                 agenticLayersButton
-            }
-
-            if vm.settings.showsPageNavigation {
-                if vm.settings.showsWritingTools || vm.settings.showsLayers { divider }
-                pageNavigationControls
             }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
     }
 
-    @ViewBuilder
-    private var pageNavigationControls: some View {
-        iconButton(
-            vm.settings.pageScrollDirection.previousSymbolName,
-            label: "Previous page",
-            enabled: vm.canGoBack
-        ) {
-            withAnimation(.easeInOut) { vm.goBack() }
-        }
-        .accessibilityIdentifier("toolbar-prev-page")
-
-        Button(action: onShowPages) {
-            Text(vm.pageLabel)
-                .font(.caption.monospacedDigit().weight(.semibold))
-                .foregroundStyle(.secondary)
-                .frame(minWidth: 46, minHeight: 34)
-        }
-        .accessibilityLabel("Show pages")
-        .accessibilityValue(vm.pageLabel)
-        .accessibilityIdentifier("toolbar-page-indicator")
-
-        if vm.canGoForward {
-            iconButton(
-                vm.settings.pageScrollDirection.nextSymbolName,
-                label: "Next page"
-            ) {
-                withAnimation(.easeInOut) { vm.goForward() }
-            }
-            .accessibilityIdentifier("toolbar-next-page")
-        } else {
-            iconButton("plus", label: "Add page") {
-                withAnimation(.easeInOut) { vm.addPage() }
-            }
-            .accessibilityIdentifier("toolbar-add-page")
-        }
+    private var toolbarLayout: AnyLayout {
+        dock.isVertical
+            ? AnyLayout(VStackLayout(spacing: 8))
+            : AnyLayout(HStackLayout(spacing: 8))
     }
 
     @ViewBuilder
@@ -212,23 +205,57 @@ struct NotebookToolbar: View {
     }
 
     private var hasVisibleControls: Bool {
-        vm.settings.showsWritingTools
-            || vm.settings.showsLayers
-            || vm.settings.showsPageNavigation
+        true
     }
 
     private var visibleGroupCount: Int {
         [
             vm.settings.showsWritingTools,
             vm.settings.showsLayers,
-            vm.settings.showsPageNavigation,
         ].filter { $0 }.count
     }
 
     // MARK: Pieces
 
     private var divider: some View {
-        Rectangle().fill(.primary.opacity(0.12)).frame(width: 1, height: 22)
+        Rectangle()
+            .fill(.primary.opacity(0.12))
+            .frame(
+                width: dock.isVertical ? 22 : 1,
+                height: dock.isVertical ? 1 : 22
+            )
+    }
+
+    private var dockGrip: some View {
+        Image(systemName: "line.3.horizontal")
+            .font(.system(size: 15, weight: .semibold))
+            .foregroundStyle(.secondary)
+            .frame(width: 34, height: 34)
+            .contentShape(Rectangle())
+            .rotationEffect(dock.isVertical ? .degrees(90) : .zero)
+            .gesture(
+                DragGesture(minimumDistance: 4, coordinateSpace: .global)
+                    .onChanged { onDockDragChanged($0.translation) }
+                    .onEnded(onDockDragEnded)
+            )
+            .accessibilityLabel("Move toolbar")
+            .accessibilityHint("Drag to snap the toolbar to an iPad edge")
+            .accessibilityIdentifier("toolbar-dock-grip")
+    }
+
+    private var imagePickerButton: some View {
+        PhotosPicker(
+            selection: $imagePickerItem,
+            matching: .images,
+            photoLibrary: .shared()
+        ) {
+            Image(systemName: "photo.badge.plus")
+                .font(.system(size: 17, weight: .medium))
+                .frame(width: 34, height: 34)
+                .foregroundStyle(Color.primary)
+        }
+        .accessibilityIdentifier("toolbar-add-image")
+        .accessibilityLabel("Add image")
     }
 
     private func toolButton(_ tool: WritingTool) -> some View {
@@ -383,40 +410,68 @@ struct NotebookToolbar: View {
     }
 
     private var refinementLassoBubble: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 0) {
             Button {
-                isRefinementLassoActive.toggle()
+                armRefinementLasso(sendToChat: false)
             } label: {
-                Label(
-                    isRefinementLassoActive ? "Drawing lasso…" : "Refinement lasso",
-                    systemImage: "lasso.badge.sparkles"
-                )
-                .font(.subheadline.weight(.semibold))
-                .padding(.horizontal, 13)
-                .padding(.vertical, 10)
-                .foregroundStyle(isRefinementLassoActive ? Color.white : Color.primary)
-                .background(.ultraThinMaterial, in: Capsule())
-                .background(isRefinementLassoActive ? Color.indigo : Color.clear, in: Capsule())
-                .overlay(Capsule().strokeBorder(.primary.opacity(0.10)))
-                .shadow(color: .black.opacity(0.12), radius: 7, y: 3)
+                Label("Guidance Pins", systemImage: "mappin.and.ellipse")
+                    .font(.subheadline.weight(.medium))
+                    .padding(.horizontal, 13)
+                    .frame(height: 46)
             }
             .buttonStyle(.plain)
-            .accessibilityIdentifier("ai-lasso-button")
+            .accessibilityIdentifier("refinement-lasso-guidance")
+            .accessibilityLabel("Create guidance Pins")
+            .accessibilityHint("Draw around notebook content to create AI guidance Pins")
+
+            refinementMenuDivider
 
             Button {
+                armRefinementLasso(sendToChat: true)
+            } label: {
+                Label("Send to Chat", systemImage: "bubble.left")
+                    .font(.subheadline.weight(.medium))
+                    .padding(.horizontal, 13)
+                    .frame(height: 46)
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("refinement-lasso-send-to-chat")
+            .accessibilityLabel("Send selection to chat")
+            .accessibilityHint("Draw around notebook content to send it directly to Pin Chat")
+
+            refinementMenuDivider
+
+            Button {
+                onRefinementChatModeChanged(false)
                 isRefinementLassoActive = false
                 isRefinementActive = false
             } label: {
                 Image(systemName: "xmark")
-                    .font(.subheadline.weight(.bold))
-                    .frame(width: 38, height: 38)
-                    .foregroundStyle(.primary)
-                    .background(.ultraThinMaterial, in: Circle())
-                    .overlay(Circle().strokeBorder(.primary.opacity(0.10)))
+                    .font(.subheadline.weight(.semibold))
+                    .frame(width: 44, height: 46)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Close refinement tool")
         }
+        .foregroundStyle(.white)
+        .background(Color(red: 0.10, green: 0.11, blue: 0.13), in: RoundedRectangle(cornerRadius: 12))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(.white.opacity(0.12), lineWidth: 1)
+        }
+        .shadow(color: .black.opacity(0.22), radius: 8, y: 3)
+    }
+
+    private var refinementMenuDivider: some View {
+        Rectangle()
+            .fill(.white.opacity(0.14))
+            .frame(width: 1, height: 22)
+    }
+
+    private func armRefinementLasso(sendToChat: Bool) {
+        onRefinementChatModeChanged(sendToChat)
+        isLassoActive = false
+        isRefinementLassoActive = true
     }
 
     private func widthAdjustmentGesture(for tool: WritingTool) -> some Gesture {
@@ -897,8 +952,6 @@ struct NotebookToolbarSettingsView: View {
                     .font(.subheadline.weight(.semibold))
 
                 Group {
-                    Toggle("Page navigation", isOn: $vm.settings.showsPageNavigation)
-                        .accessibilityIdentifier("settings-page-navigation")
                     Toggle("Writing tools", isOn: $vm.settings.showsWritingTools)
                         .accessibilityIdentifier("settings-writing-tools")
                     Toggle("Layers", isOn: $vm.settings.showsLayers)

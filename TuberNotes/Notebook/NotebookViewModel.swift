@@ -1028,13 +1028,19 @@ final class NotebookViewModel: ObservableObject {
         agentError = nil
         let client = AgentInsightClientFactory.make()
         let capturedGeneration = client.generation
+        let pageImages = makeAgentPageImages()
         let originatingPage = notebook.pages.first(where: { $0.id == selection.pageID })
+        let originatingIndex = currentIndex
         let selectionID = selection.id
 
         analysisTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let insight = try await client.analyze(selection, question: submittedQuestion)
+                let insight = try await client.analyze(
+                    selection,
+                    question: submittedQuestion,
+                    pageImages: pageImages
+                )
                 guard !Task.isCancelled,
                       originatingPage != nil,
                       notebook.pages.first(where: { $0.id == selection.pageID }) == originatingPage,
@@ -1057,32 +1063,48 @@ final class NotebookViewModel: ObservableObject {
                     finishAnalysis(requestID)
                     return
                 }
-                let target = continuationTarget(
+                let placedPins = applyAgentToolCalls(
+                    insight.toolCalls,
+                    layerIndex: destinationLayerIndex,
                     parent: parentPin,
-                    in: notebook.agenticLayers[destinationLayerIndex].conversations,
-                    fallback: PageNormalizedPoint(
-                        x: selection.pageBounds.x + selection.pageBounds.width / 2,
-                        y: selection.pageBounds.y + selection.pageBounds.height / 2
-                    )
+                    userPrompt: trimmedQuestion
                 )
-                notebook.agenticLayers[destinationLayerIndex].conversations.append(
-                    PageAnnotation(
-                        id: UUID(),
-                        pageID: selection.pageID,
-                        threadID: childThreadID,
-                        parentThreadID: parentPin?.threadID,
-                        userPrompt: trimmedQuestion,
-                        target: target,
-                        targetRegion: selection.pageBounds,
-                        kind: .explanation,
-                        teaser: trimmedQuestion
-                            ?? (parentPin == nil ? "Learning guidance" : "Deeper explanation"),
-                        body: insight.body,
-                        citations: [],
-                        status: .complete
+                if !insight.body.isEmpty, !placedPins {
+                    let target = continuationTarget(
+                        parent: parentPin,
+                        in: notebook.agenticLayers[destinationLayerIndex].conversations,
+                        fallback: PageNormalizedPoint(
+                            x: selection.pageBounds.x + selection.pageBounds.width / 2,
+                            y: selection.pageBounds.y + selection.pageBounds.height / 2
+                        )
                     )
-                )
-                newestAgentThreadID = childThreadID
+                    notebook.agenticLayers[destinationLayerIndex].conversations.append(
+                        PageAnnotation(
+                            id: UUID(),
+                            pageID: selection.pageID,
+                            threadID: childThreadID,
+                            parentThreadID: parentPin?.threadID,
+                            userPrompt: trimmedQuestion,
+                            target: target,
+                            targetRegion: selection.pageBounds,
+                            kind: .explanation,
+                            teaser: trimmedQuestion
+                                ?? (parentPin == nil ? "Learning guidance" : "Deeper explanation"),
+                            body: insight.body,
+                            citations: [],
+                            status: .complete
+                        )
+                    )
+                    newestAgentThreadID = childThreadID
+                }
+                if currentIndex == originatingIndex,
+                   let requestedPage = insight.toolCalls.compactMap({ call -> Int? in
+                       guard case let .switchPage(pageNumber) = call else { return nil }
+                       return pageNumber
+                   }).last,
+                   notebook.pages.indices.contains(requestedPage - 1) {
+                    go(to: requestedPage - 1)
+                }
                 finishAnalysis(requestID)
                 persistNow()
             } catch is CancellationError {
@@ -1098,6 +1120,88 @@ final class NotebookViewModel: ObservableObject {
                 finishAnalysis(requestID)
             }
         }
+    }
+
+    /// Current page plus at most one immediate neighbor on either side. These
+    /// are immutable request snapshots; rendering never changes visible state.
+    private func makeAgentPageImages() -> [AgentPageImage] {
+        let lower = max(0, currentIndex - 1)
+        let upper = min(notebook.pages.count - 1, currentIndex + 1)
+        guard lower <= upper else { return [] }
+        return (lower...upper).compactMap(makeAgentPageImage)
+    }
+
+    private func makeAgentPageImage(at index: Int) -> AgentPageImage? {
+        guard notebook.pages.indices.contains(index) else { return nil }
+        let page = notebook.pages[index]
+        let fullBounds = PageNormalizedRect(x: 0, y: 0, width: 1, height: 1)
+        let fullPath = [
+            PageNormalizedPoint(x: 0, y: 0), PageNormalizedPoint(x: 1, y: 0),
+            PageNormalizedPoint(x: 1, y: 1), PageNormalizedPoint(x: 0, y: 1),
+        ]
+        let pageRect = CGRect(origin: .zero, size: NotebookPageLayout.size)
+        guard let evidence = try? SelectionEvidenceRenderer.render(
+            pageSize: pageRect.size,
+            selectionPageBounds: fullBounds,
+            lassoPath: fullPath,
+            renderPage: { context, logicalPageRect in
+                UIGraphicsPushContext(context)
+                UIColor.white.setFill()
+                context.fill(logicalPageRect)
+                for placed in page.images {
+                    placed.draw(in: CGRect(
+                        x: placed.rect.minX * logicalPageRect.width,
+                        y: placed.rect.minY * logicalPageRect.height,
+                        width: placed.rect.width * logicalPageRect.width,
+                        height: placed.rect.height * logicalPageRect.height
+                    ))
+                }
+                page.drawing.image(from: logicalPageRect, scale: 2).draw(in: logicalPageRect)
+                UIGraphicsPopContext()
+            }
+        ) else { return nil }
+        return AgentPageImage(
+            pageID: page.id,
+            pageNumber: index + 1,
+            imageData: evidence.context.imageData,
+            mediaType: evidence.context.mediaType
+        )
+    }
+
+    private func applyAgentToolCalls(
+        _ calls: [AgentToolCall],
+        layerIndex: Int,
+        parent: PageAnnotation?,
+        userPrompt: String?
+    ) -> Bool {
+        var placedAny = false
+        var attachesPrompt = true
+        for call in calls {
+            guard case let .placePins(pageNumber, pins) = call,
+                  notebook.pages.indices.contains(pageNumber - 1) else { continue }
+            let pageID = notebook.pages[pageNumber - 1].id
+            for draft in pins {
+                let threadID = UUID()
+                notebook.agenticLayers[layerIndex].conversations.append(PageAnnotation(
+                    id: draft.id,
+                    pageID: pageID,
+                    threadID: threadID,
+                    parentThreadID: parent?.threadID,
+                    userPrompt: attachesPrompt ? userPrompt : nil,
+                    target: PageNormalizedPoint(x: draft.target.x, y: draft.target.y),
+                    targetRegion: nil,
+                    kind: draft.kind,
+                    teaser: draft.teaser,
+                    body: draft.body,
+                    citations: draft.citations,
+                    status: .complete
+                ))
+                newestAgentThreadID = threadID
+                attachesPrompt = false
+                placedAny = true
+            }
+        }
+        return placedAny
     }
 
     func cancelAnalysis() {

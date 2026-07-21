@@ -21,10 +21,10 @@ struct NotebookView: View {
     @AppStorage("tuber.pencilDoubleTap") private var pencilDoubleTapEnabled = true
     @AppStorage("tuber.pencilSqueeze") private var pencilSqueezeEnabled = true
     @AppStorage("tuber.pencilHoverPreview") private var pencilHoverPreviewEnabled = true
+    @AppStorage("tuber.notebookToolbarDock") private var toolbarDockRaw = NotebookToolbarDock.bottom.rawValue
     @State private var showPages = false
     @State private var showStrip = false
     @State private var showAgentSidebar = false
-    @State private var showAgentChatTab = false
     @State private var selectedAgentParentThreadID: UUID?
     @State private var showProviderAccessPopup = false
     @State private var showToolbarSettings = false
@@ -36,6 +36,8 @@ struct NotebookView: View {
     @State private var isMagicAskExpanded = false
     @State private var pendingGuidanceAfterSignIn: SelectionArtifact?
     @State private var pendingGuidanceIntent: InvestigationIntent?
+    @State private var pendingMagicChatAfterSignIn: SelectionArtifact?
+    @State private var sendsMagicLassoToChat = false
     @State private var isRefinementLassoActive = false
     @State private var showExportOptions = false
     @State private var showFileExporter = false
@@ -72,9 +74,7 @@ struct NotebookView: View {
     @State private var isZoomHUDVisible = false
     @State private var isPinchZooming = false
     @State private var zoomHUDHideTask: Task<Void, Never>?
-
-    /// Horizontal room the sidebar occupies (340pt panel + 8pt trailing inset).
-    private let sidebarShift: CGFloat = 356
+    @State private var toolbarDragOffset = CGSize.zero
 
     init(notebook: Notebook, store: NotebookStore) {
         _vm = StateObject(wrappedValue: NotebookViewModel(notebook: notebook, store: store))
@@ -93,8 +93,9 @@ struct NotebookView: View {
                 .ignoresSafeArea()
                 .allowsHitTesting(false)
 
-            // When the assistant sidebar is open, the strip and the page keep
-            // to the space left of it instead of sliding under the frost.
+            // Notebook geometry is invariant while assistant chrome comes and
+            // goes. The sidebar overlays the trailing edge; it never reflows,
+            // recenters, or rescales the page beneath the user's hand.
             VStack(spacing: 0) {
                 if showStrip {
                     PageStripView(vm: vm)
@@ -102,87 +103,48 @@ struct NotebookView: View {
                 }
                 pageArea
             }
-            .padding(.trailing, showAgentSidebar ? sidebarShift : 0)
-            .animation(.spring(response: 0.36, dampingFraction: 0.86), value: showAgentSidebar)
 
             if showAgentSidebar {
-                // Opaque near-black field behind the panel, matching the menu
-                // backdrop, so page content never reads through the frost.
-                HStack(spacing: 0) {
-                    Spacer(minLength: 0)
-                    LinearGradient(
-                        colors: [
-                            Color(red: 0.05, green: 0.05, blue: 0.07),
-                            Color(red: 0.02, green: 0.02, blue: 0.03),
-                        ],
-                        startPoint: .top, endPoint: .bottom
-                    )
-                    .frame(width: sidebarShift)
-                    .ignoresSafeArea()
-                }
-                .transition(.move(edge: .trailing))
-                .zIndex(4.5)
-
                 HStack(spacing: 0) {
                     Spacer(minLength: 0)
                     AgentSidebarView(
                         vm: vm,
                         selectedParentThreadID: $selectedAgentParentThreadID,
-                        isFullChatTab: false,
+                        isFullChatTab: true,
                         onClose: { withAnimation { showAgentSidebar = false } },
-                        onOpenFullChat: {
-                            withAnimation {
-                                showAgentSidebar = false
-                                showAgentChatTab = true
-                            }
-                        },
+                        onOpenFullChat: {},
                         onEditProviderAccess: { withAnimation { showProviderAccessPopup = true } }
                     )
                 }
                 .transition(.move(edge: .trailing))
-                .zIndex(5)
-            }
-
-            if showAgentChatTab {
-                Color.black.opacity(0.28)
-                    .ignoresSafeArea()
-                    .transition(.opacity)
-                    .zIndex(5.5)
-                AgentSidebarView(
-                    vm: vm,
-                    selectedParentThreadID: $selectedAgentParentThreadID,
-                    isFullChatTab: true,
-                    onClose: { withAnimation { showAgentChatTab = false } },
-                    onOpenFullChat: {},
-                    onEditProviderAccess: { withAnimation { showProviderAccessPopup = true } }
-                )
-                .padding(.horizontal, 34)
-                .padding(.vertical, 20)
-                .transition(.move(edge: .bottom).combined(with: .opacity))
-                .zIndex(6)
+                // Stay above a right-docked writing toolbar so chat controls
+                // cannot be covered; the toolbar itself does not move.
+                .zIndex(7.25)
             }
 
             if vm.isArrangingImages {
                 arrangeControls.zIndex(6)
             }
 
-            VStack {
-                Spacer()
+            GeometryReader { toolbarProxy in
                 NotebookToolbar(
                     vm: vm,
                     undo: vm.undo,
                     isLassoActive: $vm.isLassoActive,
                     isRefinementActive: $isRefinementActive,
                     isRefinementLassoActive: $isRefinementLassoActive,
-                    onShowPages: { withAnimation { showPages = true } },
-                    onAskAgent: { withAnimation { showAgentSidebar = true } }
+                    imagePickerItem: $pickerItem,
+                    dock: toolbarDock,
+                    onDockDragChanged: { toolbarDragOffset = $0 },
+                    onDockDragEnded: { finishToolbarDrag($0, in: toolbarProxy.size) },
+                    onAskAgent: { withAnimation { showAgentSidebar = true } },
+                    onRefinementChatModeChanged: { sendsMagicLassoToChat = $0 }
                 )
-                .padding(.bottom, 14)
-                .padding(.trailing, showAgentSidebar ? sidebarShift : 0)
+                .offset(toolbarDragOffset)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: toolbarDock.alignment)
+                .padding(toolbarDockPaddingEdge, 14)
             }
             .zIndex(7)
-            .opacity(showAgentChatTab ? 0 : 1)
-            .allowsHitTesting(!showAgentChatTab)
 
             if pencilPaletteAnchor != nil {
                 pencilPaletteLayer
@@ -222,12 +184,6 @@ struct NotebookView: View {
 
                 templateMenu
 
-                PhotosPicker(selection: $pickerItem, matching: .images, photoLibrary: .shared()) {
-                    Image(systemName: "photo.badge.plus")
-                }
-                .accessibilityIdentifier("nav-add-image")
-                .accessibilityLabel("Add image")
-
                 if vm.settings.showsPageLock {
                     pageLockButton
                 }
@@ -235,6 +191,15 @@ struct NotebookView: View {
                 if vm.settings.showsExport {
                     exportButton
                 }
+
+                Button(action: toggleAgentSidebar) {
+                    Image(systemName: showAgentSidebar ? "bubble.left.and.bubble.right.fill" : "bubble.left.and.bubble.right")
+                        .foregroundStyle(showAgentSidebar ? Color.accentColor : Color.primary)
+                        .contentTransition(.symbolEffect(.replace))
+                }
+                .accessibilityIdentifier("nav-chat-sidebar")
+                .accessibilityLabel(showAgentSidebar ? "Close chat sidebar" : "Open chat sidebar")
+                .accessibilityValue(showAgentSidebar ? "Open" : "Closed")
 
                 toolbarSettingsButton
             }
@@ -285,7 +250,6 @@ struct NotebookView: View {
         .onChange(of: vm.isAgenticLayersActive) { _, isActive in
             guard !isActive else { return }
             if showAgentSidebar { withAnimation { showAgentSidebar = false } }
-            if showAgentChatTab { withAnimation { showAgentChatTab = false } }
         }
         .onChange(of: vm.currentDrawingLayerID) { _, _ in
             dismissPencilPalette()
@@ -298,19 +262,27 @@ struct NotebookView: View {
             if active { dismissPencilPalette() }
         }
         .onChange(of: isRefinementActive) { _, active in
-            guard active else { return }
-            magicEraserPath = []
-            magicEraserSelection = nil
-            magicAskText = ""
-            isMagicAskExpanded = false
-            dismissPencilPalette()
+            if active {
+                magicEraserPath = []
+                magicEraserSelection = nil
+                magicAskText = ""
+                isMagicAskExpanded = false
+                dismissPencilPalette()
+            } else if !isRefinementLassoActive {
+                sendsMagicLassoToChat = false
+            }
         }
         .onChange(of: openAILogin.phase) { _, phase in
-            guard let selection = pendingGuidanceAfterSignIn, case .signedIn = phase else { return }
-            let intent = pendingGuidanceIntent
-            pendingGuidanceAfterSignIn = nil
-            pendingGuidanceIntent = nil
-            if let intent { vm.requestIntervention(selection: selection, intent: intent) }
+            guard case .signedIn = phase else { return }
+            if let selection = pendingMagicChatAfterSignIn {
+                pendingMagicChatAfterSignIn = nil
+                submitMagicSelectionToChat(selection)
+            } else if let selection = pendingGuidanceAfterSignIn {
+                let intent = pendingGuidanceIntent
+                pendingGuidanceAfterSignIn = nil
+                pendingGuidanceIntent = nil
+                if let intent { vm.requestIntervention(selection: selection, intent: intent) }
+            }
         }
         .onChange(of: vm.newestAgentThreadID) { _, threadID in
             guard threadID != nil, !magicEraserPath.isEmpty else { return }
@@ -361,6 +333,63 @@ struct NotebookView: View {
             Image(systemName: "square.grid.2x2")
         }
         .accessibilityIdentifier("nav-template")
+    }
+
+    private var toolbarDock: NotebookToolbarDock {
+        NotebookToolbarDock(rawValue: toolbarDockRaw) ?? .bottom
+    }
+
+    private var toolbarDockPaddingEdge: Edge.Set {
+        switch toolbarDock {
+        case .top: .top
+        case .bottom: .bottom
+        case .leading: .leading
+        case .trailing: .trailing
+        }
+    }
+
+    private func finishToolbarDrag(_ drag: DragGesture.Value, in containerSize: CGSize) {
+        let origin: CGPoint
+        switch toolbarDock {
+        case .top: origin = CGPoint(x: containerSize.width / 2, y: 0)
+        case .bottom: origin = CGPoint(x: containerSize.width / 2, y: containerSize.height)
+        case .leading: origin = CGPoint(x: 0, y: containerSize.height / 2)
+        case .trailing: origin = CGPoint(x: containerSize.width, y: containerSize.height / 2)
+        }
+        let predicted = CGPoint(
+            x: origin.x + drag.predictedEndTranslation.width,
+            y: origin.y + drag.predictedEndTranslation.height
+        )
+        let distances: [(NotebookToolbarDock, CGFloat)] = [
+            (.top, abs(predicted.y)),
+            (.bottom, abs(containerSize.height - predicted.y)),
+            (.leading, abs(predicted.x)),
+            (.trailing, abs(containerSize.width - predicted.x)),
+        ]
+        let destination = distances.min(by: { $0.1 < $1.1 })?.0 ?? .bottom
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
+            toolbarDragOffset = .zero
+            toolbarDockRaw = destination.rawValue
+        }
+    }
+
+    private func toggleAgentSidebar() {
+        if showAgentSidebar {
+            withAnimation { showAgentSidebar = false }
+            return
+        }
+
+        if !vm.isAgenticLayersActive {
+            let layers = vm.conversationLayers.layers
+            if let layerID = layers.first(where: { $0.id == vm.selectedLayerID })?.id
+                ?? layers.first?.id {
+                vm.selectAgenticLayer(layerID)
+            }
+        }
+
+        withAnimation {
+            showAgentSidebar = true
+        }
     }
 
     private var pageLockButton: some View {
@@ -1292,8 +1321,7 @@ struct NotebookView: View {
                                     return
                                 }
                                 selectedAgentParentThreadID = pin.threadID
-                                showAgentSidebar = false
-                                withAnimation { showAgentChatTab = true }
+                                withAnimation { showAgentSidebar = true }
                             case .expanded(_), .collapsed(_), .citationSelected(_, _):
                                 break
                             }
@@ -1301,7 +1329,7 @@ struct NotebookView: View {
                     )
                 }
 
-                if isRefinementActive {
+                if isRefinementLassoActive {
                     MagicLassoOverlay(
                         enabled: true,
                         initialPath: nil,
@@ -1312,6 +1340,11 @@ struct NotebookView: View {
                 if magicEraserSelection != nil,
                    let selectionBounds = MagicLassoGeometry.pageBounds(of: magicEraserPath) {
                     GeometryReader { proxy in
+                        let menuSize = magicMenuSize(
+                            in: proxy.size,
+                            isExpanded: isMagicAskExpanded,
+                            hasStatus: vm.agentError != nil || vm.interventionNotice != nil
+                        )
                         MagicEraserContextMenu(
                             askText: $magicAskText,
                             isAskExpanded: $isMagicAskExpanded,
@@ -1340,13 +1373,12 @@ struct NotebookView: View {
                                 pendingGuidanceIntent = nil
                             }
                         )
-                        .frame(maxWidth: min(proxy.size.width - 24, 520))
+                        .frame(width: menuSize.width, height: menuSize.height)
                         .position(
                             magicMenuPosition(
                                 for: selectionBounds,
                                 in: proxy.size,
-                                isExpanded: isMagicAskExpanded,
-                                hasError: vm.agentError != nil || vm.interventionNotice != nil
+                                menuSize: menuSize
                             )
                         )
                         .transition(.scale(scale: 0.88).combined(with: .opacity))
@@ -1404,8 +1436,25 @@ struct NotebookView: View {
         vm.agentError = nil
         vm.interventionNotice = nil
         isRefinementActive = false
+        isRefinementLassoActive = false
         isMagicAskExpanded = false
         magicAskText = ""
+        if sendsMagicLassoToChat {
+            sendsMagicLassoToChat = false
+            if case .signedIn = openAILogin.phase {
+                submitMagicSelectionToChat(selection)
+            } else {
+                pendingMagicChatAfterSignIn = selection
+                withAnimation { showProviderAccessPopup = true }
+            }
+        }
+    }
+
+    private func submitMagicSelectionToChat(_ selection: SelectionArtifact) {
+        vm.isAgenticLayersActive = true
+        selectedAgentParentThreadID = nil
+        vm.analyzeCurrentPage(selection: selection)
+        withAnimation { showAgentSidebar = true }
     }
 
     private func submitMagicGuidance(_ intent: InvestigationIntent) {
@@ -1428,6 +1477,9 @@ struct NotebookView: View {
         isMagicAskExpanded = false
         pendingGuidanceAfterSignIn = nil
         pendingGuidanceIntent = nil
+        pendingMagicChatAfterSignIn = nil
+        sendsMagicLassoToChat = false
+        isRefinementLassoActive = false
         vm.agentError = nil
         vm.interventionNotice = nil
     }
@@ -1435,16 +1487,10 @@ struct NotebookView: View {
     private func magicMenuPosition(
         for bounds: PageNormalizedRect,
         in size: CGSize,
-        isExpanded: Bool,
-        hasError: Bool
+        menuSize: CGSize
     ) -> CGPoint {
-        let menuWidth = min(max(size.width - 24, 0), 520)
-        let halfWidth = menuWidth / 2
-        let halfHeight: CGFloat = if isExpanded {
-            hasError ? 142 : 108
-        } else {
-            hasError ? 102 : 66
-        }
+        let halfWidth = menuSize.width / 2
+        let halfHeight = menuSize.height / 2
         let anchorX = CGFloat(bounds.x + bounds.width / 2) * size.width
         let below = CGFloat(bounds.y + bounds.height) * size.height + halfHeight + 12
         let above = CGFloat(bounds.y) * size.height - halfHeight - 12
@@ -1456,6 +1502,21 @@ struct NotebookView: View {
             ? below
             : max(halfHeight + 10, above)
         return CGPoint(x: x, y: y)
+    }
+
+    private func magicMenuSize(
+        in containerSize: CGSize,
+        isExpanded: Bool,
+        hasStatus: Bool
+    ) -> CGSize {
+        let desiredWidth: CGFloat = isExpanded ? 380 : (hasStatus ? 340 : 300)
+        let desiredHeight: CGFloat = isExpanded
+            ? (hasStatus ? 176 : 112)
+            : (hasStatus ? 112 : 50)
+        return CGSize(
+            width: min(desiredWidth, max(containerSize.width - 24, 0)),
+            height: min(desiredHeight, max(containerSize.height - 20, 0))
+        )
     }
 
     private var showsWorkingToolbar: Bool {
@@ -1477,45 +1538,8 @@ private struct MagicEraserContextMenu: View {
     let onCancel: () -> Void
 
     var body: some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 9) {
-                Label("Selected region", systemImage: "circle.dashed.inset.filled")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                Spacer()
-                if isSubmitting {
-                    ProgressView()
-                        .controlSize(.small)
-                    Text("Reading…")
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.secondary)
-                }
-                Button(action: onCancel) {
-                    Image(systemName: "xmark.circle.fill")
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .accessibilityLabel("Clear Magic Eraser selection")
-            }
-
-            HStack(spacing: 8) {
-                Button(action: onExplain) {
-                    Label("Explain", systemImage: "lightbulb.fill")
-                }
-                Button(action: onCheck) {
-                    Label("Check", systemImage: "checkmark.seal.fill")
-                }
-                Button {
-                    withAnimation(.easeInOut(duration: 0.18)) {
-                        isAskExpanded.toggle()
-                    }
-                } label: {
-                    Label("Ask", systemImage: "text.bubble.fill")
-                }
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.regular)
-            .disabled(isSubmitting)
+        VStack(spacing: 8) {
+            commandStrip
 
             if let errorMessage, !isSubmitting {
                 Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
@@ -1523,6 +1547,8 @@ private struct MagicEraserContextMenu: View {
                     .foregroundStyle(.red)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .fixedSize(horizontal: false, vertical: true)
+                    .padding(9)
+                    .background(menuSurface, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
             }
 
             if let notice, !isSubmitting {
@@ -1536,31 +1562,113 @@ private struct MagicEraserContextMenu: View {
                 .foregroundStyle(notice.style == .confirmation ? Color.green : Color.orange)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
+                .padding(9)
+                .background(menuSurface, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
             }
 
             if isAskExpanded {
                 HStack(spacing: 8) {
                     TextField("What should the Pins focus on?", text: $askText, axis: .vertical)
-                        .lineLimit(1...3)
+                        .lineLimit(1...2)
                         .textFieldStyle(.plain)
-                        .padding(.horizontal, 11)
-                        .padding(.vertical, 9)
-                        .background(.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
-                    Button("Send", action: onAsk)
-                        .buttonStyle(.borderedProminent)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
+                        .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+                    Button(action: onAsk) {
+                        Image(systemName: "arrow.up")
+                            .font(.caption.weight(.bold))
+                            .frame(width: 34, height: 34)
+                            .foregroundStyle(.black)
+                            .background(.white, in: RoundedRectangle(cornerRadius: 8))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Send question")
                         .disabled(askText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSubmitting)
                 }
-                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .padding(8)
+                .background(menuSurface, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 11, style: .continuous)
+                        .stroke(.white.opacity(0.12), lineWidth: 1)
+                }
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
-        .padding(12)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(Color.indigo.opacity(0.45), lineWidth: 1)
-        }
-        .shadow(color: .indigo.opacity(0.22), radius: 16, y: 5)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .environment(\.colorScheme, .dark)
         .accessibilityIdentifier("magic-eraser-context-menu")
+    }
+
+    private var commandStrip: some View {
+        HStack(spacing: 0) {
+            if isSubmitting {
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(.white)
+                    Text("Analyzing…")
+                        .font(.caption.weight(.semibold))
+                }
+                .padding(.horizontal, 12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                commandButton("Explain", symbol: "lightbulb", action: onExplain)
+                stripDivider
+                commandButton("Check", symbol: "checkmark.circle", action: onCheck)
+                stripDivider
+                commandButton("Ask", symbol: "text.bubble") {
+                        withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
+                            isAskExpanded.toggle()
+                        }
+                }
+            }
+            stripDivider
+            Button(action: onCancel) {
+                Image(systemName: "xmark")
+                    .font(.caption.weight(.semibold))
+                    .frame(width: 38, height: 46)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .accessibilityLabel("Clear Magic Lasso selection")
+        }
+        .frame(height: 48)
+        .background(menuSurface, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .stroke(.white.opacity(0.12), lineWidth: 1)
+        }
+        .shadow(color: .black.opacity(0.22), radius: 9, y: 4)
+    }
+
+    private func commandButton(
+        _ title: String,
+        symbol: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: symbol)
+                    .font(.caption.weight(.semibold))
+                Text(title)
+                    .font(.caption.weight(.semibold))
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 10)
+            .frame(height: 46)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
+    }
+
+    private var stripDivider: some View {
+        Rectangle()
+            .fill(.white.opacity(0.12))
+            .frame(width: 1, height: 20)
+    }
+
+    private var menuSurface: Color {
+        Color(red: 0.055, green: 0.065, blue: 0.095).opacity(0.96)
     }
 }
 

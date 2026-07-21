@@ -1740,3 +1740,179 @@ conversation surfaces are prohibited and provide no acceptance evidence.
   is under `tmp/build/pc19-pin-chat-markdown*/`. No deprecated review surface
   was used. Phillip's current normal-app interaction/visual verdict is the only
   remaining gate.
+
+## Active line — PC-20: calm, content-preserving Pin cards
+
+Status: **follow-up Release-delivered — awaiting Phillip's verdict**
+
+Target branch: `main`
+
+Child work-line: [`PC-20-CalmPinCards.md`](PC-20-CalmPinCards.md)
+
+Owner: Pins spatial UI; Notebook integration, AgentHarness content, persistence,
+page-normalized anchors, Pin Chat, and Pencil/canvas ownership remain unchanged.
+
+Summary: collapsed Pins become a single unobtrusive anchor instead of a text pill;
+expanded Pins use one connected, edge-aware, high-contrast card with readable
+hierarchy, explicit dismissal, sufficient content room, and the existing direct
+Continue path. Final visual and interaction judgment remains Phillip's in the
+normal Release app.
+
+### Session log
+
+- 2026-07-21 — Created PC-20 from Phillip's normal-app screenshots and explicit
+  request to revise the complete Pin presentation. Scoped the repair to Pins
+  layout/presentation and preserved the unrelated untracked `.claude/` content.
+- 2026-07-21 — Completed the Pins-only revision: collapsed text labels are gone;
+  expanded normal-notebook cards are larger, opaque, connected, scrollable, and
+  expose independent Pin Chat/Close controls. Focused checks pass 8/8 and diff
+  hygiene passes. Signed Release build/install/normal launch and live-process
+  query pass on exact iPad `2DD98ECC-A26A-5730-943B-01DD63DC4117`; evidence is
+  under `tmp/verify/pc20-calm-pin-cards/`. Phillip's current normal-app visual,
+  touch/Pencil, clipping/overlap, scrolling, and animation verdict remains.
+
+## Active line — PC-21: Magic Lasso compact command strip
+
+Status: **command strip implemented and Release-delivered — awaiting Phillip's verdict**
+
+Target branch: `main`
+
+Child work-line: [`PC-21-MagicLassoRadialMenu.md`](PC-21-MagicLassoRadialMenu.md)
+
+Owner: Notebook presentation for the existing Magic Lasso result. Regular Lasso,
+SpatialCanvas, AI runtime, coordinates, Pins, and persistence remain unchanged.
+
+Summary: replace the wide gray Magic Lasso action pill with a compact monochrome
+Explain/Check/Ask/Close command strip; Ask expands locally and analysis stays in
+the same restrained footprint. No gradients, glows, circles, or pill buttons.
+
+### Session log
+
+- 2026-07-21 — Reopened the chat-sidebar addition after Phillip's major UX
+  critique. Removed page/toolbar reflow and the page-blocking full-chat takeover:
+  page geometry is invariant, while new, continued, Magic-Lasso-originated, and
+  Pin-originated conversations now remain in a narrow trailing overlay without
+  dimming or disabling note-taking outside its bounds. The sidebar also no longer
+  changes notebook pages when responses arrive or branches are selected. Focused
+  checks pass 11/11; signed Release build/install/normal launch/process presence
+  pass on exact iPad `2DD98ECC-A26A-5730-943B-01DD63DC4117`. Evidence is under
+  `tmp/verify/pc21-noninterrupting-sidebar/`; Phillip's verdict remains.
+- 2026-07-21 — Added a direct top-bar open/close button for the existing chat
+  sidebar, independent of Magic Lasso and the Layers popover. It activates the
+  selected/default Agentic Layer when needed; lasso, AI, Pin, and spatial
+  contracts remain unchanged. Focused checks pass 3/3; signed Release
+  build/install/normal launch/process presence pass on exact iPad
+  `2DD98ECC-A26A-5730-943B-01DD63DC4117`. Evidence is under
+  `tmp/verify/pc21-chat-sidebar-button/`; Phillip's verdict remains.
+- 2026-07-21 — Corrected the earlier misunderstanding after Phillip's screenshot:
+  this line changes only the Magic Lasso's post-selection menu and explicitly
+  preserves the separate regular and Magic Lasso tools.
+- 2026-07-21 — Delivered the actual redesign: a transparent radial composition
+  with three compact circular actions, gradient sparkle anchor, explicit Close,
+  local Ask card, and progress orb replaces the wide gray pill. Focused checks
+  pass 10/10; signed Release build/install/normal launch/process query pass on
+  exact iPad `2DD98ECC-A26A-5730-943B-01DD63DC4117`. Artifacts are under
+  `tmp/verify/pc21-magic-lasso-radial/`; Phillip's current-app verdict remains.
+- 2026-07-21 — Phillip rejected the radial gradient/orb treatment as tacky and
+  selected the monochrome command strip. Reopened PC-21 for that presentation-
+  only correction; regular and Magic Lasso remain separate and unchanged.
+- 2026-07-21 — Delivered the selected monochrome direction: one 48-point charcoal
+  Explain/Check/Ask/Close strip with hairline separators, matching local Ask field,
+  and in-strip progress. No gradient, glow, circle, badge, or pill remains in the
+  Magic Lasso menu. Focused checks pass 10/10; signed Release build/install/normal
+  launch/process query pass on exact iPad
+  `2DD98ECC-A26A-5730-943B-01DD63DC4117`. Current artifacts are under
+  `tmp/verify/pc21-magic-lasso-command-strip/`; Phillip's verdict remains.
+
+## Active line — PC-22: Magic Lasso polish and direct-to-chat mode
+
+Status: **implementation complete and Release-delivered — awaiting Phillip's verdict**
+
+Target branch: `main`
+
+Child work-line: [`PC-22-MagicLassoPolish.md`](PC-22-MagicLassoPolish.md)
+
+Owner: coordinator integrates; subagents have non-overlapping SpatialCanvas
+animation, NotebookToolbar entry UI, and focused-check leases.
+
+Summary: preserve separate regular/Magic Lassos; add Guidance Pins versus Send
+to Chat choices to the bottom Magic Lasso bubble, route the latter through the
+existing captured-selection analysis into full Pin Chat, and add a restrained
+living trace plus closed-loop seal animation without changing geometry/runtime
+contracts.
+
+### Session log
+
+- 2026-07-21 — Started PC-22 at Phillip's explicit request for subagent execution.
+  Frozen interpretation: Send to Chat arms the next Magic Lasso and opens full
+  Pin Chat around the existing analysis result; it does not combine lasso tools.
+- 2026-07-21 — Integrated the bounded toolbar, trace/seal, and source-contract
+  slices. Focused checks pass 15/15 and diff hygiene passes. Signed Release build,
+  install, normal launch, and process query passed on Phillip's pinned iPad
+  `2DD98ECC-A26A-5730-943B-01DD63DC4117` (PID 2596). Regular and Magic Lassos remain
+  separate; Phillip's Pencil feel, animation taste, and end-to-end mode verdict remain.
+
+## Active line — PC-23: contextual sidebar agent tools
+
+Status: **implemented — awaiting build delivery and Phillip's verdict**
+
+Target branch: `main`
+
+Child work-line: [`PC-23-SidebarAgentTools.md`](PC-23-SidebarAgentTools.md)
+
+Summary: truthful new-chat copy, bounded previous/current/next page images,
+strict locally validated `place_pins` and `switch_page` model tools, and an
+inline route-approved model selector in the non-modal chat sidebar.
+
+### Session log
+
+- 2026-07-21 — Removed the purple focused-turn treatment and simplified the
+  transcript toward standard chat composition: neutral right-aligned user
+  bubbles, plain assistant responses, and no current-turn glow/badge/border.
+- 2026-07-21 — Simplified fresh-chat copy to `Ask a question…`; adjacent page
+  images remain model-only request context and are not exposed in sidebar UI.
+- 2026-07-21 — `CONTRACT:` extended `ProductToolName` with `switch_page` and
+  extended the App-owned insight boundary with bounded page-image context and
+  typed tool results. AgentHarness may request actions but cannot mutate the
+  notebook; Notebook validates page/count/coordinate/text/staleness bounds before
+  applying them.
+- 2026-07-21 — Implemented all four requested sidebar changes. Focused checks
+  pass 12/12; signed Release build/install/normal launch/process presence pass
+  on exact iPad `2DD98ECC-A26A-5730-943B-01DD63DC4117`. Evidence is under
+  `tmp/verify/pc23-sidebar-agent-tools/`; Phillip's live model/tool and normal-app
+  UI verdict remain.
+
+## Active line — PC-22: universal draggable toolbar dock
+
+Status: **implementation complete and Release-delivered — awaiting Phillip's verdict**
+
+Target branch: `main`
+
+Child work-line: [`PC-22-UniversalToolbarDock.md`](PC-22-UniversalToolbarDock.md)
+
+Owner: App/Notebook toolbar presentation; SpatialCanvas and page content
+coordinates remain unchanged.
+
+Summary: move image import into the main toolbar, let a dedicated grip drag and
+snap that toolbar to any iPad edge, and persist one app-wide dock across all
+notebooks and pages.
+
+### Session log
+
+- 2026-07-21 — Created PC-22 for Phillip's requested toolbar move and universal
+  dock behavior. Implementation is scoped to Notebook toolbar presentation and
+  its app-wide placement preference.
+- 2026-07-21 — Delivered the toolbar image picker, dedicated grip, four-way
+  nearest-edge snap, side-aware vertical layout, and universal persisted dock.
+  PC-22 checks pass 3/3; signed Release build/install/normal launch/process
+  query pass on exact iPad `2DD98ECC-A26A-5730-943B-01DD63DC4117`. Artifacts
+  are under `tmp/verify/pc22-universal-toolbar-dock/`; Phillip's current normal-
+  app interaction and visual verdict remains.
+- 2026-07-21 — Reopened PC-22 to remove page navigation and Pencil from the
+  floating toolbar and enforce Phillip's requested compact tool ordering. This
+  remains a toolbar-presentation change; drawing and page contracts are intact.
+- 2026-07-21 — Delivered Pen → marker/highlighter line → Eraser → Lasso → Magic
+  Lasso → Image → Undo → Redo → Layers. Pencil and page navigation are absent
+  from the floating toolbar, and the obsolete page-navigation settings toggle
+  is removed. PC-22 checks pass 4/4; signed Release build/install/normal launch/
+  process query pass on the exact pinned iPad. Phillip's verdict remains.

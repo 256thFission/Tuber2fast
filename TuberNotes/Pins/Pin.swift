@@ -131,9 +131,9 @@ enum PinOverlayLayout {
         let availableHeight = max(0, containerSize.height - (edgePadding * 2))
         let desired: CGSize = switch behavior {
         case .adaptive:
-            isExpanded ? CGSize(width: 304, height: 208) : CGSize(width: 208, height: 48)
+            isExpanded ? CGSize(width: 320, height: 248) : .zero
         case .pageAnchoredCompact:
-            isExpanded ? CGSize(width: 228, height: 126) : CGSize(width: 164, height: 38)
+            isExpanded ? CGSize(width: 310, height: 230) : .zero
         }
         return CGSize(
             width: min(desired.width, availableWidth),

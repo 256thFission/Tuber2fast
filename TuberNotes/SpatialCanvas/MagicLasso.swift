@@ -207,6 +207,7 @@ final class MagicLassoInputView: UIView {
     private var appliedInitialPath: [PageNormalizedPoint]?
     private var appliedBoundsSize: CGSize?
     private let boundaryLayer = CAShapeLayer()
+    private let traceAccentLayer = CAShapeLayer()
     private let dimLayer = CAShapeLayer()
 
     override init(frame: CGRect) {
@@ -221,10 +222,17 @@ final class MagicLassoInputView: UIView {
         boundaryLayer.lineWidth = 3
         boundaryLayer.lineJoin = .round
         boundaryLayer.shadowColor = UIColor.systemIndigo.cgColor
-        boundaryLayer.shadowOpacity = 0.65
-        boundaryLayer.shadowRadius = 7
+        boundaryLayer.shadowOpacity = 0.32
+        boundaryLayer.shadowRadius = 4
+        traceAccentLayer.fillColor = UIColor.clear.cgColor
+        traceAccentLayer.strokeColor = UIColor.systemCyan.withAlphaComponent(0.78).cgColor
+        traceAccentLayer.lineWidth = 1.25
+        traceAccentLayer.lineJoin = .round
+        traceAccentLayer.lineCap = .round
+        traceAccentLayer.lineDashPattern = [3, 11]
         layer.addSublayer(dimLayer)
         layer.addSublayer(boundaryLayer)
+        layer.addSublayer(traceAccentLayer)
         accessibilityIdentifier = "magic-lasso-overlay"
     }
 
@@ -234,13 +242,14 @@ final class MagicLassoInputView: UIView {
         super.layoutSubviews()
         dimLayer.frame = bounds
         boundaryLayer.frame = bounds
+        traceAccentLayer.frame = bounds
         guard bounds.width > 0, bounds.height > 0 else { return }
         guard let initialPath else {
             guard appliedInitialPath != nil || appliedBoundsSize != bounds.size else { return }
             appliedInitialPath = nil
             appliedBoundsSize = bounds.size
             captured = []
-            render([], selected: false)
+            render([], selected: false, drawing: false)
             return
         }
         guard initialPath != appliedInitialPath || appliedBoundsSize != bounds.size else { return }
@@ -248,19 +257,19 @@ final class MagicLassoInputView: UIView {
         appliedBoundsSize = bounds.size
         captured = initialPath
         boundaryLayer.strokeColor = UIColor.systemIndigo.cgColor
-        render(initialPath, selected: true)
+        render(initialPath, selected: true, drawing: false)
     }
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         guard isEnabled, let touch = touches.first else { return }
         captured = [normalized(touch.location(in: self))]
-        render(captured, selected: false)
+        render(captured, selected: false, drawing: true)
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
         guard isEnabled, let touch = touches.first else { return }
         captured.append(normalized(touch.location(in: self)))
-        render(captured, selected: false)
+        render(captured, selected: false, drawing: true)
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
@@ -271,25 +280,26 @@ final class MagicLassoInputView: UIView {
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
         captured = []
-        render([], selected: false)
+        render([], selected: false, drawing: false)
     }
 
     private func finish(_ path: [PageNormalizedPoint]) {
         guard let closed = MagicLassoGeometry.closedPath(from: path) else {
             captured = []
             boundaryLayer.strokeColor = UIColor.systemRed.cgColor
-            render(path, selected: false)
+            render(path, selected: false, drawing: false)
             UINotificationFeedbackGenerator().notificationOccurred(.warning)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
                 guard let self else { return }
                 self.boundaryLayer.strokeColor = UIColor.systemIndigo.cgColor
-                self.render([], selected: false)
+                self.render([], selected: false, drawing: false)
             }
             return
         }
         boundaryLayer.strokeColor = UIColor.systemIndigo.cgColor
         captured = closed
-        render(closed, selected: true)
+        render(closed, selected: true, drawing: false)
+        animateLoopSeal()
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         onCapturedPath?(closed, bounds.size)
     }
@@ -301,7 +311,7 @@ final class MagicLassoInputView: UIView {
         )
     }
 
-    private func render(_ points: [PageNormalizedPoint], selected: Bool) {
+    private func render(_ points: [PageNormalizedPoint], selected: Bool, drawing: Bool) {
         let path = UIBezierPath()
         for (index, point) in points.enumerated() {
             let canvas = SpatialCoordinateTransform.pageCanvasPoint(
@@ -311,24 +321,61 @@ final class MagicLassoInputView: UIView {
             let cgPoint = CGPoint(x: canvas.x, y: canvas.y)
             index == 0 ? path.move(to: cgPoint) : path.addLine(to: cgPoint)
         }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
         boundaryLayer.path = path.cgPath
+        traceAccentLayer.path = path.cgPath
         if selected {
             let dim = UIBezierPath(rect: bounds)
             dim.append(path)
             dim.usesEvenOddFillRule = true
             dimLayer.path = dim.cgPath
-            if boundaryLayer.animation(forKey: "magic-halo-pulse") == nil {
-                let pulse = CABasicAnimation(keyPath: "shadowOpacity")
-                pulse.fromValue = 0.35
-                pulse.toValue = 0.95
-                pulse.duration = 0.85
-                pulse.autoreverses = true
-                pulse.repeatCount = .infinity
-                boundaryLayer.add(pulse, forKey: "magic-halo-pulse")
-            }
+            boundaryLayer.shadowOpacity = 0.38
+            traceAccentLayer.opacity = 0.24
         } else {
             dimLayer.path = nil
-            boundaryLayer.removeAnimation(forKey: "magic-halo-pulse")
+            boundaryLayer.shadowOpacity = drawing ? 0.32 : 0
+            traceAccentLayer.opacity = drawing ? 0.72 : 0
         }
+        CATransaction.commit()
+
+        if drawing, !UIAccessibility.isReduceMotionEnabled, !points.isEmpty {
+            if traceAccentLayer.animation(forKey: "magic-trace-drift") == nil {
+                let drift = CABasicAnimation(keyPath: "lineDashPhase")
+                drift.byValue = -14
+                drift.duration = 0.7
+                drift.repeatCount = .infinity
+                drift.timingFunction = CAMediaTimingFunction(name: .linear)
+                traceAccentLayer.add(drift, forKey: "magic-trace-drift")
+            }
+        } else {
+            traceAccentLayer.removeAnimation(forKey: "magic-trace-drift")
+        }
+    }
+
+    private func animateLoopSeal() {
+        guard !UIAccessibility.isReduceMotionEnabled else { return }
+
+        let seal = CAAnimationGroup()
+        let drawClosedSegment = CABasicAnimation(keyPath: "strokeEnd")
+        drawClosedSegment.fromValue = 0.9
+        drawClosedSegment.toValue = 1
+        let settleWidth = CABasicAnimation(keyPath: "lineWidth")
+        settleWidth.fromValue = 4.5
+        settleWidth.toValue = boundaryLayer.lineWidth
+        let settleGlow = CABasicAnimation(keyPath: "shadowOpacity")
+        settleGlow.fromValue = 0.72
+        settleGlow.toValue = boundaryLayer.shadowOpacity
+        seal.animations = [drawClosedSegment, settleWidth, settleGlow]
+        seal.duration = 0.24
+        seal.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        boundaryLayer.add(seal, forKey: "magic-loop-seal")
+
+        let accentSeal = CABasicAnimation(keyPath: "opacity")
+        accentSeal.fromValue = 0.82
+        accentSeal.toValue = traceAccentLayer.opacity
+        accentSeal.duration = 0.24
+        accentSeal.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        traceAccentLayer.add(accentSeal, forKey: "magic-loop-seal-accent")
     }
 }

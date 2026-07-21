@@ -22,6 +22,7 @@ enum AgentEvent: Equatable, Sendable {
 enum ProductToolName: String, Codable, Equatable, Sendable {
     case searchTextbook = "search_textbook"
     case placePins = "place_pins"
+    case switchPage = "switch_page"
 }
 
 struct ToolInvocationSummary: Identifiable, Codable, Equatable, Sendable {

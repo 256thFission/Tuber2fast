@@ -65,58 +65,37 @@ struct PinChatTurnView: View {
     let isFocused: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 14) {
             if let userPrompt, !userPrompt.isEmpty {
                 HStack(alignment: .top) {
-                    Spacer(minLength: 56)
-                    VStack(alignment: .trailing, spacing: 4) {
-                        Text("You")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                        Text(verbatim: userPrompt)
-                            .font(.body)
-                            .textSelection(.enabled)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 10)
-                            .foregroundStyle(.white)
-                            .background(Color.indigo.opacity(0.82), in: RoundedRectangle(cornerRadius: 16))
-                    }
+                    Spacer(minLength: 52)
+                    Text(verbatim: userPrompt)
+                        .font(.body)
+                        .textSelection(.enabled)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .foregroundStyle(.primary)
+                        .background(.white.opacity(0.11), in: RoundedRectangle(cornerRadius: 16))
                 }
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel("You: \(userPrompt)")
             }
 
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 6) {
-                        Text("Assistant")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                        if isFocused {
-                            Label("Focused turn", systemImage: "scope")
-                                .font(.caption2.weight(.semibold))
-                                .foregroundStyle(.indigo)
-                        }
-                    }
-                    MarkdownMessageView(source: assistantMarkdown)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 12)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(.white.opacity(0.075), in: RoundedRectangle(cornerRadius: 16))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 16)
-                                .strokeBorder(isFocused ? Color.indigo.opacity(0.8) : .clear, lineWidth: 2)
-                        }
-                }
-                Spacer(minLength: 40)
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "sparkles")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 24, height: 24)
+                    .background(.white.opacity(0.08), in: Circle())
+                MarkdownMessageView(source: assistantMarkdown)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
             .accessibilityElement(children: .contain)
-            .accessibilityHint(isFocused ? "Focused assistant turn" : "Assistant response")
+            .accessibilityHint("Assistant response")
         }
-        .padding(12)
-        .background(isFocused ? Color.indigo.opacity(0.08) : .clear, in: RoundedRectangle(cornerRadius: 18))
+        .padding(.vertical, 8)
         .accessibilityElement(children: .contain)
-        .accessibilityIdentifier(isFocused ? "pin-chat-focused-turn" : "pin-chat-turn")
+        .accessibilityIdentifier("pin-chat-turn")
     }
 }
 
@@ -127,15 +106,12 @@ struct PinChatPendingTurnView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Spacer(minLength: 40)
-                VStack(alignment: .trailing, spacing: 4) {
-                    Text("You").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                    Text(verbatim: userPrompt)
-                        .textSelection(.enabled)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 10)
-                        .foregroundStyle(.white)
-                        .background(Color.indigo.opacity(0.82), in: RoundedRectangle(cornerRadius: 16))
-                }
+                Text(verbatim: userPrompt)
+                    .textSelection(.enabled)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .foregroundStyle(.primary)
+                    .background(.white.opacity(0.11), in: RoundedRectangle(cornerRadius: 16))
             }
             HStack(spacing: 8) {
                 ProgressView()
@@ -253,7 +229,11 @@ struct PinChatComposer: View {
             }
 
             HStack(alignment: .bottom, spacing: 10) {
-                TextField("Ask a follow-up…", text: $text, axis: .vertical)
+                TextField(
+                    continuationLabel == nil ? "Ask a question…" : "Ask a follow-up…",
+                    text: $text,
+                    axis: .vertical
+                )
                     .lineLimit(1...6)
                     .focused($isComposerFocused)
                     .textFieldStyle(.plain)

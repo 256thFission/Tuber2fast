@@ -90,15 +90,53 @@ class AgentLayerInteractionContractTests(unittest.TestCase):
         self.assertIn("let destinationLayerIndex", view_model)
         self.assertIn("$0.id == layerID", view_model)
 
-    def test_normal_pin_continue_opens_the_matching_tree_node(self):
+    def test_normal_pin_continue_opens_the_matching_sidebar_conversation(self):
         view = (NOTEBOOK / "NotebookView.swift").read_text()
         overlay = (PINS / "PinOverlayView.swift").read_text()
 
         self.assertIn("allowsConversationRequests: true", view)
         self.assertIn("selectedAgentParentThreadID = pin.threadID", view)
-        self.assertIn("showAgentChatTab = true", view)
-        self.assertIn("showAgentSidebar = false", view)
-        self.assertIn('Label("Continue", systemImage: "bubble.left.and.bubble.right.fill")', overlay)
+        self.assertIn("withAnimation { showAgentSidebar = true }", view)
+        self.assertNotIn("showAgentChatTab", view)
+        self.assertIn('.accessibilityLabel("Open Pin Chat")', overlay)
+
+    def test_sidebar_chat_has_adjacent_page_context_tools_and_model_choice(self):
+        view_model = (NOTEBOOK / "NotebookViewModel.swift").read_text()
+        sidebar = (NOTEBOOK / "AgentSidebarView.swift").read_text()
+        components = (NOTEBOOK / "PinChatComponents.swift").read_text()
+        insight = (NOTEBOOK / "AgentInsight.swift").read_text()
+
+        self.assertIn('"Ask a question…" : "Ask a follow-up…"', components)
+        self.assertNotIn('"Ask about these pages…"', components)
+        self.assertIn("private func makeAgentPageImages()", view_model)
+        self.assertIn("currentIndex - 1", view_model)
+        self.assertIn("currentIndex + 1", view_model)
+        self.assertIn('"name": "place_pins"', insight)
+        self.assertIn('"name": "switch_page"', insight)
+        self.assertIn("applyAgentToolCalls(", view_model)
+        self.assertIn("currentIndex == originatingIndex", view_model)
+        self.assertIn('accessibilityIdentifier("sidebar-model-selector")', sidebar)
+        self.assertIn("OpenAICodexConstants.supportedModels", sidebar)
+        self.assertNotIn('Label("Focused turn"', components)
+        self.assertNotIn('Color.indigo.opacity(0.08)', components)
+        self.assertIn('.accessibilityIdentifier("pin-chat-turn")', components)
+
+    def test_collapsed_pins_do_not_cover_page_content_with_labels(self):
+        contract = (PINS / "Pin.swift").read_text()
+        overlay = (PINS / "PinOverlayView.swift").read_text()
+
+        self.assertIn("let showsLabel = expandedAnnotationID == placement.id", overlay)
+        self.assertIn("isExpanded ? CGSize(width: 320, height: 248) : .zero", contract)
+        self.assertIn("isExpanded ? CGSize(width: 310, height: 230) : .zero", contract)
+
+    def test_expanded_pin_card_has_opaque_hierarchy_and_explicit_dismissal(self):
+        overlay = (PINS / "PinOverlayView.swift").read_text()
+
+        self.assertIn('Color(red: 0.075, green: 0.085, blue: 0.12).opacity(0.97)', overlay)
+        self.assertIn('.accessibilityLabel("Close Pin")', overlay)
+        self.assertIn('.scrollIndicators(.visible)', overlay)
+        self.assertNotIn(".background(.ultraThinMaterial", overlay)
+        self.assertNotIn('Text("Drag the Pin dot to move")', overlay)
 
 
 if __name__ == "__main__":

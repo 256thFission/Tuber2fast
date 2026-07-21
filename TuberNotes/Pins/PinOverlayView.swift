@@ -68,9 +68,7 @@ struct PinOverlayView: View {
             ZStack(alignment: .topLeading) {
                 ForEach(placements, id: \.id) { placement in
                     if let annotation = annotationsByID[placement.id] {
-                        let showsLabel = labelBehavior != .pageAnchoredCompact
-                            || expandedAnnotationID == nil
-                            || expandedAnnotationID == placement.id
+                        let showsLabel = expandedAnnotationID == placement.id
                         if showsLabel {
                             PinConnector(anchor: placement.anchor, labelFrame: placement.labelFrame)
                         }
@@ -104,7 +102,7 @@ struct PinOverlayView: View {
                                 annotation: annotation,
                                 isExpanded: annotation.id == expandedAnnotationID,
                                 isCompact: labelBehavior == .pageAnchoredCompact,
-                                canMove: canMovePins,
+                                onDismiss: { toggle(annotation) },
                                 onConversationRequested: conversationAction(for: annotation),
                                 onCitationSelected: { citation in
                                     onEvent?(.citationSelected(annotationID: annotation.id, citationID: citation.id))
@@ -292,13 +290,17 @@ private struct PinAnchor: View {
                 PinHoldProgressCue()
             }
             Circle()
-                .fill(style.color.opacity(0.20))
-                .frame(width: 30, height: 30)
+                .fill(style.color.opacity(isExpanded ? 0.28 : 0.18))
+                .frame(width: isExpanded ? 34 : 32, height: isExpanded ? 34 : 32)
             Circle()
                 .fill(style.color)
-                .frame(width: 18, height: 18)
+                .frame(width: isExpanded ? 22 : 20, height: isExpanded ? 22 : 20)
+                .overlay {
+                    Circle()
+                        .stroke(.white.opacity(0.72), lineWidth: 1)
+                }
             Image(systemName: style.symbol)
-                .font(.system(size: 9, weight: .bold))
+                .font(.system(size: 10, weight: .bold))
                 .foregroundStyle(.white)
         }
         .frame(width: 44, height: 44)
@@ -440,52 +442,56 @@ private struct PinCard: View {
     let annotation: PageAnnotation
     let isExpanded: Bool
     let isCompact: Bool
-    let canMove: Bool
+    let onDismiss: () -> Void
     let onConversationRequested: (() -> Void)?
     let onCitationSelected: (Citation) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 9) {
-                Image(systemName: style.symbol)
+            HStack(spacing: 10) {
+                HStack(spacing: 10) {
+                    ZStack {
+                        Circle()
+                            .fill(style.color.opacity(0.22))
+                        Image(systemName: style.symbol)
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(style.color)
+                    }
+                    .frame(width: 28, height: 28)
+                    Text(MarkdownTextProjection.plainText(from: annotation.teaser, limit: 120))
+                        .font((isCompact ? Font.callout : Font.body).weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(MarkdownTextProjection.plainText(from: annotation.teaser, limit: 160))
+                .accessibilityValue(statusAccessibilityValue)
+                .accessibilityIdentifier("pin-card-\(annotation.id.uuidString)")
+                if let onConversationRequested {
+                    Button(action: onConversationRequested) {
+                        Image(systemName: "bubble.left.and.bubble.right.fill")
+                            .frame(width: 30, height: 30)
+                    }
+                    .buttonStyle(.plain)
                     .foregroundStyle(style.color)
-                    .frame(width: 18)
-                Text(MarkdownTextProjection.plainText(from: annotation.teaser, limit: 120))
-                    .font((isCompact ? Font.footnote : Font.subheadline).weight(.semibold))
-                    .foregroundStyle(.primary)
-                    .lineLimit(isExpanded ? 2 : 1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityLabel("Open Pin Chat")
+                }
+                Button(action: onDismiss) {
+                    Image(systemName: "xmark")
+                        .font(.caption.weight(.bold))
+                        .frame(width: 30, height: 30)
+                        .background(.white.opacity(0.10), in: Circle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .accessibilityLabel("Close Pin")
             }
-            .padding(.horizontal, isCompact ? 8 : 10)
-            .frame(minHeight: isCompact ? 38 : 48)
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel(MarkdownTextProjection.plainText(from: annotation.teaser, limit: 160))
-            .accessibilityValue(statusAccessibilityValue)
-            .accessibilityIdentifier("pin-card-\(annotation.id.uuidString)")
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .frame(minHeight: 52)
 
             if isExpanded {
-                if !isCompact, canMove || onConversationRequested != nil {
-                    Divider()
-                    HStack(spacing: 10) {
-                        if canMove {
-                            Label("Drag the Pin dot to move", systemImage: "arrow.up.and.down.and.arrow.left.and.right")
-                                .font(.caption.weight(.medium))
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer(minLength: 4)
-                        if let onConversationRequested {
-                            Button(action: onConversationRequested) {
-                                Label("Continue", systemImage: "bubble.left.and.bubble.right.fill")
-                                    .font(.caption.weight(.semibold))
-                            }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                            .accessibilityLabel("Continue conversation")
-                        }
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 7)
-                }
                 Divider()
                 ScrollView {
                     VStack(alignment: .leading, spacing: 10) {
@@ -505,18 +511,24 @@ private struct PinCard: View {
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(10)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .scrollIndicators(.visible)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background(
+            Color(red: 0.075, green: 0.085, blue: 0.12).opacity(0.97),
+            in: RoundedRectangle(cornerRadius: 18, style: .continuous)
+        )
         .overlay {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(style.color.opacity(0.40), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(.white.opacity(0.13), lineWidth: 1)
         }
-        .shadow(color: .black.opacity(0.10), radius: 7, y: 3)
+        .shadow(color: .black.opacity(0.28), radius: 16, y: 7)
+        .environment(\.colorScheme, .dark)
     }
 
     @ViewBuilder
