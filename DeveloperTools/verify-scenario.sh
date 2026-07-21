@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+echo "DISABLED: Debug scenario verification does not represent the actual TuberNotes implementation. Use the normal Release app on the explicitly pinned iPad." >&2
+exit 64
+
 # Lightweight physical-iPad TuberNotes scenario verification.
 # Builds, installs, launches a named DEBUG scenario, pulls compact runtime
 # evidence, and reports mechanical pass/fail. Visible inspection and Apple

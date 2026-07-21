@@ -1572,7 +1572,7 @@ placeholder.
 
 ## Proposed line — PC-18: Reasoning Pins — Calculus Check + Ochem Explain
 
-Status: **implemented and Release-delivered — live golden streaks and Phillip verdict pending**
+Status: **implementation paused — obsolete fixture evidence invalidated; actual Release-app verdict pending**
 
 Target branch: `main`
 
@@ -1600,6 +1600,11 @@ and a concrete return contract.
 
 ### Session log
 
+- 2026-07-21 — Phillip declared the Debug/fixture verification surface
+  non-representative and paused PC-18. Its prior results are invalidated as
+  acceptance evidence. `AGENTS.md` now requires the actual normal Release app;
+  Debug scenario routing and the scenario, structured-review, and Pencil
+  fixture entry points are disabled. No further PC-18 verification ran.
 - 2026-07-21 — `CONTRACT:` extend `SelectionArtifact` with an optional,
   orientation-only context crop and introduce the versioned
   `InterventionOutcome`/typed Calculus and Organic Chemistry evidence contract.

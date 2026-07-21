@@ -1,6 +1,6 @@
 # PC-18 — Reasoning Pins: Calculus Check + Ochem Explain
 
-Status: **implemented and Release-delivered — live golden streaks and Phillip verdict pending**
+Status: **implementation paused — obsolete fixture evidence invalidated; actual Release-app verdict pending**
 
 Target branch: `main`
 
@@ -832,6 +832,13 @@ revision. This rewrite retains their accepted constraints:
 
 ## Session log
 
+- 2026-07-21 — Phillip paused PC-18 and rejected the Debug/fixture verification
+  surface as non-representative of the actual implementation. All prior results
+  from that surface are invalidated as acceptance evidence. The app now always
+  enters its normal Library flow, and the scenario, structured-review, and
+  Pencil fixture tool entry points fail closed. Future verification is limited
+  to the normal Release app on Phillip's explicitly pinned iPad; none ran in
+  this paused session.
 - 2026-07-21 — `CONTRACT:` accepted optional orientation-only
   `SelectionArtifact.contextCrop` and the versioned typed intervention outcome
   contract. Coordinates remain tight-crop-relative; only spatial guidance may

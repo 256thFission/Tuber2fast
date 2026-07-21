@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate and render the human-facing part of a structured review queue."""
+"""DISABLED: obsolete structured-review tooling."""
 
 from __future__ import annotations
 
@@ -98,6 +98,14 @@ def render(queue: dict, step_id: str) -> str:
 
 
 def main() -> int:
+    print(
+        "DISABLED: structured review sessions do not represent the actual TuberNotes implementation. "
+        "Use the normal Release app on the explicitly pinned iPad.",
+        file=sys.stderr,
+    )
+    return 64
+
+    # Retained temporarily for repository history; this path is unreachable.
     parser = argparse.ArgumentParser()
     parser.add_argument("queue", type=Path)
     parser.add_argument("--step", help="render one human-facing step")

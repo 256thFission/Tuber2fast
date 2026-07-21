@@ -1,9 +1,7 @@
-"""Development-only human review and Pencil fixture tooling for TuberNotes.
+"""DISABLED: obsolete feedback and Pencil fixture tooling for TuberNotes.
 
-Conversational feedback threads persist messages, attachments, queue state,
-and automatic-wake cursors. The separate pen-fixture protocol captures and
-replays authentic Pencil input. Humans complete both workflows entirely in the
-Debug app; agents collect durable evidence without Mac-side human steps.
+The retained implementation is historical only. Its entry point fails closed;
+validate behavior in the normal Release app on the explicitly pinned iPad.
 """
 
 from __future__ import annotations
@@ -2431,6 +2429,10 @@ async def cancel_review_run(feedback_thread_id: str, owner_token: str, reason: s
 
 
 def main() -> None:
+    raise SystemExit(
+        "DISABLED: fixture-driven feedback does not represent the actual TuberNotes implementation. "
+        "Use the normal Release app on the explicitly pinned iPad."
+    )
     mcp.run()
 
 
