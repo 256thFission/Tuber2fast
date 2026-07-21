@@ -1929,10 +1929,12 @@ Status: **implementation merged — Release build blocked; Phillip's verdict pen
   append within that Pin. A fork icon beside each agent response selects the
   parent for a message-level branch and never creates another spatial Pin.
 - 2026-07-21 — Focused host contracts pass 29/29 and `git diff --check`
-  passes. Phillip reported the physical iPad is disconnected and requested a
-  simulator; the repository device contract prohibits simulator fallback, so
-  no Release build/install/launch was attempted. Canonical physical-device
-  delivery and Phillip's normal-app verdict remain pending. The full host suite
+  passes. Phillip reported the physical iPad is disconnected and explicitly
+  directed a compile-only simulator override. The generic iOS Simulator Release
+  build succeeded for arm64 and x86_64; log:
+  `tmp/build/merge-sive-dev-simulator/build.log`. No simulator launch or
+  behavioral acceptance was performed. Canonical physical-device delivery and
+  Phillip's normal-app verdict remain pending. The full host suite
   passes 87/94; seven stale/unrelated assertions remain in agent-content,
   provider-access, Magic-Lasso routing, scroll-direction, tool-selection, and
   verifier-truthfulness contracts. Full log:
