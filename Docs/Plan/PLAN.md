@@ -837,6 +837,12 @@ persisted.
   before account selection. Generic unsigned Release build succeeded under
   `tmp/build/pc10-keychain-refresh/`; no harness, device action, automated
   account login, or provider request ran. Phillip owns the live refresh verdict.
+- 2026-07-21 — Product commit `44c06f2` passed exact-device preflight, fresh
+  signed Release build, install, and normal launch on Phillip's iPad
+  `2DD98ECC-A26A-5730-943B-01DD63DC4117`. Evidence is under
+  `tmp/build/pc10-keychain-refresh-device/`. No scenario, automated account
+  action, provider call, or visual verifier ran; Phillip owns the live refresh
+  verdict.
 
 ## Active line — PC-11: OpenAI-backed drawing refinement
 

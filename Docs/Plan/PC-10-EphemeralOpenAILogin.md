@@ -344,6 +344,12 @@ demo. Never invent another unofficial login or copy credentials from another app
   `tmp/build/pc10-keychain-refresh/DerivedData/Build/Products/Release-iphoneos/TuberNotes.app`.
   No scenario/test harness, device action, automated login, or provider request
   ran; Phillip owns the live refresh verdict.
+- 2026-07-21 — Deployed product commit `44c06f2` to exact physical iPad
+  `2DD98ECC-A26A-5730-943B-01DD63DC4117`. Preflight, fresh signed Release build,
+  install, and normal no-scenario launch succeeded. Artifact and logs are under
+  `tmp/build/pc10-keychain-refresh-device/`. No automated login, refresh,
+  provider call, scenario, or visual verifier ran; Phillip owns the relaunch and
+  silent-refresh verdict.
 - 2026-07-20 — Planned an ephemeral Debug-only device-code login from current
   `main` at `05d4af3`. Chose relog on launch/expiry and no refresh persistence.
   Scoped the milestone to the normal Agentic Layer insight path. At Phillip's
