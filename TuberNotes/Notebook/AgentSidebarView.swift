@@ -159,7 +159,7 @@ struct AgentSidebarView: View {
                     parentThreadID: selectedParentThreadID
                 )
             } else {
-                vm.placeGuidancePins(question: prompt.isEmpty ? nil : prompt)
+                vm.analyzeCurrentPage(question: prompt.isEmpty ? nil : prompt)
             }
         } label: {
             Label(analyzeTitle, systemImage: "mappin.and.ellipse")

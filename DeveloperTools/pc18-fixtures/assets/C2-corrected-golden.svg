@@ -1,0 +1,3 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800" viewBox="0 0 1200 800">
+<rect width="1200" height="800" fill="#fffdf8"/><style>text{fill:#182033;font-family:Helvetica,Arial,sans-serif}.ink{font-family:"Marker Felt","Comic Sans MS",cursive}.small{font-size:30px}.main{font-size:54px}.title{font-size:34px;font-weight:bold}.arrow{fill:none;stroke:#182033;stroke-width:6;stroke-linecap:round}</style><text x="110" y="110" class="title ink">Calc I — Check the selected work</text><text x="150" y="230" class="main ink">∫ x e^(x²) dx</text><text x="150" y="345" class="main ink">u = x²      du = 2x dx</text><text x="150" y="460" class="main ink">½ ∫ eᵘ du</text><text x="150" y="575" class="main ink">½e^(x²) + C</text>
+</svg>

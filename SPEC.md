@@ -393,6 +393,7 @@ struct SelectionArtifact: Identifiable, Sendable {
     let lassoPath: [PageNormalizedPoint]
     let pageBounds: PageNormalizedRect
     let crop: SelectionCrop
+    let contextCrop: SelectionCrop?
     let context: SelectionContext
 }
 
@@ -421,6 +422,9 @@ Requirements:
 - Crop-normalized coordinates refer to the complete encoded image, not the lasso polygon's internal bounding shape.
 - The artifact remains valid for Retry even if the viewport changes.
 - Nearby text is optional supplementary context and must not replace the image.
+- PC-18 uses a lossless, coordinate-bearing tight crop and may include one
+  orientation-only context crop. Provider coordinates always refer to the tight
+  crop; context pixels can never justify a target outside its bounds.
 
 ## 9. Pin and annotation contract
 
@@ -608,6 +612,34 @@ Deferred tools:
 - Cancellation stops new events; already completed Pins may remain only if the user has seen them.
 - Late events for an inactive or mismatched investigation ID are ignored and logged.
 - Provider diagnostics must not expose secrets or selected page content in normal console logs.
+
+### 10.6 PC-18 intervention decision
+
+Check and Explain use one versioned, schema-constrained multimodal decision:
+
+```swift
+enum InterventionOutcome: Sendable, Equatable {
+    case spatialGuidance(GroundedIntervention, basis: InterventionBasis)
+    case transientConfirmation(TransientConfirmation, basis: CalculusBasis)
+    case needsInput(NeedsInput)
+    case noAction(NoAction)
+}
+```
+
+`InterventionBasis` is either a typed `CalculusBasis` or
+`OrganicChemistryBasis`. Calculus correctness requires observed work, the
+expected relationship/result, and independent derivative evidence for a
+confirmation. Organic-chemistry explanation requires electron source,
+electrophilic destination, leaving group, formed/broken bonds, and observed
+electron-flow edges. Schema shape alone is insufficient; the bounded semantic
+validator rejects unsupported or contradictory claims.
+
+Only `spatialGuidance` converts to one `PinDraft` and creates a persisted
+annotation/chat root. The other three outcomes are successful, selection-
+attached, transient results and leave notebook persistence unchanged. Empty-Pin
+success is therefore first-class. Notebook rechecks cancellation, login
+generation, selection identity, page content, destination layer existence and
+visibility, and crop-to-page containment before applying any spatial result.
 
 ## 11. Knowledge architecture
 

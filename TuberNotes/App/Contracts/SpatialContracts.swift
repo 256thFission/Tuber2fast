@@ -64,6 +64,9 @@ struct SelectionArtifact: Identifiable, Equatable, Sendable {
     let lassoPath: [PageNormalizedPoint]
     let pageBounds: PageNormalizedRect
     let crop: SelectionCrop
+    /// Optional orientation-only evidence. Provider coordinates always refer
+    /// to `crop`; this image can never justify a target outside `crop.pageBounds`.
+    var contextCrop: SelectionCrop? = nil
     let context: SelectionContext
 }
 

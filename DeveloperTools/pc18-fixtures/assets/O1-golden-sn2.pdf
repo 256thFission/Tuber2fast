@@ -1,0 +1,50 @@
+%PDF-1.4
+%PC18
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 792 612] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>
+endobj
+4 0 obj
+<< /Length 707 >>
+stream
+1 1 0.97 rg 0 0 792 612 re f
+0.09 0.13 0.20 rg
+BT /F1 22 Tf 54 535 Td (Intro Ochem - Explain electron flow) Tj ET
+BT /F1 29 Tf 62 270 Td (HO) Tj ET
+BT /F1 16 Tf 102 284 Td (-) Tj ET
+BT /F1 29 Tf 128 270 Td (+  CH) Tj ET
+BT /F1 16 Tf 220 260 Td (3) Tj ET
+BT /F1 29 Tf 230 270 Td (CH) Tj ET
+BT /F1 16 Tf 275 260 Td (2) Tj ET
+BT /F1 29 Tf 286 270 Td (-Br  ->  CH) Tj ET
+BT /F1 16 Tf 440 260 Td (3) Tj ET
+BT /F1 29 Tf 450 270 Td (CH) Tj ET
+BT /F1 16 Tf 495 260 Td (2) Tj ET
+BT /F1 29 Tf 506 270 Td (-OH  +  Br) Tj ET
+BT /F1 16 Tf 650 284 Td (-) Tj ET
+0.09 0.13 0.20 RG 3 w 90 315 m 150 400 250 400 327 316 c S
+327 316 m 312 323 l 319 337 l f
+390 316 m 455 395 520 395 585 317 c S
+585 317 m 569 323 l 577 338 l f
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000015 00000 n 
+0000000064 00000 n 
+0000000121 00000 n 
+0000000247 00000 n 
+0000001005 00000 n 
+trailer << /Size 6 /Root 1 0 R >>
+startxref
+1075
+%%EOF

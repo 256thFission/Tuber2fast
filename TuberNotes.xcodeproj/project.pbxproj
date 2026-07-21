@@ -35,6 +35,10 @@
 		A0000000000000000000001A /* OpenAICodexLoginSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000011A /* OpenAICodexLoginSession.swift */; };
 		E10000000000000000000001 /* OpenAICodexResponsesTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = E10000000000000000000101 /* OpenAICodexResponsesTransport.swift */; };
 		E10000000000000000000002 /* OpenAICodexPinClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = E10000000000000000000102 /* OpenAICodexPinClient.swift */; };
+		E18000000000000000000001 /* InterventionOutcome.swift in Sources */ = {isa = PBXBuildFile; fileRef = E18000000000000000000101 /* InterventionOutcome.swift */; };
+		E18000000000000000000002 /* InterventionValidator.swift in Sources */ = {isa = PBXBuildFile; fileRef = E18000000000000000000102 /* InterventionValidator.swift */; };
+		E18000000000000000000003 /* SelectionEvidenceRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = E18000000000000000000103 /* SelectionEvidenceRenderer.swift */; };
+		E18000000000000000000004 /* InterventionContractChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = E18000000000000000000104 /* InterventionContractChecks.swift */; };
 		C00000000000000000000001 /* DocumentStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00000000000000000000101 /* DocumentStore.swift */; };
 		D10000000000000000000001 /* DrawingRefinementClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000101 /* DrawingRefinementClient.swift */; };
 		D10000000000000000000002 /* ConversationLayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000102 /* ConversationLayer.swift */; };
@@ -93,6 +97,10 @@
 		A0000000000000000000011A /* OpenAICodexLoginSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAICodexLoginSession.swift; sourceTree = "<group>"; };
 		E10000000000000000000101 /* OpenAICodexResponsesTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAICodexResponsesTransport.swift; sourceTree = "<group>"; };
 		E10000000000000000000102 /* OpenAICodexPinClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAICodexPinClient.swift; sourceTree = "<group>"; };
+		E18000000000000000000101 /* InterventionOutcome.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InterventionOutcome.swift; sourceTree = "<group>"; };
+		E18000000000000000000102 /* InterventionValidator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InterventionValidator.swift; sourceTree = "<group>"; };
+		E18000000000000000000103 /* SelectionEvidenceRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectionEvidenceRenderer.swift; sourceTree = "<group>"; };
+		E18000000000000000000104 /* InterventionContractChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InterventionContractChecks.swift; sourceTree = "<group>"; };
 		C00000000000000000000101 /* DocumentStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentStore.swift; sourceTree = "<group>"; };
 		D10000000000000000000101 /* DrawingRefinementClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DrawingRefinementClient.swift; sourceTree = "<group>"; };
 		D10000000000000000000102 /* ConversationLayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationLayer.swift; sourceTree = "<group>"; };
@@ -201,6 +209,9 @@
 				A0000000000000000000011A /* OpenAICodexLoginSession.swift */,
 				E10000000000000000000101 /* OpenAICodexResponsesTransport.swift */,
 				E10000000000000000000102 /* OpenAICodexPinClient.swift */,
+				E18000000000000000000101 /* InterventionOutcome.swift */,
+				E18000000000000000000102 /* InterventionValidator.swift */,
+				E18000000000000000000104 /* InterventionContractChecks.swift */,
 				D10000000000000000000101 /* DrawingRefinementClient.swift */,
 			);
 			path = AgentHarness;
@@ -271,6 +282,7 @@
 				D1000000000000000000010F /* NotebookToolbar.swift */,
 				D10000000000000000000110 /* NotebookView.swift */,
 				D10000000000000000000111 /* NotebookViewModel.swift */,
+				E18000000000000000000103 /* SelectionEvidenceRenderer.swift */,
 				D10000000000000000000112 /* PageFlipOverlay.swift */,
 				D10000000000000000000113 /* PageStripView.swift */,
 				D10000000000000000000114 /* PageTemplate.swift */,
@@ -378,6 +390,9 @@
 				A0000000000000000000001A /* OpenAICodexLoginSession.swift in Sources */,
 				E10000000000000000000001 /* OpenAICodexResponsesTransport.swift in Sources */,
 				E10000000000000000000002 /* OpenAICodexPinClient.swift in Sources */,
+				E18000000000000000000001 /* InterventionOutcome.swift in Sources */,
+				E18000000000000000000002 /* InterventionValidator.swift in Sources */,
+				E18000000000000000000004 /* InterventionContractChecks.swift in Sources */,
 				C00000000000000000000001 /* DocumentStore.swift in Sources */,
 				D10000000000000000000001 /* DrawingRefinementClient.swift in Sources */,
 				D10000000000000000000002 /* ConversationLayer.swift in Sources */,
@@ -397,6 +412,7 @@
 				D1000000000000000000000F /* NotebookToolbar.swift in Sources */,
 				D10000000000000000000010 /* NotebookView.swift in Sources */,
 				D10000000000000000000011 /* NotebookViewModel.swift in Sources */,
+				E18000000000000000000003 /* SelectionEvidenceRenderer.swift in Sources */,
 				D10000000000000000000012 /* PageFlipOverlay.swift in Sources */,
 				D10000000000000000000013 /* PageStripView.swift in Sources */,
 				D10000000000000000000014 /* PageTemplate.swift in Sources */,

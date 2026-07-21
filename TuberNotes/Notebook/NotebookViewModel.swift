@@ -9,6 +9,12 @@ enum NotebookPageTurnDirection {
     case backward
 }
 
+struct InterventionNotice: Equatable {
+    enum Style: Equatable { case confirmation, needsInput, noAction }
+    let message: String
+    let style: Style
+}
+
 @MainActor
 final class NotebookViewModel: ObservableObject {
     @Published var notebook: Notebook
@@ -53,6 +59,7 @@ final class NotebookViewModel: ObservableObject {
     // Agentic Layer questions
     @Published var isAnalyzing = false
     @Published var agentError: String?
+    @Published var interventionNotice: InterventionNotice?
     @Published private(set) var newestAgentThreadID: UUID?
 
     private let store: NotebookStore
@@ -62,6 +69,7 @@ final class NotebookViewModel: ObservableObject {
     private var lastAnalysisParentThreadID: UUID?
     private var lastGuidanceQuestion: String?
     private var lastGuidanceSelection: SelectionArtifact?
+    private var lastInterventionIntent: InvestigationIntent?
 
     init(notebook: Notebook, store: NotebookStore) {
         self.notebook = notebook
@@ -657,9 +665,9 @@ final class NotebookViewModel: ObservableObject {
     /// The normal Release hero path: analyze the lasso crop, receive strict
     /// crop-normalized drafts, and persist only page-normalized annotations.
     /// No AI request mutates ink, images, or lasso geometry.
-    func placeGuidancePins(
+    func requestIntervention(
         selection suppliedSelection: SelectionArtifact? = nil,
-        question: String? = nil
+        intent: InvestigationIntent
     ) {
         guard !isAnalyzing else { return }
         guard isAgenticLayersActive,
@@ -684,42 +692,89 @@ final class NotebookViewModel: ObservableObject {
         }
 
         let layerID = notebook.agenticLayers[layerIndex].id
-        let trimmedQuestion = question?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
-        lastGuidanceQuestion = question
+        lastGuidanceQuestion = nil
         lastGuidanceSelection = selection
+        lastInterventionIntent = intent
         isAnalyzing = true
         agentError = nil
+        interventionNotice = nil
         let client = OpenAICodexPinClient(route: route)
         let generation = client.generation
+        let originatingPage = currentPage
+        let selectionID = selection.id
         analysisTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let drafts = try await client.placePins(for: selection, question: trimmedQuestion)
+                let outcome = try await client.intervene(for: selection, intent: intent)
                 guard !Task.isCancelled,
-                      OpenAICodexLoginSession.shared.isCurrent(generation: generation)
+                      OpenAICodexLoginSession.shared.isCurrent(generation: generation),
+                      lastGuidanceSelection?.id == selectionID,
+                      notebook.pages.first(where: { $0.id == selection.pageID }) == originatingPage
                 else {
                     isAnalyzing = false
                     analysisTask = nil
                     return
                 }
-                guard let destinationLayerIndex = notebook.agenticLayers.firstIndex(where: { $0.id == layerID }) else {
+                guard let destinationLayerIndex = notebook.agenticLayers.firstIndex(where: {
+                    $0.id == layerID && $0.isVisible
+                }) else {
                     agentError = "That Agentic Layer was removed before guidance completed."
                     isAnalyzing = false
                     analysisTask = nil
                     return
                 }
-                let annotations = drafts.compactMap { self.annotation(fromGuidanceDraft: $0, selection: selection) }
-                guard annotations.count == drafts.count, !annotations.isEmpty else {
-                    agentError = "The guidance response contained invalid Pin locations."
-                    isAnalyzing = false
-                    analysisTask = nil
-                    return
+                switch outcome {
+                case let .spatialGuidance(guidance, _):
+                    let draft = PinDraft(
+                        id: UUID(),
+                        target: guidance.target,
+                        targetRegion: nil,
+                        kind: guidance.kind,
+                        teaser: guidance.teaser,
+                        body: guidance.body + (guidance.studyCue.map { "\n\n\($0)" } ?? ""),
+                        citations: []
+                    )
+                    guard let annotation = self.annotation(fromGuidanceDraft: draft, selection: selection) else {
+                        agentError = "The guidance response contained an invalid Pin location."
+                        isAnalyzing = false
+                        analysisTask = nil
+                        return
+                    }
+                    notebook.agenticLayers[destinationLayerIndex].conversations.append(annotation)
+                    newestAgentThreadID = annotation.threadID
+                    persistNow()
+                case let .transientConfirmation(confirmation, _):
+                    let notice = InterventionNotice(
+                        message: confirmation.message,
+                        style: .confirmation
+                    )
+                    interventionNotice = notice
+                    Task { [weak self] in
+                        try? await Task.sleep(for: .seconds(3))
+                        guard self?.interventionNotice == notice else { return }
+                        self?.interventionNotice = nil
+                    }
+                case let .needsInput(needsInput):
+                    interventionNotice = InterventionNotice(
+                        message: needsInput.message,
+                        style: .needsInput
+                    )
+                case let .noAction(noAction):
+                    let message = switch noAction.reason {
+                    case .noRelevantContent:
+                        "There isn’t a reasoning step to annotate in this selection."
+                    case .unsupportedIntent:
+                        "That action isn’t supported for this selection."
+                    case .unsupportedContent:
+                        "This selection is outside the supported reasoning examples."
+                    }
+                    interventionNotice = InterventionNotice(
+                        message: message,
+                        style: .noAction
+                    )
                 }
-                notebook.agenticLayers[destinationLayerIndex].conversations.append(contentsOf: annotations)
-                newestAgentThreadID = annotations.last?.threadID
                 isAnalyzing = false
                 analysisTask = nil
-                persistNow()
             } catch is CancellationError {
                 isAnalyzing = false
                 analysisTask = nil
@@ -790,23 +845,6 @@ final class NotebookViewModel: ObservableObject {
         let images = currentPage.images
 
         let pageRect = CGRect(origin: .zero, size: NotebookPageLayout.size)
-        let format = UIGraphicsImageRendererFormat.default()
-        format.scale = 1
-        let renderer = UIGraphicsImageRenderer(size: pageRect.size, format: format)
-        let full = renderer.image { context in
-            UIColor.white.setFill()
-            context.fill(pageRect)
-            for placed in images {
-                let rect = CGRect(
-                    x: placed.rect.minX * pageRect.width,
-                    y: placed.rect.minY * pageRect.height,
-                    width: placed.rect.width * pageRect.width,
-                    height: placed.rect.height * pageRect.height
-                )
-                placed.draw(in: rect)
-            }
-            drawing.image(from: pageRect, scale: 1).draw(in: pageRect)
-        }
 
         let capturedBounds = capturedPath.flatMap(MagicLassoGeometry.pageBounds)
         let inheritedBounds = (capturedBounds ?? preferredBounds).flatMap { bounds -> CGRect? in
@@ -818,80 +856,63 @@ final class NotebookViewModel: ObservableObject {
                 height: CGFloat(bounds.height)
             )
         }
-        let usesFocusedCrop = capturedPath != nil || lassoRect != nil || inheritedBounds != nil
         var normalized = capturedPath == nil
             ? (lassoRect ?? inheritedBounds ?? CGRect(x: 0, y: 0, width: 1, height: 1))
             : (inheritedBounds ?? CGRect(x: 0, y: 0, width: 1, height: 1))
         normalized = normalized.intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
-        var output = full
-        var cropNormalized = normalized
-        if usesFocusedCrop {
-            let cropRect = CGRect(
-                x: normalized.minX * pageRect.width,
-                y: normalized.minY * pageRect.height,
-                width: normalized.width * pageRect.width,
-                height: normalized.height * pageRect.height
-            ).insetBy(dx: -14, dy: -14).intersection(pageRect).integral
-            if cropRect.width > 10,
-               cropRect.height > 10,
-               let image = full.cgImage?.cropping(to: cropRect) {
-                output = UIImage(cgImage: image)
-                if let capturedPath {
-                    let cropped = output
-                    let masked = UIGraphicsImageRenderer(size: cropped.size, format: format).image { context in
-                        UIColor.white.setFill()
-                        context.fill(CGRect(origin: .zero, size: cropped.size))
-                        let polygon = UIBezierPath()
-                        for (index, point) in capturedPath.enumerated() {
-                            let cropPoint = CGPoint(
-                                x: CGFloat(point.x) * pageRect.width - cropRect.minX,
-                                y: CGFloat(point.y) * pageRect.height - cropRect.minY
-                            )
-                            index == 0 ? polygon.move(to: cropPoint) : polygon.addLine(to: cropPoint)
-                        }
-                        polygon.close()
-                        context.cgContext.saveGState()
-                        polygon.addClip()
-                        cropped.draw(in: CGRect(origin: .zero, size: cropped.size))
-                        context.cgContext.restoreGState()
-                    }
-                    output = masked
-                }
-                cropNormalized = CGRect(
-                    x: cropRect.minX / pageRect.width,
-                    y: cropRect.minY / pageRect.height,
-                    width: cropRect.width / pageRect.width,
-                    height: cropRect.height / pageRect.height
-                )
-            }
-        }
-
-        guard let data = output.jpegData(compressionQuality: 0.8) else { return nil }
-        let pageBounds = PageNormalizedRect(
-            x: Double(cropNormalized.minX),
-            y: Double(cropNormalized.minY),
-            width: Double(cropNormalized.width),
-            height: Double(cropNormalized.height)
-        )
         let rectangularPath = [
             PageNormalizedPoint(x: Double(normalized.minX), y: Double(normalized.minY)),
             PageNormalizedPoint(x: Double(normalized.maxX), y: Double(normalized.minY)),
             PageNormalizedPoint(x: Double(normalized.maxX), y: Double(normalized.maxY)),
             PageNormalizedPoint(x: Double(normalized.minX), y: Double(normalized.maxY)),
         ]
+        let evidencePath = capturedPath ?? rectangularPath
+        let selectionBounds = PageNormalizedRect(
+            x: Double(normalized.minX), y: Double(normalized.minY),
+            width: Double(normalized.width), height: Double(normalized.height)
+        )
+        guard let evidence = try? SelectionEvidenceRenderer.render(
+                pageSize: pageRect.size,
+                selectionPageBounds: selectionBounds,
+                lassoPath: evidencePath,
+                renderPage: { context, pageRect in
+                    UIGraphicsPushContext(context)
+                    UIColor.white.setFill()
+                    context.fill(pageRect)
+                    for placed in images {
+                        let rect = CGRect(
+                            x: placed.rect.minX * pageRect.width,
+                            y: placed.rect.minY * pageRect.height,
+                            width: placed.rect.width * pageRect.width,
+                            height: placed.rect.height * pageRect.height
+                        )
+                        placed.draw(in: rect)
+                    }
+                    drawing.image(from: pageRect, scale: 2).draw(in: pageRect)
+                    UIGraphicsPopContext()
+                }
+              ) else { return nil }
+        let pageBounds = evidence.tight.pageBounds
         return SelectionArtifact(
             id: UUID(),
             documentID: notebook.id,
             pageID: currentPageID,
             pageIndex: currentIndex,
-            lassoPath: capturedPath ?? rectangularPath,
+            lassoPath: evidencePath,
             pageBounds: pageBounds,
             crop: SelectionCrop(
-                imageData: data,
-                mediaType: "image/jpeg",
-                pixelWidth: Int(output.size.width),
-                pixelHeight: Int(output.size.height),
+                imageData: evidence.tight.imageData,
+                mediaType: evidence.tight.mediaType,
+                pixelWidth: evidence.tight.pixelWidth,
+                pixelHeight: evidence.tight.pixelHeight,
                 pageBounds: pageBounds
+            ),
+            contextCrop: SelectionCrop(
+                imageData: evidence.context.imageData,
+                mediaType: evidence.context.mediaType,
+                pixelWidth: evidence.context.pixelWidth,
+                pixelHeight: evidence.context.pixelHeight,
+                pageBounds: evidence.context.pageBounds
             ),
             context: SelectionContext(
                 documentTitle: notebook.title,
@@ -904,7 +925,8 @@ final class NotebookViewModel: ObservableObject {
 
     func analyzeCurrentPage(
         question: String? = nil,
-        parentThreadID: UUID? = nil
+        parentThreadID: UUID? = nil,
+        selection suppliedSelection: SelectionArtifact? = nil
     ) {
         guard !isAnalyzing else { return }
         guard isAgenticLayersActive,
@@ -927,7 +949,7 @@ final class NotebookViewModel: ObservableObject {
             agentError = "Open the previous Pin's page before continuing this conversation."
             return
         }
-        guard let selection = makeSelectionSnapshot(preferredBounds: parentPin?.targetRegion) else {
+        guard let selection = suppliedSelection ?? makeSelectionSnapshot(preferredBounds: parentPin?.targetRegion) else {
             agentError = "Draw or add something first, then ask about it."
             return
         }
@@ -941,16 +963,24 @@ final class NotebookViewModel: ObservableObject {
         let childThreadID = UUID()
         lastAnalysisQuestion = question
         lastAnalysisParentThreadID = parentThreadID
+        lastGuidanceSelection = nil
+        lastInterventionIntent = nil
         isAnalyzing = true
         agentError = nil
         let client = AgentInsightClientFactory.make()
         let capturedGeneration = client.generation
+        let originatingPage = notebook.pages.first(where: { $0.id == selection.pageID })
+        let selectionID = selection.id
 
         analysisTask = Task { [weak self] in
             guard let self else { return }
             do {
                 let insight = try await client.analyze(selection, question: submittedQuestion)
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled,
+                      originatingPage != nil,
+                      notebook.pages.first(where: { $0.id == selection.pageID }) == originatingPage,
+                      suppliedSelection == nil || suppliedSelection?.id == selectionID
+                else { return }
                 if let capturedGeneration,
                    !OpenAICodexLoginSession.shared.isCurrent(generation: capturedGeneration) {
                     isAnalyzing = false
@@ -958,7 +988,7 @@ final class NotebookViewModel: ObservableObject {
                     return
                 }
                 guard let destinationLayerIndex = notebook.agenticLayers.firstIndex(where: {
-                    $0.id == layerID
+                    $0.id == layerID && $0.isVisible
                 }) else {
                     agentError = "That Agentic Layer was removed before the response completed."
                     isAnalyzing = false
@@ -1021,7 +1051,11 @@ final class NotebookViewModel: ObservableObject {
 
     func retryLastAnalysis() {
         guard !isAnalyzing else { return }
-        placeGuidancePins(selection: lastGuidanceSelection, question: lastGuidanceQuestion)
+        if let selection = lastGuidanceSelection, let intent = lastInterventionIntent {
+            requestIntervention(selection: selection, intent: intent)
+        } else {
+            analyzeCurrentPage(question: lastAnalysisQuestion, parentThreadID: lastAnalysisParentThreadID)
+        }
     }
 
     /// Cascading removal is intentional: a branch cannot outlive the Pin that

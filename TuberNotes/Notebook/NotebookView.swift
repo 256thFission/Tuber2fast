@@ -35,7 +35,7 @@ struct NotebookView: View {
     @State private var magicAskText = ""
     @State private var isMagicAskExpanded = false
     @State private var pendingGuidanceAfterSignIn: SelectionArtifact?
-    @State private var pendingGuidancePrompt: String?
+    @State private var pendingGuidanceIntent: InvestigationIntent?
     @State private var isRefinementLassoActive = false
     @State private var showExportOptions = false
     @State private var showFileExporter = false
@@ -281,6 +281,9 @@ struct NotebookView: View {
         .onChange(of: vm.currentDrawingLayerID) { _, _ in
             dismissPencilPalette()
             isRefinementLassoActive = false
+            if magicEraserSelection?.pageID != vm.currentPageID {
+                clearMagicSelectionForPageChange()
+            }
         }
         .onChange(of: vm.isLassoActive) { _, active in
             if active { dismissPencilPalette() }
@@ -295,10 +298,10 @@ struct NotebookView: View {
         }
         .onChange(of: openAILogin.phase) { _, phase in
             guard let selection = pendingGuidanceAfterSignIn, case .signedIn = phase else { return }
-            let prompt = pendingGuidancePrompt
+            let intent = pendingGuidanceIntent
             pendingGuidanceAfterSignIn = nil
-            pendingGuidancePrompt = nil
-            vm.placeGuidancePins(selection: selection, question: prompt)
+            pendingGuidanceIntent = nil
+            if let intent { vm.requestIntervention(selection: selection, intent: intent) }
         }
         .onChange(of: vm.newestAgentThreadID) { _, threadID in
             guard threadID != nil, !magicEraserPath.isEmpty else { return }
@@ -1305,20 +1308,17 @@ struct NotebookView: View {
                             isAskExpanded: $isMagicAskExpanded,
                             isSubmitting: vm.isAnalyzing,
                             errorMessage: vm.agentError,
+                            notice: vm.interventionNotice,
                             onExplain: {
-                                submitMagicGuidance(
-                                    "Explain the selected work clearly. Place short Pins on the most important ideas and relationships."
-                                )
+                                submitMagicGuidance(.explain)
                             },
                             onCheck: {
-                                submitMagicGuidance(
-                                    "Check the selected work for mistakes, missing steps, or uncertainty. Place short Pins exactly where attention is needed."
-                                )
+                                submitMagicGuidance(.check)
                             },
                             onAsk: {
                                 let prompt = magicAskText.trimmingCharacters(in: .whitespacesAndNewlines)
                                 guard !prompt.isEmpty else { return }
-                                submitMagicGuidance(prompt)
+                                vm.analyzeCurrentPage(question: prompt, selection: magicEraserSelection)
                             },
                             onCancel: {
                                 magicEraserPath = []
@@ -1326,6 +1326,9 @@ struct NotebookView: View {
                                 magicAskText = ""
                                 isMagicAskExpanded = false
                                 vm.agentError = nil
+                                vm.interventionNotice = nil
+                                pendingGuidanceAfterSignIn = nil
+                                pendingGuidanceIntent = nil
                             }
                         )
                         .frame(maxWidth: min(proxy.size.width - 24, 520))
@@ -1334,7 +1337,7 @@ struct NotebookView: View {
                                 for: selectionBounds,
                                 in: proxy.size,
                                 isExpanded: isMagicAskExpanded,
-                                hasError: vm.agentError != nil
+                                hasError: vm.agentError != nil || vm.interventionNotice != nil
                             )
                         )
                         .transition(.scale(scale: 0.88).combined(with: .opacity))
@@ -1388,21 +1391,34 @@ struct NotebookView: View {
         magicEraserPath = path
         magicEraserSelection = selection
         vm.agentError = nil
+        vm.interventionNotice = nil
         isRefinementActive = false
         isMagicAskExpanded = false
         magicAskText = ""
     }
 
-    private func submitMagicGuidance(_ prompt: String) {
+    private func submitMagicGuidance(_ intent: InvestigationIntent) {
         guard let selection = magicEraserSelection else { return }
         vm.isAgenticLayersActive = true
         if case .signedIn = openAILogin.phase {
-            vm.placeGuidancePins(selection: selection, question: prompt)
+            vm.requestIntervention(selection: selection, intent: intent)
         } else {
             pendingGuidanceAfterSignIn = selection
-            pendingGuidancePrompt = prompt
+            pendingGuidanceIntent = intent
             withAnimation { showProviderAccessPopup = true }
         }
+    }
+
+    private func clearMagicSelectionForPageChange() {
+        vm.cancelAnalysis()
+        magicEraserPath = []
+        magicEraserSelection = nil
+        magicAskText = ""
+        isMagicAskExpanded = false
+        pendingGuidanceAfterSignIn = nil
+        pendingGuidanceIntent = nil
+        vm.agentError = nil
+        vm.interventionNotice = nil
     }
 
     private func magicMenuPosition(
@@ -1443,6 +1459,7 @@ private struct MagicEraserContextMenu: View {
     @Binding var isAskExpanded: Bool
     let isSubmitting: Bool
     let errorMessage: String?
+    let notice: InterventionNotice?
     let onExplain: () -> Void
     let onCheck: () -> Void
     let onAsk: () -> Void
@@ -1495,6 +1512,19 @@ private struct MagicEraserContextMenu: View {
                     .foregroundStyle(.red)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if let notice, !isSubmitting {
+                Label(
+                    notice.message,
+                    systemImage: notice.style == .confirmation
+                        ? "checkmark.seal.fill"
+                        : "arrow.up.left.and.arrow.down.right"
+                )
+                .font(.caption)
+                .foregroundStyle(notice.style == .confirmation ? Color.green : Color.orange)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
             }
 
             if isAskExpanded {

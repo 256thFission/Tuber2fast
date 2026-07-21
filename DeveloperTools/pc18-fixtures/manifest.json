@@ -1,0 +1,127 @@
+{
+  "schema_version": 1,
+  "coordinate_space": "crop-normalized",
+  "geometry_rule": "A spatialGuidance target must be finite and inside allowed_region; every non-spatial outcome must have no target.",
+  "cases": [
+    {
+      "id": "C1", "subject": "calculus", "intent": "check", "holdout": false,
+      "asset": "assets/C1-golden-missing-half.svg", "page_id": "C1800000-0000-4000-8000-000000000001",
+      "lasso_region": [[0.08,0.12],[0.92,0.12],[0.92,0.88],[0.08,0.88]], "allowed_region": [0.08,0.12,0.84,0.76],
+      "expected": {"outcome":"spatialGuidance","reason":null,"pin_count":1,"persists":true},
+      "required_claims": ["integrand:x*exp(x^2)","observed_substitution:u=x^2;du=2x dx","observed_result:exp(x^2)+C","relationship:x dx=1/2 du","corrected_result:1/2 exp(x^2)+C"],
+      "critical_claims": ["relationship:x dx=1/2 du","corrected_result:1/2 exp(x^2)+C"],
+      "forbidden_claims": ["checks_out","factor_not_one_half","transcription_only"],
+      "human_rationale": "The golden missing-factor error requires a causal correction, so abstention is wrong."
+    },
+    {
+      "id": "C2", "subject": "calculus", "intent": "check", "holdout": false,
+      "asset": "assets/C2-corrected-golden.svg", "page_id": "C2800000-0000-4000-8000-000000000002",
+      "lasso_region": [[0.08,0.12],[0.92,0.12],[0.92,0.88],[0.08,0.88]], "allowed_region": null,
+      "expected": {"outcome":"transientConfirmation","reason":null,"pin_count":0,"persists":false},
+      "required_claims": ["observed_result:1/2 exp(x^2)+C","verification:differentiate","derivative:x*exp(x^2)"],
+      "critical_claims": ["verification:differentiate","derivative:x*exp(x^2)"],
+      "forbidden_claims": ["issue_pin","persistent_pin","confirmation_without_verification"],
+      "human_rationale": "Correct work deserves affirmative evidence without a second Pin."
+    },
+    {
+      "id": "C3", "subject": "calculus", "intent": "check", "holdout": false,
+      "asset": "assets/C3-missing-constant.svg", "page_id": "C3800000-0000-4000-8000-000000000003",
+      "lasso_region": [[0.08,0.12],[0.92,0.12],[0.92,0.88],[0.08,0.88]], "allowed_region": [0.08,0.50,0.84,0.38],
+      "expected": {"outcome":"spatialGuidance","reason":null,"pin_count":1,"persists":true},
+      "required_claims": ["observed_result:1/2 exp(x^2)","indefinite_integral_requires:+C","corrected_result:1/2 exp(x^2)+C","verification:differentiate"],
+      "critical_claims": ["indefinite_integral_requires:+C","corrected_result:1/2 exp(x^2)+C"],
+      "forbidden_claims": ["missing_one_half","checks_out","constant_changes_derivative","transcription_only"],
+      "human_rationale": "A second valid correction prevents a missing-one-half-only shortcut."
+    },
+    {
+      "id": "C4", "subject": "calculus", "intent": "check", "holdout": false,
+      "asset": "assets/C4-power-rule-correct.svg", "page_id": "C4800000-0000-4000-8000-000000000004",
+      "lasso_region": [[0.08,0.18],[0.92,0.18],[0.92,0.82],[0.08,0.82]], "allowed_region": null,
+      "expected": {"outcome":"transientConfirmation","reason":null,"pin_count":0,"persists":false},
+      "required_claims": ["observed_result:x^4/4+C","rule:power_rule","verification:differentiate","derivative:x^3"],
+      "critical_claims": ["verification:differentiate","derivative:x^3"],
+      "forbidden_claims": ["issue_pin","substitution_factor","unsupported_content","generic_confirmation"],
+      "human_rationale": "A plainly correct neighbor must be affirmatively checked."
+    },
+    {
+      "id": "C5", "subject": "calculus", "intent": "check", "holdout": true,
+      "asset": "assets/C5-unreadable-exponent.svg", "page_id": "C5800000-0000-4000-8000-000000000005",
+      "lasso_region": [[0.08,0.18],[0.92,0.18],[0.92,0.82],[0.08,0.82]], "allowed_region": null,
+      "expected": {"outcome":"needsInput","reason":"unreadableSelection","pin_count":0,"persists":false},
+      "required_claims": ["ambiguity:exponent_unreadable","next_action:clearer_or_tighter_selection"],
+      "critical_claims": ["ambiguity:exponent_unreadable"],
+      "forbidden_claims": ["guessed_exponent","correctness_verdict","persistent_pin"],
+      "human_rationale": "The exponent controls the answer; guessing would be academically unsafe."
+    },
+    {
+      "id": "C6", "subject": "calculus", "intent": "check", "holdout": true,
+      "asset": "assets/C6-integration-by-parts.svg", "page_id": "C6800000-0000-4000-8000-000000000006",
+      "lasso_region": [[0.06,0.10],[0.94,0.10],[0.94,0.90],[0.06,0.90]], "allowed_region": null,
+      "expected": {"outcome":"noAction","reason":"unsupportedContent","pin_count":0,"persists":false},
+      "required_claims": ["scope:unsupported_integration_by_parts","content:legible"],
+      "critical_claims": ["scope:unsupported_integration_by_parts"],
+      "forbidden_claims": ["correctness_verdict","fabricated_missing_step","unreadable_selection","substitution_factor"],
+      "human_rationale": "Readable but unsupported work distinguishes noAction from missing evidence."
+    },
+    {
+      "id": "O1", "subject": "organicChemistry", "intent": "explain", "holdout": false,
+      "asset": "assets/O1-golden-sn2.pdf", "source_svg": "assets/O1-golden-sn2.svg", "page_id": "01800000-0000-4000-8000-000000000001",
+      "lasso_region": [[0.04,0.08],[0.96,0.08],[0.96,0.92],[0.04,0.92]], "allowed_region": [0.04,0.08,0.92,0.84],
+      "expected": {"outcome":"spatialGuidance","reason":null,"pin_count":1,"persists":true},
+      "required_claims": ["family:SN2","nucleophile:hydroxide","electron_source:hydroxide_lone_pair","electrophile:carbon_bonded_to_bromine","leaving_group:bromide","bond_formed:C-O","bond_broken:C-Br","timing:concerted","electron_destination:bromine","study_cue:follow_arrows_source_to_destination"],
+      "critical_claims": ["electron_source:hydroxide_lone_pair","electrophile:carbon_bonded_to_bromine","leaving_group:bromide","bond_formed:C-O","bond_broken:C-Br","timing:concerted"],
+      "forbidden_claims": ["carbocation","stepwise","rearrangement","stereochemistry","reaction_competition","safety_advice","transcription_only"],
+      "human_rationale": "The complete golden mechanism requires one causal explanation."
+    },
+    {
+      "id": "O2", "subject": "organicChemistry", "intent": "explain", "holdout": false,
+      "asset": "assets/O2-sn2-no-arrowheads.svg", "page_id": "02800000-0000-4000-8000-000000000002",
+      "lasso_region": [[0.04,0.08],[0.96,0.08],[0.96,0.92],[0.04,0.92]], "allowed_region": null,
+      "expected": {"outcome":"needsInput","reason":"missingReactionContext","pin_count":0,"persists":false},
+      "required_claims": ["ambiguity:arrowheads_or_endpoints_missing","next_action:wider_or_clearer_complete_arrows"],
+      "critical_claims": ["ambiguity:arrowheads_or_endpoints_missing"],
+      "forbidden_claims": ["asserted_arrow_direction","asserted_bond_changes","sn2_correctness","persistent_pin"],
+      "human_rationale": "Arrow shafts do not establish electron-flow direction."
+    },
+    {
+      "id": "O3", "subject": "organicChemistry", "intent": "explain", "holdout": false,
+      "asset": "assets/O3-cropped-leaving-group.svg", "page_id": "03800000-0000-4000-8000-000000000003",
+      "lasso_region": [[0.04,0.08],[0.72,0.08],[0.72,0.92],[0.04,0.92]], "allowed_region": null,
+      "expected": {"outcome":"needsInput","reason":"missingReactionContext","pin_count":0,"persists":false},
+      "required_claims": ["ambiguity:leaving_group_context_missing","next_action:wider_selection_with_leaving_group_and_endpoint"],
+      "critical_claims": ["ambiguity:leaving_group_context_missing"],
+      "forbidden_claims": ["observed_bromine","asserted_C-Br_break","asserted_bromide_product","complete_sn2_claim"],
+      "human_rationale": "Plausible chemistry cannot replace evidence absent from the crop."
+    },
+    {
+      "id": "O4", "subject": "organicChemistry", "intent": "explain", "holdout": false,
+      "asset": "assets/O4-label-only.svg", "page_id": "04800000-0000-4000-8000-000000000004",
+      "lasso_region": [[0.12,0.25],[0.88,0.25],[0.88,0.75],[0.12,0.75]], "allowed_region": null,
+      "expected": {"outcome":"noAction","reason":"noRelevantContent","pin_count":0,"persists":false},
+      "required_claims": ["selection:label_only","content:no_reaction_or_electron_flow"],
+      "critical_claims": ["content:no_reaction_or_electron_flow"],
+      "forbidden_claims": ["reaction_family","atom_roles","bond_changes","persistent_pin"],
+      "human_rationale": "A semantically empty selection should remain clean."
+    },
+    {
+      "id": "O5", "subject": "organicChemistry", "intent": "explain", "holdout": true,
+      "asset": "assets/O5-proton-transfer.svg", "page_id": "05800000-0000-4000-8000-000000000005",
+      "lasso_region": [[0.04,0.08],[0.96,0.08],[0.96,0.92],[0.04,0.92]], "allowed_region": [0.04,0.08,0.92,0.84],
+      "expected": {"outcome":"spatialGuidance","reason":null,"pin_count":1,"persists":true},
+      "required_claims": ["family:proton_transfer","electron_source:B-_lone_pair","electrophile:proton","bond_formed:B-H","bond_broken:H-A","electron_destination:A","timing:concerted"],
+      "critical_claims": ["electron_source:B-_lone_pair","electrophile:proton","bond_formed:B-H","bond_broken:H-A","electron_destination:A"],
+      "forbidden_claims": ["family:SN2","carbon_electrophile","substitution_narrative","role_reversal","transcription_only"],
+      "human_rationale": "A neighboring complete electron-flow pattern tests causal generalization."
+    },
+    {
+      "id": "O6", "subject": "organicChemistry", "intent": "explain", "holdout": true,
+      "asset": "assets/O6-wedge-dash.svg", "page_id": "06800000-0000-4000-8000-000000000006",
+      "lasso_region": [[0.06,0.08],[0.94,0.08],[0.94,0.92],[0.06,0.92]], "allowed_region": null,
+      "expected": {"outcome":"needsInput","reason":"unsupportedContent","pin_count":0,"persists":false},
+      "required_claims": ["scope:stereochemistry_unsupported","next_action:simpler_electron_flow_selection"],
+      "critical_claims": ["scope:stereochemistry_unsupported"],
+      "forbidden_claims": ["R_or_S_assignment","inversion_or_retention","3D_orientation_claim","reaction_competition"],
+      "human_rationale": "The explicit stereochemistry boundary must be honored without calling visible content unreadable."
+    }
+  ]
+}

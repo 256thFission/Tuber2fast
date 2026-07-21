@@ -1569,3 +1569,84 @@ placeholder.
   collaborator edits were preserved. Xcode asset compilation, installation, and
   home-screen inspection remain blocked because this host has no Xcode toolchain
   or pinned iPad session.
+
+## Proposed line — PC-18: Reasoning Pins — Calculus Check + Ochem Explain
+
+Status: **implemented and Release-delivered — live golden streaks and Phillip verdict pending**
+
+Target branch: `main`
+
+Child work-line:
+[`PC-18-InstructionalInterventionEngine.md`](PC-18-InstructionalInterventionEngine.md)
+
+Owners: Notebook user intent and lifecycle; AgentHarness intervention policy,
+bounded transport, and validation; SpatialCanvas geometry; Pins presentation.
+
+Summary: prove one Reasoning Pin interaction across two prepared learning
+problems: Check catches the missing `½` in the handwritten Calc I integral
+`∫x e^(x²) dx`, while Explain describes electron flow in a clean SN2 PDF
+reaction. The feature set is reverse-derived from those two moments: typed
+intent, high-fidelity tight/context crops, Calc and Ochem evidence bases, one
+Pin by default, transient correct/missing-context outcomes, retained selection,
+and existing page-normalized persistence. Twelve frozen cross-domain cases and
+five repeated live runs per golden problem gate a three-day critical path.
+General CAS/OCR/chemical parsing, broad subjects, multi-call critics, atom-level
+anchors, and live follow-up generation remain outside the hackathon scope. The
+child plan now supplies one coordinator delivery goal and four fan-out/fold-in
+stages: read-only contract/image/eval attacks, non-overlapping implementation
+packages, independent Calc/Ochem/product audits, and coordinator-owned device
+delivery. Every subagent packet names prerequisites, files, non-goals, checks,
+and a concrete return contract.
+
+### Session log
+
+- 2026-07-21 — `CONTRACT:` extend `SelectionArtifact` with an optional,
+  orientation-only context crop and introduce the versioned
+  `InterventionOutcome`/typed Calculus and Organic Chemistry evidence contract.
+  Provider coordinates remain bound exclusively to the tight crop. Only
+  `spatialGuidance` persists one Pin/chat root; confirmation, needs-input, and
+  no-action are successful nonpersistent outcomes. This is required to prevent
+  forced Pins and make academic claims mechanically rejectable without changing
+  page-normalized persistence or subsystem ownership.
+- 2026-07-21 — Fold-in 2 completed: strict intervention decoding, lossless
+  tight/context evidence, typed Notebook persistence/transient handling,
+  twelve-case assets/evaluator, project membership, and SPEC integration.
+  Generic Debug build, focused contract checks, evaluator self-test, and diff
+  hygiene pass; independent Fold 3 audits started.
+- 2026-07-21 — Fold 3 findings drove the one bounded correction pass: exact
+  academic predicates plus app-owned visible copy, full narrow prompt support,
+  transport image-boundary checks, selection/page/sign-in/retry lifecycle
+  repairs, retained-crop Ask, and timed confirmation. Host checks and generic
+  Debug build pass; Fold 4 device/scenario delivery began.
+- 2026-07-21 — Final mechanical delivery: contract/evaluator/asset/secret/diff
+  host gates pass; exact-device `pin-drift` and `edge-pins` pass. Legacy
+  `hero-recorded` and `agent-recorded-failure` launch but fail missing runtime
+  evidence, retained as explicit failed artifacts. A fresh signed Release build
+  succeeded, installed, and ordinarily launched on Phillip's pinned iPad.
+  Phillip's normal-app five-run Calc and Ochem streaks, live latency and visible
+  quality/crash verdict remain the only delivery-gate evidence not mechanically
+  obtainable without his Pencil and device-owned OpenAI session.
+- 2026-07-21 — Phillip authorized overnight PC-18 implementation-first
+  execution. Gate 0 confirmed `main` at `e79abb4`, preserved existing work, and
+  pinned only iPad `2DD98ECC-A26A-5730-943B-01DD63DC4117`. The normal
+  structured-Pin route exists; device-owned live account transport proof is
+  deferred to the delivery gate while host-safe folds continue.
+- 2026-07-21 — Freeze 1 accepted the closed typed outcome/evidence contract,
+  2x lossless tight/context image contract, and frozen twelve-case manifest
+  with C5/C6/O5/O6 holdouts. Fold 2 began with non-overlapping AgentHarness,
+  selection-evidence, and DeveloperSupport/DeveloperTools file leases.
+- 2026-07-21 — Created the distinct PC-18 proposal after repeated live shallow
+  narration demonstrated that forced Pin generation and phrase filtering were
+  structurally insufficient. No product code or runtime state changed.
+- 2026-07-21 — Product/demo, multimodal-systems, and one-week-delivery reviewers
+  independently returned revise. Narrowed the proposal to a one-call,
+  Check-first hero; recorded accepted, deferred, and partially accepted
+  objections in the child plan. No implementation or device action ran.
+- 2026-07-21 — Rewrote PC-18 backward from two golden problems: a missing-factor
+  substitution integral and a canonical SN2 electron-flow explanation. The
+  child plan now derives every required feature, fixture, and cut from those
+  demonstrations. No product code or runtime state changed.
+- 2026-07-21 — Added the orchestration layer: explicit coordinator goal and
+  authority boundary, four dependency folds, bounded subagent assignments with
+  non-overlapping file leases and return contracts, fold-in gates, and
+  coordinator-only device/live-provider/final-judgment work.
