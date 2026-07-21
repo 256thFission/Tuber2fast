@@ -6,6 +6,10 @@ enum InterventionResponseDecoder {
               let data = json.data(using: .utf8),
               let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               integer(root["schema_version"]) == 1,
+              exactKeys(root, [
+                  "schema_version", "outcome", "basis", "intervention",
+                  "confirmation", "needs_input", "no_action"
+              ]),
               let outcome = root["outcome"] as? String else {
             throw AgentError.parse
         }
@@ -13,7 +17,7 @@ enum InterventionResponseDecoder {
         let decoded: InterventionOutcome
         switch outcome {
         case "spatial_guidance":
-            guard exactKeys(root, ["schema_version", "outcome", "basis", "intervention"]),
+            guard nullSlots(root, except: ["basis", "intervention"]),
                   let rawBasis = root["basis"] as? [String: Any],
                   let rawIntervention = root["intervention"] as? [String: Any] else {
                 throw AgentError.parse
@@ -23,7 +27,7 @@ enum InterventionResponseDecoder {
                 basis: try basis(rawBasis)
             )
         case "transient_confirmation":
-            guard exactKeys(root, ["schema_version", "outcome", "basis", "confirmation"]),
+            guard nullSlots(root, except: ["basis", "confirmation"]),
                   let rawBasis = root["basis"] as? [String: Any],
                   case let .calculus(calculus) = try basis(rawBasis),
                   let rawConfirmation = root["confirmation"] as? [String: Any],
@@ -35,7 +39,7 @@ enum InterventionResponseDecoder {
                 TransientConfirmation(message: message), basis: calculus
             )
         case "needs_input":
-            guard exactKeys(root, ["schema_version", "outcome", "needs_input"]),
+            guard nullSlots(root, except: ["needs_input"]),
                   let raw = root["needs_input"] as? [String: Any],
                   exactKeys(raw, ["reason", "message"]),
                   let reasonRaw = raw["reason"] as? String,
@@ -45,7 +49,7 @@ enum InterventionResponseDecoder {
             }
             decoded = .needsInput(NeedsInput(reason: reason, message: message))
         case "no_action":
-            guard exactKeys(root, ["schema_version", "outcome", "no_action"]),
+            guard nullSlots(root, except: ["no_action"]),
                   let raw = root["no_action"] as? [String: Any],
                   exactKeys(raw, ["reason"]),
                   let reasonRaw = raw["reason"] as? String,
@@ -61,6 +65,12 @@ enum InterventionResponseDecoder {
             throw AgentError.parse
         }
         return InterventionVisibleCopy.normalized(decoded)
+    }
+
+    private static func nullSlots(_ root: [String: Any], except present: Set<String>) -> Bool {
+        ["basis", "intervention", "confirmation", "needs_input", "no_action"].allSatisfy {
+            present.contains($0) ? !(root[$0] is NSNull) : root[$0] is NSNull
+        }
     }
 
     private static func basis(_ raw: [String: Any]) throws -> InterventionBasis {

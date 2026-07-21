@@ -790,24 +790,10 @@ final class NotebookViewModel: ObservableObject {
                         guard self?.interventionNotice == notice else { return }
                         self?.interventionNotice = nil
                     }
-                case let .needsInput(needsInput):
-                    interventionNotice = InterventionNotice(
-                        message: needsInput.message,
-                        style: .needsInput
-                    )
-                case let .noAction(noAction):
-                    let message = switch noAction.reason {
-                    case .noRelevantContent:
-                        "There isn’t a reasoning step to annotate in this selection."
-                    case .unsupportedIntent:
-                        "That action isn’t supported for this selection."
-                    case .unsupportedContent:
-                        "This selection is outside the supported reasoning examples."
-                    }
-                    interventionNotice = InterventionNotice(
-                        message: message,
-                        style: .noAction
-                    )
+                case .needsInput, .noAction:
+                    // A silent non-result keeps the lasso available without
+                    // interrupting the student with a clarification/no-action toast.
+                    interventionNotice = nil
                 }
                 finishAnalysis(requestID)
             } catch is CancellationError {
@@ -1055,7 +1041,7 @@ final class NotebookViewModel: ObservableObject {
                         targetRegion: selection.pageBounds,
                         kind: .explanation,
                         teaser: trimmedQuestion
-                            ?? (parentPin == nil ? "Agent insight" : "Follow-up"),
+                            ?? (parentPin == nil ? "Learning guidance" : "Deeper explanation"),
                         body: insight.body,
                         citations: [],
                         status: .complete

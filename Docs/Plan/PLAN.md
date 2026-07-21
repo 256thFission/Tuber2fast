@@ -1601,6 +1601,17 @@ and a concrete return contract.
 
 ### Session log
 
+- 2026-07-21 — Phillip's first normal Release test found that the live
+  structured-Pin request could be rejected before inference and that generic
+  clarification/observational copy violated the learning interaction. PC-18's
+  bounded correction changes the structured-output wire schema to a supported
+  closed root object while preserving strict local outcome validation, silences
+  needs-input/no-action toasts, and requires useful teaching guidance rather
+  than transcription, context requests, or generic follow-up labels. The
+  signed Release build under `tmp/build/pc18-live-correction/` succeeded,
+  installed, and normally launched on only Phillip's pinned iPad
+  `2DD98ECC-A26A-5730-943B-01DD63DC4117`; his repeat live interaction is the
+  remaining verdict.
 - 2026-07-21 — Phillip declared the Debug/fixture verification surface
   non-representative and paused PC-18. Its prior results are invalidated as
   acceptance evidence. `AGENTS.md` now requires the actual normal Release app;

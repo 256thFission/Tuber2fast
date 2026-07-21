@@ -40,7 +40,8 @@ struct OpenAICodexPinClient: Sendable {
         }
         let instruction = """
         \(intentInstruction)
-        Return exactly one schema-v1 outcome. The supported affirmative set is narrow: a missing one-half substitution factor, an omitted integration constant, a corrected substitution result, a correct elementary power-rule result, a complete canonical SN2 explanation, or a complete basic proton-transfer explanation. Correct work uses transient_confirmation. Missing or unreadable evidence uses needs_input. Unsupported or instructionally empty content uses no_action.
+        Return exactly one schema-v1 outcome. The supported affirmative set is narrow: a missing one-half substitution factor, an omitted integration constant, a corrected substitution result, a correct elementary power-rule result, a complete canonical SN2 explanation, or a complete basic proton-transfer explanation. Correct work uses transient_confirmation. Use needs_input only when the decisive symbols or relationships are genuinely unreadable; the app will silently keep the selection for retry. Unsupported or instructionally empty content uses no_action.
+        A Pin must teach: identify the reasoning move, explain why it matters, and give the student a usable next step or checking strategy. Never return observational narration, a transcription of visible content, "incomplete question", a request for more context, or generic labels such as "Follow-up" or "Follow-up branch".
         Copy visible mathematical and chemical notation faithfully. Do not guess missing superscripts, charges, arrow endpoints, reagents, products, or steps. Coordinates are normalized within the supplied selection crop; make no atom-level or glyph-level placement claim.
         """
         let dataURL = "data:\(selection.crop.mediaType);base64,\(selection.crop.imageData.base64EncodedString())"
@@ -215,50 +216,46 @@ struct OpenAICodexPinClient: Sendable {
         ]
     ] }
 
-    private static var responseSchema: [String: Any] { [
-        "type": "object",
-        "oneOf": [
-            closedOutcome(
-                "spatial_guidance",
-                payload: ["basis": ["oneOf": [calculusBasis, chemistryBasis]], "intervention": intervention]
-            ),
-            closedOutcome(
-                "transient_confirmation",
-                payload: [
-                    "basis": calculusBasis,
-                    "confirmation": closedObject([
-                        "message": ["type": "string", "minLength": 8, "maxLength": 180]
-                    ])
+    /// Responses structured outputs require the root itself to be an object,
+    /// not a root-level `oneOf`. All variant slots are required and nullable;
+    /// the local decoder enforces that exactly the selected outcome is present.
+    private static var responseSchema: [String: Any] {
+        let confirmation = closedObject([
+            "message": ["type": "string", "minLength": 8, "maxLength": 180]
+        ])
+        let needsInput = closedObject([
+            "reason": [
+                "type": "string",
+                "enum": [
+                    "unreadable_selection", "missing_math_step",
+                    "missing_reaction_context", "unsupported_content"
                 ]
-            ),
-            closedOutcome(
-                "needs_input",
-                payload: [
-                    "needs_input": closedObject([
-                        "reason": [
-                            "type": "string",
-                            "enum": [
-                                "unreadable_selection", "missing_math_step",
-                                "missing_reaction_context", "unsupported_content"
-                            ]
-                        ],
-                        "message": ["type": "string", "minLength": 8, "maxLength": 180]
-                    ])
-                ]
-            ),
-            closedOutcome(
-                "no_action",
-                payload: [
-                    "no_action": closedObject([
-                        "reason": [
-                            "type": "string",
-                            "enum": ["no_relevant_content", "unsupported_intent", "unsupported_content"]
-                        ]
-                    ])
-                ]
-            )
-        ]
-    ] }
+            ],
+            "message": ["type": "string", "minLength": 8, "maxLength": 180]
+        ])
+        let noAction = closedObject([
+            "reason": [
+                "type": "string",
+                "enum": ["no_relevant_content", "unsupported_intent", "unsupported_content"]
+            ]
+        ])
+        return closedObject([
+            "schema_version": ["type": "integer", "const": 1],
+            "outcome": [
+                "type": "string",
+                "enum": ["spatial_guidance", "transient_confirmation", "needs_input", "no_action"]
+            ],
+            "basis": nullable(["anyOf": [calculusBasis, chemistryBasis]]),
+            "intervention": nullable(intervention),
+            "confirmation": nullable(confirmation),
+            "needs_input": nullable(needsInput),
+            "no_action": nullable(noAction)
+        ])
+    }
+
+    private static func nullable(_ schema: [String: Any]) -> [String: Any] {
+        ["anyOf": [schema, ["type": "null"]]]
+    }
 
     private static func closedObject(_ properties: [String: Any]) -> [String: Any] {
         [
@@ -273,12 +270,6 @@ struct OpenAICodexPinClient: Sendable {
             && inner.y + inner.height <= outer.y + outer.height
     }
 
-    private static func closedOutcome(_ name: String, payload: [String: Any]) -> [String: Any] {
-        var properties = payload
-        properties["schema_version"] = ["type": "integer", "const": 1]
-        properties["outcome"] = ["type": "string", "const": name]
-        return closedObject(properties)
-    }
 }
 
 enum ResponsesInterventionTranslator {

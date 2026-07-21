@@ -96,11 +96,17 @@ struct SignedOutAgentInsightClient: AgentInsightClient {
 }
 
 private func defaultInsightPrompt(_ question: String?) -> String {
-    question ?? """
-    This is a page from a handwritten notebook. The user has drawn on it and may have \
-    circled or marked something. Describe what you see, focusing on anything circled or \
-    marked. Reply with a one-paragraph summary, then a short bullet list (using "- ") of \
-    the distinct things you notice. Keep it concise.
+    let task = question ?? "Help the student learn from the selected notebook work."
+    return """
+    \(task)
+
+    Give a direct, useful teaching response grounded in the visible selection. Infer the \
+    likely learning need when the work makes it reasonably clear. Explain the relevant \
+    reasoning, why it matters, and a concrete next step or self-check. Do not merely \
+    describe or transcribe what is visible. Do not say "incomplete question", ask the \
+    student to provide context, or label the response "Follow-up" or "Follow-up branch". \
+    If the evidence is genuinely unreadable or too ambiguous to answer safely, return one \
+    brief neutral sentence without inventing facts. Use readable Markdown and stay concise.
     """
 }
 

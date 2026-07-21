@@ -858,6 +858,19 @@ revision. This rewrite retains their accepted constraints:
 
 ## Session log
 
+- 2026-07-21 — Phillip's first normal-app test exposed a live structured-output
+  rejection and instructionally poor fallback language. The correction keeps
+  the existing typed evidence and geometry contracts but replaces the provider-
+  rejected root `oneOf` schema with one closed object whose variant payloads
+  are required-nullable and locally discriminated. Needs-input/no-action now
+  complete silently with the lasso retained; the normal insight prompt forbids
+  incomplete-question/context requests, generic follow-up labels, and
+  observational narration, requiring a reasoning explanation and usable next
+  step. A signed Release build succeeded from
+  `tmp/build/pc18-live-correction/`, then installed and ordinarily launched on
+  only iPad `2DD98ECC-A26A-5730-943B-01DD63DC4117`. Phillip's repeat of the
+  failing live selection remains the required account/model and teaching-value
+  verdict.
 - 2026-07-21 — Phillip paused PC-18 and rejected the Debug/fixture verification
   surface as non-representative of the actual implementation. All prior results
   from that surface are invalidated as acceptance evidence. The app now always
