@@ -1570,17 +1570,17 @@ placeholder.
   home-screen inspection remain blocked because this host has no Xcode toolchain
   or pinned iPad session.
 
-## Proposed line — PC-18: Reasoning Pins — Calculus Check + Ochem Explain
+## Active line — PC-18: Reasoning Pins — Calculus Check + Ochem Explain
 
-Status: **implementation paused — obsolete fixture evidence invalidated; actual Release-app verdict pending**
+Status: **implementation complete and Release-delivered — actual normal-app golden interactions and Phillip verdict pending**
 
 Target branch: `main`
 
 Child work-line:
 [`PC-18-InstructionalInterventionEngine.md`](PC-18-InstructionalInterventionEngine.md)
 
-Owners: Notebook user intent and lifecycle; AgentHarness intervention policy,
-bounded transport, and validation; SpatialCanvas geometry; Pins presentation.
+Owners: App integration and in-product intervention policy/transport/validation;
+Notebook user intent and lifecycle; SpatialCanvas geometry; Pins presentation.
 
 Summary: prove one Reasoning Pin interaction across two prepared learning
 problems: Check catches the missing `½` in the handwritten Calc I integral
@@ -1588,8 +1588,9 @@ problems: Check catches the missing `½` in the handwritten Calc I integral
 reaction. The feature set is reverse-derived from those two moments: typed
 intent, high-fidelity tight/context crops, Calc and Ochem evidence bases, one
 Pin by default, transient correct/missing-context outcomes, retained selection,
-and existing page-normalized persistence. Twelve frozen cross-domain cases and
-five repeated live runs per golden problem gate a three-day critical path.
+and existing page-normalized persistence. Reference-case/evaluator artifacts
+document the intended semantics but no longer count as acceptance evidence;
+five repeated normal-app runs per golden problem are the behavioral gate.
 General CAS/OCR/chemical parsing, broad subjects, multi-call critics, atom-level
 anchors, and live follow-up generation remain outside the hackathon scope. The
 child plan now supplies one coordinator delivery goal and four fan-out/fold-in
@@ -1605,6 +1606,13 @@ and a concrete return contract.
   acceptance evidence. `AGENTS.md` now requires the actual normal Release app;
   Debug scenario routing and the scenario, structured-review, and Pencil
   fixture entry points are disabled. No further PC-18 verification ran.
+- 2026-07-21 — Status audit after the pause: PC-18 implementation, integration,
+  bounded correction, signed Release build, installation, and ordinary launch
+  remain valid completed work. Debug/fixture/evaluator results do not. The line
+  is therefore implementation-complete and Release-delivered, but not
+  behaviorally accepted: five real Calc runs, five real Ochem runs, live
+  latency, actual-app spatial/visual/crash inspection, and Phillip's verdict
+  remain the only completion gate.
 - 2026-07-21 — `CONTRACT:` extend `SelectionArtifact` with an optional,
   orientation-only context crop and introduce the versioned
   `InterventionOutcome`/typed Calculus and Organic Chemistry evidence contract.

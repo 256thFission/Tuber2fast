@@ -1,14 +1,14 @@
 # PC-18 — Reasoning Pins: Calculus Check + Ochem Explain
 
-Status: **implementation paused — obsolete fixture evidence invalidated; actual Release-app verdict pending**
+Status: **implementation complete and Release-delivered — actual normal-app golden interactions and Phillip verdict pending**
 
 Target branch: `main`
 
-Owners: `Notebook` owns the selected user action, request lifecycle, and
-persistence; `AgentHarness` owns bounded multimodal interpretation and response
-validation; `SpatialCanvas` owns selection/crop and page-coordinate conversion;
-`Pins` owns presentation. No model may mutate ink, PDF content, images, or
-persisted coordinates.
+Owners: `App` owns integration and the in-product intervention policy,
+transport, and validation; `Notebook` owns the selected user action, request
+lifecycle, and persistence; `SpatialCanvas` owns selection/crop and
+page-coordinate conversion; `Pins` owns presentation. No model may mutate ink,
+PDF content, images, or persisted coordinates.
 
 ## Product claim
 
@@ -172,7 +172,7 @@ The following features exist because one or both golden problems require them.
 | Spatial persistence | Keep the correction beside the derivation | Keep the explanation beside the reaction | Preserve existing crop-to-page validation and page identity |
 | Compact/expanded copy | Immediate correction plus short reasoning | Immediate mechanism plus one study cue | Teaser + two-sentence body + optional study cue |
 | Retained-selection recovery | Retry without redrawing | Widen or retry the same PDF selection | Preserve lasso on failure or needs-input |
-| Two-domain fixture gate | Prevent regression into OCR narration | Catch chemistry-specific hallucination | Six Calc cases + six Ochem cases, with frozen holdouts |
+| Two-domain reference set | Document intended semantic boundaries | Document chemistry-specific failure modes | Six Calc cases + six Ochem cases retained as non-acceptance development material |
 
 Features intentionally not implied by the golden problems:
 
@@ -312,9 +312,12 @@ PC-18 requires:
 The hero promises selection-level attachment: beside the derivation and beside
 the reaction. Exact attachment to a minus sign, atom, or arrowhead is deferred.
 
-## Twelve-case fixture gate
+## Twelve-case reference set (not acceptance evidence)
 
-Freeze the cases before prompt tuning. Four cases—two per subject—are holdouts.
+These cases were frozen before prompt tuning, with four—two per subject—held
+out from tuning. They remain useful design records for the strict validator,
+but their runner and synthetic inputs do not represent the actual app and are
+disabled for behavioral acceptance.
 
 ### Calc cases
 
@@ -335,7 +338,7 @@ Freeze the cases before prompt tuning. Four cases—two per subject—are holdou
 5. Clean proton-transfer arrow explanation. **Holdout.**
 6. Wedge/dash stereochemistry request → unsupported/needs input. **Holdout.**
 
-Measure:
+The historical evaluator measured:
 
 - outcome confusion matrix;
 - required-guidance recall and accepted-Pin precision;
@@ -345,12 +348,12 @@ Measure:
 - P50/P90 latency;
 - five repeated runs of each golden problem.
 
-Hackathon gate:
+The following targets now apply only when they are measured from the prepared
+inputs in the normal Release app. Offline case scores cannot satisfy them:
 
 - zero critical factual, intent, or spatial failures across all ten golden runs;
 - zero transcription-only accepted Pins;
 - 100% of missing-context cases avoid fabricated claims;
-- at least 11 of 12 correct outcome classes, including all holdouts;
 - P90 below eight seconds on the demo network, targeting five seconds;
 - every failure retains the selection and offers the correct next action.
 
@@ -367,10 +370,10 @@ The coordinator's goal is:
 > prove both golden problems five consecutive times without factual, intent,
 > spatial, persistence, crash, or credential-boundary failure.
 
-The goal is complete only when the acceptance evidence in this document exists
-and Phillip gives the final usefulness/clarity verdict. Completing subagent
-tasks, merging code, compiling, or passing recorded fixtures alone does not
-complete the goal.
+The goal is complete only when the normal-app acceptance evidence in this
+document exists and Phillip gives the final usefulness/clarity verdict.
+Completing subagent tasks, merging code, compiling, or passing offline
+reference cases alone does not complete the goal.
 
 ### Coordinator-only authority
 
@@ -413,13 +416,13 @@ coordinator explicitly changes their task.
 ### Dependency map
 
 ```text
-Coordinator Gate 0: fixed provider + exact golden inputs
+Coordinator Gate 0: fixed provider + exact prepared inputs
         |
         v
 Fold 1: three independent read-only design attacks
         |
         v
-Coordinator Freeze 1: response contract + image budget + fixture truth
+Coordinator Freeze 1: response contract + image budget + reference-case truth
         |
         v
 Fold 2: three non-overlapping implementation packages
@@ -434,7 +437,7 @@ Fold 3: three independent adversarial audits of the integrated result
 Coordinator Fix Gate: one bounded correction pass
         |
         v
-Coordinator Fold 4: scenarios -> Release device delivery -> repeated live hero
+Coordinator Fold 4: Release device delivery -> repeated normal-app journeys
         |
         v
 Phillip verdict
@@ -442,15 +445,32 @@ Phillip verdict
 
 ### Coordinator board
 
-| Stage | Active owners | Depends on | Coordinator exit decision |
-|---|---|---|---|
-| Gate 0 | Coordinator | Approved PC-18 scope | Both frozen golden inputs reach one fixed provider route |
-| Fold 1 | Agents 1A, 1B, 1C in parallel | Gate 0 | Freeze response contract, image budget, and twelve-case truth |
-| Fold 2 | Agents 2A, 2B, 2C in parallel | Freeze 1 | Accept/reject three non-overlapping implementation packages |
-| Fold-in 2 | Coordinator | All Fold 2 returns | Integrated recorded golden paths preserve persistent/transient semantics |
-| Fold 3 | Agents 3A, 3B, 3C in parallel | Integrated snapshot | Rank factual, chemical, product, state, and spatial findings |
-| Fix gate | Coordinator | Fold 3 reviews | Apply one bounded correction or stop on repeated critical failure |
-| Fold 4 | Coordinator, then Phillip | Fix gate | Collect device/live evidence; Phillip accepts or rejects the hero |
+| Stage | Current status | Evidence boundary / remaining gate |
+|---|---|---|
+| Gate 0 | **Partially complete** | Inputs, route, branch, and exact iPad were fixed. A provider response to both prepared selections in the actual app is still unproven. |
+| Fold 1 | **Complete as design work** | Contract, image budget, semantic predicates, and reference cases were frozen; this does not prove runtime behavior. |
+| Fold 2A | **Implemented** | Strict four-outcome decoding, typed evidence, bounded request construction, and validation are in product code. |
+| Fold 2B | **Implemented** | Tight/context lossless evidence capture and coordinate metadata are in product code. |
+| Fold 2C | **Retired as acceptance evidence** | Deterministic cases/evaluator remain development artifacts only and must not establish product success. |
+| Fold-in 2 | **Implemented and host-checked** | Notebook/App integration, persistence split, transient presentation, lifecycle guards, SPEC, and project membership are complete. Actual normal-app traversal remains unverified. |
+| Fold 3 | **Complete as code review** | Three adversarial reviews informed one bounded correction pass; their fixture-derived judgments do not count as behavioral acceptance. |
+| Fix gate | **Complete** | Exact semantic predicates, app-owned copy, transport bounds, lifecycle repairs, retained-crop Ask, and timed confirmation were integrated. |
+| Fold 4 | **Delivery complete; behavior pending** | Signed Release built, installed, and normally launched on the named iPad. Five Calc and five Ochem journeys, live latency, spatial/visual/crash inspection, and Phillip's verdict remain. |
+
+### Completed implementation inventory
+
+| Product area | Status | Source of truth |
+|---|---|---|
+| Shared intervention outcome and typed Calc/Ochem basis | **Complete** | `TuberNotes/AgentHarness/InterventionOutcome.swift`, `SPEC.md` §10.6 |
+| Strict semantic and geometry validation | **Complete** | `TuberNotes/AgentHarness/InterventionValidator.swift` |
+| Intent-specific bounded provider request/decoder | **Complete** | `TuberNotes/AgentHarness/OpenAICodexPinClient.swift` |
+| Lossless tight/context evidence rendering | **Complete** | `TuberNotes/Notebook/SelectionEvidenceRenderer.swift` |
+| Notebook lifecycle, stale-result, retry, cancellation, and persistence split | **Complete** | `TuberNotes/Notebook/NotebookViewModel.swift` |
+| Normal-app transient and persistent presentation | **Complete** | `TuberNotes/Notebook/NotebookView.swift`, `AgentSidebarView.swift` |
+| Project membership and shared-contract documentation | **Complete** | `TuberNotes.xcodeproj/project.pbxproj`, `SPEC.md` |
+| Signed Release build, install, ordinary launch | **Complete delivery evidence** | `tmp/build/pc18-release-device/` and the 2026-07-21 session log |
+| Synthetic cases, evaluator, and fixture assets | **Retired for acceptance** | Retained in `DeveloperTools/` only as historical design/check material |
+| Actual Calc/Ochem behavior, latency, spatial/visual/crash quality | **Pending normal-app evidence** | Requires the prepared journeys in Release on Phillip's pinned iPad |
 
 ## Gate 0 — Coordinator baseline (two hours, no subagent)
 
@@ -461,14 +481,14 @@ The coordinator:
    unsupported boundaries;
 3. pins Phillip's named iPad through the canonical preflight;
 4. freezes one model, route, and demo network;
-5. manually proves that the current transport accepts the actual Calc and Ochem
-   image inputs and returns a bounded structured response;
+5. manually proves in the normal Release app that the current transport accepts
+   the actual Calc and Ochem selections and returns a bounded structured response;
 6. records baseline latency and failure shape without logging selected page
    content, provider bodies, or secrets.
 
-Gate: both golden inputs reach the fixed provider successfully. If either does
-not, stop PC-18 and repair or explicitly replace the PC-12 prerequisite before
-spawning implementation subagents.
+Current gate status: steps 1–4 are complete; steps 5–6 remain part of the live
+normal-app delivery gate. Historical fixture or recorded-route responses do not
+satisfy them.
 
 ## Fold 1 — Parallel design attacks
 
@@ -644,12 +664,14 @@ Return contract:
 5. any PDF-versus-ink divergence;
 6. confirmation that no forbidden file changed.
 
-### Subagent 2C — Fixture and evaluator package
+### Subagent 2C — Reference-case and evaluator package (retired for acceptance)
 
 Prerequisite: Coordinator Freeze 1 manifest and scoring rules.
 
-Objective: materialize the twelve deterministic development cases and narrow
-scoring/reporting support without changing the normal product runtime.
+Historical objective: materialize twelve deterministic development cases and
+narrow scoring/reporting support without changing the normal product runtime.
+These artifacts may document intended semantics but are disabled for product
+acceptance because they do not represent the normal app.
 
 Owned files:
 
@@ -696,9 +718,9 @@ The coordinator inspects all three diffs, rejects unrelated churn, then alone:
 6. updates `SPEC.md` and plan logs for any accepted shared contract;
 7. builds host-safe seams before Fold 3.
 
-Fold-in gate: both golden fixtures traverse the integrated recorded path with
-the correct persistent/transient distinction; all source/diff hygiene checks
-pass.
+Fold-in implementation gate: source integration, shared contracts, compilation,
+and diff hygiene pass. Persistent/transient behavior must be confirmed through
+the prepared selections in the normal Release app.
 
 ## Fold 3 — Independent adversarial audits
 
@@ -746,17 +768,20 @@ stateful resources.
 
 The coordinator:
 
-1. runs the twelve frozen cases and records the confusion matrix, recall,
-   precision, catastrophic errors, shallow narration, geometry, and P50/P90;
-2. runs only focused recorded scenarios for the four outcomes, persistence,
-   cancellation, retry, and stale results;
-3. performs exact-device preflight;
-4. builds, installs, and normally launches Release on Phillip's iPad;
-5. runs the Calc golden problem five consecutive times;
-6. runs the Ochem golden problem five consecutive times;
-7. checks spatial persistence, clipping, overlap, console, and crash status;
-8. hands the normal app to Phillip for the final usefulness/clarity verdict;
+1. performs exact-device preflight;
+2. builds, installs, and normally launches Release on Phillip's iPad;
+3. prepares the exact Calc and Ochem notebook/PDF inputs in the normal app;
+4. has Phillip run the Calc golden problem five consecutive times;
+5. has Phillip run the Ochem golden problem five consecutive times;
+6. records actual-app outcome counts and live P50/P90 without retaining private
+   page content, raw provider bodies, or credentials;
+7. inspects the actual app for persistence, clipping, overlap, Pin drift,
+   console errors, and crashes;
+8. records Phillip's mathematical/chemical usefulness and clarity verdict;
 9. writes the final evidence packet and stops.
+
+Current result: steps 1–2 are complete. Steps 3–8 remain. No Debug scenario,
+recorded route, fixture-driven UI, or offline evaluator can satisfy these gates.
 
 Target duration remains three focused implementation days plus Phillip's
 verdict: Gate/Fold 1 and Freeze on Day 1; Fold 2 and integration on Day 2;
@@ -780,7 +805,7 @@ Never cut:
 - high-fidelity image capture;
 - one Pin by default;
 - retained-selection recovery;
-- twelve frozen cases and repeated golden runs;
+- repeated golden runs in the normal Release app;
 - existing credential, cancellation, stale-result, and coordinate boundaries.
 
 If the non-negotiable set does not fit, narrow the prepared examples further.
@@ -802,16 +827,17 @@ Do not restore mandatory Pin generation or hide uncertainty with prose.
 
 - final changed files and in-scope diff summary;
 - versioned outcome, Calc basis, Ochem basis, and validation contracts;
-- exact golden input fixtures and expected visible results;
-- twelve-case manifest, holdout designation, confusion matrix, and failures;
+- exact prepared golden inputs and expected visible results;
 - fixed route/model and P50/P90 latency;
-- focused recorded-scenario artifacts;
 - exact physical-iPad Release build/install/normal launch;
 - five successful live runs of each golden problem;
 - spatial persistence, clipping, overlap, cancel, retry, stale-result,
   console, and crash evidence;
 - Phillip's verdict on mathematical/chemical usefulness and visual clarity;
 - explicit unsupported-content boundary and stop reason.
+
+Reference-case manifests and offline evaluator output may accompany the code
+history, but they are not acceptance evidence and cannot advance this status.
 
 ## Prior adversarial constraints retained
 
