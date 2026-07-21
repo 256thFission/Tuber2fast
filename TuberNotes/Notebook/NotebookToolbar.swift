@@ -17,7 +17,9 @@ struct NotebookToolbar: View {
     @State private var showLayers = false
     @State private var pressedTool: WritingTool?
     @State private var isLassoHeld = false
+    @State private var isColorScrubbing = false
     @State private var pressStartWidth: CGFloat = 0
+    @State private var colorScrubStartIndex = 0
 
     var body: some View {
         Group {
@@ -63,6 +65,7 @@ struct NotebookToolbar: View {
                 isRefinementActive = false
                 isRefinementLassoActive = false
                 pressedTool = nil
+                isColorScrubbing = false
             }
         }
         .onChange(of: vm.settings.showsLayers) { _, isVisible in
@@ -88,7 +91,7 @@ struct NotebookToolbar: View {
                 toolbarContent
                     .fixedSize(horizontal: true, vertical: true)
             }
-            .scrollDisabled(pressedTool != nil || isLassoHeld)
+            .scrollDisabled(pressedTool != nil || isLassoHeld || isColorScrubbing)
             .mask {
                 LinearGradient(
                     stops: [
@@ -196,6 +199,12 @@ struct NotebookToolbar: View {
                 color: tool == .eraser ? .secondary : vm.inkColor
             )
             .transition(.opacity.combined(with: .scale(scale: 0.94, anchor: .bottom)))
+        } else if isColorScrubbing {
+            FavoriteColorHoldIndicator(
+                colors: vm.settings.favoriteColors,
+                selectedHex: vm.inkColorHex
+            )
+            .transition(.opacity.combined(with: .scale(scale: 0.94, anchor: .bottom)))
         } else if isLassoHeld {
             LassoHoldIndicator()
                 .transition(.opacity.combined(with: .scale(scale: 0.94, anchor: .bottom)))
@@ -269,9 +278,7 @@ struct NotebookToolbar: View {
 
     private var lassoButton: some View {
         Button {
-            isLassoHeld = false
-            vm.activateLasso()
-            isRefinementActive = false
+            activateLassoTool()
         } label: {
             Image(systemName: "lasso")
                 .font(.system(size: 17, weight: .medium))
@@ -286,10 +293,21 @@ struct NotebookToolbar: View {
                 .animation(.spring(response: 0.22, dampingFraction: 0.62), value: isLassoActive)
         }
         .highPriorityGesture(lassoHoldGesture)
+        // As with the writing tools, the high-priority hold can consume the
+        // Button's short tap inside the adaptive horizontal toolbar.
+        .simultaneousGesture(
+            TapGesture().onEnded { _ in activateLassoTool() }
+        )
         .accessibilityIdentifier("tool-lasso")
         .accessibilityLabel("Selection lasso")
         .accessibilityHint("Draw around strokes to select and move them")
         .accessibilityAddTraits(isLassoActive ? [.isSelected] : [])
+    }
+
+    private func activateLassoTool() {
+        isLassoHeld = false
+        vm.activateLasso()
+        isRefinementActive = false
     }
 
     private var lassoHoldGesture: some Gesture {
@@ -461,7 +479,7 @@ struct NotebookToolbar: View {
     }
 
     private var colorButton: some View {
-        Button { showColors = true } label: {
+        Button { presentColorPicker() } label: {
             Circle()
                 .fill(vm.inkColor)
                 .frame(width: 24, height: 24)
@@ -469,12 +487,87 @@ struct NotebookToolbar: View {
                 .overlay(Circle().strokeBorder(.primary.opacity(0.18), lineWidth: 1))
                 .symbolEffect(.pulse, value: showColors)
         }
+        .highPriorityGesture(colorScrubGesture)
+        // Match the writing tools: the priority hold protects scrubbing from
+        // the adaptive ScrollView, while this observer preserves a short tap.
+        .simultaneousGesture(
+            TapGesture().onEnded { _ in presentColorPicker() }
+        )
+        .sensoryFeedback(.selection, trigger: vm.inkColorHex)
         .accessibilityIdentifier("toolbar-color")
         .accessibilityLabel("Ink color")
+        .accessibilityValue(vm.inkColorHex)
+        .accessibilityHint("Tap for all colors. Long press, then slide left or right through favorites")
+        .accessibilityAdjustableAction { direction in
+            adjustFavoriteColor(direction)
+        }
         .popover(isPresented: $showColors) {
             ColorPalettePopover(vm: vm)
                 .presentationCompactAdaptation(.popover)
         }
+    }
+
+    private func presentColorPicker() {
+        showColors = true
+    }
+
+    private var colorScrubGesture: some Gesture {
+        LongPressGesture(minimumDuration: 0.45, maximumDistance: 24)
+            .sequenced(before: DragGesture(minimumDistance: 0))
+            .onChanged { value in
+                guard case .second(true, let drag?) = value else { return }
+                beginColorScrub()
+                guard isColorScrubbing else { return }
+                let delta = Int((drag.translation.width / 34).rounded())
+                selectFavoriteColor(at: colorScrubStartIndex + delta)
+            }
+            .onEnded { _ in
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    isColorScrubbing = false
+                }
+            }
+    }
+
+    private func beginColorScrub() {
+        guard !isColorScrubbing, !vm.settings.favoriteColors.isEmpty else { return }
+        showColors = false
+        pressedTool = nil
+        isLassoHeld = false
+        isRefinementActive = false
+        colorScrubStartIndex = vm.settings.favoriteColors.firstIndex {
+            $0.caseInsensitiveCompare(vm.inkColorHex) == .orderedSame
+        } ?? 0
+        selectFavoriteColor(at: colorScrubStartIndex)
+        withAnimation(.easeOut(duration: 0.12)) {
+            isColorScrubbing = true
+        }
+    }
+
+    private func selectFavoriteColor(at proposedIndex: Int) {
+        let favorites = vm.settings.favoriteColors
+        guard !favorites.isEmpty else { return }
+        let index = min(max(proposedIndex, 0), favorites.count - 1)
+        let hex = favorites[index]
+        guard vm.inkColorHex.caseInsensitiveCompare(hex) != .orderedSame else { return }
+        vm.selectColor(hex)
+    }
+
+    private func adjustFavoriteColor(_ direction: AccessibilityAdjustmentDirection) {
+        let favorites = vm.settings.favoriteColors
+        guard !favorites.isEmpty else { return }
+        let currentIndex = favorites.firstIndex {
+            $0.caseInsensitiveCompare(vm.inkColorHex) == .orderedSame
+        }
+        let targetIndex: Int
+        switch direction {
+        case .increment:
+            targetIndex = min((currentIndex ?? -1) + 1, favorites.count - 1)
+        case .decrement:
+            targetIndex = max((currentIndex ?? favorites.count) - 1, 0)
+        @unknown default:
+            return
+        }
+        selectFavoriteColor(at: targetIndex)
     }
 
     private var agenticLayersButton: some View {
@@ -1041,6 +1134,72 @@ private struct ToolWidthHoldIndicator: View {
                     .offset(x: (trackWidth - thumbDiameter) * progress)
             }
             .frame(width: trackWidth, height: thumbDiameter)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 13))
+        .overlay(RoundedRectangle(cornerRadius: 13).strokeBorder(.primary.opacity(0.1)))
+        .shadow(color: .black.opacity(0.16), radius: 8, y: 3)
+    }
+}
+
+private struct FavoriteColorHoldIndicator: View {
+    let colors: [String]
+    let selectedHex: String
+
+    private let maximumVisibleColors = 7
+
+    private var selectedIndex: Int {
+        colors.firstIndex {
+            $0.caseInsensitiveCompare(selectedHex) == .orderedSame
+        } ?? 0
+    }
+
+    private var visibleRange: Range<Int> {
+        guard colors.count > maximumVisibleColors else { return 0..<colors.count }
+        let lowerBound = min(
+            max(selectedIndex - maximumVisibleColors / 2, 0),
+            colors.count - maximumVisibleColors
+        )
+        return lowerBound..<(lowerBound + maximumVisibleColors)
+    }
+
+    var body: some View {
+        VStack(spacing: 7) {
+            Text("Favorite \(selectedIndex + 1) of \(colors.count)")
+                .font(.caption2.monospacedDigit().weight(.semibold))
+
+            HStack(spacing: 7) {
+                if visibleRange.lowerBound > 0 {
+                    Image(systemName: "chevron.left")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(.secondary)
+                }
+
+                ForEach(Array(visibleRange), id: \.self) { index in
+                    let uiColor = UIColor(hex: colors[index]) ?? .black
+                    let isSelected = index == selectedIndex
+                    Circle()
+                        .fill(Color(uiColor))
+                        .frame(width: 22, height: 22)
+                        .overlay(Circle().strokeBorder(.primary.opacity(0.18), lineWidth: 1))
+                        .overlay {
+                            if isSelected {
+                                Circle()
+                                    .strokeBorder(uiColor.isLight ? Color.black : Color.white, lineWidth: 2)
+                                    .padding(3)
+                            }
+                        }
+                        .scaleEffect(isSelected ? 1.18 : 1)
+                        .animation(.spring(response: 0.2, dampingFraction: 0.7), value: isSelected)
+                }
+
+                if visibleRange.upperBound < colors.count {
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(.secondary)
+                }
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 9)

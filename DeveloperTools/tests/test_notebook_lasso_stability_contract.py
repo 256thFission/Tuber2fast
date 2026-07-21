@@ -38,6 +38,15 @@ class NotebookLassoStabilityContractTests(unittest.TestCase):
         self.assertIn("if !isLassoActive {", self.canvas)
         self.assertNotIn("if !isLassoActive || lassoRect == nil", self.canvas)
 
+    def test_short_tap_survives_lasso_hold_gesture(self):
+        lasso_button = self.toolbar.split("private var lassoButton", 1)[1].split(
+            "private var lassoHoldGesture", 1
+        )[0]
+        self.assertIn(".highPriorityGesture(lassoHoldGesture)", lasso_button)
+        self.assertIn(".simultaneousGesture(", lasso_button)
+        self.assertIn("TapGesture().onEnded { _ in activateLassoTool() }", lasso_button)
+        self.assertIn("private func activateLassoTool()", lasso_button)
+
     def test_selection_and_move_stay_inside_logical_page(self):
         self.assertIn(
             ".intersection(CGRect(origin: .zero, size: NotebookPageLayout.size))",

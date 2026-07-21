@@ -864,6 +864,23 @@ must remain recoverable inside the logical page.
 
 ### Session log
 
+- 2026-07-20 — Reopened after a device-side report that the regular lasso
+  appears broken. Traced its toolbar input path and found that its
+  high-priority hold gesture can consume a short tap; unlike the adjacent
+  writing-tool buttons, the lasso button had no simultaneous tap observer.
+  Began the smallest activation-path repair and focused regression check; no
+  coordinate or shared-contract change is required.
+- 2026-07-20 — Routed both the lasso Button action and a simultaneous short-tap
+  observer through one idempotent activation helper, matching the established
+  adaptive-toolbar gesture pattern. Added a focused regression assertion.
+  Lasso stability passes 6/6, toolbar selection passes 2/2, and nearby notebook
+  contracts pass 15/15. The complete host suite passes 61/62; its sole failure
+  is the previously logged unrelated verifier-truthfulness fixture supplying
+  13 runtime fields to a 19-field assertion. `git diff --check` passes and the
+  diff remains limited to lasso activation, its focused test, and this log. No
+  shared contract changed. Xcode build, normal-notebook launch, screenshot,
+  console/crash collection, and physical tap/Pencil verification remain
+  blocked because this Linux host has no Xcode tools or pinned iPad session.
 - 2026-07-20 — Traced normal notebook lasso state and movement. Confirmed that
   mode exit and degenerate gestures can leave `NotebookViewModel.lassoRect`
   stale after the UIKit overlay clears, and that drag deltas are not bounded to
@@ -962,3 +979,140 @@ Shared-contract log — 2026-07-20: `CONTRACT:` extend persisted
 `NotebookPageScrollDirection` so a notebook can retain the user's chosen page
 navigation axis. Missing values decode as Horizontal; page identity, spatial
 coordinates, archive version, and existing setting keys are unchanged.
+
+## Active line — PC-14: favorite color scrub
+
+Status: **implementation complete — host-checked; physical-device verification blocked**
+
+Target branch: `sive/dev`
+
+Child work-line: [`PC-14-FavoriteColorScrub.md`](PC-14-FavoriteColorScrub.md)
+
+Owner: App integration, using the existing notebook color and favorite-settings
+contracts.
+
+### Objective and user-visible outcome
+
+Let the user long-press the working toolbar's color control and slide left or
+right through favorited colors, matching the pen tools' hold-and-slide
+interaction, while a normal tap continues to open the full color picker.
+
+### Scope
+
+- `TuberNotes/Notebook/NotebookToolbar.swift`
+- `DeveloperTools/tests/test_notebook_tool_selection_contract.py`
+- `Docs/Plan/PC-14-FavoriteColorScrub.md`
+- this PC-14 section and session log
+
+### Non-goals and dependencies
+
+- No favorite-color persistence, palette contents, PencilKit, canvas,
+  coordinate, toolbar-order, or shared-contract changes.
+- No redesign of the full color picker or notebook settings.
+- Physical launch and inspection depend on an explicitly named, pinned iPad.
+
+### Work and verification
+
+1. Add a priority hold-then-horizontal-drag gesture to the color button while
+   retaining its short-tap popover action.
+2. Select the nearest favorite as the drag crosses each swatch step and show a
+   compact live favorite strip above the toolbar.
+3. Preserve adaptive scrolling outside the hold and provide adjustable
+   accessibility selection through favorites.
+4. Run focused host checks and final diff hygiene.
+5. Build, launch, and mechanically inspect the normal notebook path on the
+   explicitly pinned iPad.
+
+### Acceptance evidence and stop conditions
+
+- Short tap still opens the full color picker.
+- Hold-and-slide reaches the first and last favorited colors and shows the
+  current selection without clipping or overlap.
+- Release dismisses the indicator and restores toolbar scrolling.
+- Empty favorites leave tap-to-open intact and do not begin a scrub.
+- Focused host checks pass and unrelated collaborator edits remain untouched.
+- Stop after evidence is collected, after two failed device verifications
+  without a narrower fix, or when the exact-device prerequisite is absent.
+
+### Session log
+
+- 2026-07-20 — Started from the existing adaptive-toolbar implementation.
+  Confirmed favorite colors already persist in `NotebookSettings` and the color
+  button currently supports only tap-to-open. Began the smallest toolbar-only
+  hold-and-scrub addition; no shared contract or ownership change is required.
+- 2026-07-20 — Added a priority 0.45-second hold followed by horizontal scrub,
+  anchored to the current favorite and clamped through the first/last saved
+  colors. A compact live strip shows the nearby favorites and current position;
+  release restores adaptive toolbar scrolling. Short tap still opens the full
+  picker, empty favorites do not start a scrub, and adjustable accessibility
+  actions traverse the same favorites. Focused toolbar/lasso contracts pass
+  9/9, the 16-start-index boundary simulation and `git diff --check` pass, and
+  the full host suite passes 62/63 with only the already logged unrelated
+  verifier-truthfulness argument-count failure. Evidence is under
+  `tmp/verify/pc-14-favorite-color-scrub/summary.txt`. Existing lasso, plan,
+  project, and app-icon collaborator edits were preserved. Xcode build,
+  physical launch, tap/scrub inspection, screenshot, console, and crash checks
+  remain blocked because this Linux host has no Xcode toolchain, explicit
+  device ID, or pinned iPad session.
+
+## Active line — PC-13: application icon asset
+
+Status: **implementation complete — host-checked; Xcode/device verification blocked**
+
+Target branch: `sive/dev`
+
+Owner: App integration and project resources.
+
+### Objective and user-visible outcome
+
+Turn the supplied `tunotes.JPEG` artwork into the canonical TuberNotes iOS app
+icon so installed builds show the intended hand-drawn mark instead of a generic
+placeholder.
+
+### Scope
+
+- `tunotes.JPEG` as the source artwork
+- `TuberNotes/Assets.xcassets/AppIcon.appiconset/`
+- `TuberNotes.xcodeproj/project.pbxproj`
+- this PC-13 section and session log
+
+### Non-goals and dependencies
+
+- no redraw, branding change, alternate dark/tinted artwork, launch-screen
+  change, or unrelated UI work;
+- Xcode asset compilation and installed-icon inspection require an Apple/Xcode
+  host and the explicitly pinned physical iPad.
+
+### Work and verification
+
+1. Inspect the source for aspect ratio, color profile, transparency, and edge
+   clearance.
+2. Normalize it to an opaque 1024×1024 sRGB PNG without changing the artwork.
+3. Add a minimal iOS AppIcon set and register the asset catalog with the target.
+4. Validate asset metadata, image properties, project references, and diff
+   hygiene; build and inspect on the pinned iPad when available.
+
+### Acceptance evidence and stop conditions
+
+- the canonical AppIcon source is square, exactly 1024×1024 pixels, opaque,
+  and sRGB;
+- the target resource phase includes the asset catalog and both Debug and
+  Release select `AppIcon`;
+- host checks pass and unrelated collaborator edits remain untouched;
+- stop after host evidence is collected when Xcode/device prerequisites are
+  unavailable, or after two asset-compilation failures without a narrower fix.
+
+### Session log
+
+- 2026-07-20 — Inspected the supplied 1259×1259 opaque sRGB JPEG. The artwork
+  is already square with generous edge clearance, so began a preservation-first
+  conversion and project integration rather than a generative redraw.
+- 2026-07-20 — Converted the supplied artwork to an opaque 1024×1024 sRGB PNG,
+  added a single-size universal iOS AppIcon set, registered the asset catalog in
+  the target resources, and selected `AppIcon` for Debug and Release. JSON,
+  image-property, project-reference, small-scale preview, and diff-hygiene checks
+  pass; evidence is under `tmp/verify/pc-13-app-icon/`. Removed the root source
+  JPEG after successful conversion at the user's request. Existing lasso/toolbar
+  collaborator edits were preserved. Xcode asset compilation, installation, and
+  home-screen inspection remain blocked because this host has no Xcode toolchain
+  or pinned iPad session.

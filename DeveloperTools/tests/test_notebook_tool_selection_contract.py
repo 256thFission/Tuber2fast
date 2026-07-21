@@ -27,6 +27,29 @@ class NotebookToolSelectionContractTests(unittest.TestCase):
         )
         self.assertIn("vm.selectTool(tool)", tool_button)
 
+    def test_color_button_keeps_tap_picker_and_priority_favorite_scrub(self):
+        source = TOOLBAR.read_text()
+        color_button = source[
+            source.index("private var colorButton"):
+            source.index("private var agenticLayersButton")
+        ]
+
+        self.assertIn("Button { presentColorPicker() }", color_button)
+        self.assertIn(".highPriorityGesture(colorScrubGesture)", color_button)
+        self.assertIn(
+            "TapGesture().onEnded { _ in presentColorPicker() }",
+            color_button,
+        )
+        self.assertIn("LongPressGesture(minimumDuration: 0.45", color_button)
+        self.assertIn("drag.translation.width / 34", color_button)
+        self.assertIn("selectFavoriteColor(at: colorScrubStartIndex + delta)", color_button)
+        self.assertIn("guard !isColorScrubbing, !vm.settings.favoriteColors.isEmpty", color_button)
+        self.assertIn(".accessibilityAdjustableAction", color_button)
+
+        hold_indicator = source[source.index("private struct FavoriteColorHoldIndicator") :]
+        self.assertIn('Text("Favorite \\(selectedIndex + 1) of \\(colors.count)")', hold_indicator)
+        self.assertIn("maximumVisibleColors = 7", hold_indicator)
+
     def test_refinement_lasso_bubble_is_anchored_to_magic_lasso_button(self):
         toolbar = TOOLBAR.read_text()
         notebook_view = NOTEBOOK_VIEW.read_text()
