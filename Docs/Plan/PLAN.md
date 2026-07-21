@@ -1666,7 +1666,7 @@ and a concrete return contract.
 
 ## Active line — PC-19: coherent Pin Chat and safe Markdown
 
-Status: **in progress — Fold 1 contracts frozen**
+Status: **implementation complete and Release-delivered — awaiting Phillip's current-app verdict**
 
 Target branch: `main`
 
@@ -1699,3 +1699,14 @@ conversation surfaces are prohibited and provide no acceptance evidence.
   from provider-authored Pin teasers without migrating existing notebooks or
   SPUD archives. Missing values are context-only; body source, IDs, lineage,
   page-normalized geometry, credentials, and provider routing are unchanged.
+- 2026-07-21 — Folds 2/3 and the coordinator correction pass are complete.
+  Complete assistant Markdown now persists unchanged; compact/accessibility
+  projections are syntax-free; sidebar/full Pin Chat roles are distinct; send,
+  cancellation, stale completion, pending prompt, page deletion, and lineage
+  state are ownership-safe. Focused checks pass 12/12, generic Release passes,
+  and commit `7f58de2` carries the required `CONTRACT:` prefix. Exact iPad
+  `2DD98ECC-A26A-5730-943B-01DD63DC4117` passed preflight, signed Release
+  build, install, normal no-scenario launch, and a live-process query. Evidence
+  is under `tmp/build/pc19-pin-chat-markdown*/`. No deprecated review surface
+  was used. Phillip's current normal-app interaction/visual verdict is the only
+  remaining gate.
