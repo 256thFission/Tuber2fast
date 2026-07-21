@@ -21,6 +21,29 @@ struct OfflineKnowledgePage: Codable, Equatable, Sendable {
     let excerpt: String
 }
 
+enum OfflineKnowledgeCorpus {
+    static func pages(
+        documentID: UUID,
+        documentTitle: String,
+        pageTexts: [String?]
+    ) -> [OfflineKnowledgePage] {
+        pageTexts.enumerated().compactMap { pageIndex, pageText in
+            guard let excerpt = pageText?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !excerpt.isEmpty else {
+                return nil
+            }
+            return OfflineKnowledgePage(
+                id: UUID(),
+                documentID: documentID,
+                documentTitle: documentTitle,
+                pageNumber: pageIndex + 1,
+                sectionTitle: nil,
+                excerpt: excerpt
+            )
+        }
+    }
+}
+
 /// Deterministic lexical textbook search for offline demos and AgentHarness recordings.
 struct OfflineTextbookKnowledgeSearcher: KnowledgeSearching {
     private let pages: [OfflineKnowledgePage]
@@ -47,6 +70,14 @@ struct OfflineTextbookKnowledgeSearcher: KnowledgeSearching {
     init(pages: [OfflineKnowledgePage]) throws {
         try Self.validate(pages)
         self.pages = pages
+    }
+
+    /// Resolves one explicitly selected imported textbook. A missing sidecar is the only
+    /// condition that falls back to the bundled demo corpus; malformed and empty imported
+    /// corpora remain distinct, with an empty imported corpus producing zero hits.
+    static func resolvingImportedCorpus(_ corpusData: Data?) throws -> Self {
+        guard let corpusData else { return Self() }
+        return try Self(corpusData: corpusData)
     }
 
     func searchTextbook(_ query: KnowledgeQuery) async throws -> [KnowledgeHit] {
@@ -86,8 +117,7 @@ struct OfflineTextbookKnowledgeSearcher: KnowledgeSearching {
     }
 
     private static func validate(_ pages: [OfflineKnowledgePage]) throws {
-        guard !pages.isEmpty,
-              Set(pages.map(\.id)).count == pages.count,
+        guard Set(pages.map(\.id)).count == pages.count,
               pages.allSatisfy({
                   $0.pageNumber > 0
                       && !$0.documentTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty

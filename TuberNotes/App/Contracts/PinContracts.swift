@@ -20,6 +20,9 @@ struct PageAnnotation: Identifiable, Codable, Equatable, Sendable {
     var teaser: String
     var body: String
     var citations: [Citation]
+    /// At most one ranked local textbook hit attached to this exact response.
+    /// Optional so notebooks written before PC-27 continue to decode.
+    var groundedCitation: GroundedCitation? = nil
     var status: AnnotationStatus
 }
 
@@ -30,6 +33,9 @@ struct PinConversationMessage: Identifiable, Codable, Equatable, Sendable {
     var parentMessageID: UUID
     var userPrompt: String
     var body: String
+    /// At most one ranked local textbook hit attached to this exact response.
+    /// Optional so notebooks written before PC-27 continue to decode.
+    var groundedCitation: GroundedCitation? = nil
 }
 
 enum AnnotationKind: String, Codable, Equatable, Sendable {

@@ -8,7 +8,7 @@ struct LibraryView: View {
 
     @AppStorage(GestureWelcomeLightbox.dismissedStorageKey)
     private var didDismissGestureWelcome = false
-    @State private var path: [UUID] = []
+    @State private var path: [LibraryRoute] = []
     @State private var showingNew = false
     @State private var newTitle = ""
     @State private var newCover: NotebookCover = .indigo
@@ -18,7 +18,9 @@ struct LibraryView: View {
     @State private var pendingDeletion: Notebook?
     @State private var openingNotebookID: UUID?
     @State private var isImportingSPUD = false
+    @State private var isImportingPDF = false
     @State private var importError: String?
+    @State private var pdfImportError: String?
     @State private var showGestureWelcome = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -34,12 +36,8 @@ struct LibraryView: View {
                 }
             }
             .navigationTitle("Notebooks")
-            .navigationDestination(for: UUID.self) { id in
-                if let notebook = store.notebook(id: id) {
-                    NotebookView(notebook: notebook, store: store)
-                } else {
-                    ContentUnavailableViewCompat(title: "Notebook missing", systemImage: "book.closed")
-                }
+            .navigationDestination(for: LibraryRoute.self) { route in
+                destination(for: route)
             }
             .toolbar {
                 ToolbarItemGroup(placement: .topBarTrailing) {
@@ -55,6 +53,12 @@ struct LibraryView: View {
                     .accessibilityLabel("Import SPUD")
                     .accessibilityIdentifier("library-import-spud")
 
+                    Button { isImportingPDF = true } label: {
+                        Image(systemName: "doc.badge.plus")
+                    }
+                    .accessibilityLabel("Import PDF")
+                    .accessibilityIdentifier("library-import-pdf")
+
                     Button { showingNew = true } label: {
                         Image(systemName: "plus")
                     }
@@ -68,6 +72,12 @@ struct LibraryView: View {
                 allowedContentTypes: [.tuberNoteArchive],
                 allowsMultipleSelection: false,
                 onCompletion: importSPUD
+            )
+            .fileImporter(
+                isPresented: $isImportingPDF,
+                allowedContentTypes: [.pdf],
+                allowsMultipleSelection: false,
+                onCompletion: importPDF
             )
             .alert("Rename notebook", isPresented: renameBinding) {
                 TextField("Title", text: $renameText)
@@ -84,6 +94,11 @@ struct LibraryView: View {
                 Button("OK", role: .cancel) { importError = nil }
             } message: {
                 Text(importError ?? "The selected file is not a valid SPUD notebook.")
+            }
+            .alert("Couldn’t Import PDF", isPresented: pdfImportErrorBinding) {
+                Button("OK", role: .cancel) { pdfImportError = nil }
+            } message: {
+                Text(pdfImportError ?? "The selected PDF could not be read.")
             }
             .confirmationDialog(
                 "Delete \(pendingDeletion?.title ?? "notebook")?",
@@ -232,7 +247,7 @@ struct LibraryView: View {
         )
         resetNewForm()
         showingNew = false
-        path.append(notebook.id)
+        path.append(.notebook(notebook.id))
     }
 
     private func resetNewForm() {
@@ -260,13 +275,27 @@ struct LibraryView: View {
         Binding(get: { importError != nil }, set: { if !$0 { importError = nil } })
     }
 
+    private var pdfImportErrorBinding: Binding<Bool> {
+        Binding(get: { pdfImportError != nil }, set: { if !$0 { pdfImportError = nil } })
+    }
+
     private func importSPUD(_ result: Result<[URL], Error>) {
         do {
             guard let sourceURL = try result.get().first else { return }
             let notebook = try store.importSPUD(from: sourceURL)
-            path.append(notebook.id)
+            path.append(.notebook(notebook.id))
         } catch {
             importError = error.localizedDescription
+        }
+    }
+
+    private func importPDF(_ result: Result<[URL], Error>) {
+        do {
+            guard let sourceURL = try result.get().first else { return }
+            let notebook = try store.importPDF(from: sourceURL)
+            path.append(.notebook(notebook.id))
+        } catch {
+            pdfImportError = error.localizedDescription
         }
     }
 
@@ -278,7 +307,7 @@ struct LibraryView: View {
     private func open(_ notebook: Notebook) {
         guard openingNotebookID == nil else { return }
         if reduceMotion {
-            path.append(notebook.id)
+            path.append(.notebook(notebook.id))
             return
         }
 
@@ -289,10 +318,61 @@ struct LibraryView: View {
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(320))
             guard openingNotebookID == notebook.id else { return }
-            path.append(notebook.id)
+            path.append(.notebook(notebook.id))
             openingNotebookID = nil
         }
     }
+
+    @ViewBuilder
+    private func destination(for route: LibraryRoute) -> some View {
+        switch route {
+        case .notebook(let id):
+            if let notebook = store.notebook(id: id) {
+                NotebookView(
+                    notebook: notebook,
+                    store: store,
+                    onAgentNavigationRequest: { request in
+                        open(request, from: notebook.id)
+                    }
+                )
+            } else {
+                ContentUnavailableViewCompat(title: "Notebook missing", systemImage: "book.closed")
+            }
+        case .agentNavigation(let request):
+            if case let .openNotebook(notebookID, pageIndex) = request,
+               let notebook = store.notebook(id: notebookID),
+               notebook.pages.indices.contains(pageIndex) {
+                NotebookView(
+                    notebook: notebook,
+                    store: store,
+                    initialPageIndex: pageIndex,
+                    onReturnFromAgentNavigation: returnFromAgentNavigation
+                )
+            } else {
+                ContentUnavailableViewCompat(title: "Notebook missing", systemImage: "book.closed")
+            }
+        }
+    }
+
+    private func open(_ request: AgentNavigationRequest, from originatingNotebookID: UUID) {
+        guard case let .openNotebook(notebookID, pageIndex) = request,
+              notebookID != originatingNotebookID,
+              let notebook = store.notebook(id: notebookID),
+              notebook.pages.indices.contains(pageIndex)
+        else { return }
+
+        path.append(.agentNavigation(request))
+    }
+
+    private func returnFromAgentNavigation() {
+        guard case .agentNavigation = path.last else { return }
+        path.removeLast()
+    }
+}
+
+private enum LibraryRoute: Hashable {
+    case notebook(UUID)
+    case agentNavigation(AgentNavigationRequest)
 }
 
 // MARK: - Cover card

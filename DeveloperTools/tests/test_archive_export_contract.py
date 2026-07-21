@@ -128,7 +128,7 @@ class ArchiveExportContractTests(unittest.TestCase):
         self.assertIn("allowedContentTypes: [.tuberNoteArchive]", library_source)
         self.assertIn('accessibilityIdentifier("library-import-spud")', library_source)
         self.assertIn("let notebook = try store.importSPUD(from: sourceURL)", library_source)
-        self.assertIn("path.append(notebook.id)", library_source)
+        self.assertIn("path.append(.notebook(notebook.id))", library_source)
         self.assertIn('alert("Couldn’t Import SPUD"', library_source)
 
         self.assertIn("func importSPUD(from sourceURL: URL) throws -> Notebook", store_source)

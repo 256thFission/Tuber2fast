@@ -78,9 +78,25 @@ struct NotebookView: View {
     @State private var isPinchZooming = false
     @State private var zoomHUDHideTask: Task<Void, Never>?
     @State private var toolbarDragOffset = CGSize.zero
+    private let onAgentNavigationRequest: ((AgentNavigationRequest) -> Void)?
+    private let onReturnFromAgentNavigation: (() -> Void)?
 
-    init(notebook: Notebook, store: NotebookStore) {
-        _vm = StateObject(wrappedValue: NotebookViewModel(notebook: notebook, store: store))
+    init(
+        notebook: Notebook,
+        store: NotebookStore,
+        initialPageIndex: Int? = nil,
+        onAgentNavigationRequest: ((AgentNavigationRequest) -> Void)? = nil,
+        onReturnFromAgentNavigation: (() -> Void)? = nil
+    ) {
+        let viewModel = NotebookViewModel(notebook: notebook, store: store)
+        if let initialPageIndex, notebook.pages.indices.contains(initialPageIndex) {
+            viewModel.currentIndex = initialPageIndex
+            viewModel.currentDrawingLayerID = notebook.pages[initialPageIndex].drawingLayers[0].id
+            viewModel.lastTemplate = notebook.pages[initialPageIndex].template
+        }
+        _vm = StateObject(wrappedValue: viewModel)
+        self.onAgentNavigationRequest = onAgentNavigationRequest
+        self.onReturnFromAgentNavigation = onReturnFromAgentNavigation
     }
 
     var body: some View {
@@ -118,6 +134,7 @@ struct NotebookView: View {
                         isFullChatTab: true,
                         onClose: { withAnimation { showAgentSidebar = false } },
                         onOpenFullChat: {},
+                        onAgentNavigationRequest: onAgentNavigationRequest,
                         onEditProviderAccess: { withAnimation { showProviderAccessPopup = true } }
                     )
                 }
@@ -175,11 +192,22 @@ struct NotebookView: View {
         .navigationBarBackButtonHidden(true)
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
-                Button { vm.persistNow(); dismiss() } label: {
+                Button {
+                    vm.persistNow()
+                    if let onReturnFromAgentNavigation {
+                        onReturnFromAgentNavigation()
+                    } else {
+                        dismiss()
+                    }
+                } label: {
                     Image(systemName: "chevron.left")
                 }
-                .accessibilityLabel("Back to notebooks")
-                .accessibilityIdentifier("notebook-back")
+                .accessibilityLabel(
+                    onReturnFromAgentNavigation == nil ? "Back to notebooks" : "Back to previous notebook"
+                )
+                .accessibilityIdentifier(
+                    onReturnFromAgentNavigation == nil ? "notebook-back" : "citation-notebook-return"
+                )
             }
             ToolbarItemGroup(placement: .topBarTrailing) {
                 Button { withAnimation { showStrip.toggle() } } label: {

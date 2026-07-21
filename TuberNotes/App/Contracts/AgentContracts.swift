@@ -1,10 +1,37 @@
 import Foundation
 
+/// Provenance for an assistant response, copied only from a local textbook hit
+/// that was actually returned to the provider. Product code cannot construct a
+/// grounded citation from model-authored prose.
+struct GroundedCitation: Identifiable, Codable, Equatable, Sendable {
+    let id: UUID
+    let documentID: UUID
+    let documentTitle: String
+    let pageNumber: Int
+    let sectionTitle: String?
+    let excerpt: String
+
+    init(hit: KnowledgeHit) {
+        id = hit.id
+        documentID = hit.documentID
+        documentTitle = hit.documentTitle
+        pageNumber = hit.pageNumber
+        sectionTitle = hit.sectionTitle
+        excerpt = hit.excerpt
+    }
+}
+
 struct InvestigationRequest: Identifiable, Equatable, Sendable {
     let id: UUID
     let intent: InvestigationIntent
     let selection: SelectionArtifact
     let conversationID: String?
+}
+
+/// App-owned navigation emitted by explicit user interaction. These requests
+/// are not model tools and must never be decoded from an assistant response.
+enum AgentNavigationRequest: Equatable, Hashable, Sendable {
+    case openNotebook(notebookID: UUID, pageIndex: Int)
 }
 
 enum AgentEvent: Equatable, Sendable {

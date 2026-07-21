@@ -1959,3 +1959,162 @@ Status: **implementation merged and Release-delivered — Phillip's verdict pend
   `2DD98ECC-A26A-5730-943B-01DD63DC4117` (PID 2671). Evidence is under
   `tmp/build/ipados26-fullscreen/`. Phillip's live landscape full-screen verdict
   remains required; no behavioral success is claimed yet.
+
+## Planned line — PC-24 … PC-29: recorded textbook-citation demo
+
+Status: **implementation complete — manual normal-app feedback and capture deferred to Phillip**
+
+Target branch: `main`
+
+Owners: Notebook document model (PC-24), Knowledge retrieval (PC-25), App
+in-product AI boundary (PC-26, PC-27), App coordination (PC-28), and
+DeveloperSupport/Phillip for non-product content and capture (PC-29).
+
+Child work lines:
+
+| Line | Child plan | Owner subsystem | `CONTRACT:` | Status |
+|---|---|---|---|---|
+| PC-24 | [`PC-24-PDFNotebookImport.md`](PC-24-PDFNotebookImport.md) | Notebook | no | implementation complete — manual feedback deferred |
+| PC-25 | [`PC-25-TextbookCorpusExtraction.md`](PC-25-TextbookCorpusExtraction.md) | Knowledge | no | implementation complete — focused checks pass |
+| PC-26 | [`PC-26-LiveTextbookSearchTool.md`](PC-26-LiveTextbookSearchTool.md) | App / AI boundary | no | implementation complete — focused checks pass |
+| PC-27 | [`PC-27-GroundedCitationChips.md`](PC-27-GroundedCitationChips.md) | App + Notebook chat | **yes** | implementation complete — focused checks pass |
+| PC-28 | [`PC-28-CrossNotebookNavigation.md`](PC-28-CrossNotebookNavigation.md) | App coordination | **yes** | implementation complete — focused checks pass |
+| PC-29 | [`PC-29-DemoContentCaptureRig.md`](PC-29-DemoContentCaptureRig.md) | DeveloperSupport | no | content artifacts complete — manual capture deferred |
+
+### Objective
+
+Prove that the sidebar agent integrates with documents other than the one in
+front of the user. A user imports an organic chemistry chapter as an ordinary
+notebook, runs Explain on a handwritten worksheet problem in a different
+notebook, and receives an answer that cites the textbook page it retrieved —
+with a tappable citation that opens that page and returns.
+
+This extends PC-18's Ochem Explain moment from "the agent reasons about SN2" to
+"the agent shows its source." Reuse PC-18's SN2 material where it fits rather
+than authoring new chemistry.
+
+### Dependencies and sequencing
+
+PC-24 → PC-25 → PC-26 → PC-27 is a hard chain; each depends on the previous
+thread's landed output. PC-28 is buildable in parallel against a hardcoded
+notebook and page index, then wired to real citations once PC-27 lands. PC-29
+starts first and runs throughout, and gates whether any of the others are
+demonstrable.
+
+### Non-goals
+
+Semantic or embedding-based retrieval; OCR of scanned books; `search_notebook`;
+split-view or side-by-side documents; a general navigation back-stack; citation
+persistence across relaunch; page-background contract changes; any staging that
+would present retrieval as working when it did not.
+
+### Acceptance evidence and stop conditions
+
+Per-thread evidence packets under `tmp/verify/pc2{4..9}-*/`, each gated on the
+canonical device workflow — preflight, signed Release build, install, and normal
+launch on iPad `2DD98ECC-A26A-5730-943B-01DD63DC4117` — followed by Phillip's
+normal-app verdict. No thread claims behavioral success before that verdict.
+
+The line is complete when the full journey runs end to end in one take on the
+pinned device: import, lasso, Explain, search chip, grounded citation, open the
+cited page, return to the worksheet with ink and Pins intact.
+
+### Known noise
+
+The host suite now stands at 92/99 with the same seven stale assertions. PC-26
+explicitly deferred the unrelated Magic-Lasso anchor assertion before starting;
+focused PC-26 loop checks cover the live tool surface instead. The typed-route
+SPUD import assertion exposed by PC-28 was repaired, so this line adds no host
+suite failure.
+
+### Session log
+
+- 2026-07-21 — Integration complete under Phillip's implementation-only
+  go-mode override. `CONTRACT:` PC-28 now wires an explicit grounded-citation
+  tap through `AgentNavigationRequest.openNotebook`; missing, same-notebook,
+  non-positive, and out-of-range targets remain disabled, targets are
+  revalidated on tap, and pushed textbook views receive no callback so
+  multi-hop navigation stays unavailable. The originating `NotebookView`
+  remains live beneath the pushed target for one-tap return. Final whole-source
+  iOS Simulator typecheck passed with existing warnings only; focused PC-25
+  through PC-28 checks passed; `git diff --check` passed; the host suite is
+  92/99 with exactly the seven pre-recorded stale failures. Evidence packets
+  are under `tmp/verify/pc2{4..9}-*/` with an integration packet under
+  `tmp/verify/pc24-29-integration/`. No commit, merge, or push. No behavioral
+  success claim; Phillip's manual normal-app journey and capture remain.
+- 2026-07-21 — PC-29 completed the lawful content packet from Phillip's valid
+  PDF: a verified 20-page trim (source pages 353–372), embedded text without OCR,
+  and a mechanically complete 835×1080 render. The citation target is Problem
+  11-2 at source PDF page 358 → local page 6 → printed page 346. License,
+  attribution, hashes, mapping, and commands are recorded under
+  `tmp/verify/pc29-demo-content-capture/`; manual worksheet/capture judgment is
+  deferred to Phillip.
+- 2026-07-21 — `CONTRACT:` PC-27 completed `GroundedCitation` plus
+  backward-compatible root/follow-up message storage, exact first-hit mapping,
+  and an inert disabled sidebar chip beneath Markdown. Focused Swift and source
+  contract checks passed. PC-28 resumed to enable that chip only when the typed
+  target notebook/page resolves, then emit the existing user-initiated
+  `AgentNavigationRequest`; `switch_page` remains unchanged.
+- 2026-07-21 — PC-26 implementation completed with a stateless bounded
+  2-search/3-response loop, exact typed-hit tool results, imported-textbook
+  scoping, zero-hit termination, and truthful live tool status. Focused scripted
+  checks and whole-source typechecks passed. `CONTRACT:` PC-27 started with a
+  coordinator-owned decision to add `GroundedCitation`, constructible in product
+  code only from a returned `KnowledgeHit`, and carry it on root/follow-up chat
+  message contracts. The legacy generic `Citation` remains untouched. PC-28
+  will consume the grounded document/page fields only after PC-27 completes.
+- 2026-07-21 — Phillip supplied a complete 48 MiB, 467-page, unencrypted
+  OpenStax Organic Chemistry PDF at a local scratch path. PC-29 resumed to
+  verify the embedded text layer, produce the roughly 20-page licensed trim,
+  map source/local/printed target pages, and render the Section 11.2 target.
+  Device and manual capture work remain deferred.
+- 2026-07-21 — PC-25 implementation completed: the real PDF traversal now
+  writes an atomic `<notebook UUID>.knowledge.json` sidecar before exposing the
+  notebook, with 1-based source pages, blank-page omission, valid empty corpora,
+  malformed-data rejection, and missing-only fixture fallback. Focused
+  strict-concurrency checks passed. PC-26 Wave 3 started under the logged stale
+  assertion deferral and implementation-only go mode.
+- 2026-07-21 — PC-29 selected the official OpenStax Organic Chemistry source
+  and Section 11.2 / Problem 11-2 target under CC BY-NC-SA 4.0, but repeated
+  downloads yielded only a corrupted partial response. The thread rejected the
+  file and recorded no invented text-layer, page-map, or render evidence.
+  Content acquisition/capture remains blocked and deferred while code waves
+  continue under Phillip's go-mode instruction.
+- 2026-07-21 — PC-26 prerequisite decision logged before the thread starts:
+  explicitly defer the stale
+  `NotebookToolSelectionContractTests.test_refinement_lasso_bubble_is_anchored_to_magic_lasso_button`
+  assertion. It checks a moved Magic-Lasso anchor, not the live agent tool
+  declaration or multi-turn retrieval loop, so repairing it in PC-26 would be
+  unrelated scope. The current baseline is 86/94 after PC-24 exposed one
+  additional brittle SPUD-import source assertion; PC-26 will use focused
+  assertions for `search_textbook`, bounded tool turns, typed hits, and zero-hit
+  termination instead of attributing the baseline failures to itself.
+- 2026-07-21 — PC-24 implementation completed with static parse and diff checks;
+  the Release build that had begun before the go-mode override was cancelled,
+  with no install or launch. PC-28's `CONTRACT:` route shell completed with
+  static diff/invariant checks and remains intentionally unwired until PC-27.
+  Neither thread claims behavioral acceptance.
+- 2026-07-21 — Phillip explicitly switched PC-24 … PC-29 to
+  implementation-only go mode: do not use Release/device gates or
+  human-review tooling; code through the dependency waves and leave all manual
+  feedback to Phillip afterward. Static and focused non-device checks remain
+  allowed. Behavioral acceptance remains unclaimed and all device evidence is
+  deferred.
+- 2026-07-21 — Phillip explicitly started PC-25 while PC-24's implemented
+  import traversal was present in the shared `main` worktree and its independent
+  Release/human gate remained open. PC-25 is limited to Knowledge-owned corpus
+  persistence/loading plus corpus emission from that import pass; live agent
+  wiring remains PC-26.
+- 2026-07-21 — Wave 1 coordination started on `main`: PC-24 and PC-28 are
+  parallel implementation threads, with PC-29 running as the independent
+  non-product content gate. Device delivery remains serialized on iPad
+  `2DD98ECC-A26A-5730-943B-01DD63DC4117`. `CONTRACT:` PC-28 will introduce an
+  App-owned `AgentNavigationRequest.openNotebook(notebookID:pageIndex:)` typed
+  boundary emitted only by a user citation tap; `switch_page` remains a
+  same-notebook model tool and is unchanged.
+- 2026-07-21 — Created the line and six child plans for the recorded demo.
+  Phillip chose screen recording plus a picture-in-picture hand shot, which makes
+  PC-28 mandatory rather than optional: a recording that cuts to a manually
+  turned page cannot be distinguished from a faked link. Reversed the earlier
+  staging advice to pre-import the textbook — the import is filmed as a setup
+  beat and shortened in the edit. No thread started; no product code changed.

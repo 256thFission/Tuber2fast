@@ -24,6 +24,7 @@ struct AgentSidebarView: View {
     var isFullChatTab = false
     var onClose: () -> Void
     var onOpenFullChat: () -> Void = {}
+    var onAgentNavigationRequest: ((AgentNavigationRequest) -> Void)? = nil
     var onEditProviderAccess: () -> Void
 
     private var hasSelection: Bool { vm.lassoRect != nil }
@@ -257,7 +258,9 @@ struct AgentSidebarView: View {
                             PinChatTurnView(
                                 userPrompt: message.userPrompt,
                                 assistantMarkdown: message.body,
-                                isFocused: message.id == selectedMessageID
+                                isFocused: message.id == selectedMessageID,
+                                groundedCitation: message.groundedCitation,
+                                onOpenCitation: message.groundedCitation.flatMap(citationHandler)
                             )
                             .id(message.id)
                             .overlay(alignment: .bottomTrailing) {
@@ -280,7 +283,10 @@ struct AgentSidebarView: View {
 
                         if let pendingQuestion = vm.pendingAnalysisQuestion,
                            vm.pendingAnalysisParentThreadID == selectedParent.threadID {
-                            PinChatPendingTurnView(userPrompt: pendingQuestion)
+                            PinChatPendingTurnView(
+                                userPrompt: pendingQuestion,
+                                toolStatus: vm.activeToolInvocation?.userVisibleStatus
+                            )
                                 .id("pending-analysis")
                         }
 
@@ -299,7 +305,10 @@ struct AgentSidebarView: View {
 
                         if let pendingQuestion = vm.pendingAnalysisQuestion,
                            vm.pendingAnalysisParentThreadID == nil {
-                            PinChatPendingTurnView(userPrompt: pendingQuestion)
+                            PinChatPendingTurnView(
+                                userPrompt: pendingQuestion,
+                                toolStatus: vm.activeToolInvocation?.userVisibleStatus
+                            )
                                 .id("pending-analysis")
                         }
                     }
@@ -331,6 +340,29 @@ struct AgentSidebarView: View {
                 .accessibilityLabel("Close assistant")
         }
         .padding(14)
+    }
+
+    private func citationHandler(
+        for citation: GroundedCitation
+    ) -> ((GroundedCitation) -> Void)? {
+        let request = vm.agentNavigationRequest(for: citation)
+        guard Self.canOpenCitation(
+            request: request,
+            hasNavigationHandler: onAgentNavigationRequest != nil
+        ), let onAgentNavigationRequest else { return nil }
+        return { tappedCitation in
+            // Re-resolve at the user action so a deleted or changed textbook
+            // cannot emit a stale route after the chip rendered.
+            guard let request = vm.agentNavigationRequest(for: tappedCitation) else { return }
+            onAgentNavigationRequest(request)
+        }
+    }
+
+    static func canOpenCitation(
+        request: AgentNavigationRequest?,
+        hasNavigationHandler: Bool
+    ) -> Bool {
+        hasNavigationHandler && request != nil
     }
 
     @ViewBuilder
@@ -694,6 +726,7 @@ private struct PinMessageThreadItem: Identifiable {
     let userPrompt: String?
     let body: String
     let depth: Int
+    let groundedCitation: GroundedCitation?
 }
 
 private enum PinMessageThreadBuilder {
@@ -708,7 +741,8 @@ private enum PinMessageThreadBuilder {
                 id: message.id,
                 userPrompt: message.userPrompt,
                 body: message.body,
-                depth: depth
+                depth: depth,
+                groundedCitation: message.groundedCitation
             ))
             for child in messages where child.parentMessageID == message.id {
                 appendMessage(child, depth: depth + 1)
@@ -720,7 +754,8 @@ private enum PinMessageThreadBuilder {
             id: pin.threadID,
             userPrompt: pin.userPrompt,
             body: pin.body,
-            depth: 0
+            depth: 0,
+            groundedCitation: pin.groundedCitation
         ))
         for child in messages where child.parentMessageID == pin.threadID {
             appendMessage(child, depth: 1)

@@ -269,12 +269,8 @@ private func testCorpusFailures() throws {
         // Expected.
     }
 
-    do {
-        _ = try OfflineTextbookKnowledgeSearcher(corpusData: Data("[]".utf8))
-        throw CheckFailure.failed("empty corpus should be rejected")
-    } catch OfflineKnowledgeCorpusError.invalidCorpus {
-        // Expected.
-    }
+    // A present but empty imported corpus is valid and must resolve to zero hits.
+    _ = try OfflineTextbookKnowledgeSearcher(corpusData: Data("[]".utf8))
 }
 
 @main

@@ -66,6 +66,7 @@ final class NotebookViewModel: ObservableObject {
     @Published private(set) var pendingAnalysisParentThreadID: UUID?
     @Published private(set) var pendingAnalysisParentMessageID: UUID?
     @Published private(set) var pendingAnalysisCreatesFork = false
+    @Published private(set) var activeToolInvocation: ToolInvocationSummary?
 
     private let store: NotebookStore
     private var saveTask: Task<Void, Never>?
@@ -97,6 +98,35 @@ final class NotebookViewModel: ObservableObject {
     var canGoBack: Bool { currentIndex > 0 }
     var canGoForward: Bool { currentIndex < notebook.pages.count - 1 }
     var pageLabel: String { "\(currentIndex + 1) / \(pageCount)" }
+
+    /// A citation becomes navigable only when its imported notebook still
+    /// exists, differs from the active worksheet, and its 1-based source page
+    /// maps to a valid zero-based notebook index.
+    func agentNavigationRequest(for citation: GroundedCitation) -> AgentNavigationRequest? {
+        let destination = store.notebook(id: citation.documentID)
+        return Self.validatedAgentNavigationRequest(
+            for: citation,
+            activeNotebookID: notebook.id,
+            destinationPageCount: destination?.pages.count
+        )
+    }
+
+    static func validatedAgentNavigationRequest(
+        for citation: GroundedCitation,
+        activeNotebookID: UUID,
+        destinationPageCount: Int?
+    ) -> AgentNavigationRequest? {
+        guard citation.documentID != activeNotebookID,
+              citation.pageNumber > 0,
+              let destinationPageCount,
+              (0..<destinationPageCount).contains(citation.pageNumber - 1)
+        else { return nil }
+        return .openNotebook(
+            notebookID: citation.documentID,
+            pageIndex: citation.pageNumber - 1
+        )
+    }
+
     var currentDrawingLayer: DrawingLayer {
         currentPage.drawingLayers.first { $0.id == currentDrawingLayerID }
             ?? currentPage.drawingLayers[0]
@@ -730,6 +760,13 @@ final class NotebookViewModel: ObservableObject {
             agentError = "Sign in with OpenAI to place guidance Pins."
             return
         }
+        let knowledgeSearcher: any KnowledgeSearching
+        do {
+            knowledgeSearcher = try resolvedTextbookKnowledgeSearcher()
+        } catch {
+            agentError = "The imported textbook index couldn't be read. Re-import the textbook and try again."
+            return
+        }
 
         let layerID = notebook.agenticLayers[layerIndex].id
         lastGuidanceQuestion = nil
@@ -738,7 +775,16 @@ final class NotebookViewModel: ObservableObject {
         let requestID = beginAnalysis(question: nil, parentThreadID: nil)
         agentError = nil
         interventionNotice = nil
-        let client = OpenAICodexVisionClient(route: route)
+        let client = OpenAICodexVisionClient(
+            route: route,
+            knowledgeSearcher: knowledgeSearcher,
+            onToolInvocation: { [weak self] invocation in
+                Task { @MainActor [weak self] in
+                    guard let self, self.ownsAnalysis(requestID) else { return }
+                    self.activeToolInvocation = invocation
+                }
+            }
+        )
         let generation = route.generation
         let originatingPage = currentPage
         let selectionID = selection.id
@@ -782,7 +828,11 @@ final class NotebookViewModel: ObservableObject {
                     body: body,
                     citations: []
                 )
-                guard let annotation = self.annotation(fromGuidanceDraft: draft, selection: selection) else {
+                guard let annotation = self.annotation(
+                    fromGuidanceDraft: draft,
+                    selection: selection,
+                    groundedCitation: insight.knowledgeHits.first.map(GroundedCitation.init(hit:))
+                ) else {
                     finishAnalysis(requestID)
                     return
                 }
@@ -863,7 +913,8 @@ final class NotebookViewModel: ObservableObject {
 
     private func annotation(
         fromGuidanceDraft draft: PinDraft,
-        selection: SelectionArtifact
+        selection: SelectionArtifact,
+        groundedCitation: GroundedCitation?
     ) -> PageAnnotation? {
         guard draft.target.isFiniteAndInUnitBounds else { return nil }
         let target = SpatialCoordinateTransform.cropPointToPage(
@@ -892,6 +943,7 @@ final class NotebookViewModel: ObservableObject {
             teaser: draft.teaser,
             body: draft.body,
             citations: draft.citations,
+            groundedCitation: groundedCitation,
             status: .complete
         )
     }
@@ -1043,6 +1095,14 @@ final class NotebookViewModel: ObservableObject {
             parent: parentPin,
             parentMessageID: resolvedParentMessageID
         )
+        let knowledgeSearcher: any KnowledgeSearching
+        do {
+            knowledgeSearcher = try resolvedTextbookKnowledgeSearcher()
+        } catch {
+            agentError = "The imported textbook index couldn't be read. Re-import the textbook and try again."
+            return
+        }
+
         let responseID = UUID()
         lastAnalysisQuestion = question
         lastAnalysisParentThreadID = parentThreadID
@@ -1057,7 +1117,15 @@ final class NotebookViewModel: ObservableObject {
             createsFork: createsFork
         )
         agentError = nil
-        let client = AgentInsightClientFactory.make()
+        let client = AgentInsightClientFactory.make(
+            knowledgeSearcher: knowledgeSearcher,
+            onToolInvocation: { [weak self] invocation in
+                Task { @MainActor [weak self] in
+                    guard let self, self.ownsAnalysis(requestID) else { return }
+                    self.activeToolInvocation = invocation
+                }
+            }
+        )
         let capturedGeneration = client.generation
         let pageImages = makeAgentPageImages()
         let originatingPage = notebook.pages.first(where: { $0.id == selection.pageID })
@@ -1113,7 +1181,8 @@ final class NotebookViewModel: ObservableObject {
                             id: responseID,
                             parentMessageID: resolvedParentMessageID,
                             userPrompt: trimmedQuestion ?? "Explain this further.",
-                            body: insight.body
+                            body: insight.body,
+                            groundedCitation: insight.knowledgeHits.first.map(GroundedCitation.init(hit:))
                         )
                     )
                     notebook.agenticLayers[destinationLayerIndex]
@@ -1143,6 +1212,7 @@ final class NotebookViewModel: ObservableObject {
                                 ?? "Learning guidance",
                             body: insight.body,
                             citations: [],
+                            groundedCitation: insight.knowledgeHits.first.map(GroundedCitation.init(hit:)),
                             status: .complete
                         )
                     )
@@ -1172,6 +1242,19 @@ final class NotebookViewModel: ObservableObject {
                 finishAnalysis(requestID)
             }
         }
+    }
+
+    /// Selects exactly one imported textbook corpus, excluding the active
+    /// worksheet. PDF import is the only producer of these sidecars. A missing
+    /// sidecar across the library uses the documented bundled demo corpus;
+    /// malformed sidecar data is allowed to fail rather than being hidden.
+    private func resolvedTextbookKnowledgeSearcher() throws -> any KnowledgeSearching {
+        for candidate in store.notebooks where candidate.id != notebook.id {
+            if let corpusData = try store.knowledgeCorpusData(forImportedTextbook: candidate.id) {
+                return try OfflineTextbookKnowledgeSearcher.resolvingImportedCorpus(corpusData)
+            }
+        }
+        return try OfflineTextbookKnowledgeSearcher.resolvingImportedCorpus(nil)
     }
 
     /// Current page plus at most one immediate neighbor on either side. These
@@ -1265,6 +1348,7 @@ final class NotebookViewModel: ObservableObject {
         pendingAnalysisParentThreadID = nil
         pendingAnalysisParentMessageID = nil
         pendingAnalysisCreatesFork = false
+        activeToolInvocation = nil
         task?.cancel()
     }
 
@@ -1280,6 +1364,7 @@ final class NotebookViewModel: ObservableObject {
         pendingAnalysisParentThreadID = parentThreadID
         pendingAnalysisParentMessageID = parentMessageID
         pendingAnalysisCreatesFork = createsFork
+        activeToolInvocation = nil
         isAnalyzing = true
         return requestID
     }
@@ -1297,6 +1382,7 @@ final class NotebookViewModel: ObservableObject {
         pendingAnalysisParentThreadID = nil
         pendingAnalysisParentMessageID = nil
         pendingAnalysisCreatesFork = false
+        activeToolInvocation = nil
     }
 
     func retryLastAnalysis() {

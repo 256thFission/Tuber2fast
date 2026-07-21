@@ -63,6 +63,8 @@ struct PinChatTurnView: View {
     let userPrompt: String?
     let assistantMarkdown: String
     let isFocused: Bool
+    var groundedCitation: GroundedCitation? = nil
+    var onOpenCitation: ((GroundedCitation) -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -87,8 +89,20 @@ struct PinChatTurnView: View {
                     .foregroundStyle(.secondary)
                     .frame(width: 24, height: 24)
                     .background(.white.opacity(0.08), in: Circle())
-                MarkdownMessageView(source: assistantMarkdown)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .leading, spacing: 9) {
+                    MarkdownMessageView(source: assistantMarkdown)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    if let groundedCitation {
+                        GroundedCitationChip(
+                            citation: groundedCitation,
+                            onOpen: onOpenCitation.map { open in
+                                { open(groundedCitation) }
+                            }
+                        )
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             .accessibilityElement(children: .contain)
             .accessibilityHint("Assistant response")
@@ -99,8 +113,56 @@ struct PinChatTurnView: View {
     }
 }
 
+private struct GroundedCitationChip: View {
+    let citation: GroundedCitation
+    let onOpen: (() -> Void)?
+
+    var body: some View {
+        Button(action: { onOpen?() }) {
+            HStack(spacing: 6) {
+                Image(systemName: "book.closed.fill")
+                Text(citation.documentTitle)
+                    .lineLimit(1)
+                Text("· p. \(citation.pageNumber)")
+                if let sectionTitle = citation.sectionTitle,
+                   !sectionTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Text("· \(sectionTitle)")
+                        .lineLimit(1)
+                }
+            }
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(.white.opacity(0.07), in: Capsule())
+            .overlay(Capsule().strokeBorder(.white.opacity(0.12)))
+        }
+        .buttonStyle(.plain)
+        .disabled(onOpen == nil)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityHint(onOpen == nil ? "" : "Opens the cited textbook page")
+        .accessibilityIdentifier("grounded-citation-chip")
+    }
+
+    private var accessibilityLabel: String {
+        [
+            citation.documentTitle,
+            "page \(citation.pageNumber)",
+            citation.sectionTitle,
+        ]
+        .compactMap { $0 }
+        .joined(separator: ", ")
+    }
+}
+
 struct PinChatPendingTurnView: View {
     let userPrompt: String
+    let toolStatus: String?
+
+    init(userPrompt: String, toolStatus: String? = nil) {
+        self.userPrompt = userPrompt
+        self.toolStatus = toolStatus
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -120,6 +182,15 @@ struct PinChatPendingTurnView: View {
                     .foregroundStyle(.secondary)
             }
             .accessibilityElement(children: .combine)
+            if let toolStatus {
+                Text(toolStatus)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.indigo)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5)
+                    .background(.indigo.opacity(0.12), in: Capsule())
+                    .accessibilityIdentifier("pin-chat-tool-invocation")
+            }
         }
         .padding(12)
         .accessibilityElement(children: .contain)
