@@ -8,6 +8,7 @@ struct NotebookToolbar: View {
     @ObservedObject var undo: NotebookUndoBridge
     @Binding var isLassoActive: Bool
     @Binding var isRefinementActive: Bool
+    @Binding var isRefinementLassoActive: Bool
     @Environment(\.colorScheme) private var colorScheme
     var onShowPages: () -> Void
     var onAskAgent: () -> Void
@@ -24,6 +25,23 @@ struct NotebookToolbar: View {
                 adaptiveToolbar
                     .background(.ultraThinMaterial, in: Capsule())
                     .overlay(Capsule().strokeBorder(.primary.opacity(0.08), lineWidth: 1))
+                    .overlayPreferenceValue(RefinementButtonBoundsPreferenceKey.self) { anchor in
+                        GeometryReader { proxy in
+                            if isRefinementActive, let anchor {
+                                let buttonFrame = proxy[anchor]
+                                refinementLassoBubble
+                                    .fixedSize()
+                                    .position(
+                                        x: buttonFrame.midX,
+                                        y: buttonFrame.minY - 30
+                                    )
+                                    .transition(
+                                        .opacity.combined(with: .scale(scale: 0.94, anchor: .bottom))
+                                    )
+                                    .zIndex(1)
+                            }
+                        }
+                    }
                     .overlay(alignment: .top) {
                         holdIndicator
                             .offset(y: -64)
@@ -35,6 +53,7 @@ struct NotebookToolbar: View {
                     .sensoryFeedback(.selection, trigger: isLassoActive)
                     .accessibilityIdentifier("notebook-toolbar")
                     .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .bottom)))
+                    .animation(.spring(response: 0.22, dampingFraction: 0.72), value: isRefinementActive)
             }
         }
         .animation(.easeInOut(duration: 0.18), value: visibleGroupCount)
@@ -42,6 +61,7 @@ struct NotebookToolbar: View {
             if !isVisible {
                 isLassoActive = false
                 isRefinementActive = false
+                isRefinementLassoActive = false
                 pressedTool = nil
             }
         }
@@ -53,6 +73,9 @@ struct NotebookToolbar: View {
         }
         .onChange(of: vm.isAgenticLayersActive) { _, isActive in
             if isActive { isRefinementActive = false }
+        }
+        .onChange(of: isRefinementActive) { _, isActive in
+            if !isActive { isRefinementLassoActive = false }
         }
     }
 
@@ -88,8 +111,8 @@ struct NotebookToolbar: View {
                     toolButton(tool)
                 }
                 colorButton
-                lassoButton
-                refinementButton
+                divider
+                lassoControls
                 divider
                 undoControls
             }
@@ -136,6 +159,12 @@ struct NotebookToolbar: View {
             }
             .accessibilityIdentifier("toolbar-add-page")
         }
+    }
+
+    @ViewBuilder
+    private var lassoControls: some View {
+        lassoButton
+        refinementButton
     }
 
     @ViewBuilder
@@ -282,6 +311,7 @@ struct NotebookToolbar: View {
             isLassoActive = false
             vm.isAgenticLayersActive = false
             isRefinementActive.toggle()
+            if !isRefinementActive { isRefinementLassoActive = false }
         } label: {
             Image(systemName: "lasso.badge.sparkles")
                 .font(.system(size: 17, weight: .medium))
@@ -299,6 +329,44 @@ struct NotebookToolbar: View {
         .accessibilityLabel("Drawing refinement")
         .accessibilityHint("Select a region to refine and apply directly to the page")
         .accessibilityAddTraits(isRefinementActive ? [.isSelected] : [])
+        .anchorPreference(key: RefinementButtonBoundsPreferenceKey.self, value: .bounds) { $0 }
+    }
+
+    private var refinementLassoBubble: some View {
+        HStack(spacing: 8) {
+            Button {
+                isRefinementLassoActive.toggle()
+            } label: {
+                Label(
+                    isRefinementLassoActive ? "Drawing lasso…" : "Refinement lasso",
+                    systemImage: "lasso.badge.sparkles"
+                )
+                .font(.subheadline.weight(.semibold))
+                .padding(.horizontal, 13)
+                .padding(.vertical, 10)
+                .foregroundStyle(isRefinementLassoActive ? Color.white : Color.primary)
+                .background(.ultraThinMaterial, in: Capsule())
+                .background(isRefinementLassoActive ? Color.indigo : Color.clear, in: Capsule())
+                .overlay(Capsule().strokeBorder(.primary.opacity(0.10)))
+                .shadow(color: .black.opacity(0.12), radius: 7, y: 3)
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("ai-lasso-button")
+
+            Button {
+                isRefinementLassoActive = false
+                isRefinementActive = false
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.subheadline.weight(.bold))
+                    .frame(width: 38, height: 38)
+                    .foregroundStyle(.primary)
+                    .background(.ultraThinMaterial, in: Circle())
+                    .overlay(Circle().strokeBorder(.primary.opacity(0.10)))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Close refinement tool")
+        }
     }
 
     private func widthAdjustmentGesture(for tool: WritingTool) -> some Gesture {
@@ -457,6 +525,14 @@ struct NotebookToolbar: View {
         }
         .disabled(!enabled)
         .accessibilityLabel(label)
+    }
+}
+
+private struct RefinementButtonBoundsPreferenceKey: PreferenceKey {
+    static let defaultValue: Anchor<CGRect>? = nil
+
+    static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
+        value = nextValue() ?? value
     }
 }
 
@@ -707,7 +783,9 @@ struct NotebookToolbarSettingsView: View {
     @Binding var pencilSqueezeEnabled: Bool
     @Binding var pencilHoverPreviewEnabled: Bool
     let isAnalysisAccessConfigured: Bool
+    let analysisAccessSummary: String
     let onEditAnalysisAccess: () -> Void
+    let onDismiss: () -> Void
 
     private let columns = Array(repeating: GridItem(.fixed(34), spacing: 12), count: 6)
 
@@ -775,9 +853,10 @@ struct NotebookToolbarSettingsView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Notebook analysis access")
                                 .foregroundStyle(.primary)
-                            Text(isAnalysisAccessConfigured ? "Provider configured" : "Demo mode")
+                            Text(analysisAccessSummary)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
+                                .lineLimit(2)
                         }
 
                         Spacer()
@@ -789,6 +868,8 @@ struct NotebookToolbarSettingsView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Notebook analysis access")
+                .accessibilityValue(analysisAccessSummary)
                 .accessibilityIdentifier("settings-analysis-access")
                 .accessibilityHint("View or configure agent provider access for notebook analysis")
 
@@ -821,6 +902,7 @@ struct NotebookToolbarSettingsView: View {
         }
         .frame(width: 340, height: 520)
         .accessibilityIdentifier("notebook-toolbar-settings")
+        .onDisappear(perform: onDismiss)
     }
 
     private func favoriteSwatch(_ hex: String) -> some View {

@@ -42,11 +42,14 @@ final class AmbientRippleModel: ObservableObject {
     }
 }
 
-/// Minimal, soothing backdrop: black with a few slow, breathing white/grey
-/// blotches that drift around, plus soft ripples wherever the page is touched.
-/// Frosted panels blur this, which is what gives them their glassy look.
+/// Minimal, soothing backdrop: black with a few slow, breathing gradients that
+/// drift around, plus soft ripples wherever the page is touched. The gradients
+/// stay neutral during normal writing and pick up the Agentic Layer glow only
+/// while that layer is active. Frosted panels blur this, which gives them their
+/// glassy look.
 struct AmbientBackground: View {
     @ObservedObject var rippleModel: AmbientRippleModel
+    let isAgenticLayerActive: Bool
 
     private struct Blob {
         let baseX, baseY, radius, driftX, driftY, driftSpeed, breathSpeed, phase, alpha: CGFloat
@@ -61,6 +64,10 @@ struct AmbientBackground: View {
         Blob(baseX: 0.50, baseY: 0.46, radius: 420, driftX: 64, driftY: 98, driftSpeed: 0.049, breathSpeed: 0.35, phase: 5.0, alpha: 0.15),
     ]
 
+    // Mirrors the cool-to-warm spectrum around the active page edge while
+    // letting every ambient gradient retain its own hue.
+    private let agenticGlowColors: [Color] = [.cyan, .blue, .indigo, .purple, .pink]
+
     var body: some View {
         TimelineView(.animation) { timeline in
             let t = timeline.date.timeIntervalSince(AmbientClock.epoch)
@@ -69,15 +76,25 @@ struct AmbientBackground: View {
 
                 ctx.drawLayer { layer in
                     layer.addFilter(.blur(radius: 48))
-                    for blob in blobs {
+                    for (index, blob) in blobs.enumerated() {
                         let cx = blob.baseX * size.width + CGFloat(sin(t * blob.driftSpeed + blob.phase)) * blob.driftX
                         let cy = blob.baseY * size.height + CGFloat(cos(t * blob.driftSpeed * 0.9 + blob.phase)) * blob.driftY
                         let breath = 1 + 0.20 * CGFloat(sin(t * blob.breathSpeed + blob.phase))
                         let r = blob.radius * breath
                         let a = blob.alpha * (0.72 + 0.28 * CGFloat(sin(t * blob.breathSpeed * 0.8 + blob.phase)))
                         let rect = CGRect(x: cx - r, y: cy - r, width: r * 2, height: r * 2)
+                        let glowColor = isAgenticLayerActive
+                            ? agenticGlowColors[index % agenticGlowColors.count]
+                            : Color.white
+                        let gradientColors = isAgenticLayerActive
+                            ? [
+                                glowColor.opacity(Double(max(a * 1.15, 0))),
+                                glowColor.opacity(Double(max(a * 0.38, 0))),
+                                .clear,
+                            ]
+                            : [Color.white.opacity(Double(max(a, 0))), .clear]
                         let shading = GraphicsContext.Shading.radialGradient(
-                            Gradient(colors: [Color.white.opacity(Double(max(a, 0))), .clear]),
+                            Gradient(colors: gradientColors),
                             center: CGPoint(x: cx, y: cy), startRadius: 0, endRadius: r
                         )
                         layer.fill(Path(ellipseIn: rect), with: shading)
@@ -94,6 +111,7 @@ struct AmbientBackground: View {
                             let radius = 44 + CGFloat(progress) * 70
                             let envelope = sin(progress * .pi)
                             let alpha = 0.06 * envelope
+                            let rippleColor = isAgenticLayerActive ? Color.cyan : Color.white
                             let rect = CGRect(
                                 x: ripple.center.x - radius,
                                 y: ripple.center.y - radius,
@@ -104,8 +122,8 @@ struct AmbientBackground: View {
                                 Path(ellipseIn: rect),
                                 with: .radialGradient(
                                     Gradient(colors: [
-                                        .white.opacity(alpha),
-                                        .white.opacity(alpha * 0.35),
+                                        rippleColor.opacity(alpha),
+                                        rippleColor.opacity(alpha * 0.35),
                                         .clear,
                                     ]),
                                     center: ripple.center,

@@ -11,6 +11,7 @@ struct PinOverlayView: View {
 
     @State private var expandedAnnotationID: UUID?
     @State private var draggedTargets: [UUID: PageNormalizedPoint] = [:]
+    @State private var draggedLabelOffsets: [UUID: CGSize] = [:]
 
     init(
         annotations: [PageAnnotation],
@@ -43,12 +44,16 @@ struct PinOverlayView: View {
                 displayed.target = target
                 return displayed
             }
-            let placements = PinOverlayLayout.placements(
+            let resolvedPlacements = PinOverlayLayout.placements(
                 for: displayedAnnotations,
                 expandedAnnotationID: expandedAnnotationID,
                 in: proxy.size,
                 projectAnchor: effectiveProjector
             )
+            let placements = resolvedPlacements.map { placement in
+                guard let offset = draggedLabelOffsets[placement.id] else { return placement }
+                return placement.keepingLabelOffset(offset, in: proxy.size)
+            }
 
             ZStack(alignment: .topLeading) {
                 ForEach(placements) { placement in
@@ -62,6 +67,7 @@ struct PinOverlayView: View {
                             onMoveChanged: { translation in
                                 updateDraggedTarget(
                                     for: annotation,
+                                    from: placement,
                                     translation: translation,
                                     in: proxy.size,
                                     projectAnchor: effectiveProjector
@@ -96,10 +102,12 @@ struct PinOverlayView: View {
                     }
                 }
             }
+            .coordinateSpace(name: PinOverlayCoordinateSpace.name)
         }
         .allowsHitTesting(!annotations.isEmpty)
         .onChange(of: annotations.map(\.id)) { _, annotationIDs in
             draggedTargets = draggedTargets.filter { annotationIDs.contains($0.key) }
+            draggedLabelOffsets = draggedLabelOffsets.filter { annotationIDs.contains($0.key) }
             guard let expandedAnnotationID, !annotationIDs.contains(expandedAnnotationID) else { return }
             self.expandedAnnotationID = nil
         }
@@ -129,10 +137,17 @@ struct PinOverlayView: View {
 
     private func updateDraggedTarget(
         for annotation: PageAnnotation,
+        from placement: PinOverlayPlacement,
         translation: CGSize,
         in size: CGSize,
         projectAnchor: AnchorProjector
     ) {
+        if draggedLabelOffsets[annotation.id] == nil {
+            draggedLabelOffsets[annotation.id] = CGSize(
+                width: placement.labelFrame.midX - placement.anchor.x,
+                height: placement.labelFrame.midY - placement.anchor.y
+            )
+        }
         let original = projectAnchor(annotation.target)
         draggedTargets[annotation.id] = PinOverlayLayout.pageNormalizedPoint(
             forOverlayPoint: CGPoint(
@@ -158,8 +173,35 @@ struct PinOverlayView: View {
             in: size
         )
         draggedTargets[annotation.id] = nil
+        draggedLabelOffsets[annotation.id] = nil
         guard let target else { return }
         onEvent?(.moved(annotationID: annotation.id, target: target))
+    }
+}
+
+private enum PinOverlayCoordinateSpace {
+    static let name = "pin-overlay-drag"
+}
+
+private extension PinOverlayPlacement {
+    func keepingLabelOffset(_ offset: CGSize, in size: CGSize) -> PinOverlayPlacement {
+        let proposedOrigin = CGPoint(
+            x: anchor.x + offset.width - labelFrame.width / 2,
+            y: anchor.y + offset.height - labelFrame.height / 2
+        )
+        let padding = PinOverlayLayout.edgePadding
+        let clampedOrigin = CGPoint(
+            x: min(max(proposedOrigin.x, padding), max(padding, size.width - padding - labelFrame.width)),
+            y: min(max(proposedOrigin.y, padding), max(padding, size.height - padding - labelFrame.height))
+        )
+        PinOverlayPlacement(
+            id: id,
+            anchor: anchor,
+            labelFrame: CGRect(
+                origin: clampedOrigin,
+                size: labelFrame.size
+            )
+        )
     }
 }
 
@@ -262,7 +304,7 @@ private struct PinAnchor: View {
     }
 
     private var touchGesture: some Gesture {
-        DragGesture(minimumDistance: 0)
+        DragGesture(minimumDistance: 0, coordinateSpace: .named(PinOverlayCoordinateSpace.name))
             .onChanged { value in
                 beginTouchIfNeeded()
                 let distance = hypot(value.translation.width, value.translation.height)

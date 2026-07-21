@@ -7,7 +7,7 @@ import UIKit
 /// fidelity and extensibility over compactness or presentation compatibility.
 struct TuberNoteArchive: Codable {
     static let oldestSupportedFormatVersion = 1
-    static let currentFormatVersion = 2
+    static let currentFormatVersion = 3
     static let formatIdentifier = "com.tubernotes.note"
     static let fileExtension = "spud"
 
@@ -20,6 +20,7 @@ struct TuberNoteArchive: Codable {
     var inkLayers: [InkLayer]
     var conversationLayers: [ConversationLayerRecord]
     var extraData: [String: JSONValue]
+    var notebook: Notebook?
 
     enum Compression: String, Codable {
         case none
@@ -229,6 +230,7 @@ enum TuberNoteArchiveCodec {
 
     struct DecodedDocument {
         let archive: TuberNoteArchive
+        let notebook: Notebook
         let inkLayers: [DecodedInkLayer]
         let conversationLayers: NoteConversationLayers
         let integrityWarnings: [String]
@@ -239,6 +241,7 @@ enum TuberNoteArchiveCodec {
         case unsupportedVersion(Int)
         case unexpectedCompression(String)
         case damagedInkLayer(UUID)
+        case missingNotebook
 
         var errorDescription: String? {
             switch self {
@@ -250,8 +253,31 @@ enum TuberNoteArchiveCodec {
                 return "Unsupported TuberNotes archive compression: \(compression)"
             case .damagedInkLayer(let id):
                 return "The PencilKit data for ink layer \(id) is damaged."
+            case .missingNotebook:
+                return "The complete notebook payload is missing from this SPUD archive."
             }
         }
+    }
+
+    static func encode(notebook: Notebook) throws -> Data {
+        let firstPage = notebook.pages.first ?? NotebookPage()
+        return try encode(
+            inkLayers: firstPage.drawingLayers.map { layer in
+                InkLayerInput(
+                    id: layer.id,
+                    name: layer.name,
+                    isVisible: layer.isVisible,
+                    drawing: layer.drawing
+                )
+            },
+            canvasSize: NotebookPageLayout.size,
+            conversationLayers: NoteConversationLayers(
+                noteID: notebook.id,
+                layers: notebook.agenticLayers
+            ),
+            formatVersion: TuberNoteArchive.currentFormatVersion,
+            notebook: notebook
+        )
     }
 
     static func encode(
@@ -274,16 +300,35 @@ enum TuberNoteArchiveCodec {
         conversationLayers: NoteConversationLayers,
         extraData: [String: JSONValue] = [:]
     ) throws -> Data {
+        try encode(
+            inkLayers: inkLayers,
+            canvasSize: canvasSize,
+            conversationLayers: conversationLayers,
+            extraData: extraData,
+            formatVersion: 2,
+            notebook: nil
+        )
+    }
+
+    private static func encode(
+        inkLayers: [InkLayerInput],
+        canvasSize: CGSize,
+        conversationLayers: NoteConversationLayers,
+        extraData: [String: JSONValue] = [:],
+        formatVersion: Int,
+        notebook: Notebook?
+    ) throws -> Data {
         let archive = TuberNoteArchive(
             format: TuberNoteArchive.formatIdentifier,
-            formatVersion: TuberNoteArchive.currentFormatVersion,
+            formatVersion: formatVersion,
             compression: .none,
             createdAt: Date(),
             noteID: conversationLayers.noteID,
             canvasSize: .init(canvasSize),
             inkLayers: inkLayers.map(makeInkLayer),
             conversationLayers: conversationLayers.layers.map(makeConversationLayer),
-            extraData: extraData
+            extraData: extraData,
+            notebook: notebook
         )
 
         let encoder = JSONEncoder()
@@ -310,6 +355,9 @@ enum TuberNoteArchiveCodec {
         guard archive.compression == .none else {
             throw ArchiveError.unexpectedCompression(archive.compression.rawValue)
         }
+        guard archive.formatVersion < 3 || archive.notebook != nil else {
+            throw ArchiveError.missingNotebook
+        }
 
         var integrityWarnings: [String] = []
         let decodedLayers = try archive.inkLayers.map { layer -> DecodedInkLayer in
@@ -333,13 +381,41 @@ enum TuberNoteArchiveCodec {
             )
         }
 
+        let conversationLayers = NoteConversationLayers(
+            noteID: archive.noteID,
+            layers: archive.conversationLayers.map(makeConversationLayer)
+        )
+        let notebook = archive.notebook ?? Notebook(
+            id: archive.noteID,
+            title: "Imported Note",
+            pages: [NotebookPage(
+                drawingLayers: decodedLayers.map { layer in
+                    DrawingLayer(
+                        id: layer.id,
+                        name: layer.name,
+                        drawingData: layer.drawing.dataRepresentation(),
+                        isVisible: layer.isVisible
+                    )
+                },
+                createdAt: archive.createdAt
+            )],
+            agenticLayers: conversationLayers.layers,
+            createdAt: archive.createdAt,
+            updatedAt: archive.createdAt
+        )
+        for page in notebook.pages {
+            for layer in page.drawingLayers {
+                guard (try? PKDrawing(data: layer.drawingData)) != nil else {
+                    throw ArchiveError.damagedInkLayer(layer.id)
+                }
+            }
+        }
+
         return DecodedDocument(
             archive: archive,
+            notebook: notebook,
             inkLayers: decodedLayers,
-            conversationLayers: NoteConversationLayers(
-                noteID: archive.noteID,
-                layers: archive.conversationLayers.map(makeConversationLayer)
-            ),
+            conversationLayers: conversationLayers,
             integrityWarnings: integrityWarnings
         )
     }

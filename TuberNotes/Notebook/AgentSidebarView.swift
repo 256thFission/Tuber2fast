@@ -92,10 +92,10 @@ struct AgentSidebarView: View {
     @ViewBuilder
     private var content: some View {
         selectionChip
-        branchContextChip
+        continuationContextChip
 
         TextField(
-            selectedParent == nil ? "Ask about this page…" : "Ask a follow-up branch…",
+            selectedParent == nil ? "Ask about this page…" : "Ask a follow-up…",
             text: $prompt,
             axis: .vertical
         )
@@ -119,14 +119,16 @@ struct AgentSidebarView: View {
         .disabled(vm.isAnalyzing)
         .padding(.top, 4)
 
-        if !isProviderConfigured {
-            Button { onEditProviderAccess() } label: {
-                Text("Demo mode — tap to configure an agent provider")
-                    .font(.caption)
-            }
-            .foregroundStyle(.secondary)
-            .padding(.top, 4)
+        Button { onEditProviderAccess() } label: {
+            Text(providerAccessLabel)
+                .font(.caption)
         }
+        .foregroundStyle(.secondary)
+        .padding(.top, 4)
+        .accessibilityLabel("Agent provider access")
+        .accessibilityValue(providerAccessValue)
+        .accessibilityHint(isProviderConfigured ? "Change provider or model" : "Configure a provider for live analysis")
+        .accessibilityIdentifier("assistant-provider-access")
 
         if vm.isAnalyzing {
             HStack(spacing: 8) {
@@ -149,18 +151,38 @@ struct AgentSidebarView: View {
 
     private var analyzeTitle: String {
         if vm.isAnalyzing { return "Analyzing…" }
-        if selectedParent != nil { return "Create follow-up branch" }
+        if selectedParent != nil { return "Continue conversation" }
         return hasSelection ? "Analyze selection" : "Analyze page"
     }
 
+    private var providerAccessLabel: String {
+#if DEBUG
+        guard providerAccess != nil else {
+            return "Demo mode — tap to configure an agent provider"
+        }
+        return "\(providerAccessValue) — tap to change"
+#else
+        return "Demo mode — live provider access is unavailable in this build"
+#endif
+    }
+
+    private var providerAccessValue: String {
+#if DEBUG
+        guard let providerAccess else { return "Demo mode" }
+        return "\(providerAccess.provider.label) · \(providerAccess.model)"
+#else
+        return "Demo mode"
+#endif
+    }
+
     @ViewBuilder
-    private var branchContextChip: some View {
+    private var continuationContextChip: some View {
         if let selectedParent {
             HStack(spacing: 8) {
-                Image(systemName: "arrow.triangle.branch")
+                Image(systemName: "bubble.left.and.bubble.right.fill")
                     .font(.caption)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("Branching from")
+                    Text("Continuing from")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                     Text(selectedParent.teaser)
@@ -187,7 +209,7 @@ struct AgentSidebarView: View {
     private var conversationTree: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Label("Conversation tree", systemImage: "list.bullet.indent")
+                Label("Conversation history", systemImage: "list.bullet.indent")
                     .font(.subheadline.weight(.semibold))
                 Spacer()
                 Text("\(treeItems.count)")
@@ -235,14 +257,14 @@ struct AgentSidebarView: View {
                         if let pageNumber { Text("Page \(pageNumber)") }
                         if item.childCount > 0 {
                             Text("·")
-                            Text("\(item.childCount) branch\(item.childCount == 1 ? "" : "es")")
+                            Text("\(item.childCount) repl\(item.childCount == 1 ? "y" : "ies")")
                         }
                     }
                     .font(.caption2)
                     .foregroundStyle(selected ? Color.white.opacity(0.72) : Color.secondary)
                 }
                 Spacer(minLength: 4)
-                Image(systemName: "arrow.triangle.branch")
+                Image(systemName: "bubble.left.and.bubble.right")
                     .font(.caption2.weight(.bold))
                     .foregroundStyle(selected ? Color.white : Color.secondary)
             }
@@ -252,8 +274,8 @@ struct AgentSidebarView: View {
         .buttonStyle(.plain)
         .padding(.leading, CGFloat(min(item.depth, 5)) * 14)
         .accessibilityLabel(item.annotation.teaser)
-        .accessibilityValue("\(pageAccessibilityValue)depth \(item.depth), \(item.childCount) branches")
-        .accessibilityHint("Uses this conversation as the parent of the next response")
+        .accessibilityValue("\(pageAccessibilityValue)depth \(item.depth), \(item.childCount) replies")
+        .accessibilityHint("Continues this conversation from this response")
         .accessibilityAddTraits(selected ? .isSelected : [])
         .accessibilityIdentifier("agent-conversation-node-\(item.annotation.id.uuidString)")
     }
@@ -286,7 +308,7 @@ struct AgentSidebarView: View {
     private var emptyState: some View {
         VStack(alignment: .leading, spacing: 10) {
             Image(systemName: "scribble.variable").font(.title2).foregroundStyle(.secondary)
-            Text("Ask about the page to create a root Pin. Then select any Pin here—or use Continue on the page—to grow a follow-up branch.")
+            Text("Ask about the page to start a conversation. Then select any Pin here—or use Continue on the page—to follow up from that response.")
                 .font(.subheadline).foregroundStyle(.secondary)
         }
     }
@@ -373,6 +395,7 @@ struct AgentProviderAccessPopup: View {
                         }
                     }
                     .pickerStyle(.segmented)
+                    .accessibilityIdentifier("agent-provider-picker")
                     .onChange(of: draftProviderRaw) { _, _ in
                         // Never carry one provider's credential across to another endpoint.
                         draftCredential = ""
@@ -389,6 +412,9 @@ struct AgentProviderAccessPopup: View {
                         .padding(12)
                         .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
                         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.white.opacity(0.14)))
+                        .accessibilityLabel("\(provider.label) access credential")
+                        .accessibilityHint("Stored locally for notebook analysis and Pin conversations")
+                        .accessibilityIdentifier("agent-provider-credential")
 
                     HStack {
                         Text("Model").font(.subheadline)
@@ -409,6 +435,8 @@ struct AgentProviderAccessPopup: View {
                             .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
                             .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.white.opacity(0.14)))
                         }
+                        .accessibilityLabel("Model")
+                        .accessibilityValue(modelLabel)
                         .accessibilityIdentifier("agent-model-picker")
                     }
 
@@ -421,6 +449,7 @@ struct AgentProviderAccessPopup: View {
                             Button("Remove access", role: .destructive) {
                                 credential = ""; draftCredential = ""; onClose()
                             }
+                            .accessibilityIdentifier("agent-provider-remove")
                         }
                         Spacer()
                         Button("Cancel") { onClose() }
@@ -433,6 +462,7 @@ struct AgentProviderAccessPopup: View {
                         }
                         .buttonStyle(.borderedProminent)
                         .disabled(trimmedDraftCredential.isEmpty)
+                        .accessibilityIdentifier("agent-provider-save")
                     }
 #else
                     Text("Live provider access is available only in local Debug builds. This build stays in credential-free demo mode until a distributable TuberNotes gateway is configured.")

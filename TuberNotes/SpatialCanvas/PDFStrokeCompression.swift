@@ -146,50 +146,62 @@ enum NotePDFExporter {
     static let defaultTolerance: CGFloat = 0.35
 
     static func makePDF(
-        from drawing: PKDrawing,
+        from drawings: [PKDrawing],
         pageBounds: CGRect,
         tolerance: CGFloat = defaultTolerance
     ) -> PDFExportResult {
-        let compressedStrokes = drawing.strokes.map { stroke in
-            let samples = (0..<stroke.path.count).map { stroke.path[$0] }
-            let compression = PDFStrokeCompressor.compress(
-                samples.map(\.location),
-                tolerance: tolerance
-            )
-            let averageWidth = samples.isEmpty
-                ? CGFloat(1)
-                : samples.reduce(CGFloat.zero) { $0 + max($1.size.width, $1.size.height) } / CGFloat(samples.count)
-            let averageOpacity = samples.isEmpty
-                ? CGFloat(1)
-                : samples.reduce(CGFloat.zero) { $0 + $1.opacity } / CGFloat(samples.count)
-            return CompressedStroke(
-                points: compression.points,
-                color: stroke.ink.color,
-                width: max(0.5, averageWidth),
-                opacity: min(1, max(0, averageOpacity)),
-                originalPointCount: compression.originalPointCount,
-                maximumDeviation: compression.maximumDeviation
-            )
+        let compressedPages = drawings.map { drawing in
+            drawing.strokes.map { stroke in
+                compressedStroke(from: stroke, tolerance: tolerance)
+            }
         }
 
         let format = UIGraphicsPDFRendererFormat()
         let renderer = UIGraphicsPDFRenderer(bounds: pageBounds, format: format)
         let data = renderer.pdfData { rendererContext in
-            rendererContext.beginPage()
-            let context = rendererContext.cgContext
-            context.setFillColor(UIColor.white.cgColor)
-            context.fill(pageBounds)
+            for compressedStrokes in compressedPages {
+                rendererContext.beginPage()
+                let context = rendererContext.cgContext
+                context.setFillColor(UIColor.white.cgColor)
+                context.fill(pageBounds)
 
-            for stroke in compressedStrokes {
-                draw(stroke, in: context)
+                for stroke in compressedStrokes {
+                    draw(stroke, in: context)
+                }
             }
         }
+        let compressedStrokes = compressedPages.flatMap { $0 }
 
         return PDFExportResult(
             data: data,
             originalPointCount: compressedStrokes.reduce(0) { $0 + $1.originalPointCount },
             emittedPointCount: compressedStrokes.reduce(0) { $0 + $1.points.count },
             maximumDeviation: compressedStrokes.map(\.maximumDeviation).max() ?? 0
+        )
+    }
+
+    private static func compressedStroke(
+        from stroke: PKStroke,
+        tolerance: CGFloat
+    ) -> CompressedStroke {
+        let samples = (0..<stroke.path.count).map { stroke.path[$0] }
+        let compression = PDFStrokeCompressor.compress(
+            samples.map(\.location),
+            tolerance: tolerance
+        )
+        let averageWidth = samples.isEmpty
+            ? CGFloat(1)
+            : samples.reduce(CGFloat.zero) { $0 + max($1.size.width, $1.size.height) } / CGFloat(samples.count)
+        let averageOpacity = samples.isEmpty
+            ? CGFloat(1)
+            : samples.reduce(CGFloat.zero) { $0 + $1.opacity } / CGFloat(samples.count)
+        return CompressedStroke(
+            points: compression.points,
+            color: stroke.ink.color,
+            width: max(0.5, averageWidth),
+            opacity: min(1, max(0, averageOpacity)),
+            originalPointCount: compression.originalPointCount,
+            maximumDeviation: compression.maximumDeviation
         )
     }
 

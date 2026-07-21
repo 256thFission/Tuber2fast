@@ -10,6 +10,8 @@ struct NotebookView: View {
     @AppStorage("tuber.fingerDrawing") private var fingerDrawing = false
     @AppStorage("tuber.snapStraight") private var snapStraight = true
     @AppStorage(AgentProviderAccess.credentialStorageKey) private var agentCredential = ""
+    @AppStorage(AgentProviderAccess.providerStorageKey) private var agentProviderRaw = AgentProvider.openAI.rawValue
+    @AppStorage(AgentProviderAccess.modelStorageKey) private var agentModel = ""
     @AppStorage("tuber.pencilDoubleTap") private var pencilDoubleTapEnabled = true
     @AppStorage("tuber.pencilSqueeze") private var pencilSqueezeEnabled = true
     @AppStorage("tuber.pencilHoverPreview") private var pencilHoverPreviewEnabled = true
@@ -19,7 +21,9 @@ struct NotebookView: View {
     @State private var selectedAgentParentThreadID: UUID?
     @State private var showProviderAccessPopup = false
     @State private var showToolbarSettings = false
+    @State private var openProviderAccessAfterToolbarSettings = false
     @State private var isRefinementActive = false
+    @State private var isRefinementLassoActive = false
     @State private var showExportOptions = false
     @State private var showFileExporter = false
     @State private var exportContentType = UTType.pdf
@@ -43,7 +47,10 @@ struct NotebookView: View {
 
     var body: some View {
         ZStack {
-            AmbientBackground(rippleModel: rippleModel)
+            AmbientBackground(
+                rippleModel: rippleModel,
+                isAgenticLayerActive: vm.isAgenticLayersActive
+            )
 
             // The UIKit observer attaches passively at the window level. It
             // reports Pencil movement without becoming a hit-test target.
@@ -84,6 +91,7 @@ struct NotebookView: View {
                     undo: vm.undo,
                     isLassoActive: $vm.isLassoActive,
                     isRefinementActive: $isRefinementActive,
+                    isRefinementLassoActive: $isRefinementLassoActive,
                     onShowPages: { withAnimation { showPages = true } },
                     onAskAgent: { withAnimation { showAgentSidebar = true } }
                 )
@@ -180,7 +188,10 @@ struct NotebookView: View {
             guard !isActive, showAgentSidebar else { return }
             withAnimation { showAgentSidebar = false }
         }
-        .onChange(of: vm.currentDrawingLayerID) { _, _ in dismissPencilPalette() }
+        .onChange(of: vm.currentDrawingLayerID) { _, _ in
+            dismissPencilPalette()
+            isRefinementLassoActive = false
+        }
         .onChange(of: vm.isLassoActive) { _, active in
             if active { dismissPencilPalette() }
         }
@@ -298,11 +309,15 @@ struct NotebookView: View {
                 pencilSqueezeEnabled: $pencilSqueezeEnabled,
                 pencilHoverPreviewEnabled: $pencilHoverPreviewEnabled,
                 isAnalysisAccessConfigured: isAnalysisAccessConfigured,
+                analysisAccessSummary: analysisAccessSummary,
                 onEditAnalysisAccess: {
+                    openProviderAccessAfterToolbarSettings = true
                     showToolbarSettings = false
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                        withAnimation { showProviderAccessPopup = true }
-                    }
+                },
+                onDismiss: {
+                    guard openProviderAccessAfterToolbarSettings else { return }
+                    openProviderAccessAfterToolbarSettings = false
+                    withAnimation { showProviderAccessPopup = true }
                 }
             )
                 .presentationCompactAdaptation(.popover)
@@ -311,10 +326,27 @@ struct NotebookView: View {
 
     private var isAnalysisAccessConfigured: Bool {
 #if DEBUG
-        !agentCredential.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        analysisProviderAccess != nil
 #else
         false
 #endif
+    }
+
+    private var analysisAccessSummary: String {
+#if DEBUG
+        guard let access = analysisProviderAccess else { return "Demo mode" }
+        return "\(access.provider.label) · \(access.model)"
+#else
+        return "Demo mode"
+#endif
+    }
+
+    private var analysisProviderAccess: AgentProviderAccess? {
+        AgentProviderAccess(
+            provider: AgentProvider(rawValue: agentProviderRaw) ?? .openAI,
+            credential: agentCredential,
+            model: agentModel
+        )
     }
 
     private var arrangeControls: some View {
@@ -396,7 +428,7 @@ struct NotebookView: View {
     private func preparePDFExport() {
         vm.persistNow()
         exportDocument = NotebookExportDocument(data: NotePDFExporter.makePDF(
-            from: vm.currentPage.drawing,
+            from: vm.notebook.pages.map(\.drawing),
             pageBounds: CGRect(origin: .zero, size: NotebookPageLayout.size),
             tolerance: CGFloat(pdfTolerance)
         ).data)
@@ -406,18 +438,9 @@ struct NotebookView: View {
     private func prepareSPUDExport() {
         vm.persistNow()
         do {
-            exportDocument = NotebookExportDocument(data: try TuberNoteArchiveCodec.encode(
-                inkLayers: vm.currentPage.drawingLayers.map { layer in
-                    TuberNoteArchiveCodec.InkLayerInput(
-                        id: layer.id,
-                        name: layer.name,
-                        isVisible: layer.isVisible,
-                        drawing: layer.drawing
-                    )
-                },
-                canvasSize: NotebookPageLayout.size,
-                conversationLayers: vm.conversationLayers
-            ))
+            exportDocument = NotebookExportDocument(
+                data: try TuberNoteArchiveCodec.encode(notebook: vm.notebook)
+            )
             queueExportPresentation(.spud)
         } catch {
             queueExportPresentation(.error(error.localizedDescription))
@@ -466,7 +489,7 @@ struct NotebookView: View {
             .joined(separator: "-")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let title = sanitizedTitle.isEmpty ? "Untitled" : sanitizedTitle
-        return "\(title)-page-\(vm.currentIndex + 1).\(fileExtension)"
+        return "\(title).\(fileExtension)"
     }
 
     private func handleExportCompletion(_ result: Result<URL, Error>) {
@@ -727,6 +750,7 @@ struct NotebookView: View {
                         client: DrawingRefinementClientFactory.make(),
                         initialSelection: vm.lassoRect,
                         pageSize: NotebookPageLayout.size,
+                        isLassoActive: $isRefinementLassoActive,
                         onApply: { data, rect, path in
                             vm.applyDrawingRefinement(
                                 imageData: data,
@@ -734,7 +758,10 @@ struct NotebookView: View {
                                 normalizedPath: path
                             )
                         },
-                        onClose: { isRefinementActive = false }
+                        onClose: {
+                            isRefinementLassoActive = false
+                            isRefinementActive = false
+                        }
                     )
                 }
             }

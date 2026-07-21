@@ -1,6 +1,6 @@
 # PC-5 — Branch logic integration
 
-Status: **implementation complete — host-checked; physical visual verification blocked**
+Status: **follow-up implemented — host-checked; physical visual verification blocked**
 
 Target branch: `sive/dev`
 
@@ -131,6 +131,13 @@ page-template improvements where they remain applicable.
   has neither `xcodebuild` nor a pinned device session, so device animation,
   clipping, overlap, tearing, console/crash, and human visual-taste checks remain
   open; no simulator or source-only visual-success claim was substituted.
+- 2026-07-20 — Toolbar grouping follow-up complete. The selection lasso and
+  refinement lasso now form their own divider-bounded subsection between the
+  writing/color controls and Undo/Redo, with both interactions unchanged. The
+  focused tool-selection and branch-logic contracts pass 5/5 and the scoped
+  diff passes `git diff --check`. Build and physical visual inspection remain
+  blocked on this Linux host because `xcodebuild` and an explicitly pinned iPad
+  session are unavailable.
 
 ## Evidence packet — 2026-07-20
 

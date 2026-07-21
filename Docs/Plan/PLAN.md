@@ -250,9 +250,11 @@ Stop and report when any of these is true:
 
 ## Active line — PC-2: adaptive notebook toolbars
 
-Status: **implemented — host-checked; awaiting pinned-iPad verification**
+Status: **follow-up implemented — host-checked; awaiting pinned-iPad verification**
 
 Target branch: `sive/dev`
+
+Child work-line: [`PC-2-AdaptiveNotebookToolbars.md`](PC-2-AdaptiveNotebookToolbars.md)
 
 Owner: App integration, preserving `SpatialCanvas` ownership of Pencil and
 coordinate behavior.
@@ -270,6 +272,9 @@ analysis API-key access belongs inside settings rather than as top-bar chrome.
 
 - `TuberNotes/Notebook/NotebookView.swift`
 - `TuberNotes/Notebook/NotebookToolbar.swift`
+- `TuberNotes/SpatialCanvas/DrawingRefinementOverlay.swift`
+- `DeveloperTools/tests/test_notebook_tool_selection_contract.py`
+- `Docs/Plan/PC-2-AdaptiveNotebookToolbars.md`
 - this PC-2 plan section and session log
 
 ### Non-goals and dependencies
@@ -303,6 +308,8 @@ analysis API-key access belongs inside settings rather than as top-bar chrome.
   actions preserve non-drag width control.
 - API-key access is available from settings and absent from the top bar.
 - Both bars retain every existing capability in a coherent order.
+- The refinement lasso bubble remains centered directly above its Magic Lasso
+  toolbar button instead of moving with page content.
 - Stop after evidence is collected, after two failed device verifications
   without a narrower repair, or when the exact-device prerequisite is absent.
 
@@ -325,6 +332,13 @@ analysis API-key access belongs inside settings rather than as top-bar chrome.
   archive/export contract tests pass. No Xcode/Swift compiler or pinned device
   session is available on this host, so build, launch, compact/wide layout,
   Pencil hold, screenshot, console, and crash checks remain open.
+- 2026-07-20 — Follow-up: anchored the refinement lasso bubble to the live
+  Magic Lasso toolbar-button bounds and lifted only its active state through
+  `NotebookView`. The canvas continues to own lasso capture and normalized
+  selection geometry. All 20 focused host contract tests and diff hygiene pass;
+  evidence is under `tmp/verify/pc-2-refinement-lasso-anchor/summary.txt`.
+  Physical wide and compact inspection remains blocked by the unavailable
+  Apple/iPad host.
 
 ## Active line — PC-4: synchronized unlocked zoom
 
@@ -341,7 +355,7 @@ toolchain or explicitly pinned physical iPad session.
 
 ## Active line — PC-5: branch logic integration
 
-Status: **implementation complete — host-checked; physical visual verification blocked**
+Status: **follow-up implemented — host-checked; physical visual verification blocked**
 
 Target branch: `sive/dev`
 
@@ -353,8 +367,10 @@ merging branch histories, replacing newer files, or reverting current zoom,
 export, toolbar, persistence, and visual repairs. Forward turns now move the
 complete current page left and insert the next page from the physical right;
 backward turns apply the inverse. The redundant always-forward layer transition
-was removed. Host checks pass; canonical device visual verification remains
-blocked by the absent Apple/Xcode host and pinned iPad session.
+was removed. The two lasso actions now occupy a divider-bounded toolbar
+subsection matching the Undo/Redo grouping. Host checks pass; canonical device
+visual verification remains blocked by the absent Apple/Xcode host and pinned
+iPad session.
 
 Shared-contract log — 2026-07-20: `CONTRACT:` extend persisted type
 `PageTemplate` with the three dotted-paper sizes required to carry Claire's
@@ -451,9 +467,87 @@ reliably open the system file exporter.
   Swift/Xcode toolchain or explicitly pinned physical-iPad session; no runtime
   success claim is made from host evidence alone.
 
+## Active line — PC-9: complete notebook PDF and SPUD export
+
+Status: **implemented — host-checked; physical export verification blocked**
+
+Target branch: `sive/dev`
+
+Owner: App integration; PDF ink emission remains in `SpatialCanvas`, and the
+native archive continues to reuse the existing notebook persistence model.
+
+### Objective and user-visible outcome
+
+Export the complete notebook rather than only the selected page: PDF contains
+one drawing-only page for every notebook page in order, while SPUD losslessly
+contains the complete editable notebook, including page identities, templates,
+images, drawing layers, Agentic Layers, cover, settings, and timestamps.
+
+### Scope
+
+- `TuberNotes/Notebook/NotebookView.swift`
+- `TuberNotes/Notebook/NotebookViewModel.swift`
+- `TuberNotes/SpatialCanvas/PDFStrokeCompression.swift`
+- `TuberNotes/SpatialCanvas/TuberNoteArchive.swift`
+- `TuberNotes/Notebook/README-notebooks.md`
+- `DeveloperTools/tests/test_archive_export_contract.py`
+- this PC-9 plan section and session log
+
+### Non-goals and dependencies
+
+- Do not add archive import UI, change the system file-exporter presentation,
+  alter toolbar layout, or emit Pins/conversations/citations into PDF.
+- Preserve the existing compressed, drawing-only PDF privacy contract.
+- Preserve decoding of existing version 1 and version 2 single-page SPUD files.
+- Canonical build and interaction inspection require an explicitly named,
+  pinned physical iPad and an Apple/Xcode host.
+
+### Work and verification
+
+1. Add ordered multi-page PDF emission without changing stroke compression.
+2. Add a versioned whole-notebook SPUD payload with legacy decoding.
+3. Route both notebook export entry points through the complete document.
+4. Extend focused source checks for page ordering, completeness, and filenames.
+5. Build and export a deterministic multi-page notebook on the pinned iPad;
+   inspect PDF page count and decode the SPUD payload for complete page state.
+
+### Acceptance evidence and stop conditions
+
+- A notebook with multiple pages exports the same number of PDF pages in the
+  same order; PDF remains drawing-only and contains no Agentic Layer content.
+- SPUD round-trips all notebook pages and notebook-owned state while version 1
+  and version 2 archives remain decodable.
+- Both exported filenames describe the notebook, not one selected page.
+- Existing export presentation/cancellation checks remain green.
+- Stop after host and device evidence is collected, after two verification
+  failures without a narrower fix, or when the exact-device prerequisite is
+  unavailable.
+
+### Session log
+
+- 2026-07-20 — Traced both normal notebook export actions to `currentPage`.
+  PDF emits one drawing-only page and SPUD stores only that page's drawing
+  layers, despite Agentic Layers spanning the whole notebook; filenames also
+  identify the selected page. Began the bounded whole-notebook repair while
+  preserving PC-3's single ordered `fileExporter` presentation.
+- 2026-07-20 — `CONTRACT:` evolve persisted type `TuberNoteArchive` to carry an
+  optional complete `Notebook` payload in format version 3. The optional field
+  preserves version 1/2 decoding; the change is required so native SPUD export
+  retains every page and all notebook-owned editable state.
+- 2026-07-20 — Implemented ordered multi-page drawing-only PDF emission and
+  whole-notebook SPUD encoding, updated both export routes and document-level
+  filenames, and documented the resulting semantics. Focused archive/export
+  checks pass 6/6 and `git diff --check` passes. The broader host suite passes
+  43/44; its lone failure is the unrelated existing verifier-truthfulness test,
+  whose helper receives 13 arguments while expecting 19. Evidence is under
+  `tmp/verify/pc-9-complete-document-export/summary.txt`. Canonical build,
+  runtime PDF page-count/SPUD round-trip inspection, save-page interaction,
+  screenshots, console, and crash checks remain blocked because this Linux host
+  has neither Xcode/Swift nor an explicitly pinned physical-iPad session.
+
 ## Active line — PC-6: agent provider unification
 
-Status: **implemented — host-checked; Apple/device verification blocked**
+Status: **implemented — provider access host-checked; Apple/device/live verification blocked**
 
 Target branch: `sive/dev`
 
@@ -466,14 +560,17 @@ Pin/conversation client share one provider-access value. Preserve recorded/demo
 defaults, strict spatial validation, credential boundaries, and the separate
 image-refinement backend contract.
 
-Host implementation and scoped checks pass. Canonical Swift/Xcode build,
-physical-iPad scenarios, normal-product visual inspection, and separately
-authorized live-provider evidence remain blocked because this host exposes no
-Apple or Swift toolchain.
+Host implementation and scoped checks pass. The normal settings and Agentic
+Layer routes now expose the selected provider/model, use lifecycle-ordered
+presentation, carry explicit accessibility contracts, and show actionable
+redacted provider failures. Canonical Swift/Xcode build, physical-iPad
+scenarios, normal-product visual inspection, and separately authorized
+live-provider evidence remain blocked because this host exposes no Apple or
+Swift toolchain or pinned device session.
 
 ## Active line — PC-7: Agentic Layer, conversation-tree, and movable-Pin interaction cleanup
 
-Status: **implementation complete — host-checked; physical-device verification blocked**
+Status: **follow-up implemented — host-checked; physical-device verification blocked**
 
 Target branch: `sive/dev`
 
@@ -483,7 +580,7 @@ Summary: make the normal notebook's Agentic Layer read as one of two honest
 user-visible states—hidden or active—without conflating an open layer picker
 with active page content. Reuse the existing page-normalized Pin contract to
 make conversation Pins draggable and persisted; render those durable Pins as
-a branchable tree in the normal Agent sidebar; remove dead follow-up
+cycle-safe conversation history in the normal Agent sidebar; remove dead follow-up
 affordances; and route supported Pin follow-ups into the matching tree node.
 
 Shared-contract log — 2026-07-20: `CONTRACT:` add
@@ -494,15 +591,26 @@ coordinate representation changes.
 
 Shared-contract log — 2026-07-20: `CONTRACT:` add optional
 `PageAnnotation.parentThreadID` so existing persisted Pin annotations can
-express branch topology without a second conversation store. Older notebook
+express lineage topology without a second conversation store. Older notebook
 and SPUD payloads decode the missing optional value as a root; page identity,
 annotation identity, and existing thread IDs are unchanged.
 
-Host implementation and scoped checks pass. Canonical build, the named Pin
-scenarios, normal-product tree/drag inspection, screenshots, console/crash
-evidence, and human interaction judgment remain blocked because this Linux
-workspace has no Apple/Swift toolchain or explicitly pinned physical-iPad
-session.
+The bounded follow-up is implemented: same-lineage replies read as conversation
+continuation, bounded cycle-safe history is isolated as quoted agent context
+with evidence/uncertainty guidance, and Pin drag uses stable overlay coordinates
+with a fixed, edge-clamped card offset. Focused checks pass 13/13; evidence is
+under `tmp/verify/pc-7-conversation-pin-followup/`. Canonical build, the named
+Pin scenarios, normal-product history/drag inspection, screenshots,
+console/crash evidence, and human interaction judgment remain blocked because
+this Linux workspace has no Apple/Swift toolchain or explicitly pinned
+physical-iPad session.
+
+The additional bounded visual follow-up now carries the active Agentic Layer's
+cyan/blue/indigo/purple/pink glow into the existing animated notebook
+background gradients and Pencil ripple while leaving the hidden-layer
+background neutral. Focused checks pass 13/13; evidence is under
+`tmp/verify/pc-7-agentic-ambient-glow/`. Physical-device visual/taste evidence
+remains blocked by the same unavailable Apple host and pinned-iPad prerequisite.
 
 ## Active line — PC-8: drawing tool recovery after erasing
 

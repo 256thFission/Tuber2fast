@@ -21,7 +21,12 @@ enum AgentError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .server(let statusCode): "The agent service failed (HTTP \(statusCode))."
+        case .server(let statusCode) where statusCode == 401 || statusCode == 403:
+            "The provider rejected this access. Check agent provider settings and try again."
+        case .server(let statusCode) where statusCode == 429:
+            "The provider is busy or this access has reached its limit. Wait, then try again."
+        case .server(let statusCode):
+            "The provider request failed (HTTP \(statusCode)). Try again."
         case .parse:         "Couldn't read the assistant's response."
         case .unavailable:   "The agent service is unavailable."
         }
