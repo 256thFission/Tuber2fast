@@ -29,6 +29,7 @@
 		A00000000000000000000014 /* FeedbackThread.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000114 /* FeedbackThread.swift */; };
 		A00000000000000000000015 /* FeedbackThreadSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000115 /* FeedbackThreadSession.swift */; };
 		A00000000000000000000016 /* FeedbackThreadViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000116 /* FeedbackThreadViews.swift */; };
+		A00000000000000000000099 /* ReviewHarnessOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000199 /* ReviewHarnessOverlay.swift */; };
 		A00000000000000000000017 /* ResponsesSSEDecoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000117 /* ResponsesSSEDecoder.swift */; };
 		A00000000000000000000018 /* DebugCodexTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000118 /* DebugCodexTransport.swift */; };
 		A00000000000000000000019 /* DebugCodexAgentClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000119 /* DebugCodexAgentClient.swift */; };
@@ -94,6 +95,7 @@
 		A00000000000000000000114 /* FeedbackThread.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedbackThread.swift; sourceTree = "<group>"; };
 		A00000000000000000000115 /* FeedbackThreadSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedbackThreadSession.swift; sourceTree = "<group>"; };
 		A00000000000000000000116 /* FeedbackThreadViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedbackThreadViews.swift; sourceTree = "<group>"; };
+		A00000000000000000000199 /* ReviewHarnessOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewHarnessOverlay.swift; sourceTree = "<group>"; };
 		A00000000000000000000117 /* ResponsesSSEDecoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResponsesSSEDecoder.swift; sourceTree = "<group>"; };
 		A00000000000000000000118 /* DebugCodexTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugCodexTransport.swift; sourceTree = "<group>"; };
 		A00000000000000000000119 /* DebugCodexAgentClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugCodexAgentClient.swift; sourceTree = "<group>"; };
@@ -249,6 +251,7 @@
 				A00000000000000000000114 /* FeedbackThread.swift */,
 				A00000000000000000000115 /* FeedbackThreadSession.swift */,
 				A00000000000000000000116 /* FeedbackThreadViews.swift */,
+				A00000000000000000000199 /* ReviewHarnessOverlay.swift */,
 			);
 			path = DeveloperSupport;
 			sourceTree = "<group>";
@@ -393,6 +396,7 @@
 				A00000000000000000000014 /* FeedbackThread.swift in Sources */,
 				A00000000000000000000015 /* FeedbackThreadSession.swift in Sources */,
 				A00000000000000000000016 /* FeedbackThreadViews.swift in Sources */,
+				A00000000000000000000099 /* ReviewHarnessOverlay.swift in Sources */,
 				A00000000000000000000017 /* ResponsesSSEDecoder.swift in Sources */,
 				A00000000000000000000018 /* DebugCodexTransport.swift in Sources */,
 				A00000000000000000000019 /* DebugCodexAgentClient.swift in Sources */,
@@ -456,7 +460,7 @@
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = iphoneos;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG REVIEW_HARNESS $(inherited)";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 			};
 			name = Debug;

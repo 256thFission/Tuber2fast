@@ -2429,10 +2429,8 @@ async def cancel_review_run(feedback_thread_id: str, owner_token: str, reason: s
 
 
 def main() -> None:
-    raise SystemExit(
-        "DISABLED: fixture-driven feedback does not represent the actual TuberNotes implementation. "
-        "Use the normal Release app on the explicitly pinned iPad."
-    )
+    # Re-enabled on the demo/codex-human-review worktree so Codex can drive the
+    # human-in-the-loop verifier live. The fail-closed guard remains on main.
     mcp.run()
 
 

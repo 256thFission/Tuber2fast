@@ -2,6 +2,106 @@
 
 TuberNotes is a one-week iPad hackathon. Prioritize: (1) hero interaction quality, (2) spatial correctness, (3) demo reliability, (4) AI capability, and (5) conventional note-app completeness.
 
+## Human-in-the-loop review is ACTIVE on this worktree
+
+> This section is authoritative on the `demo/codex-human-review` worktree. It
+> **supersedes** the "PC-10 go-mode override" and the paragraph below that calls
+> `DeveloperTools/PencilFixtureMCP` disabled. On this worktree the human review
+> loop is enabled and, for the trigger below, **required**. Everywhere else the
+> disable still stands.
+
+TuberNotes' verification model splits work into two kinds:
+
+- **Verifiable** — a build, a test, or a mechanical inspection settles it. Handle
+  it yourself; do not bother a human.
+- **Non-verifiable (taste / feel / "reads better")** — no test can settle it.
+  You do **not** get to self-certify these. You must obtain a human verdict
+  through the `PencilFixtureMCP` review tools before claiming the work is done.
+
+The `PencilFixtureMCP` server is the human-in-the-loop verifier. When you post a
+question, it surfaces as a "Your turn" card inside the running app
+(`ReviewHarnessOverlay`, `REVIEW_HARNESS` build), the human answers on device,
+and their verdict returns to you. Treat that verdict as the test result.
+
+### Trigger
+
+When the operator's request is exactly (or a close paraphrase of):
+
+> **"The pin overlay feels cramped — widen its internal padding so notes read better."**
+
+follow the flow below. Do not skip the human verdict, and do not declare success
+before it arrives.
+
+### Required flow
+
+1. **Make the smallest change.** Edit the pin-note padding in
+   `TuberNotes/Pins/PinOverlayView.swift` (the `.padding(.horizontal, 14)` /
+   `.padding(.vertical, 10)` on the note body near line 490). Widen it modestly —
+   e.g. horizontal 14 → 18, vertical 10 → 14. One bounded edit; no refactor.
+
+2. **Build** to prove it compiles (scheme `TuberNotes`, Debug — the
+   `REVIEW_HARNESS` flag is on for this scheme).
+
+3. **Recognize this is non-verifiable.** "Reads better" is taste. Request a human
+   verdict via `PencilFixtureMCP` — three tool calls, in order:
+
+   ```
+   create_feedback_thread(
+     title="Pin overlay spacing — does it read better?",
+     objective="Human verdict on a non-verifiable spacing change.",
+     prompt="I widened the pin overlay padding. Confirm the new spacing reads better.",
+     scenario="pin-overlay-demo")
+   → returns { feedback_thread_id, owner_token, last_sequence }
+
+   ask_thread_question(
+     feedback_thread_id, owner_token,
+     idempotency_key="pin-overlay-q1",
+     prompt="I widened the pin overlay padding (h:14→18, v:10→14). Which way did the spacing go?",
+     kind="single-choice",
+     options=[{"id":"better","label":"Better"},
+              {"id":"same","label":"About the same"},
+              {"id":"worse","label":"Worse"}],
+     allows_comment=True)
+   → returns the question message; note its sequence
+
+   await_thread_response(
+     feedback_thread_id, owner_token,
+     after_sequence=<the question message sequence>,
+     timeout_seconds=180)
+   → blocks until the human answers on device
+   ```
+
+4. **Act on the verdict.**
+   - `better` → finalize; report the change plus the human verdict as the
+     acceptance evidence.
+   - `same` / `worse` → adjust the padding per any comment and repeat step 3 with
+     a fresh `idempotency_key`. Iterate until `better` or the human resolves the
+     thread.
+   - `timeout` → do not guess. Report that no human verdict arrived and stop.
+
+5. **Never claim behavioral success before the human verdict.** The verdict *is*
+   the test result for this task.
+
+Operator setup (done outside the model, on the physical iPad — not a simulator).
+The verifier round-trips over `xcrun devicectl ... copy` into the app's data
+container, so it needs a **Debug**-signed install (`get-task-allow`) and a pinned
+device session:
+
+1. Pin the iPad from this worktree:
+   `DeveloperTools/device-preflight.sh --device <UDID>`
+   (writes `.tubernotes-device-session.json` at the worktree root).
+2. Install and launch the **Debug + `REVIEW_HARNESS`** build (scheme `TuberNotes`)
+   on that pinned iPad. Release/distribution builds cannot be container-copied and
+   will not receive threads.
+3. Register `PencilFixtureMCP` as this Codex session's MCP server, run **from this
+   worktree** so `ROOT` resolves here (`python -m server` under
+   `DeveloperTools/PencilFixtureMCP`).
+
+The push (`create_feedback_thread` / `ask_thread_question`) writes the thread into
+`Documents/feedback-threads/` on the iPad, where `FeedbackThreadSession` shows the
+"Your turn" card; `await_thread_response` pulls the human's answer back off the
+device. Bundle id `com.tubernotes.app` must match the installed app.
+
 ## PC-10 go-mode override
 
 Until Phillip explicitly lifts this override, PC-10 OpenAI-login work runs in
@@ -43,7 +143,7 @@ Codex, Skills, MCPs, Xcode, and fixtures are **development tooling**. The multim
 
 Canonical workflow: pin an explicitly named connected physical iPad with `DeveloperTools/device-preflight.sh`, then use `TuberNotes.xcodeproj`, scheme `TuberNotes`, through that shared session. Build, install, launch, and inspect the pinned device; never discover or fall back to another target. See `Docs/DeviceWorkflow.md`, `Docs/Development.md`, and the repo Skills under `.codex/skills/`.
 
-Validate user-visible behavior only in the actual normal Release app on Phillip's explicitly named iPad. Debug scenarios, recorded routes, fixture-driven UI, `DeveloperTools/verify-scenario.sh`, `DeveloperTools/review-session.py`, and `DeveloperTools/PencilFixtureMCP` are disabled and must not be used as acceptance evidence. Phillip performs any required human interaction directly in the normal app. Never claim behavioral success before his verdict.
+Validate user-visible behavior only in the actual normal Release app on Phillip's explicitly named iPad. Debug scenarios, recorded routes, fixture-driven UI, `DeveloperTools/verify-scenario.sh`, `DeveloperTools/review-session.py`, and `DeveloperTools/PencilFixtureMCP` are disabled and must not be used as acceptance evidence — **except** the human review loop re-enabled for this worktree under "Human-in-the-loop review is ACTIVE on this worktree" above, which does produce acceptance evidence. Phillip performs any required human interaction directly in the normal app. Never claim behavioral success before his verdict.
 
 ## Operating contract
 

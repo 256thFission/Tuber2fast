@@ -13,5 +13,8 @@ struct TuberNotesApp: App {
     @ViewBuilder
     private var rootContent: some View {
         LibraryView(store: notebookStore)
+        #if REVIEW_HARNESS
+            .overlay { ReviewHarnessOverlay() }
+        #endif
     }
 }
