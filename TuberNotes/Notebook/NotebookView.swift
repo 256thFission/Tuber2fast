@@ -26,8 +26,11 @@ struct NotebookView: View {
     @State private var showStrip = false
     @State private var showAgentSidebar = false
     @State private var selectedAgentParentThreadID: UUID?
+    @State private var selectedAgentMessageID: UUID?
+    @State private var forkedAgentMessageID: UUID?
     @State private var showProviderAccessPopup = false
     @State private var showToolbarSettings = false
+    @State private var showPageSettings = false
     @State private var openProviderAccessAfterToolbarSettings = false
     @State private var isRefinementActive = false
     @State private var magicEraserPath: [PageNormalizedPoint] = []
@@ -110,6 +113,8 @@ struct NotebookView: View {
                     AgentSidebarView(
                         vm: vm,
                         selectedParentThreadID: $selectedAgentParentThreadID,
+                        selectedMessageID: $selectedAgentMessageID,
+                        forkedFromMessageID: $forkedAgentMessageID,
                         isFullChatTab: true,
                         onClose: { withAnimation { showAgentSidebar = false } },
                         onOpenFullChat: {},
@@ -182,7 +187,7 @@ struct NotebookView: View {
                 }
                 .accessibilityIdentifier("nav-page-strip")
 
-                templateMenu
+                pageSettingsButton
 
                 if vm.settings.showsPageLock {
                     pageLockButton
@@ -208,6 +213,16 @@ struct NotebookView: View {
             exportOptions
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $showPageSettings) {
+            PageSettingsLightbox(
+                vm: vm,
+                snapStraight: $snapStraight,
+                fingerDrawing: $fingerDrawing,
+                isPageLocked: $isPageLocked
+            )
+            .presentationDetents([.large])
+            .presentationDragIndicator(.hidden)
         }
         .sheet(item: $pendingImageImport) { pending in
             imageImportOptions(for: pending)
@@ -309,30 +324,14 @@ struct NotebookView: View {
         }
     }
 
-    private var templateMenu: some View {
-        Menu {
-            Picker("Template", selection: Binding(get: { vm.currentTemplate }, set: { vm.setTemplate($0) })) {
-                ForEach(PageTemplate.allCases) { Text($0.label).tag($0) }
-            }
-            Divider()
-            Toggle("Snap to straight line", isOn: $snapStraight)
-            Toggle("Finger drawing", isOn: $fingerDrawing)
-            Divider()
-            Button("Zoom out", systemImage: "minus.magnifyingglass") { vm.zoomOut() }
-                .disabled(isPageLocked || vm.zoomScale <= 0.5)
-            Button("Reset zoom (\(vm.zoomLabel))", systemImage: "1.magnifyingglass") { vm.resetZoom() }
-                .disabled(isPageLocked)
-            Button("Zoom in", systemImage: "plus.magnifyingglass") { vm.zoomIn() }
-                .disabled(isPageLocked || vm.zoomScale >= 5)
-            if !vm.currentPage.images.isEmpty {
-                Button(vm.isArrangingImages ? "Finish arranging images" : "Arrange images") {
-                    withAnimation { vm.toggleArrangeImages() }
-                }
-            }
-        } label: {
+    private var pageSettingsButton: some View {
+        Button { showPageSettings = true } label: {
             Image(systemName: "square.grid.2x2")
         }
         .accessibilityIdentifier("nav-template")
+        .accessibilityLabel("Page settings")
+        .accessibilityValue(vm.currentTemplate.label)
+        .accessibilityHint("Choose a paper template and adjust drawing, lock, zoom, or image settings")
     }
 
     private var toolbarDock: NotebookToolbarDock {
@@ -1321,6 +1320,8 @@ struct NotebookView: View {
                                     return
                                 }
                                 selectedAgentParentThreadID = pin.threadID
+                                selectedAgentMessageID = pin.conversationMessages?.last?.id ?? pin.threadID
+                                forkedAgentMessageID = nil
                                 withAnimation { showAgentSidebar = true }
                             case .expanded(_), .collapsed(_), .citationSelected(_, _):
                                 break
@@ -1877,5 +1878,170 @@ private struct NotebookExportDocument: FileDocument {
 
     func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
         FileWrapper(regularFileWithContents: data)
+    }
+}
+
+private struct PageSettingsLightbox: View {
+    @ObservedObject var vm: NotebookViewModel
+    @Binding var snapStraight: Bool
+    @Binding var fingerDrawing: Bool
+    @Binding var isPageLocked: Bool
+    @Environment(\.dismiss) private var dismiss
+
+    private let columns = [GridItem(.adaptive(minimum: 112, maximum: 148), spacing: 14)]
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    settingsHeading("Paper Template", detail: "Choose a background without moving ink, images, or Pins.")
+                    LazyVGrid(columns: columns, alignment: .leading, spacing: 16) {
+                        ForEach(PageTemplate.allCases) { template in
+                            PageTemplateChoice(template: template, isSelected: vm.currentTemplate == template) {
+                                vm.setTemplate(template)
+                            }
+                        }
+                    }
+                    .accessibilityIdentifier("page-template-gallery")
+
+                    Divider()
+                    settingsHeading("Drawing", detail: "Control marks and page editing.")
+                    VStack(spacing: 0) {
+                        settingsToggle("Snap to straight line", isOn: $snapStraight, systemImage: "ruler")
+                        Divider().padding(.leading, 50)
+                        settingsToggle("Finger drawing", isOn: $fingerDrawing, systemImage: "hand.draw")
+                        Divider().padding(.leading, 50)
+                        settingsToggle("Lock page", isOn: $isPageLocked, systemImage: isPageLocked ? "lock.fill" : "lock.open")
+                    }
+                    .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
+
+                    Divider()
+                    settingsHeading("Page Zoom", detail: isPageLocked ? "Unlock the page to change zoom." : "Adjust or reset the current page view.")
+                    HStack(spacing: 12) {
+                        Button { vm.zoomOut() } label: { Image(systemName: "minus.magnifyingglass").frame(width: 44, height: 44) }
+                            .disabled(isPageLocked || vm.zoomScale <= 0.5)
+                        Button { vm.resetZoom() } label: {
+                            VStack(spacing: 2) {
+                                Text(vm.zoomLabel).font(.headline.monospacedDigit())
+                                Text("Reset zoom").font(.caption).foregroundStyle(.secondary)
+                            }
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                        }
+                        .disabled(isPageLocked)
+                        Button { vm.zoomIn() } label: { Image(systemName: "plus.magnifyingglass").frame(width: 44, height: 44) }
+                            .disabled(isPageLocked || vm.zoomScale >= 5)
+                    }
+                    .buttonStyle(.bordered)
+
+                    if !vm.currentPage.images.isEmpty {
+                        Divider()
+                        Button {
+                            withAnimation { vm.toggleArrangeImages() }
+                            dismiss()
+                        } label: {
+                            Label(vm.isArrangingImages ? "Finish arranging images" : "Arrange images", systemImage: "photo.on.rectangle.angled")
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(isPageLocked)
+                    }
+                }
+                .frame(maxWidth: 760, alignment: .leading)
+                .padding(28)
+                .frame(maxWidth: .infinity)
+            }
+            .background(Color(uiColor: .systemGroupedBackground))
+            .navigationTitle("Page Settings")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Text("Page \(vm.currentIndex + 1) of \(vm.notebook.pages.count)")
+                        .font(.subheadline).foregroundStyle(.secondary)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }.fontWeight(.semibold)
+                }
+            }
+        }
+        .accessibilityIdentifier("page-settings-lightbox")
+    }
+
+    private func settingsHeading(_ title: String, detail: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title).font(.title3.weight(.semibold))
+            Text(detail).font(.subheadline).foregroundStyle(.secondary)
+        }
+    }
+
+    private func settingsToggle(_ title: String, isOn: Binding<Bool>, systemImage: String) -> some View {
+        Toggle(isOn: isOn) {
+            Label(title, systemImage: systemImage).padding(.vertical, 11)
+        }
+        .padding(.horizontal, 14)
+    }
+}
+
+private struct PageTemplateChoice: View {
+    let template: PageTemplate
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 9) {
+                PageTemplatePreview(template: template)
+                    .overlay(alignment: .topTrailing) {
+                        if isSelected {
+                            Image(systemName: "checkmark.circle.fill")
+                                .symbolRenderingMode(.palette)
+                                .foregroundStyle(.white, Color.accentColor)
+                                .padding(7)
+                        }
+                    }
+                Label(template.label, systemImage: template.systemImage)
+                    .font(.caption.weight(isSelected ? .semibold : .medium))
+                    .foregroundStyle(.primary)
+            }
+            .padding(8)
+            .background(isSelected ? Color.accentColor.opacity(0.10) : Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 14))
+            .overlay { RoundedRectangle(cornerRadius: 14).strokeBorder(isSelected ? Color.accentColor : Color.primary.opacity(0.09), lineWidth: isSelected ? 2 : 1) }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(template.label) paper")
+        .accessibilityValue(isSelected ? "Selected" : "Not selected")
+        .accessibilityIdentifier("page-template-\(template.rawValue)")
+    }
+}
+
+private struct PageTemplatePreview: View {
+    let template: PageTemplate
+
+    var body: some View {
+        Canvas { context, size in
+            let spacing = max(9, template.spacing * 0.36)
+            let color = Color(red: 0.50, green: 0.62, blue: 0.78).opacity(0.58)
+            var marks = Path()
+            if template.isDotted {
+                stride(from: spacing, to: size.height, by: spacing).forEach { y in
+                    stride(from: spacing, to: size.width, by: spacing).forEach { x in
+                        marks.addEllipse(in: CGRect(x: x - 1, y: y - 1, width: 2, height: 2))
+                    }
+                }
+                context.fill(marks, with: .color(color))
+            } else if template.isLined || template.isGrid {
+                stride(from: spacing, to: size.height, by: spacing).forEach { y in
+                    marks.move(to: CGPoint(x: 0, y: y)); marks.addLine(to: CGPoint(x: size.width, y: y))
+                }
+                if template.isGrid {
+                    stride(from: spacing, to: size.width, by: spacing).forEach { x in
+                        marks.move(to: CGPoint(x: x, y: 0)); marks.addLine(to: CGPoint(x: x, y: size.height))
+                    }
+                }
+                context.stroke(marks, with: .color(color), lineWidth: 0.8)
+            }
+        }
+        .background(Color.white)
+        .aspectRatio(4.0 / 3.0, contentMode: .fit)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 }

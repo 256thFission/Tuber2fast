@@ -53,6 +53,7 @@
 		D10000000000000000000009 /* AmbientBackground.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000109 /* AmbientBackground.swift */; };
 		D1000000000000000000000A /* GlassStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1000000000000000000010A /* GlassStyle.swift */; };
 		D1000000000000000000000B /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1000000000000000000010B /* LibraryView.swift */; };
+		D21000000000000000000001 /* GestureWelcomeLightbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = D21000000000000000000101 /* GestureWelcomeLightbox.swift */; };
 		D1000000000000000000000C /* Notebook.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1000000000000000000010C /* Notebook.swift */; };
 		D1000000000000000000000D /* NotebookCanvas.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1000000000000000000010D /* NotebookCanvas.swift */; };
 		D1000000000000000000000E /* NotebookStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1000000000000000000010E /* NotebookStore.swift */; };
@@ -116,6 +117,7 @@
 		D10000000000000000000109 /* AmbientBackground.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AmbientBackground.swift; sourceTree = "<group>"; };
 		D1000000000000000000010A /* GlassStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlassStyle.swift; sourceTree = "<group>"; };
 		D1000000000000000000010B /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryView.swift; sourceTree = "<group>"; };
+		D21000000000000000000101 /* GestureWelcomeLightbox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GestureWelcomeLightbox.swift; sourceTree = "<group>"; };
 		D1000000000000000000010C /* Notebook.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Notebook.swift; sourceTree = "<group>"; };
 		D1000000000000000000010D /* NotebookCanvas.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotebookCanvas.swift; sourceTree = "<group>"; };
 		D1000000000000000000010E /* NotebookStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotebookStore.swift; sourceTree = "<group>"; };
@@ -282,6 +284,7 @@
 				D10000000000000000000109 /* AmbientBackground.swift */,
 				D1000000000000000000010A /* GlassStyle.swift */,
 				D1000000000000000000010B /* LibraryView.swift */,
+				D21000000000000000000101 /* GestureWelcomeLightbox.swift */,
 				D1000000000000000000010C /* Notebook.swift */,
 				D1000000000000000000010D /* NotebookCanvas.swift */,
 				D1000000000000000000010E /* NotebookStore.swift */,
@@ -414,6 +417,7 @@
 				D10000000000000000000009 /* AmbientBackground.swift in Sources */,
 				D1000000000000000000000A /* GlassStyle.swift in Sources */,
 				D1000000000000000000000B /* LibraryView.swift in Sources */,
+				D21000000000000000000001 /* GestureWelcomeLightbox.swift in Sources */,
 				D1000000000000000000000C /* Notebook.swift in Sources */,
 				D1000000000000000000000D /* NotebookCanvas.swift in Sources */,
 				D1000000000000000000000E /* NotebookStore.swift in Sources */,

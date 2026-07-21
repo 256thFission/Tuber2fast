@@ -49,10 +49,23 @@ class ImageImportArrangementContractTests(unittest.TestCase):
         model = (NOTEBOOK / "NotebookViewModel.swift").read_text()
 
         self.assertIn("func draw(in rect: CGRect)", notebook)
-        self.assertIn("context.rotate(by: rotationRadians)", notebook)
+        self.assertIn("context.rotate(by: safeRotation)", notebook)
         self.assertIn("placed.draw(in: r)", notebook)
         self.assertIn("placed.draw(in: rect)", model)
         self.assertIn("placedImage.draw(in: CGRect(", view)
+
+    def test_large_and_malformed_images_are_safe_during_lasso_composition(self):
+        notebook = (NOTEBOOK / "Notebook.swift").read_text()
+        canvas = (NOTEBOOK / "NotebookCanvas.swift").read_text()
+
+        self.assertIn("import ImageIO", notebook)
+        self.assertIn("maximumDisplayPixelDimension = 4_096", notebook)
+        self.assertIn("CGImageSourceCreateThumbnailAtIndex", notebook)
+        self.assertIn("kCGImageSourceThumbnailMaxPixelSize", notebook)
+        self.assertIn("let safeRotation = rotationRadians.isFinite", notebook)
+        self.assertIn("guard rect.minX.isFinite, rect.minY.isFinite", notebook)
+        self.assertIn("guard frame.minX.isFinite, frame.minY.isFinite", canvas)
+        self.assertIn("let rotation = placed.rotationRadians.isFinite", canvas)
 
     def test_import_offers_on_device_transparent_background_processing(self):
         source = (NOTEBOOK / "NotebookView.swift").read_text()

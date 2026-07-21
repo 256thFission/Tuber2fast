@@ -346,12 +346,13 @@ struct NotebookToolbar: View {
         lastLassoToggle = now
         isLassoHeld = false
         if isLassoActive {
-            isLassoActive = false
-            vm.clearLasso()
+            vm.deactivateLasso()
         } else {
-            isLassoActive = true
+            // Route the ordinary tap through the same model transition as the
+            // hold gesture. In particular, this exits image arrangement before
+            // the lasso overlay starts accepting touches.
+            vm.activateLasso()
             isRefinementActive = false
-            vm.isAgenticLayersActive = false
         }
     }
 

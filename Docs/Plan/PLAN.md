@@ -1916,3 +1916,24 @@ notebooks and pages.
   from the floating toolbar, and the obsolete page-navigation settings toggle
   is removed. PC-22 checks pass 4/4; signed Release build/install/normal launch/
   process query pass on the exact pinned iPad. Phillip's verdict remains.
+
+## Integration — `sive/dev` into `main`
+
+Status: **implementation merged — Release build blocked; Phillip's verdict pending**
+
+- 2026-07-21 — Integrated the gesture welcome lightbox, lasso/image stability,
+  and visual page-settings gallery from `sive/dev` while preserving `main`'s
+  non-modal chat sidebar, calm Pin cards, draggable toolbar organization, Magic
+  Lasso behavior, and contextual agent tools. `CONTRACT:` each spatial Pin now
+  owns its conversation messages; ordinary replies and explicit message forks
+  append within that Pin. A fork icon beside each agent response selects the
+  parent for a message-level branch and never creates another spatial Pin.
+- 2026-07-21 — Focused host contracts pass 29/29 and `git diff --check`
+  passes. Phillip reported the physical iPad is disconnected and requested a
+  simulator; the repository device contract prohibits simulator fallback, so
+  no Release build/install/launch was attempted. Canonical physical-device
+  delivery and Phillip's normal-app verdict remain pending. The full host suite
+  passes 87/94; seven stale/unrelated assertions remain in agent-content,
+  provider-access, Magic-Lasso routing, scroll-direction, tool-selection, and
+  verifier-truthfulness contracts. Full log:
+  `tmp/merge-sive-dev-host-tests.log`.

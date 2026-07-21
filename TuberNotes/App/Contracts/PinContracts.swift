@@ -9,6 +9,11 @@ struct PageAnnotation: Identifiable, Codable, Equatable, Sendable {
     /// `nil`; their teaser remains Pin context and is never presented as a
     /// fabricated user message.
     var userPrompt: String? = nil
+    /// Follow-up turns and message-level branches owned by this Pin. `nil`
+    /// preserves decoding of notebooks written before Pin-owned conversations.
+    /// The annotation itself is the implicit root message, identified by
+    /// `threadID`.
+    var conversationMessages: [PinConversationMessage]? = nil
     var target: PageNormalizedPoint
     var targetRegion: PageNormalizedRect?
     var kind: AnnotationKind
@@ -16,6 +21,15 @@ struct PageAnnotation: Identifiable, Codable, Equatable, Sendable {
     var body: String
     var citations: [Citation]
     var status: AnnotationStatus
+}
+
+struct PinConversationMessage: Identifiable, Codable, Equatable, Sendable {
+    let id: UUID
+    /// Either the owning Pin's `threadID` (the initial summary) or another
+    /// message ID in the same Pin.
+    var parentMessageID: UUID
+    var userPrompt: String
+    var body: String
 }
 
 enum AnnotationKind: String, Codable, Equatable, Sendable {

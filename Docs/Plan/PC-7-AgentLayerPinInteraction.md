@@ -1,6 +1,6 @@
 # PC-7 — Agentic Layer, conversation-tree, and movable-Pin interaction cleanup
 
-Status: **page-edge glow inset repaired — host-checked; physical-device verification blocked**
+Status: **Pin message-tree/fork semantics implemented — host-checked; physical-device verification blocked**
 
 Target branch: `sive/dev`
 
@@ -18,9 +18,9 @@ Make Agentic Layer interaction direct and truthful in the normal notebook:
 - merely opening the layer picker does not masquerade as activating a layer;
 - dragging a conversation Pin moves it on the logical page and persists its
   new page-normalized anchor;
-- the Agent sidebar presents each layer's durable Pins as conversation history,
-  and a follow-up can continue from any existing response while reusing that
-  lineage's page region and bounded answer context;
+- each durable Pin owns its initial summary plus a cycle-safe message tree;
+  ordinary follow-ups stay on that Pin, while explicitly forking any message
+  creates exactly one child Pin with precise source-message lineage;
 - expanded Pins explain that they can be dragged, show a direct conversation
   action only on surfaces that actually support follow-up, open the matching
   tree node in the normal Agent sidebar, and never advertise a dead hold
@@ -33,6 +33,7 @@ Make Agentic Layer interaction direct and truthful in the normal notebook:
 - `TuberNotes/Notebook/NotebookViewModel.swift`
 - `TuberNotes/Notebook/NotebookToolbar.swift`
 - `TuberNotes/Notebook/AgentSidebarView.swift`
+- `TuberNotes/Notebook/PinChatComponents.swift`
 - `TuberNotes/Notebook/README-notebooks.md`
 - `TuberNotes/Pins/Pin.swift`
 - `TuberNotes/Pins/PinOverlayView.swift`
@@ -40,8 +41,8 @@ Make Agentic Layer interaction direct and truthful in the normal notebook:
   the Pins-owned adapter truthful
 - `TuberNotes/App/RootView.swift` only to preserve the Debug conversation
   regression surface across the additive Pin event
-- `TuberNotes/App/Contracts/PinContracts.swift` for the additive optional
-  parent-thread link required by durable lineage topology
+- `TuberNotes/App/Contracts/PinContracts.swift` for additive optional Pin-fork
+  lineage and Pin-owned message records
 - `DeveloperTools/tests/test_agent_layer_interaction_contract.py` for narrow
   host checks of the new state, tree, and normalized-move seams
 - this child plan and the parent status board/session log
@@ -50,11 +51,11 @@ Make Agentic Layer interaction direct and truthful in the normal notebook:
 
 - No agent-provider, prompt, response, streaming, retrieval, or credential
   changes.
-- No detached chat surface, transcript/message persistence, provider-side
-  divergence protocol, Pin visual redesign, or new coordinate system.
-- No changes to `ConversationLayer`, document/archive, or page identity
-  representations beyond `PageAnnotation`'s optional parent-thread link,
-  which naturally round-trips inside the existing annotation payload.
+- No provider-side divergence protocol, Pin visual redesign, new coordinate
+  system, or conversation store outside the existing annotation payload.
+- No changes to `ConversationLayer`, document/archive versioning, or page
+  identity. The additive optional message/fork fields naturally round-trip
+  inside the existing annotation payload and preserve older notebooks.
 - The semantic `targetRegion` remains the original analyzed selection; moving
   a Pin changes only its page-normalized visual anchor.
 - Canonical build and visual acceptance depend on the explicitly pinned
@@ -73,10 +74,9 @@ Make Agentic Layer interaction direct and truthful in the normal notebook:
    coordinator for persistence.
 4. Add an honest expanded-Pin move hint and a direct follow-up action only when
    a conversation handler is present; retain hold as an optional shortcut.
-5. Replace the Agent sidebar's transient duplicate answer list with durable
-   conversation history. Selecting any response continues from that point; the
-   next answer becomes a child Pin and then selects that child so ordinary
-   follow-ups remain in the active lineage.
+5. Keep the Pin body as its initial summary and render its persisted follow-up
+   messages as a tree. Ordinary sends append a message to the same Pin. “Fork
+   from here” is the sole existing-conversation path that creates a child Pin.
 6. Inspect the final diff and run focused host-safe checks.
 7. On the explicitly pinned iPad, build once; run `fake-pin`,
    `pin-conversation`, and `pin-drift` as applicable with build reuse; then
@@ -99,13 +99,13 @@ Make Agentic Layer interaction direct and truthful in the normal notebook:
   supported zoom/pan/layout changes and after save/reopen.
 - Pins without a conversation handler do not advertise follow-up; supported
   completed Pins expose a visible direct action as well as the hold shortcut.
-- The normal Agent sidebar renders every active-layer Pin exactly once in a
-  cycle-safe history; roots and indented descendants remain understandable, a
-  selected continuation point is visually explicit, and clearing it starts a
-  new conversation.
-- A continuation uses the prior Pin's current page/selection region and bounded
-  cycle-safe lineage context, persists a new child Pin with a fresh thread ID
-  and the prior thread ID, and never rewrites its ancestor.
+- The normal Agent sidebar renders every active-layer Pin exactly once, and
+  full Pin Chat renders the Pin's initial summary plus cycle-safe indented
+  message descendants with an explicit selected turn.
+- A continuation reuses the owning Pin's page/selection region and bounded
+  message ancestry, persists one message on that Pin, and adds no spatial Pin.
+- Forking a chosen message reuses that exact bounded ancestry and creates one
+  child Pin with a fresh thread ID, parent Pin ID, and source message ID.
 - Existing Pin expansion, citation, recorded-conversation, and page gestures
   remain intact with no clipping, unintended overlap, crash, or immediate
   exit.
@@ -230,6 +230,16 @@ Make Agentic Layer interaction direct and truthful in the normal notebook:
   records. This Linux host exposes neither `xcodebuild`/`xcrun` nor a pinned
   device session, so the canonical build and physical visual checks could not
   start and no simulator or alternate target was substituted.
+- 2026-07-21 — User clarified the Pin/conversation boundary: a Pin keeps its
+  initial summary and owns all ordinary replies and message-level branches.
+  Implemented additive `PinConversationMessage` and
+  `PageAnnotation.conversationMessages`; Pin Chat renders cycle-safe threaded
+  messages with a fork icon beside every agent response. Both ordinary replies
+  and explicit forks append messages to the owning Pin and never append another
+  spatial annotation. Focused plus nearby checks previously ran under
+  `tmp/verify/pc-7-pin-message-forks/`; the full host suite is 76/80 with four
+  unrelated existing/concurrent failures recorded in its log. Apple/Xcode and
+  pinned-device evidence remain unavailable on this Linux host.
 
 ## Evidence packet — 2026-07-20
 
@@ -385,3 +395,34 @@ Make Agentic Layer interaction direct and truthful in the normal notebook:
   attached console/crash diagnostics, clipping/overlap checks, and animation
   taste remain uncollected. Stop reason: exact Apple host/device prerequisite
   absent after the bounded repair passed its host evidence.
+
+## Pin message-tree/fork evidence packet — 2026-07-21
+
+- Objective: open full Pin Chat directly from an expanded Pin, keep the Pin's
+  initial summary as the conversation root, store ordinary replies as messages
+  on that Pin, and create another Pin only for an explicit message fork.
+- Changed files: `TuberNotes/App/Contracts/PinContracts.swift`,
+  `TuberNotes/Notebook/AgentSidebarView.swift`, `NotebookView.swift`,
+  `NotebookViewModel.swift`, `PinChatComponents.swift`,
+  `README-notebooks.md`, `TuberNotes/Pins/PinOverlayView.swift`, the focused
+  PC-7 contract test, and the PC-7/parent plan records. Concurrent page
+  settings, image, lasso, library, and welcome-lightbox work in the shared
+  worktree was preserved and excluded from this follow-up's scope accounting.
+- Diff summary: `PinConversationMessage` persists a Pin-local message tree;
+  ordinary responses append only that record, explicit forks add the sole
+  child `PageAnnotation`, and the UI exposes “Open conversation” plus “Fork
+  from here.” Shared contract additions are optional for older payloads.
+- Host evidence: focused plus archive/export and notebook branch checks pass
+  21/21. The full suite is 76/80; failures are unrelated provider-contract
+  drift, concurrent lasso-toolbar contract drift, and the previously recorded
+  verifier argument mismatch. Logs:
+  `tmp/verify/pc-7-pin-message-forks/nearby-tests.log` and
+  `tmp/verify/pc-7-pin-message-forks/full-host-suite.log`.
+- Build/device: not run; this Linux host has no `xcodebuild`/`xcrun`, named
+  physical iPad, or pinned device session. Release launch, screenshots,
+  console/crash evidence, and mechanical clipping/overlap checks are
+  uncollected.
+- Human-only checks: message-tree readability, fork discoverability, and the
+  direct Pin-to-chat interaction feel in the normal Release app. Phillip's
+  verdict remains required. Stop reason: implementation and host checks are
+  complete; canonical Apple/device prerequisites are absent.
