@@ -519,3 +519,20 @@ the four nearby notebook/Pencil checks pass (5/5), as does `git diff --check`;
 evidence is under `tmp/verify/pc-8-drawing-tool-recovery/`. Canonical build,
 `blank-canvas`, and physical eraser-to-drawing interaction proof remain blocked
 because this Linux host has no Xcode or explicitly pinned iPad session.
+
+## Active line — PC-9: drawing-refinement lasso containment
+
+Status: **mechanically accepted — ready to merge**
+
+Target branch: `phil/lasso-containment`
+
+Child work-line: [`PC-9-LassoContainment.md`](PC-9-LassoContainment.md)
+
+Summary: drawing refinement now retains the validated closed lasso path and
+removes only strokes fully enclosed by it; crossing or grazing strokes survive.
+The focused containment contract passes 3/3. Exact physical iPad
+`2DD98ECC-A26A-5730-943B-01DD63DC4117` passed preflight and the `lasso-crop`
+build/install/launch, runtime-evidence, and crop assertions under
+`tmp/verify/20260720-190651-lasso-crop/`. The retained crop contains the
+expected ruled PDF content. Human Pencil feel and visual-taste review remain
+uncollected.

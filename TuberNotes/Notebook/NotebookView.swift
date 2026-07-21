@@ -727,8 +727,12 @@ struct NotebookView: View {
                         client: DrawingRefinementClientFactory.make(),
                         initialSelection: vm.lassoRect,
                         pageSize: NotebookPageLayout.size,
-                        onApply: { data, rect in
-                            vm.applyDrawingRefinement(imageData: data, normalizedRect: rect)
+                        onApply: { data, rect, path in
+                            vm.applyDrawingRefinement(
+                                imageData: data,
+                                normalizedRect: rect,
+                                normalizedPath: path
+                            )
                         },
                         onClose: { isRefinementActive = false }
                     )
