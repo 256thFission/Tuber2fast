@@ -39,6 +39,7 @@ class AgentLayerInteractionContractTests(unittest.TestCase):
         self.assertIn("if isDraggingPin {\n                    onMoveChanged(value.translation)", overlay)
         self.assertIn('coordinateSpace: .named(PinOverlayCoordinateSpace.name)', overlay)
         self.assertIn("keepingLabelOffset", overlay)
+        self.assertIn("return PinOverlayPlacement(", overlay)
         self.assertIn("guard target.isFiniteAndInUnitBounds else { return }", view_model)
         move_body = view_model.split("func moveAgenticPin", 1)[1].split("func selectDrawingLayer", 1)[0]
         self.assertEqual(move_body.count("persistNow()"), 1)

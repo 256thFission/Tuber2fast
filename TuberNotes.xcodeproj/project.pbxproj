@@ -442,6 +442,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = AX444DZQ8V;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = TuberNotes/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = TuberNotes;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -469,6 +470,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = AX444DZQ8V;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = TuberNotes/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = TuberNotes;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;

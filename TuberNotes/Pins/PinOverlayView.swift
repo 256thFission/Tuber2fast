@@ -194,7 +194,7 @@ private extension PinOverlayPlacement {
             x: min(max(proposedOrigin.x, padding), max(padding, size.width - padding - labelFrame.width)),
             y: min(max(proposedOrigin.y, padding), max(padding, size.height - padding - labelFrame.height))
         )
-        PinOverlayPlacement(
+        return PinOverlayPlacement(
             id: id,
             anchor: anchor,
             labelFrame: CGRect(

@@ -13,11 +13,15 @@ zoomable PencilKit page with a compact floating toolbar.
 - Use the adjacent sparkle-lasso to refine a region and apply the result directly
   to the page; refinement changes drawing/image state, never an Agentic Layer.
 - Add images, pages, and drawing layers without leaving the page.
+- Import a version 3 `.spud` file from the library. The imported document opens
+  as a new notebook, preserving its page and content identities without
+  overwriting an existing library item.
 - Export the complete notebook as PDF or as an editable `.spud` archive. PDF
   preserves every page's visible ink in order but remains drawing-only, with no
   Pin, citation, or conversation markup. `.spud` preserves the full notebook,
   including page identities, templates, images, drawing layers, Pins, Agentic
-  Layer visibility, cover, settings, and timestamps.
+  Layer visibility, cover, settings, and timestamps. SPUD is a prerelease,
+  version-3-only format; earlier experimental versions are not accepted.
 
 ## Agentic layers and Pins
 

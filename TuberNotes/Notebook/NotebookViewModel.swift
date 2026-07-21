@@ -103,7 +103,7 @@ final class NotebookViewModel: ObservableObject {
     func selectColor(_ hex: String) {
         inkColorHex = hex
         if tool == .eraser { setActiveTool(.pen) }
-        isLassoActive = false
+        deactivateLasso()
         isArrangingImages = false
     }
 
@@ -141,19 +141,31 @@ final class NotebookViewModel: ObservableObject {
     }
 
     private func clearCompetingToolModes() {
-        isLassoActive = false
+        deactivateLasso()
+        isArrangingImages = false
+        isAgenticLayersActive = false
+    }
+
+    func activateLasso() {
+        if !isLassoActive { lassoRect = nil }
+        isLassoActive = true
         isArrangingImages = false
         isAgenticLayersActive = false
     }
 
     func toggleLasso() {
-        isLassoActive.toggle()
         if isLassoActive {
-            isArrangingImages = false
-            isAgenticLayersActive = false
+            deactivateLasso()
+        } else {
+            activateLasso()
         }
     }
     func clearLasso() { lassoRect = nil }
+
+    func deactivateLasso(preservingSelection: Bool = false) {
+        isLassoActive = false
+        if !preservingSelection { lassoRect = nil }
+    }
 
     // MARK: Images
 
@@ -170,7 +182,7 @@ final class NotebookViewModel: ObservableObject {
         notebook.pages[currentIndex].images.append(placed)
         selectedImageID = placed.id
         isArrangingImages = true
-        isLassoActive = false
+        deactivateLasso()
         persistNow()
     }
 
@@ -191,7 +203,7 @@ final class NotebookViewModel: ObservableObject {
 
     func toggleArrangeImages() {
         isArrangingImages.toggle()
-        if isArrangingImages { isLassoActive = false } else { selectedImageID = nil }
+        if isArrangingImages { deactivateLasso() } else { selectedImageID = nil }
     }
 
     func finishArrangingImages() {
@@ -269,7 +281,7 @@ final class NotebookViewModel: ObservableObject {
         notebook.agenticLayers[index].isVisible = true
         selectedLayerID = id
         isAgenticLayersActive = true
-        isLassoActive = false
+        deactivateLasso(preservingSelection: true)
         isArrangingImages = false
         if restoredVisibility { persistNow() }
     }
@@ -285,6 +297,8 @@ final class NotebookViewModel: ObservableObject {
         notebook.agenticLayers.append(layer)
         selectedLayerID = layer.id
         isAgenticLayersActive = true
+        deactivateLasso(preservingSelection: true)
+        isArrangingImages = false
         persistNow()
     }
 
@@ -301,7 +315,7 @@ final class NotebookViewModel: ObservableObject {
             notebook.agenticLayers[index].isVisible = true
             selectedLayerID = id
             isAgenticLayersActive = true
-            isLassoActive = false
+            deactivateLasso(preservingSelection: true)
             isArrangingImages = false
         }
         persistNow()
@@ -322,7 +336,12 @@ final class NotebookViewModel: ObservableObject {
 
     func selectDrawingLayer(_ id: UUID) {
         guard currentPage.drawingLayers.contains(where: { $0.id == id }) else { return }
+        guard currentDrawingLayerID != id else {
+            isAgenticLayersActive = false
+            return
+        }
         currentDrawingLayerID = id
+        deactivateLasso()
         isAgenticLayersActive = false
     }
 
@@ -333,6 +352,7 @@ final class NotebookViewModel: ObservableObject {
         let layer = DrawingLayer(name: name.isEmpty ? "Drawing \(count + 1)" : name)
         notebook.pages[currentIndex].drawingLayers.append(layer)
         currentDrawingLayerID = layer.id
+        deactivateLasso()
         isAgenticLayersActive = false
         persistNow()
     }
@@ -345,6 +365,7 @@ final class NotebookViewModel: ObservableObject {
         if !notebook.pages[currentIndex].drawingLayers[idx].isVisible, currentDrawingLayerID == id {
             if let replacement = notebook.pages[currentIndex].drawingLayers.first(where: \.isVisible) {
                 currentDrawingLayerID = replacement.id
+                deactivateLasso()
             } else {
                 notebook.pages[currentIndex].drawingLayers[idx].isVisible = true
             }

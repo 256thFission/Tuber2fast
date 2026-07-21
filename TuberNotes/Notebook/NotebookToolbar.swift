@@ -59,7 +59,7 @@ struct NotebookToolbar: View {
         .animation(.easeInOut(duration: 0.18), value: visibleGroupCount)
         .onChange(of: vm.settings.showsWritingTools) { _, isVisible in
             if !isVisible {
-                isLassoActive = false
+                vm.deactivateLasso()
                 isRefinementActive = false
                 isRefinementLassoActive = false
                 pressedTool = nil
@@ -256,7 +256,6 @@ struct NotebookToolbar: View {
 
     private func activateToolbarTool(_ tool: WritingTool) {
         pressedTool = nil
-        isLassoActive = false
         isRefinementActive = false
         vm.selectTool(tool)
     }
@@ -264,9 +263,8 @@ struct NotebookToolbar: View {
     private var lassoButton: some View {
         Button {
             isLassoHeld = false
-            isLassoActive = true
+            vm.activateLasso()
             isRefinementActive = false
-            vm.isAgenticLayersActive = false
         } label: {
             Image(systemName: "lasso")
                 .font(.system(size: 17, weight: .medium))
@@ -292,9 +290,8 @@ struct NotebookToolbar: View {
             .sequenced(before: DragGesture(minimumDistance: 0))
             .onChanged { value in
                 guard case .second(true, _) = value, !isLassoHeld else { return }
-                isLassoActive = true
+                vm.activateLasso()
                 isRefinementActive = false
-                vm.isAgenticLayersActive = false
                 withAnimation(.easeOut(duration: 0.12)) {
                     isLassoHeld = true
                 }
@@ -308,7 +305,7 @@ struct NotebookToolbar: View {
 
     private var refinementButton: some View {
         Button {
-            isLassoActive = false
+            vm.deactivateLasso(preservingSelection: true)
             vm.isAgenticLayersActive = false
             isRefinementActive.toggle()
             if !isRefinementActive { isRefinementLassoActive = false }

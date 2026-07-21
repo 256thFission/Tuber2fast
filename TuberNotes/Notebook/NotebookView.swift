@@ -694,7 +694,6 @@ struct NotebookView: View {
             zoomScale: vm.zoomScale,
             fingerDrawing: fingerDrawing,
             isLassoActive: vm.isLassoActive,
-            lassoRect: vm.lassoRect,
             snapStraight: snapStraight,
             images: vm.currentPage.images,
             isArrangingImages: vm.isArrangingImages,
@@ -872,11 +871,4 @@ private struct NotebookExportDocument: FileDocument {
     func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
         FileWrapper(regularFileWithContents: data)
     }
-}
-
-private extension UTType {
-    static let tuberNoteArchive = UTType(
-        exportedAs: TuberNoteArchive.formatIdentifier,
-        conformingTo: .json
-    )
 }

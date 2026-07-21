@@ -18,7 +18,6 @@ struct NotebookCanvas: UIViewRepresentable {
     let zoomScale: CGFloat
     let fingerDrawing: Bool
     let isLassoActive: Bool
-    let lassoRect: CGRect?
     let snapStraight: Bool
     let images: [PlacedImage]
     let isArrangingImages: Bool
@@ -59,6 +58,7 @@ struct NotebookCanvas: UIViewRepresentable {
         view.lassoView.beginMoveIfInside = { [weak c, weak view] p in c?.beginMove(at: p, view) ?? false }
         view.lassoView.onMove = { [weak c, weak view] delta in c?.moveSelection(by: delta, view) }
         view.lassoView.onMoveEnded = { [weak c, weak view] in c?.commitMove(view) }
+        view.lassoView.onMoveCancelled = { [weak c, weak view] in c?.cancelMove(view) }
 
         view.imageLayer.onChange = onImagesChanged
         view.imageLayer.onSelect = onSelectImage
@@ -134,7 +134,7 @@ struct NotebookCanvas: UIViewRepresentable {
         view.setBackgroundDrawingData(backgroundDrawingData)
         view.onPageViewportChange = onPageViewportChange
         applyMode(to: view)
-        if !isLassoActive || lassoRect == nil {
+        if !isLassoActive {
             view.lassoView.clear()
             context.coordinator.clearLassoSelection()
         }
@@ -153,7 +153,7 @@ struct NotebookCanvas: UIViewRepresentable {
         view.scrollView.panGestureRecognizer.minimumNumberOfTouches = fingerDrawing ? 2 : 1
 
         view.lassoView.isHidden = !isLassoActive
-        view.lassoView.isUserInteractionEnabled = isLassoActive
+        view.lassoView.isUserInteractionEnabled = isLassoActive && !isPageLocked
 
         view.imageLayer.isEditing = isArrangingImages
         view.imageLayer.selectedID = selectedImageID
@@ -269,7 +269,12 @@ struct NotebookCanvas: UIViewRepresentable {
         func clearLassoSelection() { lassoSelection = [] }
 
         func completeLasso(_ points: [CGPoint], _ view: ZoomablePageView?) {
-            guard let view, points.count > 2 else { return }
+            guard let view, points.count > 2 else {
+                lassoSelection = []
+                parent.onLassoChanged(nil)
+                view?.lassoView.clear()
+                return
+            }
             let drawing = view.canvasView.drawing
             lassoSelection = strokesInside(polygon: points, drawing: drawing)
 
@@ -281,7 +286,15 @@ struct NotebookCanvas: UIViewRepresentable {
                 let xs = points.map(\.x), ys = points.map(\.y)
                 rect = CGRect(x: xs.min()!, y: ys.min()!, width: xs.max()! - xs.min()!, height: ys.max()! - ys.min()!)
             }
-            rect = rect.insetBy(dx: -8, dy: -8)
+            rect = rect
+                .insetBy(dx: -8, dy: -8)
+                .intersection(CGRect(origin: .zero, size: NotebookPageLayout.size))
+            guard !rect.isNull, rect.width > 0, rect.height > 0 else {
+                lassoSelection = []
+                parent.onLassoChanged(nil)
+                view.lassoView.clear()
+                return
+            }
 
             view.lassoView.showSelection(rect)
             parent.onLassoChanged(normalize(rect))
@@ -372,10 +385,34 @@ struct NotebookCanvas: UIViewRepresentable {
             }
         }
 
+        func cancelMove(_ view: ZoomablePageView?) {
+            guard let view else {
+                preMoveDrawing = nil
+                movingStrokes = []
+                moveTranslation = .zero
+                return
+            }
+            if let drawingBeforeMove = preMoveDrawing {
+                parent.undo.withoutRegistration {
+                    isProgrammatic = true
+                    view.canvasView.drawing = drawingBeforeMove
+                    isProgrammatic = false
+                }
+                loadedDrawingData = drawingBeforeMove.dataRepresentation()
+            }
+            preMoveDrawing = nil
+            movingStrokes = []
+            moveTranslation = .zero
+            view.moveImageView.isHidden = true
+            view.moveImageView.image = nil
+        }
+
         private func normalize(_ rect: CGRect) -> CGRect {
             let page = NotebookPageLayout.size
-            return CGRect(x: rect.minX / page.width, y: rect.minY / page.height,
-                          width: rect.width / page.width, height: rect.height / page.height)
+            let bounded = rect.intersection(CGRect(origin: .zero, size: page))
+            guard !bounded.isNull else { return .zero }
+            return CGRect(x: bounded.minX / page.width, y: bounded.minY / page.height,
+                          width: bounded.width / page.width, height: bounded.height / page.height)
         }
 
         // MARK: Hold-to-straighten
@@ -879,6 +916,8 @@ final class LassoOverlayView: UIView {
     var beginMoveIfInside: ((CGPoint) -> Bool)?
     var onMove: ((CGPoint) -> Void)?
     var onMoveEnded: (() -> Void)?
+    var onMoveCancelled: (() -> Void)?
+    private var moveOriginRect: CGRect?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -918,6 +957,7 @@ final class LassoOverlayView: UIView {
                beginMoveIfInside?(p) == true {
                 mode = .move
                 lastMovePoint = p
+                moveOriginRect = rect
             } else {
                 mode = .loop
                 loopPoints = [p]
@@ -927,23 +967,42 @@ final class LassoOverlayView: UIView {
             }
         case .changed:
             if mode == .move {
-                let d = CGPoint(x: p.x - lastMovePoint.x, y: p.y - lastMovePoint.y)
+                let proposedDelta = CGPoint(x: p.x - lastMovePoint.x, y: p.y - lastMovePoint.y)
                 lastMovePoint = p
-                onMove?(d)
-                if var r = selectionRect { r.origin.x += d.x; r.origin.y += d.y; showSelection(r) }
+                guard let selectionRect else { return }
+                let delta = clampedMoveDelta(proposedDelta, for: selectionRect)
+                onMove?(delta)
+                var movedRect = selectionRect
+                movedRect.origin.x += delta.x
+                movedRect.origin.y += delta.y
+                showSelection(movedRect)
             } else if mode == .loop {
                 loopPoints.append(p)
                 drawLoop(closed: false)
             }
-        case .ended, .cancelled:
-            if mode == .move {
+        case .ended:
+            let completedMode = mode
+            mode = .idle
+            if completedMode == .move {
                 onMoveEnded?()
-            } else if mode == .loop {
+                moveOriginRect = nil
+            } else if completedMode == .loop {
                 drawLoop(closed: true)
                 loopLayer.path = nil
                 onLoopComplete?(loopPoints)
             }
+        case .cancelled, .failed:
+            let cancelledMode = mode
             mode = .idle
+            if cancelledMode == .move {
+                onMoveCancelled?()
+                showSelection(moveOriginRect)
+                moveOriginRect = nil
+            } else if cancelledMode == .loop {
+                loopPoints = []
+                loopLayer.path = nil
+                onLoopComplete?([])
+            }
         default:
             break
         }
@@ -958,6 +1017,17 @@ final class LassoOverlayView: UIView {
         loopLayer.path = path.cgPath
     }
 
+    private func clampedMoveDelta(_ delta: CGPoint, for rect: CGRect) -> CGPoint {
+        let minX = bounds.minX - rect.minX
+        let maxX = bounds.maxX - rect.maxX
+        let minY = bounds.minY - rect.minY
+        let maxY = bounds.maxY - rect.maxY
+        return CGPoint(
+            x: min(max(delta.x, minX), maxX),
+            y: min(max(delta.y, minY), maxY)
+        )
+    }
+
     func showSelection(_ rect: CGRect?) {
         selectionRect = rect
         guard let rect else { selectionLayer.path = nil; return }
@@ -966,11 +1036,18 @@ final class LassoOverlayView: UIView {
     }
 
     func clear() {
+        let activeMode = mode
+        mode = .idle
+        if activeMode == .move {
+            onMoveCancelled?()
+        } else if activeMode == .loop {
+            onLoopComplete?([])
+        }
         loopPoints = []
         loopLayer.path = nil
         selectionLayer.path = nil
         selectionRect = nil
-        mode = .idle
+        moveOriginRect = nil
     }
 
     private func startMarching(_ layer: CAShapeLayer) {

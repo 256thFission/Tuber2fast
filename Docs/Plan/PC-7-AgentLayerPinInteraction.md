@@ -1,6 +1,6 @@
 # PC-7 — Agentic Layer, conversation-tree, and movable-Pin interaction cleanup
 
-Status: **follow-up implemented — host-checked; physical-device verification blocked**
+Status: **IPA build regression repaired — host-checked; physical-device re-verification blocked**
 
 Target branch: `sive/dev`
 
@@ -201,6 +201,17 @@ Make Agentic Layer interaction direct and truthful in the normal notebook:
   persistence, coordinate, provider, or shared contract changed. Canonical
   build and visual inspection remain blocked because this Linux host has no
   Xcode tools or explicitly pinned physical-iPad session.
+- 2026-07-20 — Repaired the Release/unsigned-IPA compile regression reported
+  after `sive/dev` advanced to `59d3fad`: `keepingLabelOffset(_:in:)` now
+  explicitly returns its constructed `PinOverlayPlacement`. Added one focused
+  source-contract assertion for the required return. PC-7 plus nearby
+  archive/export and notebook branch-logic checks pass 15/15; the full host
+  suite is 46/47 with the same pre-existing verifier-truthfulness argument
+  mismatch already recorded above. Logs:
+  `tmp/verify/pc-7-ipa-build-regression/focused-tests.log` and
+  `tmp/verify/pc-7-ipa-build-regression/full-host-suite.log`. This host still
+  has no `xcodebuild`, `xcrun`, or pinned-device session, so the unsigned IPA
+  build and physical-iPad scenarios require re-running on the named Apple host.
 
 ## Evidence packet — 2026-07-20
 
@@ -312,3 +323,23 @@ Make Agentic Layer interaction direct and truthful in the normal notebook:
   not collected: this host exposes no `xcodebuild`/`xcrun` and has no pinned
   physical-iPad session. Human-only color balance and visual-taste review remain
   open. Stop reason: exact Apple host/device prerequisite absent.
+
+## IPA build-regression evidence packet — 2026-07-20
+
+- Objective: restore compilation of the PC-7 Pin placement helper after the
+  refreshed unsigned-IPA build failed with “missing return in instance method.”
+- Changed files: `TuberNotes/Pins/PinOverlayView.swift`, the focused PC-7
+  contract test, this child log, and the parent status board. The product diff
+  is one explicit `return`; no coordinate, interaction, persistence, provider,
+  archive, or shared contract changed.
+- Host evidence: focused checks pass 15/15; full suite is 46/47 with the known
+  unrelated verifier-truthfulness mismatch. Logs are under
+  `tmp/verify/pc-7-ipa-build-regression/`; `git diff --check` passes.
+- Build/device: not run on this Linux host because `xcodebuild`, `xcrun`, an
+  explicitly named physical iPad, and `.tubernotes-device-session.json` are
+  unavailable. Re-run the unsigned-IPA build on the reporting Apple host, then
+  run the named PC-7 Pin scenarios before claiming device acceptance.
+- Human-only checks: unchanged from the PC-7 follow-ups; this compiler repair
+  adds no new visual or interaction judgment. Stop reason: host/device
+  prerequisite absent after the narrow source regression was repaired and
+  host-checked.

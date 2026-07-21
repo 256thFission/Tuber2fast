@@ -469,7 +469,7 @@ reliably open the system file exporter.
 
 ## Active line — PC-9: complete notebook PDF and SPUD export
 
-Status: **implemented — host-checked; physical export verification blocked**
+Status: **follow-up implemented — host-checked; physical import/export verification blocked**
 
 Target branch: `sive/dev`
 
@@ -481,12 +481,18 @@ native archive continues to reuse the existing notebook persistence model.
 Export the complete notebook rather than only the selected page: PDF contains
 one drawing-only page for every notebook page in order, while SPUD losslessly
 contains the complete editable notebook, including page identities, templates,
-images, drawing layers, Agentic Layers, cover, settings, and timestamps.
+images, drawing layers, Agentic Layers, cover, settings, and timestamps. The
+library can import that SPUD as a new notebook without overwriting an existing
+notebook that has the same archived identity.
 
 ### Scope
 
 - `TuberNotes/Notebook/NotebookView.swift`
 - `TuberNotes/Notebook/NotebookViewModel.swift`
+- `TuberNotes/Notebook/LibraryView.swift`
+- `TuberNotes/Notebook/NotebookStore.swift`
+- `TuberNotes/Info.plist`
+- `TuberNotes.xcodeproj/project.pbxproj`
 - `TuberNotes/SpatialCanvas/PDFStrokeCompression.swift`
 - `TuberNotes/SpatialCanvas/TuberNoteArchive.swift`
 - `TuberNotes/Notebook/README-notebooks.md`
@@ -495,28 +501,34 @@ images, drawing layers, Agentic Layers, cover, settings, and timestamps.
 
 ### Non-goals and dependencies
 
-- Do not add archive import UI, change the system file-exporter presentation,
-  alter toolbar layout, or emit Pins/conversations/citations into PDF.
+- Do not change the system file-exporter presentation, redesign the library,
+  add PDF import to the normal notebook library, or emit Pins/conversations/
+  citations into PDF.
 - Preserve the existing compressed, drawing-only PDF privacy contract.
-- Preserve decoding of existing version 1 and version 2 single-page SPUD files.
+- This prerelease format supports version 3 only; remove version 1/2 fields,
+  encoders, decoders, and migration adapters rather than carrying dead schema.
 - Canonical build and interaction inspection require an explicitly named,
   pinned physical iPad and an Apple/Xcode host.
 
 ### Work and verification
 
 1. Add ordered multi-page PDF emission without changing stroke compression.
-2. Add a versioned whole-notebook SPUD payload with legacy decoding.
+2. Keep SPUD as a version-3-only whole-notebook payload.
 3. Route both notebook export entry points through the complete document.
-4. Extend focused source checks for page ordering, completeness, and filenames.
-5. Build and export a deterministic multi-page notebook on the pinned iPad;
-   inspect PDF page count and decode the SPUD payload for complete page state.
+4. Add library import that clones the decoded notebook under a fresh identity.
+5. Extend focused source checks for page ordering, completeness, filenames,
+   version rejection, importer wiring, and collision-safe persistence.
+6. On the pinned iPad, export and re-import a deterministic multi-page notebook;
+   inspect PDF page count and imported SPUD page/content identity.
 
 ### Acceptance evidence and stop conditions
 
 - A notebook with multiple pages exports the same number of PDF pages in the
   same order; PDF remains drawing-only and contains no Agentic Layer content.
-- SPUD round-trips all notebook pages and notebook-owned state while version 1
-  and version 2 archives remain decodable.
+- SPUD round-trips all notebook pages and notebook-owned state; any format
+  version other than 3 is rejected.
+- Importing SPUD creates and opens a new library notebook, preserves page and
+  content identities, and never overwrites an existing notebook ID.
 - Both exported filenames describe the notebook, not one selected page.
 - Existing export presentation/cancellation checks remain green.
 - Stop after host and device evidence is collected, after two verification
@@ -544,6 +556,28 @@ images, drawing layers, Agentic Layers, cover, settings, and timestamps.
   runtime PDF page-count/SPUD round-trip inspection, save-page interaction,
   screenshots, console, and crash checks remain blocked because this Linux host
   has neither Xcode/Swift nor an explicitly pinned physical-iPad session.
+- 2026-07-20 — Follow-up requested for the prerelease format: remove all SPUD
+  version 1/2 compatibility and add normal-library SPUD import. Reopened PC-9
+  with import UI and collision-safe store persistence in scope.
+- 2026-07-20 — `CONTRACT:` replace persisted type `TuberNoteArchive`'s legacy
+  single-page/mirror fields with one required complete `Notebook` payload and
+  accept format version 3 only. No released data requires migration; the reset
+  removes dead prerelease schema before adding the matching import path. The
+  same contract declares `com.tubernotes.note` as JSON tagged with the `.spud`
+  extension so Files can select archives through the normal importer.
+- 2026-07-20 — Removed all version 1/2 archive structures and adapters; version
+  3 now contains one required complete `Notebook` and validates every drawing
+  layer during decode. Added the registered `.spud` document type and a library
+  Files importer. Import uses security-scoped access, assigns a fresh notebook
+  ID to prevent overwrite, preserves page/content identities and notebook state,
+  saves the result, and opens it. Focused checks pass 8/8, plist parsing and
+  `git diff --check` pass, and no legacy SPUD production symbols remain. The
+  broader host suite passes 51/52 with the same unrelated verifier-argument
+  mismatch. Concurrent out-of-scope unstaged edits appeared during verification
+  and were preserved. Updated evidence is under
+  `tmp/verify/pc-9-complete-document-export/summary.txt`. Physical Files export,
+  re-import, visible content, screenshot, console, and crash evidence remain
+  blocked by the absent Xcode/Swift host and pinned iPad session.
 
 ## Active line — PC-6: agent provider unification
 
@@ -570,7 +604,7 @@ Swift toolchain or pinned device session.
 
 ## Active line — PC-7: Agentic Layer, conversation-tree, and movable-Pin interaction cleanup
 
-Status: **follow-up implemented — host-checked; physical-device verification blocked**
+Status: **IPA build regression repaired — host-checked; physical-device re-verification blocked**
 
 Target branch: `sive/dev`
 
@@ -612,6 +646,13 @@ background neutral. Focused checks pass 13/13; evidence is under
 `tmp/verify/pc-7-agentic-ambient-glow/`. Physical-device visual/taste evidence
 remains blocked by the same unavailable Apple host and pinned-iPad prerequisite.
 
+The unsigned-IPA build regression reported at `PinOverlayView.swift:197` is
+repaired with the missing explicit `return` and a focused regression assertion.
+PC-7 plus nearby archive/export and notebook branch-logic checks pass 15/15;
+evidence is under `tmp/verify/pc-7-ipa-build-regression/`. This Linux host has
+no Xcode tools or pinned-device session, so the reporting Apple host must rerun
+the IPA build and the named PC-7 physical-device scenarios.
+
 ## Active line — PC-8: drawing tool recovery after erasing
 
 Status: **implemented — host-checked; physical-device verification blocked**
@@ -644,3 +685,146 @@ build/install/launch, runtime-evidence, and crop assertions under
 `tmp/verify/20260720-190651-lasso-crop/`. The retained crop contains the
 expected ruled PDF content. Human Pencil feel and visual-taste review remain
 uncollected.
+
+## Active line — PC-10: codebase stability audit
+
+Status: **host audit complete — high-risk findings open; Apple/device verification blocked**
+
+Target branch: `sive/dev`
+
+Owner: product-wide investigation coordinated through App integration; no
+product implementation changes are authorized by this audit line.
+
+### Objective and user-visible outcome
+
+Trace the shipping library/notebook path, its persistence and asynchronous
+boundaries, spatial and export code, project membership, and development
+verification tooling for crash, data-loss, stale-state, interaction, and
+non-determinism risks. Produce prioritized evidence rather than treating host
+source checks as proof of physical-iPad stability.
+
+### Scope
+
+- all Swift sources under `TuberNotes/` and their Xcode source membership;
+- notebook lifecycle, drawing, images, layers, Agentic work, Pins, export, and
+  persistence reached from the normal product entry path;
+- `DeveloperTools/` host checks, verifier truthfulness checks, and harness
+  source contracts;
+- repository diff hygiene and the current `sive/dev` working-tree snapshot.
+
+### Non-goals and dependencies
+
+- no product fixes, refactors, architecture changes, external writes, or new
+  test-suite construction;
+- canonical build, launch, visual inspection, console/crash collection, Pencil
+  feel, and viewport interaction require an Apple/Xcode host plus an explicitly
+  pinned physical iPad;
+- preserve concurrent collaborator edits and distinguish them from audit work.
+
+### Acceptance evidence and stop conditions
+
+- prioritized findings include exact source locations and reproducible impact;
+- all available host suites, syntax checks, secret scans, project membership,
+  and diff hygiene are reported with failures separated from unavailable
+  prerequisites;
+- stop after host evidence is recorded because the exact-device prerequisite
+  is unavailable; do not claim the app has no unstable behaviors.
+
+### Session log
+
+- 2026-07-20 — Audited 16,323 lines across 51 Swift files at
+  `59d3fadd5d2403ce3291eb6edab16af12015fa04`. Found open high-risk defects:
+  debounced drawing saves are not flushed on app backgrounding; persistence
+  errors are silently presented as successful in-memory saves/deletes; an
+  Agentic request can outlive its editor and later overwrite newer whole-note
+  state; and page lock leaves Pencil drawing enabled. Also found destructive
+  page deletion without confirmation/undo and unbounded photo payloads being
+  re-encoded synchronously on the main actor. No product files were changed.
+- 2026-07-20 — Main host suite: 46/47 pass; the verifier truthfulness test is
+  stale (13 supplied runtime fields versus 19 unpacked). Focused product source
+  contracts otherwise pass 43/43, agent-layer checks pass 5/5, OpenCode auth
+  reproduction and secret scans pass 16/16, and all Python/Shell syntax checks
+  pass. The PencilFixtureMCP UI source suite passes 15/16 because one assertion
+  depends on single-line Swift formatting; remaining MCP integration tests are
+  unavailable without the declared `mcp` dependency. CodexAdapter Swift checks,
+  Xcode build, physical scenarios, screenshots, console, and crash diagnostics
+  are blocked because this Linux host has no Swift/Xcode tools or pinned iPad.
+- 2026-07-20 — During the audit, concurrent collaborator edits appeared in
+  `PinOverlayView.swift` and its focused contract test. They add the explicit
+  `return` required by the multi-statement placement helper and pass their 5/5
+  focused checks. The audit preserved those edits and did not attribute them to
+  this work.
+
+## Active line — PC-11: baseline notebook lasso stability
+
+Status: **implemented — host-checked; physical-device verification blocked**
+
+Target branch: `sive/dev`
+
+Owner: `SpatialCanvas` owns gesture geometry and canvas-local movement;
+`Notebook` owns visible lasso mode and selection state.
+
+### Objective and user-visible outcome
+
+Make the normal notebook lasso predictable: abandoned or cancelled selections
+must not remain actionable, intentional Agent/refinement handoffs must retain
+their chosen region, degenerate gestures must clear stale state, and moved ink
+must remain recoverable inside the logical page.
+
+### Scope
+
+- `TuberNotes/Notebook/NotebookCanvas.swift`
+- `TuberNotes/Notebook/NotebookToolbar.swift`
+- `TuberNotes/Notebook/NotebookView.swift`
+- `TuberNotes/Notebook/NotebookViewModel.swift`
+- one focused host regression check under `DeveloperTools/tests/`
+- this plan section
+
+### Non-goals and dependencies
+
+- no drawing-refinement lasso redesign, shared coordinate-contract change,
+  toolbar redesign, Pencil capture change, or Pin behavior change;
+- physical interaction and Pencil feel require an Apple/Xcode host and an
+  explicitly pinned iPad.
+
+### Work and verification
+
+1. Clear model selection whenever lasso mode exits or a gesture cannot produce
+   a usable selection.
+2. Clamp visible selection bounds and drag deltas to the logical page before
+   moving or persisting strokes.
+3. Add focused source checks for clearing and page-boundary behavior.
+4. Run nearby notebook/lasso host suites and diff hygiene; run the canonical
+   device scenario only when the exact-device prerequisite is available.
+
+### Acceptance evidence and stop conditions
+
+- abandoned lasso rectangles cannot feed later actions, while explicit Agent
+  and refinement handoffs retain their selected region;
+- moved selected ink and its selection frame remain within page bounds;
+- focused host checks pass and unrelated collaborator edits remain untouched;
+- stop after host verification when the Apple/device prerequisite is
+  unavailable, or after two failed device attempts without a narrower fix.
+
+### Session log
+
+- 2026-07-20 — Traced normal notebook lasso state and movement. Confirmed that
+  mode exit and degenerate gestures can leave `NotebookViewModel.lassoRect`
+  stale after the UIKit overlay clears, and that drag deltas are not bounded to
+  the page. Began the smallest state/geometry repair; no contract type changes.
+- 2026-07-20 — Implemented explicit lasso activation/deactivation semantics so
+  toolbar, drawing-layer, image-arrangement, Agent, and refinement transitions
+  either clear or intentionally preserve the selected region. Degenerate loops
+  now clear model and overlay state. Removed the update-loop defect that cleared
+  every active, not-yet-completed loop whenever SwiftUI refreshed—a path made
+  especially visible by Pencil-driven ambient updates. Page-edge selection
+  rectangles and drag deltas are clamped to logical page coordinates; locked
+  pages reject lasso input; cancelled loops clear instead of selecting, and
+  cancelled moves restore the pre-drag drawing rather than committing partial
+  movement. Focused lasso and nearby notebook suites pass 19/19; the complete
+  host suite passes 53/54, with only the separately logged unrelated stale
+  verifier-truthfulness test failing. Python
+  and shell syntax plus `git diff --check` pass. No shared contract changed.
+  Canonical Xcode build, `blank-canvas` interaction, screenshots, console/crash
+  collection, and Pencil feel remain blocked on this Linux host without an
+  explicitly pinned physical iPad session.
