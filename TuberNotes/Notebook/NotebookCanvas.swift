@@ -790,7 +790,10 @@ final class ZoomablePageView: UIView {
         let scaledH = page.height * scrollView.zoomScale
         let hInset = max(0, (scrollView.bounds.width - scaledW) / 2)
         let vInset = max(16, (scrollView.bounds.height - scaledH) / 2)
-        scrollView.contentInset = UIEdgeInsets(top: vInset, left: hInset, bottom: 140, right: hInset)
+        let inset = UIEdgeInsets(top: vInset, left: hInset, bottom: 140, right: hInset)
+        guard scrollView.contentInset != inset else { return }
+        scrollView.contentInset = inset
+        DispatchQueue.main.async { [weak self] in self?.reportPageViewport() }
     }
 
     func convertToScreen(_ point: CGPoint) -> CGPoint {

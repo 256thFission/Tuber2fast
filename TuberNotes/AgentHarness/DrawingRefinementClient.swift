@@ -8,6 +8,12 @@ struct DrawingRefinementRequest: Sendable {
 
 struct RefinedDrawing: Sendable {
     let imageData: Data
+    let generation: UUID?
+
+    init(imageData: Data, generation: UUID? = nil) {
+        self.imageData = imageData
+        self.generation = generation
+    }
 }
 
 protocol DrawingRefinementClient: Sendable {
@@ -16,14 +22,14 @@ protocol DrawingRefinementClient: Sendable {
 
 enum DrawingRefinementClientFactory {
     static func make() -> any DrawingRefinementClient {
-#if DEBUG
         let backend = BackendDrawingRefinementClient()
-        if backend.endpoint == nil {
-            return PreviewDrawingRefinementClient()
+        if backend.endpoint != nil {
+            return backend
         }
-        return backend
+#if DEBUG
+        return PreviewDrawingRefinementClient()
 #else
-        return BackendDrawingRefinementClient()
+        return backend
 #endif
     }
 }
@@ -36,9 +42,9 @@ enum DrawingRefinementError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .notConfigured:
-            return "AI refinement needs a backend endpoint."
+            return "Drawing refinement isn't available in this build."
         case .invalidResponse:
-            return "The refinement service returned an unreadable image."
+            return "The refinement service returned an image TuberNotes couldn't use. Try again; your drawing is unchanged."
         case .requestFailed(let statusCode):
             return "The refinement service failed (HTTP \(statusCode))."
         }

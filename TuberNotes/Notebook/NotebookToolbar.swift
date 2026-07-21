@@ -51,9 +51,6 @@ struct NotebookToolbar: View {
                 showLayers = false
             }
         }
-        .onChange(of: vm.isAgenticLayersActive) { _, isActive in
-            if isActive { isRefinementActive = false }
-        }
     }
 
     private var adaptiveToolbar: some View {
@@ -279,9 +276,12 @@ struct NotebookToolbar: View {
 
     private var refinementButton: some View {
         Button {
-            isLassoActive = false
-            vm.isAgenticLayersActive = false
-            isRefinementActive.toggle()
+            if isRefinementActive {
+                isRefinementActive = false
+            } else {
+                isLassoActive = false
+                isRefinementActive = true
+            }
         } label: {
             Image(systemName: "lasso.badge.sparkles")
                 .font(.system(size: 17, weight: .medium))
@@ -295,9 +295,9 @@ struct NotebookToolbar: View {
                 .symbolEffect(.pulse, options: .speed(1.4), value: isRefinementActive)
                 .animation(.spring(response: 0.22, dampingFraction: 0.62), value: isRefinementActive)
         }
-        .accessibilityIdentifier("tool-refinement-lasso")
-        .accessibilityLabel("Drawing refinement")
-        .accessibilityHint("Select a region to refine and apply directly to the page")
+        .accessibilityIdentifier("tool-magic-eraser")
+        .accessibilityLabel("Magic Eraser")
+        .accessibilityHint("Draw a closed circle with Apple Pencil to reveal AI guidance Pins")
         .accessibilityAddTraits(isRefinementActive ? [.isSelected] : [])
     }
 

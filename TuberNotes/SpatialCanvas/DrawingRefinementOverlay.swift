@@ -22,6 +22,9 @@ struct DrawingRefinementOverlay: View {
     @State private var refinedImageData: Data?
     @State private var isRefining = false
     @State private var errorMessage: String?
+    @State private var refinementTask: Task<Void, Never>?
+    @State private var retryRect: CGRect?
+    @State private var retryCanvasSize: CGSize?
 
     private let prompt = "Clean up this drawing while preserving its meaning and composition."
 
@@ -61,6 +64,9 @@ struct DrawingRefinementOverlay: View {
             }
         }
         .alert("Couldn’t refine drawing", isPresented: errorIsPresented) {
+            if let retryRect, let retryCanvasSize {
+                Button("Retry") { refine(retryRect, in: retryCanvasSize) }
+            }
             Button("OK", role: .cancel) {}
         } message: {
             Text(errorMessage ?? "Unknown error")
@@ -94,7 +100,10 @@ struct DrawingRefinementOverlay: View {
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("ai-lasso-button")
 
-                Button(action: onClose) {
+                Button {
+                    cancelRefinement()
+                    onClose()
+                } label: {
                     Image(systemName: "xmark")
                         .font(.subheadline.weight(.bold))
                         .frame(width: 38, height: 38)
@@ -141,6 +150,11 @@ struct DrawingRefinementOverlay: View {
                         }
                     }
                 }
+
+                if isRefining {
+                    Button("Cancel") { cancelRefinement() }
+                        .accessibilityIdentifier("cancel-refinement-button")
+                }
             }
             .font(.caption.weight(.bold))
             .foregroundStyle(.white)
@@ -178,6 +192,11 @@ struct DrawingRefinementOverlay: View {
         .accessibilityLabel("Selected drawing region")
         .accessibilityHint("Long press or right-click for refinement actions")
         .accessibilityIdentifier("drawing-refinement-selection")
+        .accessibilityHint(
+            refinedImageData == nil
+                ? "Preview is non-mutating. Applying replaces only fully enclosed ink with a raster; Undo restores it."
+                : "Preview is non-mutating. Apply replaces only fully enclosed ink with a raster; Undo restores it."
+        )
     }
 
     private var lassoPath: Path {
@@ -240,7 +259,10 @@ struct DrawingRefinementOverlay: View {
         }
 
         isRefining = true
-        Task {
+        retryRect = rect
+        retryCanvasSize = canvasSize
+        refinementTask?.cancel()
+        refinementTask = Task {
             do {
                 let result = try await client.refine(
                     DrawingRefinementRequest(imageData: imageData, prompt: prompt)
@@ -249,17 +271,38 @@ struct DrawingRefinementOverlay: View {
                     throw DrawingRefinementError.invalidResponse
                 }
                 await MainActor.run {
+                    guard !Task.isCancelled else { return }
+                    if let generation = result.generation,
+                       !OpenAICodexLoginSession.shared.isCurrent(generation: generation) {
+                        isRefining = false
+                        refinementTask = nil
+                        return
+                    }
                     refinedImage = image
                     refinedImageData = result.imageData
                     isRefining = false
+                    refinementTask = nil
+                }
+            } catch is CancellationError {
+                await MainActor.run {
+                    isRefining = false
+                    refinementTask = nil
                 }
             } catch {
                 await MainActor.run {
+                    guard !Task.isCancelled else { return }
                     errorMessage = error.localizedDescription
                     isRefining = false
+                    refinementTask = nil
                 }
             }
         }
+    }
+
+    private func cancelRefinement() {
+        refinementTask?.cancel()
+        refinementTask = nil
+        isRefining = false
     }
 
     private func normalizedPoint(_ point: CGPoint, in canvasSize: CGSize) -> CGPoint {

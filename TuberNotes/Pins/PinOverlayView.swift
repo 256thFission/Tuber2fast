@@ -219,7 +219,7 @@ private struct PinAnchor: View {
 
     var body: some View {
         ZStack {
-            if isExpanded && isHoldingForConversation {
+            if isHoldingForConversation {
                 PinHoldProgressCue()
             }
             Circle()
@@ -277,7 +277,7 @@ private struct PinAnchor: View {
                         onMoveChanged(value.translation)
                     }
                 } else if !touchExceededTapDistance {
-                    isHoldingForConversation = isExpanded && onConversationRequested != nil
+                    isHoldingForConversation = onConversationRequested != nil
                 }
             }
             .onEnded { value in
@@ -291,12 +291,11 @@ private struct PinAnchor: View {
         touchExceededTapDistance = false
         isDraggingPin = false
         didCompleteHold = false
-        guard isExpanded, let onConversationRequested else { return }
+        guard let onConversationRequested else { return }
         isHoldingForConversation = true
         holdTask = Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(350))
             guard !Task.isCancelled,
-                  isExpanded,
                   isTrackingTouch,
                   !touchExceededTapDistance
             else { return }
@@ -326,10 +325,10 @@ private struct PinAnchor: View {
     private var accessibilityHint: String {
         let tapAction = isExpanded ? "Tap to collapse" : "Tap to expand"
         if canMove, onConversationRequested != nil {
-            return "\(tapAction), drag to move, or hold for follow-up"
+            return "\(tapAction), drag to move, or hold for full chat"
         }
         if canMove { return "\(tapAction), or drag to move" }
-        if onConversationRequested != nil { return "\(tapAction), or hold for follow-up" }
+        if onConversationRequested != nil { return "\(tapAction), or hold for full chat" }
         return tapAction
     }
 

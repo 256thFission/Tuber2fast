@@ -536,3 +536,191 @@ build/install/launch, runtime-evidence, and crop assertions under
 `tmp/verify/20260720-190651-lasso-crop/`. The retained crop contains the
 expected ruled PDF content. Human Pencil feel and visual-taste review remain
 uncollected.
+
+## Active line — PC-10: ephemeral OpenAI account login
+
+Status: **implemented and installed — awaiting Phillip's live token-exchange
+verdict**
+
+Target branch: `main`
+
+Child work-line: [`PC-10-EphemeralOpenAILogin.md`](PC-10-EphemeralOpenAILogin.md)
+
+Summary: add an OpenCode-style OpenAI device-code login to the normal Release
+provider settings and normal Agentic Layer analysis path. Credentials remain in
+process memory only; app relaunch, expiry, sign-out, or 401/403 requires relog.
+Preserve explicit API-key/right.codes paths and the Release gateway boundary.
+At Phillip's direction, do not use or modify the stale scenario/test harness;
+Phillip will manually verify the normal app on the pinned iPad after separately
+confirming live account use.
+
+### Session log
+
+- 2026-07-20 — Created the PC-10 implementation plan from `main` at `05d4af3`.
+  Selected temporary device-code authorization with relog on launch/expiry,
+  memory-only OAuth access, normal-app-only integration, and Phillip-led manual
+  verification. No product source or account state was changed.
+- 2026-07-20 — Phillip authorized implementation with extensive subagents and
+  directed that PC-10 use no verification/review harness while implementation
+  is underway. `AGENTS.md` now carries the narrow go-mode override.
+- 2026-07-20 — PC-10 implementation is complete. Generic unsigned iOS Debug and
+  Release builds succeeded; no harness, device, browser login, or live provider
+  call ran. Phillip owns the remaining normal-app behavioral verdict.
+- 2026-07-20 — Corrected the target after Phillip clarified that the normal
+  Release app—not Debug—is used. Promoted the memory-only temporary login while
+  keeping API-key/right.codes controls Debug-only. Exact iPad
+  `2DD98ECC-A26A-5730-943B-01DD63DC4117` passed preflight; signed Release build,
+  install, and normal no-scenario launch succeeded. Phillip owns behavioral
+  verification.
+- 2026-07-20 — Reopened for Phillip's requested in-app Safari presentation.
+  Device auth, polling, credential lifetime, and provider routing remain
+  unchanged; only the normal login presentation is in scope.
+- 2026-07-20 — Embedded the device sign-in page in an in-app
+  `SFSafariViewController` sheet while keeping polling independent of sheet
+  presentation. Exact iPad `2DD98ECC-A26A-5730-943B-01DD63DC4117` passed
+  preflight; the fresh signed Release build succeeded, installed, and normally
+  launched. No Debug build, scenario/test harness, visual verifier, automated
+  login, or provider request ran. Phillip owns the remaining live sign-in
+  verdict.
+- 2026-07-20 — Rebuilt once more at Phillip's request from fresh DerivedData,
+  then installed and normally launched that second signed Release artifact on
+  the same pinned iPad. No Debug or verification harness ran.
+- 2026-07-20 — Reopened after shared Safari cookies made an accidentally chosen
+  OpenAI account sticky. Adding a user-triggered ephemeral system-auth route
+  that preserves the active device-code poller and cannot reuse those cookies;
+  no harness verification is authorized.
+- 2026-07-20 — Added the explicit cookie-isolated different-account route,
+  rebuilt signed Release from fresh DerivedData, installed it on the pinned
+  iPad, and normally relaunched. The shared Safari route remains for ordinary
+  SSO. Phillip owns the live account-selection verdict.
+- 2026-07-20 — Reopened at Phillip's direction to make cookie-isolated
+  authentication automatic for every primary sign-in/retry. Existing-browser
+  session reuse becomes explicit secondary behavior.
+- 2026-07-20 — Live browser authorization exposed an over-strict token decoder:
+  it rejected a successful response when unused ID/refresh material was absent.
+  The bounded repair requires only the access token TuberNotes actually keeps,
+  preserves optional account-claim extraction, and retains redacted failures.
+- 2026-07-20 — Delivered fresh-by-default sign-in and the tolerant, access-only
+  token-establishment repair in a new signed Release build. Exact-device
+  preflight, install, and normal launch succeeded; no harness or automated live
+  login ran.
+
+Shared-contract log — 2026-07-20: `CONTRACT:` introduce
+`AgentRuntimeAccess` so Notebook can select either the existing provider-key
+authorization or a request-scoped, memory-only `OpenAICodexAccess` without
+owning endpoints or authorization headers. This changes only the internal
+Notebook/AgentHarness handoff; no persisted document, Pin, coordinate, archive,
+or Release authentication contract changes.
+
+Shared-contract log — 2026-07-20: `CONTRACT:` revise `SPEC.md` section 10.1 so
+the normal hackathon Release app may use the ephemeral, memory-only OpenAI
+device-authorization route. The production gateway remains required for a
+distributable service; reusable secrets, refresh persistence, and credential
+reuse from other applications remain forbidden.
+
+## Active line — PC-11: OpenAI-backed drawing refinement
+
+Status: **stopped — private Codex route rejected image generation; lasso hero redirected to guidance Pins**
+
+Target branch: `main`
+
+Child work-line: [`PC-11-OpenAIDrawingRefinement.md`](PC-11-OpenAIDrawingRefinement.md)
+
+Summary: connect the existing preview-first lasso refinement boundary to the
+temporary OpenAI session when no dedicated backend is configured. Preserve all
+lasso, stroke-containment, page-normalized placement, persistence, and explicit
+Apply behavior. The private Codex route's image-generation capability remains a
+live manual gate; no Debug or stale verification harness is authorized.
+
+### Session log
+
+- 2026-07-20 — Created PC-11 after Release surfaced the missing
+  `TuberRefinementEndpoint`. Scoped the experiment to AgentHarness transport and
+  decoding plus truthful copy; spatial and document contracts remain frozen.
+- 2026-07-20 — Implemented the temporary-session Release refinement fallback.
+  The exact pinned iPad passed preflight; a fresh signed Release build succeeded,
+  installed, and normally launched from
+  `tmp/build/pc11-openai-refinement/DerivedData/Build/Products/Release-iphoneos/TuberNotes.app`.
+  No Debug/scenario/test harness or automated provider call ran. Reinstalling
+  clears the memory-only login, so Phillip owns the fresh-login and live
+  image-tool verdict.
+- 2026-07-21 — Phillip manually established that the private Codex route rejects
+  `image_generation`. This line stopped at its planned capability boundary; the
+  normal Release sparkle-lasso must not mutate ink or images and is now covered
+  by the PC-12 structured guidance-Pin path.
+
+## Planned line — PC-12: Release AI runtime unification and interaction hardening
+
+Status: **in progress — corrected P0 lasso-to-guidance-Pins path implemented; manual gate pending**
+
+Target branch: `main`
+
+Child work-line: [`PC-12-ReleaseAIRuntimeUnification.md`](PC-12-ReleaseAIRuntimeUnification.md)
+
+Summary: consolidate temporary OpenAI authorization, capability routing,
+bounded transport, and generation-scoped invalidation inside AgentHarness;
+make the normal sparkle-lasso produce structured, spatially anchored guidance
+Pins without generating or replacing drawings; make normal requests cancellable
+and stale-result safe; then separately decide whether to add local
+`search_textbook` retrieval. Debug/scenario tooling is explicitly excluded.
+
+### Session log
+
+- 2026-07-20 — Three user-requested `gpt-5.6-terra` subagents independently
+  inventoried Release/dormant AI surfaces, designed the smallest unification
+  seam, and audited user-visible AI lifecycle/safety. Their read-only findings
+  were synthesized into a six-phase patch plan with exact ownership, files,
+  dependencies, manual gates, risks, and stop conditions.
+- 2026-07-21 — Corrected the Release hero interaction to lasso crop vision,
+  strict `place_pins` output, crop-to-page coordinate conversion, and immediate
+  Agentic Layer Pin persistence. Central temporary route/transport and
+  generation checks are in scope; image generation, raster Apply, and
+  stroke deletion are excluded. No build, device action, harness, or provider
+  call ran during this implementation session.
+- 2026-07-21 — Removed the rejected image-generation client and completed the
+  structured-Pin integration with bounded SSE/complete response handling and
+  crop bounds matching the transmitted pixels. Exact-device preflight and a
+  fresh signed Release build/install/normal launch succeeded from
+  `tmp/build/pc12-guidance-pins/DerivedData/Build/Products/Release-iphoneos/TuberNotes.app`.
+  No Debug/scenario/test harness or automated provider call ran. Phillip owns
+  the live Pin-placement verdict after a fresh sign-in.
+- 2026-07-21 — Restored Phillip's exact hero flow after the first P0 wiring had
+  incorrectly repurposed the ordinary selection interaction: Pencil-only Magic
+  Eraser circle → retained pulsing halo → structured short guidance Pins → hold
+  any Pin for the full-width Pin Chat tab. Crop-relative outputs still map
+  through the existing page-normalized spatial transform; ink is untouched.
+  Fresh exact-device signed Release build/install/normal launch succeeded from
+  `tmp/build/pc12-magic-eraser-hero/DerivedData/Build/Products/Release-iphoneos/TuberNotes.app`.
+  No Debug/scenario/test harness or automated provider call ran.
+- 2026-07-21 — Live manual feedback showed the restored flow still activated a
+  page-wide rainbow and silently rejected ordinary circles. Removed that glow
+  and automatic send. Magic capture now accepts Pencil/touch with forgiving
+  closure and visible rejection feedback, retains a local halo, then presents
+  Explain / Check / Ask before sending the polygon-masked crop and chosen
+  prompt. Fresh exact-device signed Release build/install/normal launch
+  succeeded from
+  `tmp/build/pc12-magic-prompt-flow/DerivedData/Build/Products/Release-iphoneos/TuberNotes.app`.
+  No Debug/scenario/test harness or automated provider call ran.
+- 2026-07-21 — Replaced the bottom-anchored post-circle chooser with an
+  automatically visible context menu attached to the halo and clamped within
+  the page. A valid circle now keeps its selection/menu even when no ink or
+  image layer was recognized, and no provider request begins until Explain,
+  Check, or Ask is chosen. Fresh exact-device signed Release
+  build/install/normal launch succeeded from
+  `tmp/build/pc12-attached-context-menu-v2/DerivedData/Build/Products/Release-iphoneos/TuberNotes.app`.
+  No Debug/scenario/test harness, visual verifier, automated login, or provider
+  request ran.
+- 2026-07-21 — Fixed retained selection drift across zoom by reprojecting the
+  saved page-normalized lasso whenever its page viewport changes and reporting
+  the final recentered viewport after zoom. Fresh exact-device signed Release
+  build/install/normal launch succeeded from
+  `tmp/build/pc12-zoom-stable-selection/DerivedData/Build/Products/Release-iphoneos/TuberNotes.app`.
+  No Debug/scenario/test harness or visual verifier ran.
+- 2026-07-21 — Fixed the silent post-Explain failure path: provider/decoder
+  errors now appear directly in the attached selection menu with retry actions,
+  and the bounded single-call decoder accepts Codex-compatible
+  `response.output_item.done` completion. Fresh exact-device signed Release
+  build/install/normal launch succeeded from
+  `tmp/build/pc12-visible-pin-result/DerivedData/Build/Products/Release-iphoneos/TuberNotes.app`.
+  No Debug/scenario/test harness, visual verifier, automated login, or provider
+  request ran.
