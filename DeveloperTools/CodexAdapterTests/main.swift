@@ -276,6 +276,12 @@ private enum CodexAdapterChecks {
     }
 
     private static func checkResponsesTextExtraction() throws {
+        let chatCompletion = Data(#"{"choices":[{"message":{"content":"OpenAI summary\n- Detail"}}]}"#.utf8)
+        require(
+            try ResponsesTextExtractor.text(from: chatCompletion) == "OpenAI summary\n- Detail",
+            "Chat Completions text was not extracted"
+        )
+
         let plain = Data(#"{"output":[{"content":[{"type":"output_text","text":"Summary\n- Detail"}]}]}"#.utf8)
         require(try ResponsesTextExtractor.text(from: plain) == "Summary\n- Detail", "plain Responses text was not extracted")
 

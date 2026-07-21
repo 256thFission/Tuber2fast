@@ -8,7 +8,7 @@ struct NotebookToolbar: View {
     @ObservedObject var undo: NotebookUndoBridge
     @Binding var isLassoActive: Bool
     @Binding var isRefinementActive: Bool
-    @Environment(\.colorScheme) private var colorScheme
+    @Binding var isRefinementLassoActive: Bool
     var onShowPages: () -> Void
     var onAskAgent: () -> Void
 
@@ -16,7 +16,9 @@ struct NotebookToolbar: View {
     @State private var showLayers = false
     @State private var pressedTool: WritingTool?
     @State private var isLassoHeld = false
+    @State private var isColorScrubbing = false
     @State private var pressStartWidth: CGFloat = 0
+    @State private var colorScrubStartIndex = 0
 
     var body: some View {
         Group {
@@ -24,6 +26,23 @@ struct NotebookToolbar: View {
                 adaptiveToolbar
                     .background(.ultraThinMaterial, in: Capsule())
                     .overlay(Capsule().strokeBorder(.primary.opacity(0.08), lineWidth: 1))
+                    .overlayPreferenceValue(RefinementButtonBoundsPreferenceKey.self) { anchor in
+                        GeometryReader { proxy in
+                            if isRefinementActive, let anchor {
+                                let buttonFrame = proxy[anchor]
+                                refinementLassoBubble
+                                    .fixedSize()
+                                    .position(
+                                        x: buttonFrame.midX,
+                                        y: buttonFrame.minY - 30
+                                    )
+                                    .transition(
+                                        .opacity.combined(with: .scale(scale: 0.94, anchor: .bottom))
+                                    )
+                                    .zIndex(1)
+                            }
+                        }
+                    }
                     .overlay(alignment: .top) {
                         holdIndicator
                             .offset(y: -64)
@@ -35,14 +54,17 @@ struct NotebookToolbar: View {
                     .sensoryFeedback(.selection, trigger: isLassoActive)
                     .accessibilityIdentifier("notebook-toolbar")
                     .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .bottom)))
+                    .animation(.spring(response: 0.22, dampingFraction: 0.72), value: isRefinementActive)
             }
         }
         .animation(.easeInOut(duration: 0.18), value: visibleGroupCount)
         .onChange(of: vm.settings.showsWritingTools) { _, isVisible in
             if !isVisible {
-                isLassoActive = false
+                vm.deactivateLasso()
                 isRefinementActive = false
+                isRefinementLassoActive = false
                 pressedTool = nil
+                isColorScrubbing = false
             }
         }
         .onChange(of: vm.settings.showsLayers) { _, isVisible in
@@ -50,6 +72,12 @@ struct NotebookToolbar: View {
                 vm.isAgenticLayersActive = false
                 showLayers = false
             }
+        }
+        .onChange(of: vm.isAgenticLayersActive) { _, isActive in
+            if isActive { isRefinementActive = false }
+        }
+        .onChange(of: isRefinementActive) { _, isActive in
+            if !isActive { isRefinementLassoActive = false }
         }
     }
 
@@ -62,7 +90,7 @@ struct NotebookToolbar: View {
                 toolbarContent
                     .fixedSize(horizontal: true, vertical: true)
             }
-            .scrollDisabled(pressedTool != nil || isLassoHeld)
+            .scrollDisabled(pressedTool != nil || isLassoHeld || isColorScrubbing)
             .mask {
                 LinearGradient(
                     stops: [
@@ -85,8 +113,8 @@ struct NotebookToolbar: View {
                     toolButton(tool)
                 }
                 colorButton
-                lassoButton
-                refinementButton
+                divider
+                lassoControls
                 divider
                 undoControls
             }
@@ -107,7 +135,11 @@ struct NotebookToolbar: View {
 
     @ViewBuilder
     private var pageNavigationControls: some View {
-        iconButton("chevron.left", label: "Previous page", enabled: vm.canGoBack) {
+        iconButton(
+            vm.settings.pageScrollDirection.previousSymbolName,
+            label: "Previous page",
+            enabled: vm.canGoBack
+        ) {
             withAnimation(.easeInOut) { vm.goBack() }
         }
         .accessibilityIdentifier("toolbar-prev-page")
@@ -123,7 +155,10 @@ struct NotebookToolbar: View {
         .accessibilityIdentifier("toolbar-page-indicator")
 
         if vm.canGoForward {
-            iconButton("chevron.right", label: "Next page") {
+            iconButton(
+                vm.settings.pageScrollDirection.nextSymbolName,
+                label: "Next page"
+            ) {
                 withAnimation(.easeInOut) { vm.goForward() }
             }
             .accessibilityIdentifier("toolbar-next-page")
@@ -133,6 +168,12 @@ struct NotebookToolbar: View {
             }
             .accessibilityIdentifier("toolbar-add-page")
         }
+    }
+
+    @ViewBuilder
+    private var lassoControls: some View {
+        lassoButton
+        refinementButton
     }
 
     @ViewBuilder
@@ -155,6 +196,12 @@ struct NotebookToolbar: View {
                 tool: tool,
                 width: vm.width(for: tool),
                 color: tool == .eraser ? .secondary : vm.inkColor
+            )
+            .transition(.opacity.combined(with: .scale(scale: 0.94, anchor: .bottom)))
+        } else if isColorScrubbing {
+            FavoriteColorHoldIndicator(
+                colors: vm.settings.favoriteColors,
+                selectedHex: vm.inkColorHex
             )
             .transition(.opacity.combined(with: .scale(scale: 0.94, anchor: .bottom)))
         } else if isLassoHeld {
@@ -198,8 +245,11 @@ struct NotebookToolbar: View {
                 .foregroundStyle(selected ? selectedToolForeground(for: tool) : Color.primary)
                 .background { if selected { Circle().fill(fill) } }
                 .overlay {
-                    if selected && tool != .eraser && selectedToolNeedsOutline {
-                        Circle().strokeBorder(.primary.opacity(0.35), lineWidth: 1)
+                    if selected {
+                        Circle().strokeBorder(
+                            selectedToolForeground(for: tool).opacity(0.55),
+                            lineWidth: selectedToolBorderWidth(for: tool)
+                        )
                     }
                 }
                 .symbolEffect(.bounce, options: .speed(1.55), value: selected)
@@ -224,17 +274,13 @@ struct NotebookToolbar: View {
 
     private func activateToolbarTool(_ tool: WritingTool) {
         pressedTool = nil
-        isLassoActive = false
         isRefinementActive = false
         vm.selectTool(tool)
     }
 
     private var lassoButton: some View {
         Button {
-            isLassoHeld = false
-            isLassoActive = true
-            isRefinementActive = false
-            vm.isAgenticLayersActive = false
+            activateLassoTool()
         } label: {
             Image(systemName: "lasso")
                 .font(.system(size: 17, weight: .medium))
@@ -249,10 +295,21 @@ struct NotebookToolbar: View {
                 .animation(.spring(response: 0.22, dampingFraction: 0.62), value: isLassoActive)
         }
         .highPriorityGesture(lassoHoldGesture)
+        // As with the writing tools, the high-priority hold can consume the
+        // Button's short tap inside the adaptive horizontal toolbar.
+        .simultaneousGesture(
+            TapGesture().onEnded { _ in activateLassoTool() }
+        )
         .accessibilityIdentifier("tool-lasso")
         .accessibilityLabel("Selection lasso")
         .accessibilityHint("Draw around strokes to select and move them")
         .accessibilityAddTraits(isLassoActive ? [.isSelected] : [])
+    }
+
+    private func activateLassoTool() {
+        isLassoHeld = false
+        vm.activateLasso()
+        isRefinementActive = false
     }
 
     private var lassoHoldGesture: some Gesture {
@@ -260,9 +317,8 @@ struct NotebookToolbar: View {
             .sequenced(before: DragGesture(minimumDistance: 0))
             .onChanged { value in
                 guard case .second(true, _) = value, !isLassoHeld else { return }
-                isLassoActive = true
+                vm.activateLasso()
                 isRefinementActive = false
-                vm.isAgenticLayersActive = false
                 withAnimation(.easeOut(duration: 0.12)) {
                     isLassoHeld = true
                 }
@@ -276,8 +332,11 @@ struct NotebookToolbar: View {
 
     private var refinementButton: some View {
         Button {
+            vm.deactivateLasso(preservingSelection: true)
+            vm.isAgenticLayersActive = false
             if isRefinementActive {
                 isRefinementActive = false
+                isRefinementLassoActive = false
             } else {
                 isLassoActive = false
                 isRefinementActive = true
@@ -299,6 +358,44 @@ struct NotebookToolbar: View {
         .accessibilityLabel("Magic Eraser")
         .accessibilityHint("Draw a closed circle with Apple Pencil to reveal AI guidance Pins")
         .accessibilityAddTraits(isRefinementActive ? [.isSelected] : [])
+        .anchorPreference(key: RefinementButtonBoundsPreferenceKey.self, value: .bounds) { $0 }
+    }
+
+    private var refinementLassoBubble: some View {
+        HStack(spacing: 8) {
+            Button {
+                isRefinementLassoActive.toggle()
+            } label: {
+                Label(
+                    isRefinementLassoActive ? "Drawing lasso…" : "Refinement lasso",
+                    systemImage: "lasso.badge.sparkles"
+                )
+                .font(.subheadline.weight(.semibold))
+                .padding(.horizontal, 13)
+                .padding(.vertical, 10)
+                .foregroundStyle(isRefinementLassoActive ? Color.white : Color.primary)
+                .background(.ultraThinMaterial, in: Capsule())
+                .background(isRefinementLassoActive ? Color.indigo : Color.clear, in: Capsule())
+                .overlay(Capsule().strokeBorder(.primary.opacity(0.10)))
+                .shadow(color: .black.opacity(0.12), radius: 7, y: 3)
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("ai-lasso-button")
+
+            Button {
+                isRefinementLassoActive = false
+                isRefinementActive = false
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.subheadline.weight(.bold))
+                    .frame(width: 38, height: 38)
+                    .foregroundStyle(.primary)
+                    .background(.ultraThinMaterial, in: Circle())
+                    .overlay(Circle().strokeBorder(.primary.opacity(0.10)))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Close refinement tool")
+        }
     }
 
     private func widthAdjustmentGesture(for tool: WritingTool) -> some Gesture {
@@ -356,40 +453,13 @@ struct NotebookToolbar: View {
         return vm.inkUIColor.isLight ? .black : .white
     }
 
-    private var selectedToolNeedsOutline: Bool {
-        let style: UIUserInterfaceStyle = colorScheme == .dark ? .dark : .light
-        let toolbarBackground = UIColor.systemGroupedBackground.resolvedColor(
-            with: UITraitCollection(userInterfaceStyle: style)
-        )
-        return contrastRatio(vm.inkUIColor, toolbarBackground) < 1.4
-    }
-
-    private func contrastRatio(_ first: UIColor, _ second: UIColor) -> CGFloat {
-        let lighter = max(relativeLuminance(first), relativeLuminance(second))
-        let darker = min(relativeLuminance(first), relativeLuminance(second))
-        return (lighter + 0.05) / (darker + 0.05)
-    }
-
-    private func relativeLuminance(_ color: UIColor) -> CGFloat {
-        var red: CGFloat = 0
-        var green: CGFloat = 0
-        var blue: CGFloat = 0
-        var alpha: CGFloat = 0
-        guard color.getRed(&red, green: &green, blue: &blue, alpha: &alpha) else { return 0 }
-
-        func linearize(_ component: CGFloat) -> CGFloat {
-            component <= 0.04045
-                ? component / 12.92
-                : pow((component + 0.055) / 1.055, 2.4)
-        }
-
-        return 0.2126 * linearize(red)
-            + 0.7152 * linearize(green)
-            + 0.0722 * linearize(blue)
+    private func selectedToolBorderWidth(for tool: WritingTool) -> CGFloat {
+        let proportionalWidth = vm.width(for: tool).squareRoot()
+        return min(max(proportionalWidth, 1.5), 7)
     }
 
     private var colorButton: some View {
-        Button { showColors = true } label: {
+        Button { presentColorPicker() } label: {
             Circle()
                 .fill(vm.inkColor)
                 .frame(width: 24, height: 24)
@@ -397,12 +467,87 @@ struct NotebookToolbar: View {
                 .overlay(Circle().strokeBorder(.primary.opacity(0.18), lineWidth: 1))
                 .symbolEffect(.pulse, value: showColors)
         }
+        .highPriorityGesture(colorScrubGesture)
+        // Match the writing tools: the priority hold protects scrubbing from
+        // the adaptive ScrollView, while this observer preserves a short tap.
+        .simultaneousGesture(
+            TapGesture().onEnded { _ in presentColorPicker() }
+        )
+        .sensoryFeedback(.selection, trigger: vm.inkColorHex)
         .accessibilityIdentifier("toolbar-color")
         .accessibilityLabel("Ink color")
+        .accessibilityValue(vm.inkColorHex)
+        .accessibilityHint("Tap for all colors. Long press, then slide left or right through favorites")
+        .accessibilityAdjustableAction { direction in
+            adjustFavoriteColor(direction)
+        }
         .popover(isPresented: $showColors) {
             ColorPalettePopover(vm: vm)
                 .presentationCompactAdaptation(.popover)
         }
+    }
+
+    private func presentColorPicker() {
+        showColors = true
+    }
+
+    private var colorScrubGesture: some Gesture {
+        LongPressGesture(minimumDuration: 0.45, maximumDistance: 24)
+            .sequenced(before: DragGesture(minimumDistance: 0))
+            .onChanged { value in
+                guard case .second(true, let drag?) = value else { return }
+                beginColorScrub()
+                guard isColorScrubbing else { return }
+                let delta = Int((drag.translation.width / 34).rounded())
+                selectFavoriteColor(at: colorScrubStartIndex + delta)
+            }
+            .onEnded { _ in
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    isColorScrubbing = false
+                }
+            }
+    }
+
+    private func beginColorScrub() {
+        guard !isColorScrubbing, !vm.settings.favoriteColors.isEmpty else { return }
+        showColors = false
+        pressedTool = nil
+        isLassoHeld = false
+        isRefinementActive = false
+        colorScrubStartIndex = vm.settings.favoriteColors.firstIndex {
+            $0.caseInsensitiveCompare(vm.inkColorHex) == .orderedSame
+        } ?? 0
+        selectFavoriteColor(at: colorScrubStartIndex)
+        withAnimation(.easeOut(duration: 0.12)) {
+            isColorScrubbing = true
+        }
+    }
+
+    private func selectFavoriteColor(at proposedIndex: Int) {
+        let favorites = vm.settings.favoriteColors
+        guard !favorites.isEmpty else { return }
+        let index = min(max(proposedIndex, 0), favorites.count - 1)
+        let hex = favorites[index]
+        guard vm.inkColorHex.caseInsensitiveCompare(hex) != .orderedSame else { return }
+        vm.selectColor(hex)
+    }
+
+    private func adjustFavoriteColor(_ direction: AccessibilityAdjustmentDirection) {
+        let favorites = vm.settings.favoriteColors
+        guard !favorites.isEmpty else { return }
+        let currentIndex = favorites.firstIndex {
+            $0.caseInsensitiveCompare(vm.inkColorHex) == .orderedSame
+        }
+        let targetIndex: Int
+        switch direction {
+        case .increment:
+            targetIndex = min((currentIndex ?? -1) + 1, favorites.count - 1)
+        case .decrement:
+            targetIndex = max((currentIndex ?? favorites.count) - 1, 0)
+        @unknown default:
+            return
+        }
+        selectFavoriteColor(at: targetIndex)
     }
 
     private var agenticLayersButton: some View {
@@ -457,6 +602,14 @@ struct NotebookToolbar: View {
         }
         .disabled(!enabled)
         .accessibilityLabel(label)
+    }
+}
+
+private struct RefinementButtonBoundsPreferenceKey: PreferenceKey {
+    static let defaultValue: Anchor<CGRect>? = nil
+
+    static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
+        value = nextValue() ?? value
     }
 }
 
@@ -707,7 +860,9 @@ struct NotebookToolbarSettingsView: View {
     @Binding var pencilSqueezeEnabled: Bool
     @Binding var pencilHoverPreviewEnabled: Bool
     let isAnalysisAccessConfigured: Bool
+    let analysisAccessSummary: String
     let onEditAnalysisAccess: () -> Void
+    let onDismiss: () -> Void
 
     private let columns = Array(repeating: GridItem(.fixed(34), spacing: 12), count: 6)
 
@@ -729,6 +884,14 @@ struct NotebookToolbarSettingsView: View {
                         .accessibilityIdentifier("settings-agentic-layers")
                 }
                 .font(.subheadline)
+
+                Picker("Page scroll direction", selection: $vm.settings.pageScrollDirection) {
+                    ForEach(NotebookPageScrollDirection.allCases) { direction in
+                        Text(direction.label).tag(direction)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .accessibilityIdentifier("settings-page-scroll-direction")
 
                 Divider()
 
@@ -775,9 +938,10 @@ struct NotebookToolbarSettingsView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Notebook analysis access")
                                 .foregroundStyle(.primary)
-                            Text(isAnalysisAccessConfigured ? "Provider configured" : "Demo mode")
+                            Text(analysisAccessSummary)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
+                                .lineLimit(2)
                         }
 
                         Spacer()
@@ -789,6 +953,8 @@ struct NotebookToolbarSettingsView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Notebook analysis access")
+                .accessibilityValue(analysisAccessSummary)
                 .accessibilityIdentifier("settings-analysis-access")
                 .accessibilityHint("View or configure agent provider access for notebook analysis")
 
@@ -821,6 +987,7 @@ struct NotebookToolbarSettingsView: View {
         }
         .frame(width: 340, height: 520)
         .accessibilityIdentifier("notebook-toolbar-settings")
+        .onDisappear(perform: onDismiss)
     }
 
     private func favoriteSwatch(_ hex: String) -> some View {
@@ -947,6 +1114,72 @@ private struct ToolWidthHoldIndicator: View {
                     .offset(x: (trackWidth - thumbDiameter) * progress)
             }
             .frame(width: trackWidth, height: thumbDiameter)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 13))
+        .overlay(RoundedRectangle(cornerRadius: 13).strokeBorder(.primary.opacity(0.1)))
+        .shadow(color: .black.opacity(0.16), radius: 8, y: 3)
+    }
+}
+
+private struct FavoriteColorHoldIndicator: View {
+    let colors: [String]
+    let selectedHex: String
+
+    private let maximumVisibleColors = 7
+
+    private var selectedIndex: Int {
+        colors.firstIndex {
+            $0.caseInsensitiveCompare(selectedHex) == .orderedSame
+        } ?? 0
+    }
+
+    private var visibleRange: Range<Int> {
+        guard colors.count > maximumVisibleColors else { return 0..<colors.count }
+        let lowerBound = min(
+            max(selectedIndex - maximumVisibleColors / 2, 0),
+            colors.count - maximumVisibleColors
+        )
+        return lowerBound..<(lowerBound + maximumVisibleColors)
+    }
+
+    var body: some View {
+        VStack(spacing: 7) {
+            Text("Favorite \(selectedIndex + 1) of \(colors.count)")
+                .font(.caption2.monospacedDigit().weight(.semibold))
+
+            HStack(spacing: 7) {
+                if visibleRange.lowerBound > 0 {
+                    Image(systemName: "chevron.left")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(.secondary)
+                }
+
+                ForEach(Array(visibleRange), id: \.self) { index in
+                    let uiColor = UIColor(hex: colors[index]) ?? .black
+                    let isSelected = index == selectedIndex
+                    Circle()
+                        .fill(Color(uiColor))
+                        .frame(width: 22, height: 22)
+                        .overlay(Circle().strokeBorder(.primary.opacity(0.18), lineWidth: 1))
+                        .overlay {
+                            if isSelected {
+                                Circle()
+                                    .strokeBorder(uiColor.isLight ? Color.black : Color.white, lineWidth: 2)
+                                    .padding(3)
+                            }
+                        }
+                        .scaleEffect(isSelected ? 1.18 : 1)
+                        .animation(.spring(response: 0.2, dampingFraction: 0.7), value: isSelected)
+                }
+
+                if visibleRange.upperBound < colors.count {
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(.secondary)
+                }
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 9)

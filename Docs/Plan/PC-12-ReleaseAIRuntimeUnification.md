@@ -308,6 +308,16 @@ network request, Debug/scenario harness, or device action.
 
 ## Session log
 
+- 2026-07-21 — Manual Release retry confirmed that the private Codex endpoint
+  still did not return the forced `place_pins` function-call dialect. Replaced
+  the pretend executable tool with the Responses structured-output contract:
+  the same masked image/prompt now requests strict `text.format` JSON named
+  `place_pins`, and the assistant text is validated into the existing Pin
+  drafts. Legacy function-call decoding remains bounded compatibility only.
+  Fresh exact-device signed Release build/install/normal launch succeeded from
+  `tmp/build/pc12-structured-pin-text/DerivedData/Build/Products/Release-iphoneos/TuberNotes.app`.
+  No Debug/scenario/test harness, visual verifier, automated login, or provider
+  request ran.
 - 2026-07-21 — Fixed the apparent no-op after **Explain**. The attached menu
   previously hid `agentError` because failures were rendered only in the
   separate assistant sidebar. It now keeps the selection, displays a specific

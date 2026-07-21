@@ -1,6 +1,6 @@
 # PC-6 — Agent provider unification
 
-Status: **implemented — host-checked; Apple/device verification blocked**
+Status: **implemented — provider access host-checked; Apple/device/live verification blocked**
 
 Target branch: `sive/dev`
 
@@ -87,6 +87,33 @@ Recorded scenarios and no-credential demo behavior remain the defaults.
   the exact-device prerequisite is unavailable.
 
 ## Session log
+
+- 2026-07-20 — Reopened at user request to prove that every model-provider
+  control is reachable from the normal notebook UI and that the shared access
+  value reaches both analysis and Pin/conversation transports with useful
+  validation and recovery. Existing uncommitted PC-7 conversation work overlaps
+  `AgentSidebarView` and `NotebookViewModel`; this pass will preserve it and
+  limit changes to separable provider behavior, focused checks, and this PC-6
+  status. Canonical device evidence remains subject to the exact pinned-iPad
+  prerequisite.
+- 2026-07-20 — Completed the bounded accessibility/runtime follow-up. The
+  notebook-settings entry now hands provider presentation off from the
+  popover's actual disappearance instead of a 0.25-second timer; settings and
+  the Agentic Layer show the selected provider/model; provider, credential,
+  model, save, and removal controls have explicit accessibility identifiers and
+  labels; and 401/403/429 failures give actionable redacted recovery copy.
+  Added focused UI/shared-access checks plus Chat Completions extraction
+  coverage for the OpenAI route. Provider and adjacent interaction checks pass
+  14/14, the source secret scan and `git diff --check` pass, and evidence is in
+  `tmp/verify/pc-6-provider-access/host-evidence.md`. Repository-wide Python
+  discovery passes 40/41; its sole failure is the unchanged
+  `test_verify_scenario_truthfulness` fixture passing 13 arguments to the
+  verifier's newer 19-argument runtime assertion, unrelated to PC-6. This host
+  has no Xcode, Swift compiler, or `.tubernotes-device-session.json`, so build,
+  scenarios, screenshots, crash/console collection, physical layout/VoiceOver
+  inspection, and separately authorized live-provider calls remain uncollected.
+  Stopped at the exact-device prerequisite without attempting credential
+  discovery, a live call, or a simulator fallback.
 
 - 2026-07-20 — Started from dirty `sive/dev` at `69efea9`, preserving unrelated
   PC-5 notebook/Pencil work. The named source is remote branch tip `ac4fa5e`;

@@ -13,9 +13,20 @@ zoomable PencilKit page with a compact floating toolbar.
 - Use the adjacent sparkle-lasso to analyze a region and place guidance Pins on
   the original page; it never changes ink or placed images.
 - Add images, pages, and drawing layers without leaving the page.
-- Export the current page as PDF or the note data as a `.spud` archive. `.spud`
-  preserves full Pin annotations and Agentic Layer visibility; compressed PDF
-  export is drawing-only and contains no Pin, citation, or conversation markup.
+- Import a version 3 `.spud` file from the library. The imported document opens
+  as a new notebook, preserving its page and content identities without
+  overwriting an existing library item.
+- Export the complete notebook as PDF or as an editable `.spud` archive. PDF
+  preserves every page's visible ink in order but remains drawing-only, with no
+  Pin, citation, or conversation markup. `.spud` preserves the full notebook,
+  including page identities, templates, images, drawing layers, Pins, Agentic
+  Layer visibility, cover, settings, and timestamps. SPUD is a prerelease,
+  version-3-only format; earlier experimental versions are not accepted. Before
+  Files opens, choose the entire document or any set of numbered pages. Custom
+  exports keep notebook order, and custom SPUD files retain only Pins attached
+  to the selected pages. PDF also offers an opt-in workspace background that
+  adds each selected page's paper template and placed images beneath vector ink;
+  Pins, conversations, citations, and app chrome remain excluded.
 
 ## Agentic layers and Pins
 
@@ -26,20 +37,23 @@ exposed as a separate global canvas tool.
 Each Agentic Layer chip is an explicit hidden/active toggle. Activating one
 shows only its Pins for the current page; tapping the active chip, selecting a
 drawing tool, or selecting a drawing layer fully hides Agentic Layer content.
-The toolbar's filled gradient and the animated page-edge glow appear only while
-an Agentic Layer is active, not merely while the layer picker is open.
+The toolbar's filled gradient, animated page-edge glow, and colored ambient
+background gradients appear only while an Agentic Layer is active, not merely
+while the layer picker is open. Hiding it returns the ambient background to its
+neutral white/gray treatment.
 
 “Ask on this layer” opens the frosted question panel. Its answer is persisted as
 a Pin at the selection center on the active Agentic Layer, so closing the panel
 does not discard the visual result.
 
-The question panel derives a cycle-safe conversation tree from those same
-persisted Pins. Selecting a node makes it the parent of the next response; the
-child reuses the parent's page region and bounded answer context and persists
-an optional parent-thread link. This is Pin branching, not a second transcript
-store. Expand a completed Pin to Continue from it directly. Drag the Pin dot to
-move its page-normalized anchor; the original semantic selection region stays
-unchanged.
+The question panel derives a cycle-safe conversation history from those same
+persisted Pins. Selecting a response continues the same lineage from that
+point; the next response reuses its page region and bounded lineage context,
+persists an optional parent-thread link, and becomes the active continuation.
+Returning to an earlier response can diverge from the later path, but ordinary
+follow-ups are presented as continuation rather than branching. Expand a
+completed Pin to Continue from it directly. Drag the Pin dot to move its
+page-normalized anchor; the original semantic selection region stays unchanged.
 
 ## Visual character
 

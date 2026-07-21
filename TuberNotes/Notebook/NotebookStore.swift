@@ -77,6 +77,31 @@ final class NotebookStore: ObservableObject {
         save(copy)
     }
 
+    @discardableResult
+    func importSPUD(from sourceURL: URL) throws -> Notebook {
+        let isAccessing = sourceURL.startAccessingSecurityScopedResource()
+        defer {
+            if isAccessing {
+                sourceURL.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        let data = try Data(contentsOf: sourceURL)
+        let archived = try TuberNoteArchiveCodec.decode(data).notebook
+        let imported = Notebook(
+            id: UUID(),
+            title: archived.title,
+            cover: archived.cover,
+            pages: archived.pages,
+            agenticLayers: archived.agenticLayers,
+            createdAt: archived.createdAt,
+            updatedAt: Date(),
+            settings: archived.settings
+        )
+        save(imported)
+        return imported
+    }
+
     func delete(_ notebook: Notebook) {
         try? FileManager.default.removeItem(at: url(for: notebook.id))
         notebooks.removeAll { $0.id == notebook.id }

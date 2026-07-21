@@ -1,6 +1,8 @@
+import CoreImage
 import PhotosUI
 import SwiftUI
 import UniformTypeIdentifiers
+import Vision
 
 /// Editor for a single notebook: a GoodNotes-style vertical page (paper is drawn
 /// inside the scrolling canvas), the floating menu bar, and the page navigator.
@@ -13,6 +15,7 @@ struct NotebookView: View {
     @AppStorage(AgentProviderAccess.credentialStorageKey) private var agentCredential = ""
     @AppStorage(AgentProviderAccess.providerStorageKey) private var agentProviderRaw = AgentProvider.openAI.rawValue
     @AppStorage(AgentAccessMethod.storageKey) private var agentAccessMethodRaw = AgentAccessMethod.apiKey.rawValue
+    @AppStorage(AgentProviderAccess.modelStorageKey) private var agentModel = ""
 #endif
     @ObservedObject private var openAILogin = OpenAICodexLoginSession.shared
     @AppStorage("tuber.pencilDoubleTap") private var pencilDoubleTapEnabled = true
@@ -25,6 +28,7 @@ struct NotebookView: View {
     @State private var selectedAgentParentThreadID: UUID?
     @State private var showProviderAccessPopup = false
     @State private var showToolbarSettings = false
+    @State private var openProviderAccessAfterToolbarSettings = false
     @State private var isRefinementActive = false
     @State private var magicEraserPath: [PageNormalizedPoint] = []
     @State private var magicEraserSelection: SelectionArtifact?
@@ -32,13 +36,22 @@ struct NotebookView: View {
     @State private var isMagicAskExpanded = false
     @State private var pendingGuidanceAfterSignIn: SelectionArtifact?
     @State private var pendingGuidancePrompt: String?
+    @State private var isRefinementLassoActive = false
     @State private var showExportOptions = false
     @State private var showFileExporter = false
     @State private var exportContentType = UTType.pdf
+    @State private var exportPageScope = ExportPageScope.entireDocument
+    @State private var selectedExportPageIDs = Set<UUID>()
     @State private var pendingExportPresentation: PendingExportPresentation?
     @State private var isPageLocked = false
     @State private var pickerItem: PhotosPickerItem?
+    @State private var pendingImageImport: PendingImageImport?
+    @State private var removesImportedImageBackground = false
+    @State private var isPreparingImageImport = false
+    @State private var imageImportTask: Task<Void, Never>?
+    @State private var imageImportError: String?
     @State private var pdfTolerance = Double(NotePDFExporter.defaultTolerance)
+    @State private var includePDFWorkspaceBackground = false
     @State private var exportDocument = NotebookExportDocument()
     @State private var exportError: String?
     @State private var pageViewportFrame = CGRect.zero
@@ -47,7 +60,12 @@ struct NotebookView: View {
     @State private var pencilPaletteMode: PencilShortcutPalette.Mode = .full
     @State private var flipOffset: CGFloat = 0
     @State private var isFlipAnimating = false
-    @State private var pageContainerWidth: CGFloat = 1024
+    @State private var pageContainerSize = CGSize(width: 1024, height: 1024)
+    @State private var isAddPageHoldActive = false
+    @State private var addPageHoldProgress: CGFloat = 0
+    @State private var addPageHoldToken = UUID()
+    @State private var didAddPageDuringCurrentGesture = false
+    @State private var addPageHoldCompletionCount = 0
 
     init(notebook: Notebook, store: NotebookStore) {
         _vm = StateObject(wrappedValue: NotebookViewModel(notebook: notebook, store: store))
@@ -55,7 +73,10 @@ struct NotebookView: View {
 
     var body: some View {
         ZStack {
-            AmbientBackground(rippleModel: rippleModel)
+            AmbientBackground(
+                rippleModel: rippleModel,
+                isAgenticLayerActive: vm.isAgenticLayersActive
+            )
 
             // The UIKit observer attaches passively at the window level. It
             // reports Pencil movement without becoming a hit-test target.
@@ -115,6 +136,7 @@ struct NotebookView: View {
                     undo: vm.undo,
                     isLassoActive: $vm.isLassoActive,
                     isRefinementActive: $isRefinementActive,
+                    isRefinementLassoActive: $isRefinementLassoActive,
                     onShowPages: { withAnimation { showPages = true } },
                     onAskAgent: { withAnimation { showAgentSidebar = true } }
                 )
@@ -180,8 +202,14 @@ struct NotebookView: View {
         }
         .sheet(isPresented: $showExportOptions, onDismiss: presentPendingExport) {
             exportOptions
-                .presentationDetents([.height(380)])
+                .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
+        }
+        .sheet(item: $pendingImageImport) { pending in
+            imageImportOptions(for: pending)
+                .presentationDetents([.medium])
+                .presentationDragIndicator(.visible)
+                .interactiveDismissDisabled(isPreparingImageImport)
         }
         .fileExporter(
             isPresented: $showFileExporter,
@@ -197,12 +225,20 @@ struct NotebookView: View {
         } message: {
             Text(exportError ?? "The file could not be exported.")
         }
+        .alert("Couldn’t import image", isPresented: imageImportErrorBinding) {
+            Button("OK", role: .cancel) { imageImportError = nil }
+        } message: {
+            Text(imageImportError ?? "The image could not be prepared.")
+        }
         .onChange(of: pickerItem) { _, item in
             guard let item else { return }
             Task {
                 if let data = try? await item.loadTransferable(type: Data.self),
                    let image = UIImage(data: data) {
-                    vm.addImage(data: data, aspect: image.size.width / max(image.size.height, 1))
+                    pendingImageImport = PendingImageImport(data: data, preview: image)
+                    removesImportedImageBackground = false
+                } else {
+                    imageImportError = "TuberNotes couldn’t read that photo."
                 }
                 pickerItem = nil
             }
@@ -212,7 +248,10 @@ struct NotebookView: View {
             if showAgentSidebar { withAnimation { showAgentSidebar = false } }
             if showAgentChatTab { withAnimation { showAgentChatTab = false } }
         }
-        .onChange(of: vm.currentDrawingLayerID) { _, _ in dismissPencilPalette() }
+        .onChange(of: vm.currentDrawingLayerID) { _, _ in
+            dismissPencilPalette()
+            isRefinementLassoActive = false
+        }
         .onChange(of: vm.isLassoActive) { _, active in
             if active { dismissPencilPalette() }
         }
@@ -243,7 +282,17 @@ struct NotebookView: View {
         .onChange(of: vm.isArrangingImages) { _, active in
             if active { dismissPencilPalette() }
         }
-        .onDisappear { vm.persistNow() }
+        .onChange(of: vm.settings) { _, _ in vm.scheduleSave() }
+        .onChange(of: vm.settings.pageScrollDirection) { _, _ in
+            cancelAddPageHold()
+            flipOffset = 0
+        }
+        .onDisappear {
+            cancelAddPageHold()
+            imageImportTask?.cancel()
+            imageImportTask = nil
+            vm.persistNow()
+        }
     }
 
     private var templateMenu: some View {
@@ -331,7 +380,7 @@ struct NotebookView: View {
 
     private var exportButton: some View {
         Button {
-            showExportOptions = true
+            openExportOptions()
         } label: {
             Image(systemName: "square.and.arrow.up")
         }
@@ -354,11 +403,15 @@ struct NotebookView: View {
                 pencilSqueezeEnabled: $pencilSqueezeEnabled,
                 pencilHoverPreviewEnabled: $pencilHoverPreviewEnabled,
                 isAnalysisAccessConfigured: isAnalysisAccessConfigured,
+                analysisAccessSummary: analysisAccessSummary,
                 onEditAnalysisAccess: {
+                    openProviderAccessAfterToolbarSettings = true
                     showToolbarSettings = false
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                        withAnimation { showProviderAccessPopup = true }
-                    }
+                },
+                onDismiss: {
+                    guard openProviderAccessAfterToolbarSettings else { return }
+                    openProviderAccessAfterToolbarSettings = false
+                    withAnimation { showProviderAccessPopup = true }
                 }
             )
                 .presentationCompactAdaptation(.popover)
@@ -380,12 +433,36 @@ struct NotebookView: View {
 #endif
     }
 
+    private var analysisAccessSummary: String {
+#if DEBUG
+        guard let access = analysisProviderAccess else { return "Demo mode" }
+        return "\(access.provider.label) · \(access.model)"
+#else
+        return "Demo mode"
+#endif
+    }
+
+#if DEBUG
+    private var analysisProviderAccess: AgentProviderAccess? {
+        AgentProviderAccess(
+            provider: AgentProvider(rawValue: agentProviderRaw) ?? .openAI,
+            credential: agentCredential,
+            model: agentModel
+        )
+    }
+#endif
+
     private var arrangeControls: some View {
         VStack {
             HStack(spacing: 10) {
-                Label("Move & pinch to resize", systemImage: "hand.draw")
+                Label("Move, pinch, or twist", systemImage: "hand.draw")
                     .font(.footnote.weight(.medium))
                 Divider().frame(height: 18)
+                Button { vm.rotateSelectedImage() } label: {
+                    Label("Rotate", systemImage: "rotate.right")
+                }
+                .disabled(vm.selectedImageID == nil)
+                .accessibilityIdentifier("rotate-selected-image")
                 Button(role: .destructive) { vm.deleteSelectedImage() } label: {
                     Label("Delete", systemImage: "trash")
                 }
@@ -401,86 +478,336 @@ struct NotebookView: View {
         }
     }
 
-    private var exportOptions: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            HStack {
-                Text("Export Note")
-                    .font(.headline)
-                Spacer()
-                Button {
-                    dismissExportOptions()
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.secondary)
+    private func imageImportOptions(for pending: PendingImageImport) -> some View {
+        NavigationStack {
+            VStack(spacing: 18) {
+                ZStack {
+                    CheckerboardBackground()
+                    Image(uiImage: pending.preview)
+                        .resizable()
+                        .scaledToFit()
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Close export options")
-                .accessibilityIdentifier("export-options-close")
-            }
+                .frame(maxWidth: .infinity, maxHeight: 230)
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
 
-            Text("PDF Compression")
-                .font(.subheadline.weight(.semibold))
+                Toggle(isOn: $removesImportedImageBackground) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Make background transparent")
+                        Text("Keeps the foreground subjects using on-device image processing.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .disabled(isPreparingImageImport)
+                .accessibilityIdentifier("image-import-remove-background")
 
-            Slider(value: $pdfTolerance, in: 0.05...2, step: 0.05) {
-                Text("Compression")
-            } minimumValueLabel: {
-                Text("Low")
-            } maximumValueLabel: {
-                Text("High")
-            }
-            .accessibilityIdentifier("pdf-compression-slider")
-
-            Text("Maximum stroke deviation: \(pdfTolerance, specifier: "%.2f") pt")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            Button {
-                preparePDFExport()
-            } label: {
-                Label("Export PDF", systemImage: "square.and.arrow.up")
+                Button {
+                    importPendingImage(pending)
+                } label: {
+                    HStack {
+                        if isPreparingImageImport { ProgressView() }
+                        Text(isPreparingImageImport ? "Preparing…" : "Add to Page")
+                    }
                     .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(isPreparingImageImport)
+                .accessibilityIdentifier("image-import-confirm")
             }
-            .buttonStyle(.borderedProminent)
-            .accessibilityIdentifier("pdf-export-confirm")
-
-            Divider()
-
-            Button(action: prepareSPUDExport) {
-                Label("Export SPUD", systemImage: "archivebox")
-                    .frame(maxWidth: .infinity)
+            .padding(20)
+            .navigationTitle("Import Image")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { pendingImageImport = nil }
+                        .disabled(isPreparingImageImport)
+                }
             }
-            .buttonStyle(.bordered)
-            .accessibilityIdentifier("spud-export-confirm")
         }
-        .padding(20)
-        .frame(width: 330)
+    }
+
+    private func importPendingImage(_ pending: PendingImageImport) {
+        guard !isPreparingImageImport else { return }
+        imageImportTask?.cancel()
+        isPreparingImageImport = true
+        let shouldRemoveBackground = removesImportedImageBackground
+        let importID = pending.id
+
+        imageImportTask = Task {
+            defer {
+                isPreparingImageImport = false
+                imageImportTask = nil
+            }
+            do {
+                let data = shouldRemoveBackground
+                    ? try await ImageBackgroundRemover.removeBackground(from: pending.data)
+                    : pending.data
+                try Task.checkCancellation()
+                guard pendingImageImport?.id == importID else { return }
+                guard let image = UIImage(data: data) else {
+                    throw ImageBackgroundRemovalError.unreadableResult
+                }
+                vm.addImage(
+                    data: data,
+                    aspect: image.size.width / max(image.size.height, 1)
+                )
+                pendingImageImport = nil
+                removesImportedImageBackground = false
+            } catch is CancellationError {
+                return
+            } catch {
+                imageImportError = error.localizedDescription
+            }
+        }
+    }
+
+    private var exportOptions: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                HStack {
+                    Text("Export Note")
+                        .font(.headline)
+                    Spacer()
+                    Button {
+                        dismissExportOptions()
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Close export options")
+                    .accessibilityIdentifier("export-options-close")
+                }
+
+                Text("Pages")
+                    .font(.subheadline.weight(.semibold))
+
+                Picker("Pages", selection: exportPageScopeBinding) {
+                    Text("Entire Document").tag(ExportPageScope.entireDocument)
+                    Text("Choose Pages").tag(ExportPageScope.selectedPages)
+                }
+                .pickerStyle(.segmented)
+                .accessibilityIdentifier("export-page-scope")
+
+                if exportPageScope == .selectedPages {
+                    exportPagePicker
+                }
+
+                Text(exportPageSummary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("export-page-summary")
+
+                Divider()
+
+                Text("PDF Compression")
+                    .font(.subheadline.weight(.semibold))
+
+                Toggle("Include workspace background", isOn: $includePDFWorkspaceBackground)
+                    .accessibilityIdentifier("pdf-include-workspace-background")
+
+                Text("Adds each page’s paper template and placed images beneath the ink.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Slider(value: $pdfTolerance, in: 0.05...2, step: 0.05) {
+                    Text("Compression")
+                } minimumValueLabel: {
+                    Text("Low")
+                } maximumValueLabel: {
+                    Text("High")
+                }
+                .accessibilityIdentifier("pdf-compression-slider")
+
+                Text("Maximum stroke deviation: \(pdfTolerance, specifier: "%.2f") pt")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Button {
+                    preparePDFExport()
+                } label: {
+                    Label("Export PDF", systemImage: "square.and.arrow.up")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(exportPages.isEmpty)
+                .accessibilityIdentifier("pdf-export-confirm")
+
+                Divider()
+
+                Button(action: prepareSPUDExport) {
+                    Label("Export SPUD", systemImage: "archivebox")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .disabled(exportPages.isEmpty)
+                .accessibilityIdentifier("spud-export-confirm")
+            }
+            .padding(20)
+        }
+        .frame(width: 360)
+    }
+
+    private var exportPagePicker: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Select pages")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("All") {
+                    selectedExportPageIDs = Set(vm.notebook.pages.map(\.id))
+                }
+                Button("Clear") {
+                    selectedExportPageIDs.removeAll()
+                }
+            }
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(vm.notebook.pages.indices, id: \.self) { index in
+                        let page = vm.notebook.pages[index]
+                        let isSelected = selectedExportPageIDs.contains(page.id)
+                        Button {
+                            toggleExportPage(page.id)
+                        } label: {
+                            HStack(spacing: 5) {
+                                Text("\(index + 1)")
+                                    .monospacedDigit()
+                                if isSelected {
+                                    Image(systemName: "checkmark")
+                                        .font(.caption2.weight(.bold))
+                                }
+                            }
+                            .frame(minWidth: 38)
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(isSelected ? Color.indigo : Color.secondary)
+                        .accessibilityLabel("Page \(index + 1)")
+                        .accessibilityAddTraits(isSelected ? .isSelected : [])
+                        .accessibilityIdentifier("export-page-\(index + 1)")
+                    }
+                }
+            }
+        }
+    }
+
+    private var exportPageScopeBinding: Binding<ExportPageScope> {
+        Binding(
+            get: { exportPageScope },
+            set: { scope in
+                exportPageScope = scope
+                if scope == .selectedPages, selectedExportPageIDs.isEmpty {
+                    selectedExportPageIDs.insert(vm.currentPageID)
+                }
+            }
+        )
+    }
+
+    private var exportPages: [NotebookPage] {
+        switch exportPageScope {
+        case .entireDocument:
+            return vm.notebook.pages
+        case .selectedPages:
+            return vm.notebook.pages.filter { selectedExportPageIDs.contains($0.id) }
+        }
+    }
+
+    private var exportPageSummary: String {
+        let count = exportPages.count
+        if exportPageScope == .entireDocument {
+            return "All \(count) page\(count == 1 ? "" : "s") will be exported."
+        }
+        guard count > 0 else { return "Choose at least one page to export." }
+        return "\(count) selected page\(count == 1 ? "" : "s") will be exported in notebook order."
+    }
+
+    private var exportNotebook: Notebook {
+        let pages = exportPages
+        guard pages.count != vm.notebook.pages.count else { return vm.notebook }
+        let exportPageIDs = Set(pages.map(\.id))
+        let layers = vm.notebook.agenticLayers.map { layer in
+            var filtered = layer
+            filtered.conversations = layer.conversations.filter {
+                exportPageIDs.contains($0.pageID)
+            }
+            return filtered
+        }
+        return Notebook(
+            id: vm.notebook.id,
+            title: vm.notebook.title,
+            cover: vm.notebook.cover,
+            pages: pages,
+            agenticLayers: layers,
+            createdAt: vm.notebook.createdAt,
+            updatedAt: vm.notebook.updatedAt,
+            settings: vm.notebook.settings
+        )
+    }
+
+    private func openExportOptions() {
+        exportPageScope = .entireDocument
+        selectedExportPageIDs.removeAll()
+        includePDFWorkspaceBackground = false
+        showExportOptions = true
+    }
+
+    private func toggleExportPage(_ pageID: UUID) {
+        if selectedExportPageIDs.contains(pageID) {
+            selectedExportPageIDs.remove(pageID)
+        } else {
+            selectedExportPageIDs.insert(pageID)
+        }
     }
 
     private func preparePDFExport() {
+        let pages = exportPages
+        guard !pages.isEmpty else { return }
         vm.persistNow()
+        let backgrounds = includePDFWorkspaceBackground
+            ? pages.map { renderWorkspaceBackground(for: $0) }
+            : []
         exportDocument = NotebookExportDocument(data: NotePDFExporter.makePDF(
-            from: vm.currentPage.drawing,
+            from: pages.map(\.drawing),
+            workspaceBackgrounds: backgrounds,
             pageBounds: CGRect(origin: .zero, size: NotebookPageLayout.size),
             tolerance: CGFloat(pdfTolerance)
         ).data)
         queueExportPresentation(.pdf)
     }
 
+    private func renderWorkspaceBackground(for page: NotebookPage) -> UIImage {
+        let pageBounds = CGRect(origin: .zero, size: NotebookPageLayout.size)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        let renderer = UIGraphicsImageRenderer(
+            size: NotebookPageLayout.size,
+            format: format
+        )
+        return renderer.image { rendererContext in
+            let paperView = PaperSheetView(frame: pageBounds)
+            paperView.template = page.template
+            paperView.layer.render(in: rendererContext.cgContext)
+
+            for placedImage in page.images {
+                placedImage.draw(in: CGRect(
+                    x: placedImage.rect.minX * pageBounds.width,
+                    y: placedImage.rect.minY * pageBounds.height,
+                    width: placedImage.rect.width * pageBounds.width,
+                    height: placedImage.rect.height * pageBounds.height
+                ))
+            }
+        }
+    }
+
     private func prepareSPUDExport() {
+        guard !exportPages.isEmpty else { return }
         vm.persistNow()
         do {
-            exportDocument = NotebookExportDocument(data: try TuberNoteArchiveCodec.encode(
-                inkLayers: vm.currentPage.drawingLayers.map { layer in
-                    TuberNoteArchiveCodec.InkLayerInput(
-                        id: layer.id,
-                        name: layer.name,
-                        isVisible: layer.isVisible,
-                        drawing: layer.drawing
-                    )
-                },
-                canvasSize: NotebookPageLayout.size,
-                conversationLayers: vm.conversationLayers
-            ))
+            exportDocument = NotebookExportDocument(
+                data: try TuberNoteArchiveCodec.encode(notebook: exportNotebook)
+            )
             queueExportPresentation(.spud)
         } catch {
             queueExportPresentation(.error(error.localizedDescription))
@@ -529,7 +856,7 @@ struct NotebookView: View {
             .joined(separator: "-")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let title = sanitizedTitle.isEmpty ? "Untitled" : sanitizedTitle
-        return "\(title)-page-\(vm.currentIndex + 1).\(fileExtension)"
+        return "\(title).\(fileExtension)"
     }
 
     private func handleExportCompletion(_ result: Result<URL, Error>) {
@@ -546,6 +873,13 @@ struct NotebookView: View {
         Binding(
             get: { exportError != nil },
             set: { if !$0 { exportError = nil } }
+        )
+    }
+
+    private var imageImportErrorBinding: Binding<Bool> {
+        Binding(
+            get: { imageImportError != nil },
+            set: { if !$0 { imageImportError = nil } }
         )
     }
 
@@ -651,7 +985,13 @@ struct NotebookView: View {
     // MARK: Interactive page turn
 
     private func handlePageFlipChanged(_ translation: CGFloat) {
-        guard !isFlipAnimating else { return }
+        guard !isFlipAnimating, !didAddPageDuringCurrentGesture else { return }
+        if !vm.canGoForward, translation <= -addPageHoldActivationDistance {
+            beginAddPageHoldIfNeeded()
+        } else {
+            cancelAddPageHold()
+        }
+
         var offset = translation
         if (offset < 0 && !vm.canGoForward) || (offset > 0 && !vm.canGoBack) {
             offset *= 0.28
@@ -660,7 +1000,16 @@ struct NotebookView: View {
     }
 
     private func handlePageFlipEnded(_ translation: CGFloat, velocity: CGFloat) {
+        cancelAddPageHold()
+        let addedPage = didAddPageDuringCurrentGesture
+        didAddPageDuringCurrentGesture = false
         guard !isFlipAnimating else { return }
+        if addedPage {
+            withAnimation(.interactiveSpring(response: 0.35, dampingFraction: 0.82)) {
+                flipOffset = 0
+            }
+            return
+        }
         let width = pageTurnDistance
         let threshold = width * 0.28
         let turnsForward = (translation < -threshold || velocity < -800) && vm.canGoForward
@@ -676,6 +1025,65 @@ struct NotebookView: View {
             }
         }
     }
+
+    private func beginAddPageHoldIfNeeded() {
+        guard !isAddPageHoldActive,
+              !didAddPageDuringCurrentGesture,
+              !vm.canGoForward else { return }
+
+        let token = UUID()
+        addPageHoldToken = token
+        addPageHoldProgress = 0
+        isAddPageHoldActive = true
+
+        DispatchQueue.main.async {
+            guard token == addPageHoldToken, isAddPageHoldActive else { return }
+            withAnimation(.linear(duration: addPageHoldDuration)) {
+                addPageHoldProgress = 1
+            }
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + addPageHoldDuration) {
+            guard token == addPageHoldToken,
+                  isAddPageHoldActive,
+                  !didAddPageDuringCurrentGesture,
+                  !vm.canGoForward else { return }
+            didAddPageDuringCurrentGesture = true
+            addPageHoldCompletionCount += 1
+            cancelAddPageHold()
+            completeAddedPageFlip(width: pageTurnDistance)
+        }
+    }
+
+    private func cancelAddPageHold() {
+        guard isAddPageHoldActive || addPageHoldProgress != 0 else { return }
+        addPageHoldToken = UUID()
+        withAnimation(.easeOut(duration: 0.12)) {
+            isAddPageHoldActive = false
+            addPageHoldProgress = 0
+        }
+    }
+
+    private func completeAddedPageFlip(width: CGFloat) {
+        isFlipAnimating = true
+        withAnimation(.easeOut(duration: 0.18)) {
+            flipOffset = -width
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
+            vm.addPage()
+            flipOffset = width
+            DispatchQueue.main.async {
+                withAnimation(.easeOut(duration: 0.20)) { flipOffset = 0 }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.20) {
+                    isFlipAnimating = false
+                }
+            }
+        }
+    }
+
+    private var addPageHoldActivationDistance: CGFloat { 72 }
+    private var addPageHoldDuration: TimeInterval { 0.7 }
 
     private func completePageFlip(forward: Bool, width: CGFloat) {
         isFlipAnimating = true
@@ -696,7 +1104,12 @@ struct NotebookView: View {
     }
 
     private var pageTurnDistance: CGFloat {
-        max(pageContainerWidth, 320)
+        switch vm.settings.pageScrollDirection {
+        case .horizontal:
+            max(pageContainerSize.width, 320)
+        case .vertical:
+            max(pageContainerSize.height, 320)
+        }
     }
 
     private var pageTurnTransition: AnyTransition {
@@ -704,22 +1117,57 @@ struct NotebookView: View {
         switch vm.pageTurnDirection {
         case .forward:
             return .asymmetric(
-                insertion: .offset(x: distance, y: 0),
-                removal: .offset(x: -distance, y: 0)
+                insertion: pageTurnTransitionOffset(distance),
+                removal: pageTurnTransitionOffset(-distance)
             )
         case .backward:
             return .asymmetric(
-                insertion: .offset(x: -distance, y: 0),
-                removal: .offset(x: distance, y: 0)
+                insertion: pageTurnTransitionOffset(-distance),
+                removal: pageTurnTransitionOffset(distance)
             )
         }
     }
 
+    private func pageTurnTransitionOffset(_ distance: CGFloat) -> AnyTransition {
+        switch vm.settings.pageScrollDirection {
+        case .horizontal:
+            .offset(x: distance, y: 0)
+        case .vertical:
+            .offset(x: 0, y: distance)
+        }
+    }
+
     private var pageArea: some View {
-        pageComposition
-            .id(vm.currentPageID)
-            .transition(pageTurnTransition)
-            .accessibilityIdentifier("notebook-page-area")
+        ZStack {
+            pageComposition
+                .id(vm.currentPageID)
+                .transition(pageTurnTransition)
+
+            if isAddPageHoldActive {
+                addPageHoldOverlay
+                    .transition(.opacity.combined(with: .scale(scale: 0.94)))
+            }
+        }
+        .sensoryFeedback(.success, trigger: addPageHoldCompletionCount)
+        .accessibilityIdentifier("notebook-page-area")
+    }
+
+    @ViewBuilder
+    private var addPageHoldOverlay: some View {
+        switch vm.settings.pageScrollDirection {
+        case .horizontal:
+            HStack {
+                Spacer(minLength: 0)
+                AddPageHoldIndicator(progress: addPageHoldProgress)
+                    .padding(.trailing, 22)
+            }
+        case .vertical:
+            VStack {
+                Spacer(minLength: 0)
+                AddPageHoldIndicator(progress: addPageHoldProgress)
+                    .padding(.bottom, showsWorkingToolbar ? 88 : 22)
+            }
+        }
     }
 
     private var pageComposition: some View {
@@ -732,9 +1180,9 @@ struct NotebookView: View {
             width: vm.activeWidth,
             template: vm.currentTemplate,
             zoomScale: vm.zoomScale,
+            pageScrollDirection: vm.settings.pageScrollDirection,
             fingerDrawing: fingerDrawing,
             isLassoActive: vm.isLassoActive,
-            lassoRect: vm.lassoRect,
             snapStraight: snapStraight,
             images: vm.currentPage.images,
             isArrangingImages: vm.isArrangingImages,
@@ -860,13 +1308,16 @@ struct NotebookView: View {
         .padding(.horizontal, 12)
         .padding(.top, 8)
         .padding(.bottom, showsWorkingToolbar ? 74 : 12)
-        .offset(x: flipOffset)
+        .offset(
+            x: vm.settings.pageScrollDirection == .horizontal ? flipOffset : 0,
+            y: vm.settings.pageScrollDirection == .vertical ? flipOffset : 0
+        )
         .background(
             GeometryReader { geometry in
                 Color.clear
-                    .onAppear { pageContainerWidth = geometry.size.width }
-                    .onChange(of: geometry.size.width) { _, width in
-                        pageContainerWidth = width
+                    .onAppear { pageContainerSize = geometry.size }
+                    .onChange(of: geometry.size) { _, size in
+                        pageContainerSize = size
                     }
             }
         )
@@ -1020,10 +1471,144 @@ private struct MagicEraserContextMenu: View {
     }
 }
 
+private struct AddPageHoldIndicator: View {
+    let progress: CGFloat
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ZStack {
+                Circle()
+                    .stroke(Color.accentColor.opacity(0.2), lineWidth: 3)
+                Circle()
+                    .trim(from: 0, to: progress)
+                    .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+                Image(systemName: "plus")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(Color.accentColor)
+            }
+            .frame(width: 28, height: 28)
+
+            Text("Hold to add page")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.primary)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(.ultraThinMaterial, in: Capsule())
+        .overlay {
+            Capsule().stroke(Color.primary.opacity(0.1), lineWidth: 1)
+        }
+        .shadow(color: .black.opacity(0.12), radius: 10, y: 4)
+        .allowsHitTesting(false)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Hold to add page")
+        .accessibilityValue("\(Int((progress * 100).rounded())) percent")
+        .accessibilityIdentifier("add-page-hold-indicator")
+    }
+}
+
+private struct PendingImageImport: Identifiable {
+    let id = UUID()
+    let data: Data
+    let preview: UIImage
+}
+
+private struct CheckerboardBackground: View {
+    var body: some View {
+        Canvas { context, size in
+            let square: CGFloat = 14
+            let rows = Int(ceil(size.height / square))
+            let columns = Int(ceil(size.width / square))
+            for row in 0..<rows {
+                for column in 0..<columns where (row + column).isMultiple(of: 2) {
+                    context.fill(
+                        Path(CGRect(
+                            x: CGFloat(column) * square,
+                            y: CGFloat(row) * square,
+                            width: square,
+                            height: square
+                        )),
+                        with: .color(.secondary.opacity(0.12))
+                    )
+                }
+            }
+        }
+        .background(Color(uiColor: .systemBackground))
+        .accessibilityHidden(true)
+    }
+}
+
+private enum ImageBackgroundRemovalError: LocalizedError {
+    case noForegroundSubject
+    case unreadableResult
+
+    var errorDescription: String? {
+        switch self {
+        case .noForegroundSubject:
+            return "No clear foreground subject was found. Try importing the original image instead."
+        case .unreadableResult:
+            return "TuberNotes couldn’t create a transparent image from that photo."
+        }
+    }
+}
+
+private enum ImageBackgroundRemover {
+    private static let context = CIContext()
+    private static let maximumPixelDimension: CGFloat = 2_560
+
+    static func removeBackground(from data: Data) async throws -> Data {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                continuation.resume(with: Result {
+                    guard var sourceImage = CIImage(
+                        data: data,
+                        options: [.applyOrientationProperty: true]
+                    ), !sourceImage.extent.isEmpty else {
+                        throw ImageBackgroundRemovalError.unreadableResult
+                    }
+                    let longestDimension = max(sourceImage.extent.width, sourceImage.extent.height)
+                    let scale = min(1, maximumPixelDimension / longestDimension)
+                    if scale < 1 {
+                        sourceImage = sourceImage.transformed(
+                            by: CGAffineTransform(scaleX: scale, y: scale)
+                        )
+                    }
+
+                    let request = VNGenerateForegroundInstanceMaskRequest()
+                    let handler = VNImageRequestHandler(ciImage: sourceImage, options: [:])
+                    try handler.perform([request])
+                    guard let observation = request.results?.first,
+                          !observation.allInstances.isEmpty else {
+                        throw ImageBackgroundRemovalError.noForegroundSubject
+                    }
+
+                    let buffer = try observation.generateMaskedImage(
+                        ofInstances: observation.allInstances,
+                        from: handler,
+                        croppedToInstancesExtent: false
+                    )
+                    let image = CIImage(cvPixelBuffer: buffer)
+                    guard let cgImage = context.createCGImage(image, from: image.extent),
+                          let pngData = UIImage(cgImage: cgImage).pngData() else {
+                        throw ImageBackgroundRemovalError.unreadableResult
+                    }
+                    return pngData
+                })
+            }
+        }
+    }
+}
+
 private enum PendingExportPresentation {
     case pdf
     case spud
     case error(String)
+}
+
+private enum ExportPageScope: Hashable {
+    case entireDocument
+    case selectedPages
 }
 
 private struct AgenticModeGlow: View {
@@ -1064,8 +1649,6 @@ private struct AgenticModeGlow: View {
                 .blur(radius: 6)
                 .opacity(isActive ? 0.90 : 0)
         }
-        .padding(.horizontal, 4)
-        .padding(.vertical, 10)
         .allowsHitTesting(false)
         .accessibilityHidden(true)
         .onAppear {
@@ -1094,11 +1677,4 @@ private struct NotebookExportDocument: FileDocument {
     func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
         FileWrapper(regularFileWithContents: data)
     }
-}
-
-private extension UTType {
-    static let tuberNoteArchive = UTType(
-        exportedAs: TuberNoteArchive.formatIdentifier,
-        conformingTo: .json
-    )
 }

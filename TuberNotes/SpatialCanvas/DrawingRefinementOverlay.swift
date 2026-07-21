@@ -7,10 +7,10 @@ struct DrawingRefinementOverlay: View {
     let client: any DrawingRefinementClient
     let initialSelection: CGRect?
     let pageSize: CGSize
+    @Binding var isLassoActive: Bool
     let onApply: (Data, CGRect, [CGPoint]) -> Void
     let onClose: () -> Void
 
-    @State private var isLassoActive = false
     @State private var lassoPoints: [CGPoint] = []
     /// Page-normalized selection. Keeping this out of transient view pixels
     /// lets it follow the paper continuously through zoom and pan.
@@ -55,12 +55,18 @@ struct DrawingRefinementOverlay: View {
                 if let selection {
                     selectionView(denormalized(selection, in: proxy.size), in: proxy.size)
                 }
-
-                controls
             }
             .onAppear {
                 guard selection == nil, let initialSelection else { return }
                 selection = initialSelection
+            }
+            .onChange(of: isLassoActive) { _, isActive in
+                lassoPoints = []
+                guard isActive else { return }
+                selection = nil
+                selectionPath = []
+                refinedImage = nil
+                refinedImageData = nil
             }
         }
         .alert("Couldn’t refine drawing", isPresented: errorIsPresented) {

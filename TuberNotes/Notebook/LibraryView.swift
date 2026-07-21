@@ -1,7 +1,8 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Gallery page: a grid of locally-saved notebooks. Tap to open, `+` to create,
-/// context-menu to rename or delete.
+/// import SPUD from Files, or use the context menu to rename and delete.
 struct LibraryView: View {
     @ObservedObject var store: NotebookStore
 
@@ -14,6 +15,8 @@ struct LibraryView: View {
     @State private var renameText = ""
     @State private var pendingDeletion: Notebook?
     @State private var openingNotebookID: UUID?
+    @State private var isImportingSPUD = false
+    @State private var importError: String?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private let columns = [GridItem(.adaptive(minimum: 150, maximum: 200), spacing: 20)]
@@ -36,7 +39,13 @@ struct LibraryView: View {
                 }
             }
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    Button { isImportingSPUD = true } label: {
+                        Image(systemName: "square.and.arrow.down")
+                    }
+                    .accessibilityLabel("Import SPUD")
+                    .accessibilityIdentifier("library-import-spud")
+
                     Button { showingNew = true } label: {
                         Image(systemName: "plus")
                     }
@@ -45,6 +54,12 @@ struct LibraryView: View {
                 }
             }
             .sheet(isPresented: $showingNew) { newNotebookSheet }
+            .fileImporter(
+                isPresented: $isImportingSPUD,
+                allowedContentTypes: [.tuberNoteArchive],
+                allowsMultipleSelection: false,
+                onCompletion: importSPUD
+            )
             .alert("Rename notebook", isPresented: renameBinding) {
                 TextField("Title", text: $renameText)
                 Button("Cancel", role: .cancel) { renaming = nil }
@@ -55,6 +70,11 @@ struct LibraryView: View {
                     }
                     renaming = nil
                 }
+            }
+            .alert("Couldn’t Import SPUD", isPresented: importErrorBinding) {
+                Button("OK", role: .cancel) { importError = nil }
+            } message: {
+                Text(importError ?? "The selected file is not a valid SPUD notebook.")
             }
             .confirmationDialog(
                 "Delete \(pendingDeletion?.title ?? "notebook")?",
@@ -207,6 +227,20 @@ struct LibraryView: View {
 
     private var deletionBinding: Binding<Bool> {
         Binding(get: { pendingDeletion != nil }, set: { if !$0 { pendingDeletion = nil } })
+    }
+
+    private var importErrorBinding: Binding<Bool> {
+        Binding(get: { importError != nil }, set: { if !$0 { importError = nil } })
+    }
+
+    private func importSPUD(_ result: Result<[URL], Error>) {
+        do {
+            guard let sourceURL = try result.get().first else { return }
+            let notebook = try store.importSPUD(from: sourceURL)
+            path.append(notebook.id)
+        } catch {
+            importError = error.localizedDescription
+        }
     }
 
     private func beginRename(_ notebook: Notebook) {

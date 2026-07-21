@@ -1,6 +1,6 @@
 # PC-7 — Agentic Layer, conversation-tree, and movable-Pin interaction cleanup
 
-Status: **implementation complete — host-checked; physical-device verification blocked**
+Status: **page-edge glow inset repaired — host-checked; physical-device verification blocked**
 
 Target branch: `sive/dev`
 
@@ -13,12 +13,14 @@ Make Agentic Layer interaction direct and truthful in the normal notebook:
 
 - a layer is presented as hidden or active, with unmistakably different
   toolbar and layer-chip treatments;
+- the notebook's drifting background gradients share the colored glow while
+  an Agentic Layer is active and return to neutral when it is hidden;
 - merely opening the layer picker does not masquerade as activating a layer;
 - dragging a conversation Pin moves it on the logical page and persists its
   new page-normalized anchor;
-- the Agent sidebar presents each layer's durable Pins as a conversation tree,
-  and a follow-up can branch from any existing node while reusing that node's
-  page region and bounded answer context;
+- the Agent sidebar presents each layer's durable Pins as conversation history,
+  and a follow-up can continue from any existing response while reusing that
+  lineage's page region and bounded answer context;
 - expanded Pins explain that they can be dragged, show a direct conversation
   action only on surfaces that actually support follow-up, open the matching
   tree node in the normal Agent sidebar, and never advertise a dead hold
@@ -27,6 +29,7 @@ Make Agentic Layer interaction direct and truthful in the normal notebook:
 ## Scope
 
 - `TuberNotes/Notebook/NotebookView.swift`
+- `TuberNotes/Notebook/AmbientBackground.swift`
 - `TuberNotes/Notebook/NotebookViewModel.swift`
 - `TuberNotes/Notebook/NotebookToolbar.swift`
 - `TuberNotes/Notebook/AgentSidebarView.swift`
@@ -38,7 +41,7 @@ Make Agentic Layer interaction direct and truthful in the normal notebook:
 - `TuberNotes/App/RootView.swift` only to preserve the Debug conversation
   regression surface across the additive Pin event
 - `TuberNotes/App/Contracts/PinContracts.swift` for the additive optional
-  parent-thread link required by durable branch topology
+  parent-thread link required by durable lineage topology
 - `DeveloperTools/tests/test_agent_layer_interaction_contract.py` for narrow
   host checks of the new state, tree, and normalized-move seams
 - this child plan and the parent status board/session log
@@ -48,7 +51,7 @@ Make Agentic Layer interaction direct and truthful in the normal notebook:
 - No agent-provider, prompt, response, streaming, retrieval, or credential
   changes.
 - No detached chat surface, transcript/message persistence, provider-side
-  branch protocol, Pin visual redesign, or new coordinate system.
+  divergence protocol, Pin visual redesign, or new coordinate system.
 - No changes to `ConversationLayer`, document/archive, or page identity
   representations beyond `PageAnnotation`'s optional parent-thread link,
   which naturally round-trips inside the existing annotation payload.
@@ -70,10 +73,10 @@ Make Agentic Layer interaction direct and truthful in the normal notebook:
    coordinator for persistence.
 4. Add an honest expanded-Pin move hint and a direct follow-up action only when
    a conversation handler is present; retain hold as an optional shortcut.
-5. Replace the Agent sidebar's transient duplicate answer list with a durable
-   flattened conversation tree. Selecting any node creates an explicit branch
-   context; the next answer becomes a child Pin and then selects that child for
-   natural continuation.
+5. Replace the Agent sidebar's transient duplicate answer list with durable
+   conversation history. Selecting any response continues from that point; the
+   next answer becomes a child Pin and then selects that child so ordinary
+   follow-ups remain in the active lineage.
 6. Inspect the final diff and run focused host-safe checks.
 7. On the explicitly pinned iPad, build once; run `fake-pin`,
    `pin-conversation`, and `pin-drift` as applicable with build reuse; then
@@ -84,6 +87,8 @@ Make Agentic Layer interaction direct and truthful in the normal notebook:
 
 - The layer-picker button is visually inactive while the layer is hidden even
   when its popover is open, and clearly active only while Pins are rendered.
+- The existing ambient gradients and Pencil ripples use the agentic glow
+  palette only while a layer is active and return to neutral when it is hidden.
 - Normal-product layer controls expose active and hidden—not a misleading
   selected/visible/active combination—and accessibility reports the same
   state.
@@ -95,11 +100,12 @@ Make Agentic Layer interaction direct and truthful in the normal notebook:
 - Pins without a conversation handler do not advertise follow-up; supported
   completed Pins expose a visible direct action as well as the hold shortcut.
 - The normal Agent sidebar renders every active-layer Pin exactly once in a
-  cycle-safe tree; roots and indented descendants remain understandable, a
-  selected branch is visually explicit, and clearing it returns to a new root.
-- A branch uses the parent Pin's current page/selection region and bounded
-  answer context, persists a new child Pin with a fresh thread ID and the
-  parent's thread ID, and never rewrites its ancestor.
+  cycle-safe history; roots and indented descendants remain understandable, a
+  selected continuation point is visually explicit, and clearing it starts a
+  new conversation.
+- A continuation uses the prior Pin's current page/selection region and bounded
+  cycle-safe lineage context, persists a new child Pin with a fresh thread ID
+  and the prior thread ID, and never rewrites its ancestor.
 - Existing Pin expansion, citation, recorded-conversation, and page gestures
   remain intact with no clipping, unintended overlap, crash, or immediate
   exit.
@@ -149,13 +155,88 @@ Make Agentic Layer interaction direct and truthful in the normal notebook:
   `xcrun`, or pinned-device session file, so canonical build and physical-iPad
   verification could not start. Stopped at the exact-device/toolchain
   prerequisite rather than substituting a simulator.
+- 2026-07-20 — User follow-up identified two coherence defects in the same
+  work line: ordinary parent-linked replies are labeled as branches even when
+  they continue the active conversation lineage, and Pin movement feels
+  unstable. The bounded repair keeps the persisted parent topology, makes
+  continuation the default agentic-conversation language (reserving divergence
+  as a structural possibility rather than labeling every reply), and stabilizes
+  drag geometry in the overlay's coordinate space while keeping the card's
+  anchor-relative placement fixed for the duration of a drag.
+- 2026-07-20 — Follow-up implementation complete. User-facing sidebar copy now
+  presents the selected response as a continuation point and calls descendants
+  replies. The newest reply remains selected, so the ordinary next turn stays
+  in the same lineage; selecting an earlier response can still intentionally
+  diverge without labeling every follow-up as branching. The agent receives up
+  to six cycle-safe ancestor turns within a 4,000-character total budget,
+  escaped as quoted context with explicit recency/evidence, non-repetition,
+  uncertainty, and prompt-boundary guidance. Pin drag uses the stable overlay
+  coordinate space and freezes the card's initial anchor-relative offset while
+  clamping it inside page edges, preventing local-coordinate feedback and
+  per-frame side flipping.
+- 2026-07-20 — Follow-up host checks PASS: the focused PC-7 plus nearby
+  archive/export and notebook navigation modules are 13/13; `git diff --check`
+  and the stale user-facing branching-copy scan pass. The full host suite is
+  35/36 with the same pre-existing scenario-verifier argument mismatch (19
+  expected, 13 supplied), outside this diff. Logs:
+  `tmp/verify/pc-7-conversation-pin-followup/focused-tests.log` and
+  `tmp/verify/pc-7-conversation-pin-followup/full-host-suite.log`. Final diff
+  inspection found only Notebook, Pins, focused contract-test, README, and plan
+  changes. No shared contract, provider transport, archive schema, page
+  identity, or SpatialCanvas ownership changed. Apple/Xcode and the explicitly
+  pinned physical iPad remain unavailable, so device build/scenario evidence
+  could not be collected and no simulator was substituted.
+- 2026-07-20 — User requested that the active Agentic Layer treatment extend
+  into the existing drifting background gradients. Started a bounded visual
+  follow-up: tint only the established ambient blobs and Pencil ripples with
+  the page-edge cyan/blue/indigo/purple/pink family while the layer is active;
+  preserve neutral background behavior, interaction, and spatial contracts.
+- 2026-07-20 — Ambient-glow follow-up implemented. `NotebookView` passes the
+  truthful active-layer state into `AmbientBackground`; the five existing
+  breathing gradients each take one page-edge palette hue and Pencil ripples
+  take cyan while active, with the prior neutral colors retained while hidden.
+  Focused PC-7, archive/export, and nearby notebook checks pass 13/13 and
+  `git diff --check` passes; log:
+  `tmp/verify/pc-7-agentic-ambient-glow/focused-tests.log`. No interaction,
+  persistence, coordinate, provider, or shared contract changed. Canonical
+  build and visual inspection remain blocked because this Linux host has no
+  Xcode tools or explicitly pinned physical-iPad session.
+- 2026-07-20 — Repaired the Release/unsigned-IPA compile regression reported
+  after `sive/dev` advanced to `59d3fad`: `keepingLabelOffset(_:in:)` now
+  explicitly returns its constructed `PinOverlayPlacement`. Added one focused
+  source-contract assertion for the required return. PC-7 plus nearby
+  archive/export and notebook branch-logic checks pass 15/15; the full host
+  suite is 46/47 with the same pre-existing verifier-truthfulness argument
+  mismatch already recorded above. Logs:
+  `tmp/verify/pc-7-ipa-build-regression/focused-tests.log` and
+  `tmp/verify/pc-7-ipa-build-regression/full-host-suite.log`. This host still
+  has no `xcodebuild`, `xcrun`, or pinned-device session, so the unsigned IPA
+  build and physical-iPad scenarios require re-running on the named Apple host.
+
+- 2026-07-20 — User reported that the active Agentic Layer glow undershoots
+  the page and appears inset. Geometry trace found the glow overlay already
+  receives the exact `pageViewportFrame`; `AgenticModeGlow` then applies an
+  additional 4-point horizontal and 10-point vertical view-space inset.
+  Started a bounded repair to remove only that inset and host-check the edge
+  alignment contract. Page layout, Pin/page-normalized coordinates,
+  interaction, persistence, and glow styling remain unchanged.
+- 2026-07-20 — Removed only the local padding from `AgenticModeGlow`, allowing
+  its rectangles to consume the overlay's exact `pageViewportFrame`. Added a
+  focused contract that retains the full viewport frame and rejects future
+  horizontal or vertical padding inside the glow. Focused plus nearby PC-7,
+  archive/export, and notebook branch-logic checks pass 21/21; logs are under
+  `tmp/verify/pc-7-agentic-page-edge-glow/`, and `git diff --check` passes.
+  Final diff inspection found only the glow, focused regression, and PC-7 plan
+  records. This Linux host exposes neither `xcodebuild`/`xcrun` nor a pinned
+  device session, so the canonical build and physical visual checks could not
+  start and no simulator or alternate target was substituted.
 
 ## Evidence packet — 2026-07-20
 
 ### Objective and changed files
 
 - Deliver coherent hidden/active Agentic Layer behavior, persisted movable
-  conversation Pins, and a branchable Pin-backed conversation tree in the
+  conversation Pins, and Pin-backed conversation history in the
   normal Agent sidebar.
 - Product changes: `TuberNotes/App/Contracts/PinContracts.swift`,
   `TuberNotes/App/RootView.swift`, `TuberNotes/Notebook/AgentSidebarView.swift`,
@@ -169,7 +250,7 @@ Make Agentic Layer interaction direct and truthful in the normal notebook:
 
 - Layer presentation is binary and truthful; durable Pin annotations are the
   sole tree store; Pin movement is normalized/clamped and coordinator-persisted;
-  direct Pin continuation selects the matching branch parent.
+  direct Pin continuation selects the matching prior response.
 - Final diff stayed in requested scope: yes.
 - Ownership violations or unrelated churn: none found.
 - Shared contracts: additive `PinOverlayEvent.moved` and optional
@@ -188,9 +269,11 @@ Make Agentic Layer interaction direct and truthful in the normal notebook:
 - Host command: `python3 -m unittest` for the focused PC-7, archive/export, and
   notebook branch-logic modules — 13/13 PASS.
 - Hygiene: `git diff --check` PASS; secret-pattern and stale-symbol scans PASS.
-- Intended device scenarios: `fake-pin`, `pin-conversation`, and `pin-drift`.
-- Expected state: visible hidden/active contrast; cycle-safe tree with selectable
-  ancestor/child branches; direct Pin Continue; drag commits an in-bounds
+- Intended device scenarios from the current change map: `fake-pin`,
+  `multi-pin`, `edge-pins`, `pin-drift`, `agent-recorded-success`,
+  `agent-recorded-failure`, `hero-recorded`, and `pin-conversation`.
+- Expected state: visible hidden/active contrast; cycle-safe history with
+  selectable prior/child responses; direct Pin Continue; drag commits an in-bounds
   page-normalized target and survives zoom/pan/save/reopen.
 - Physical-iPad inspection, screenshots, attached console, crash diagnostics,
   and artifact directory: not collected; exact-device prerequisite absent.
@@ -217,3 +300,88 @@ Make Agentic Layer interaction direct and truthful in the normal notebook:
 - Stopped with implementation and host evidence complete because the canonical
   Apple host and explicitly pinned physical iPad are unavailable. The existing
   unrelated 34/35 full-host-suite verifier mismatch remains outside PC-7.
+
+## Follow-up evidence packet — 2026-07-20
+
+- Objective: correct continuation semantics and stabilize Pin movement.
+- Changed product files: `AgentSidebarView.swift`, `NotebookViewModel.swift`,
+  `README-notebooks.md`, and `PinOverlayView.swift`; focused contract test and
+  PC-7/parent plan logs changed alongside them. Final diff stayed in scope.
+- Build/device: not run; this host has no Apple/Swift toolchain, `xcrun`, pinned
+  device-session file, or explicitly named physical iPad.
+- Host evidence: 13/13 focused PASS; full suite 35/36 with the unchanged
+  out-of-scope scenario-verifier mismatch; `git diff --check` PASS. Logs are in
+  `tmp/verify/pc-7-conversation-pin-followup/`.
+- Expected device state: follow-ups read as continuation, lineage context stays
+  bounded/cycle-safe, and a dragged Pin/card tracks smoothly without side
+  flipping while the committed anchor remains page-normalized and in bounds.
+- Device-mechanical checks still required: build/launch; the Pin layout,
+  coordinate, and conversation scenarios named above; persistence after reopen;
+  zoom/pan anchoring; clipping/overlap; console/crash state; and direct
+  touch-gesture behavior.
+- Human-only check still required: Pin drag feel and conversation-history
+  clarity on iPad. Stop reason: exact Apple host/device prerequisite absent.
+
+## Ambient-glow follow-up evidence packet — 2026-07-20
+
+- Objective: give the existing notebook background gradients the same colored
+  glow language as an active Agentic Layer.
+- Changed files for this follow-up: `AmbientBackground.swift`,
+  `NotebookView.swift`, `README-notebooks.md`, the focused PC-7 contract test,
+  and the PC-7/parent plan logs. Final diff inspection found no out-of-scope
+  changes from this follow-up and preserved the earlier uncommitted PC-7 work.
+- Host evidence: focused PC-7 plus archive/export and notebook checks pass
+  13/13; `git diff --check` passes. Log:
+  `tmp/verify/pc-7-agentic-ambient-glow/focused-tests.log`.
+- Expected device state: neutral animated background when Agentic Layers are
+  hidden; cyan/blue/indigo/purple/pink breathing gradients and a cyan Pencil
+  ripple when active; page content remains dominant with no clipping or input
+  interception.
+- Build/device, screenshot, console/crash, and mechanical visual evidence were
+  not collected: this host exposes no `xcodebuild`/`xcrun` and has no pinned
+  physical-iPad session. Human-only color balance and visual-taste review remain
+  open. Stop reason: exact Apple host/device prerequisite absent.
+
+## IPA build-regression evidence packet — 2026-07-20
+
+- Objective: restore compilation of the PC-7 Pin placement helper after the
+  refreshed unsigned-IPA build failed with “missing return in instance method.”
+- Changed files: `TuberNotes/Pins/PinOverlayView.swift`, the focused PC-7
+  contract test, this child log, and the parent status board. The product diff
+  is one explicit `return`; no coordinate, interaction, persistence, provider,
+  archive, or shared contract changed.
+- Host evidence: focused checks pass 15/15; full suite is 46/47 with the known
+  unrelated verifier-truthfulness mismatch. Logs are under
+  `tmp/verify/pc-7-ipa-build-regression/`; `git diff --check` passes.
+- Build/device: not run on this Linux host because `xcodebuild`, `xcrun`, an
+  explicitly named physical iPad, and `.tubernotes-device-session.json` are
+  unavailable. Re-run the unsigned-IPA build on the reporting Apple host, then
+  run the named PC-7 Pin scenarios before claiming device acceptance.
+- Human-only checks: unchanged from the PC-7 follow-ups; this compiler repair
+  adds no new visual or interaction judgment. Stop reason: host/device
+  prerequisite absent after the narrow source regression was repaired and
+  host-checked.
+
+## Page-edge glow inset evidence packet — 2026-07-20
+
+- Objective: make the active Agentic Layer glow reach the same view-space
+  bounds as the page viewport instead of undershooting it.
+- Changed files: `TuberNotes/Notebook/NotebookView.swift`,
+  `DeveloperTools/tests/test_agent_layer_interaction_contract.py`, this child
+  log, and the parent status board. The product diff removes a 4-point
+  horizontal and 10-point vertical inset; page layout, Pin/page-normalized
+  coordinates, interaction, persistence, and glow colors/animation are
+  unchanged. Final diff stayed in scope.
+- Host evidence: focused contract passes 6/6; focused plus nearby PC-7,
+  archive/export, and notebook branch-logic checks pass 21/21; `git diff
+  --check` passes. Logs:
+  `tmp/verify/pc-7-agentic-page-edge-glow/focused-tests.log` and
+  `tmp/verify/pc-7-agentic-page-edge-glow/nearby-tests.log`.
+- Expected device state: when an Agentic Layer is active, the animated glow
+  reaches all four page viewport edges without shifting page content,
+  intercepting input, or changing Pin placement.
+- Build/device: not run; this Linux host has no `xcodebuild`/`xcrun` and no
+  `.tubernotes-device-session.json`. Physical-iPad inspection, screenshots,
+  attached console/crash diagnostics, clipping/overlap checks, and animation
+  taste remain uncollected. Stop reason: exact Apple host/device prerequisite
+  absent after the bounded repair passed its host evidence.

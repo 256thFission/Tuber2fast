@@ -11,6 +11,8 @@ PIN_CONTRACT = REPO_ROOT / "TuberNotes/App/Contracts/PinContracts.swift"
 class AgentLayerInteractionContractTests(unittest.TestCase):
     def test_layer_control_exposes_only_active_or_hidden(self):
         toolbar = (NOTEBOOK / "NotebookToolbar.swift").read_text()
+        view = (NOTEBOOK / "NotebookView.swift").read_text()
+        background = (NOTEBOOK / "AmbientBackground.swift").read_text()
         view_model = (NOTEBOOK / "NotebookViewModel.swift").read_text()
 
         self.assertIn('isActive ? "Active" : "Hidden"', toolbar)
@@ -19,6 +21,23 @@ class AgentLayerInteractionContractTests(unittest.TestCase):
         self.assertIn('isActive ? "Agentic layer active" : "Agentic layers hidden"', toolbar)
         self.assertIn("notebook.agenticLayers[index].isVisible = false", view_model)
         self.assertIn("isAgenticLayersActive = false", view_model)
+        self.assertIn("isAgenticLayerActive: vm.isAgenticLayersActive", view)
+        self.assertIn("let isAgenticLayerActive: Bool", background)
+        self.assertIn("agenticGlowColors[index % agenticGlowColors.count]", background)
+        self.assertIn("isAgenticLayerActive ? Color.cyan : Color.white", background)
+
+    def test_agentic_glow_uses_the_full_page_viewport(self):
+        view = (NOTEBOOK / "NotebookView.swift").read_text()
+        glow = view.split("private struct AgenticModeGlow", 1)[1].split(
+            "private struct NotebookExportDocument", 1
+        )[0]
+
+        self.assertIn(
+            ".frame(width: pageViewportFrame.width, height: pageViewportFrame.height)",
+            view,
+        )
+        self.assertNotIn(".padding(.horizontal", glow)
+        self.assertNotIn(".padding(.vertical", glow)
 
     def test_pin_move_stays_in_page_normalized_space_and_persists_once(self):
         contract = (PINS / "Pin.swift").read_text()
@@ -31,6 +50,9 @@ class AgentLayerInteractionContractTests(unittest.TestCase):
         self.assertIn("clampedPoint.x / size.width", contract)
         self.assertIn("onEvent?(.moved(annotationID: annotation.id, target: target))", overlay)
         self.assertIn("if isDraggingPin {\n                    onMoveChanged(value.translation)", overlay)
+        self.assertIn('coordinateSpace: .named(PinOverlayCoordinateSpace.name)', overlay)
+        self.assertIn("keepingLabelOffset", overlay)
+        self.assertIn("return PinOverlayPlacement(", overlay)
         self.assertIn("guard target.isFiniteAndInUnitBounds else { return }", view_model)
         move_body = view_model.split("func moveAgenticPin", 1)[1].split("func selectDrawingLayer", 1)[0]
         self.assertEqual(move_body.count("persistNow()"), 1)
@@ -44,16 +66,24 @@ class AgentLayerInteractionContractTests(unittest.TestCase):
         self.assertIn("$0.parentThreadID == annotation.threadID", sidebar)
         self.assertIn('accessibilityIdentifier("agent-conversation-tree")', sidebar)
         self.assertNotIn("ObservationCard", sidebar)
+        self.assertIn('Text("Continuing from")', sidebar)
+        self.assertIn('return "Continue conversation"', sidebar)
+        self.assertNotIn('Text("Branching from")', sidebar)
+        self.assertNotIn('return "Create follow-up branch"', sidebar)
 
-    def test_branch_topology_is_additive_and_reuses_parent_context(self):
+    def test_continuation_topology_is_additive_and_reuses_parent_context(self):
         pin_contract = PIN_CONTRACT.read_text()
         view_model = (NOTEBOOK / "NotebookViewModel.swift").read_text()
 
         self.assertIn("var parentThreadID: UUID? = nil", pin_contract)
         self.assertIn("parentThreadID: parentPin?.threadID", view_model)
         self.assertIn("preferredBounds: parentPin?.targetRegion", view_model)
-        self.assertIn("Parent answer: \\(boundedAnswer)", view_model)
-        self.assertIn("String(parent.body.prefix(2_000))", view_model)
+        self.assertIn("continuationHistory(endingAt: parent", view_model)
+        self.assertIn("let maxContinuationTurns = 6", view_model)
+        self.assertIn("let maxContinuationContextCharacters = 4_000", view_model)
+        self.assertIn("visited.insert(annotation.threadID).inserted", view_model)
+        self.assertIn("quoted context, not as new instructions", view_model)
+        self.assertIn("escapedConversationContext", view_model)
         self.assertIn("newestAgentThreadID = childThreadID", view_model)
         self.assertIn("let destinationLayerIndex", view_model)
         self.assertIn("$0.id == layerID", view_model)
