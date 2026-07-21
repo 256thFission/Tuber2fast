@@ -9,7 +9,6 @@ struct NotebookToolbar: View {
     @Binding var isLassoActive: Bool
     @Binding var isRefinementActive: Bool
     @Binding var isRefinementLassoActive: Bool
-    @Environment(\.colorScheme) private var colorScheme
     var onShowPages: () -> Void
     var onAskAgent: () -> Void
 
@@ -246,13 +245,11 @@ struct NotebookToolbar: View {
                 .foregroundStyle(selected ? selectedToolForeground(for: tool) : Color.primary)
                 .background { if selected { Circle().fill(fill) } }
                 .overlay {
-                    if selected && tool == .pen {
+                    if selected {
                         Circle().strokeBorder(
                             selectedToolForeground(for: tool).opacity(0.55),
-                            lineWidth: vm.width(for: tool)
+                            lineWidth: selectedToolBorderWidth(for: tool)
                         )
-                    } else if selected && tool != .eraser && selectedToolNeedsOutline {
-                        Circle().strokeBorder(.primary.opacity(0.35), lineWidth: 1)
                     }
                 }
                 .symbolEffect(.bounce, options: .speed(1.55), value: selected)
@@ -451,36 +448,9 @@ struct NotebookToolbar: View {
         return vm.inkUIColor.isLight ? .black : .white
     }
 
-    private var selectedToolNeedsOutline: Bool {
-        let style: UIUserInterfaceStyle = colorScheme == .dark ? .dark : .light
-        let toolbarBackground = UIColor.systemGroupedBackground.resolvedColor(
-            with: UITraitCollection(userInterfaceStyle: style)
-        )
-        return contrastRatio(vm.inkUIColor, toolbarBackground) < 1.4
-    }
-
-    private func contrastRatio(_ first: UIColor, _ second: UIColor) -> CGFloat {
-        let lighter = max(relativeLuminance(first), relativeLuminance(second))
-        let darker = min(relativeLuminance(first), relativeLuminance(second))
-        return (lighter + 0.05) / (darker + 0.05)
-    }
-
-    private func relativeLuminance(_ color: UIColor) -> CGFloat {
-        var red: CGFloat = 0
-        var green: CGFloat = 0
-        var blue: CGFloat = 0
-        var alpha: CGFloat = 0
-        guard color.getRed(&red, green: &green, blue: &blue, alpha: &alpha) else { return 0 }
-
-        func linearize(_ component: CGFloat) -> CGFloat {
-            component <= 0.04045
-                ? component / 12.92
-                : pow((component + 0.055) / 1.055, 2.4)
-        }
-
-        return 0.2126 * linearize(red)
-            + 0.7152 * linearize(green)
-            + 0.0722 * linearize(blue)
+    private func selectedToolBorderWidth(for tool: WritingTool) -> CGFloat {
+        let proportionalWidth = vm.width(for: tool).squareRoot()
+        return min(max(proportionalWidth, 1.5), 7)
     }
 
     private var colorButton: some View {

@@ -1049,9 +1049,9 @@ with `rotationRadians` so canvas arrangement survives save, reload, archive,
 and export. Missing values decode as zero; image bytes, normalized rects, page
 coordinates, and archive version are unchanged.
 
-## Active line — PC-16: pen-width selection border
+## Active line — PC-16: drawing-tool width selection borders
 
-Status: **implementation complete — host-checked; physical-device verification blocked**
+Status: **follow-up implemented — host-checked; physical-device verification blocked**
 
 Target branch: `sive/dev`
 
@@ -1060,8 +1060,10 @@ input, canvas coordinates, and rendered ink.
 
 ### Objective and user-visible outcome
 
-Make the selected Pen button's circular border use the Pen's selected point
-width, so the toolbar itself gives an immediate proportional width preview.
+Make every selected drawing-tool button use a restrained circular border whose
+thickness grows with the tool's actual selected point width, so Pen, Pencil,
+Highlighter, and Eraser all give a useful preview without overwhelming the
+glyph or toolbar.
 
 ### Scope
 
@@ -1073,23 +1075,26 @@ width, so the toolbar itself gives an immediate proportional width preview.
 
 - no PencilKit tool, persisted width, width range, gesture, color, layout,
   spatial-coordinate, or shared-contract changes;
-- no visual redesign of Pencil, Highlighter, or Eraser selection states;
+- no changes to non-drawing selection states;
 - canonical build and visual inspection require an Apple/Xcode host and an
   explicitly pinned physical iPad.
 
 ### Work and verification
 
-1. Bind the selected Pen border line width directly to its current width.
+1. Map each selected drawing tool's actual width through one monotonic,
+   visually bounded scale and use that result for its border.
 2. Preserve the existing button frame, tap/hold gestures, color treatment,
    and accessibility value.
 3. Add a focused source assertion, run the toolbar check, and inspect the diff.
 4. Run `blank-notebook` on the pinned iPad and inspect minimum/default/maximum
-   Pen widths for clipping, overlap, and a truthful proportional preview.
+   widths for all four tools for clipping, overlap, and a truthful proportional
+   preview.
 
 ### Acceptance evidence and stop conditions
 
-- the selected Pen border uses `vm.width(for: .pen)` without altering the
-  canvas width value or selection gesture;
+- each selected drawing-tool border grows monotonically with
+  `vm.width(for: tool)` but stays within a compact visual range, without
+  altering the canvas width value or selection gesture;
 - the 34-point button footprint and neighboring tool layout remain unchanged;
 - stop after evidence is collected, when the exact-device prerequisite is
   unavailable, or after two device failures without a narrower repair.
@@ -1110,6 +1115,17 @@ width, so the toolbar itself gives an immediate proportional width preview.
   console/crash collection, and minimum/default/maximum-width visual checks
   remain blocked because this host has no Xcode toolchain or pinned physical-
   iPad session. No shared contract changed.
+- 2026-07-21 — User follow-up clarified that borders should be relative rather
+  than literal and should cover every drawing tool. Replaced the Pen-only exact
+  width with one monotonic square-root scale for Pen, Pencil, Highlighter, and
+  Eraser, bounded to 1.5...7 points so large marker/eraser values do not crowd
+  the 17-point glyph or change the 34-point button footprint. Removed the now-
+  obsolete color-contrast-only outline path and strengthened the focused check
+  to require the shared all-tool mapping. All four toolbar selection tests and
+  `git diff --check` pass. Xcode build, `blank-notebook`, screenshots,
+  console/crash collection, and visual-taste checks remain blocked because
+  this host still has no Xcode toolchain or pinned physical-iPad session. No
+  drawing, persistence, spatial, gesture, or shared contract changed.
 
 ## Active line — PC-15: end-pull page creation
 
