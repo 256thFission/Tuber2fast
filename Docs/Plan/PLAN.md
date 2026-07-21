@@ -1919,7 +1919,7 @@ notebooks and pages.
 
 ## Integration — `sive/dev` into `main`
 
-Status: **implementation merged — Release build blocked; Phillip's verdict pending**
+Status: **implementation merged and Release-delivered — Phillip's verdict pending**
 
 - 2026-07-21 — Integrated the gesture welcome lightbox, lasso/image stability,
   and visual page-settings gallery from `sive/dev` while preserving `main`'s
@@ -1939,3 +1939,11 @@ Status: **implementation merged — Release build blocked; Phillip's verdict pen
   provider-access, Magic-Lasso routing, scroll-direction, tool-selection, and
   verifier-truthfulness contracts. Full log:
   `tmp/merge-sive-dev-host-tests.log`.
+- 2026-07-21 — After Phillip reconnected the named iPad, device preflight,
+  signed Release build, install, normal no-scenario launch, and live-process
+  query all passed on physical device
+  `2DD98ECC-A26A-5730-943B-01DD63DC4117` (UDID
+  `00008103-000145D91107001E`, PID 2669). Evidence is under
+  `tmp/build/merge-sive-dev-device/`. No Debug scenario or behavioral fixture
+  was used; Phillip's normal-app visual, interaction, and message-thread/fork
+  verdict remains the acceptance gate.
