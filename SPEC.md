@@ -665,6 +665,13 @@ rechecks cancellation, login generation, selection identity, page content,
 destination layer existence and visibility, and crop-to-page containment before
 applying either spatial result.
 
+A newly completed Magic Lasso is a replacement boundary for its selected
+Agentic Layer. Before a new request begins, TuberNotes cancels any prior request
+and removes existing current-page Pins whose anchors fall inside the exact
+closed lasso polygon. Removal cascades through their conversation descendants
+so no reply can outlive the context it depends on. Pins outside the polygon and
+Pins in other Agentic Layers remain unchanged.
+
 ## 11. Knowledge architecture
 
 There are two intentionally different paths.

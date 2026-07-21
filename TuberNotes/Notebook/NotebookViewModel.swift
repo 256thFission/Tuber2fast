@@ -1159,6 +1159,44 @@ final class NotebookViewModel: ObservableObject {
         persistNow()
     }
 
+    /// A fresh Magic Lasso replaces prior guidance in that exact region. Only
+    /// the selected Agentic Layer is affected; removing a conversational node
+    /// also removes every descendant that depends on its context.
+    @discardableResult
+    func removeAgenticPins(
+        inside closedPath: [PageNormalizedPoint],
+        pageID: UUID
+    ) -> Int {
+        guard let layerIndex = notebook.agenticLayers.firstIndex(where: { $0.id == selectedLayerID }),
+              MagicLassoGeometry.closedPath(from: closedPath) != nil else { return 0 }
+        let conversations = notebook.agenticLayers[layerIndex].conversations
+        var removedThreads = Set(
+            conversations
+                .filter {
+                    $0.pageID == pageID
+                        && MagicLassoGeometry.contains($0.target, in: closedPath)
+                }
+                .map(\.threadID)
+        )
+        guard !removedThreads.isEmpty else { return 0 }
+
+        var changed = true
+        while changed {
+            changed = false
+            for annotation in conversations
+            where annotation.parentThreadID.map(removedThreads.contains) == true {
+                changed = removedThreads.insert(annotation.threadID).inserted || changed
+            }
+        }
+        let originalCount = notebook.agenticLayers[layerIndex].conversations.count
+        notebook.agenticLayers[layerIndex].conversations.removeAll {
+            removedThreads.contains($0.threadID)
+        }
+        if newestAgentThreadID.map(removedThreads.contains) == true { newestAgentThreadID = nil }
+        persistNow()
+        return originalCount - notebook.agenticLayers[layerIndex].conversations.count
+    }
+
     private func continuationQuestion(
         _ question: String?,
         parent: PageAnnotation?,

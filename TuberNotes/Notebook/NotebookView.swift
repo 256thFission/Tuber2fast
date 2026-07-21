@@ -1397,6 +1397,8 @@ struct NotebookView: View {
             magicEraserPath = []
             return
         }
+        vm.cancelAnalysis()
+        vm.removeAgenticPins(inside: selection.lassoPath, pageID: selection.pageID)
         magicEraserPath = path
         magicEraserSelection = selection
         vm.agentError = nil

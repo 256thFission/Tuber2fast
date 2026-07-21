@@ -26,6 +26,26 @@ enum MagicLassoGeometry {
         return PageNormalizedRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
     }
 
+    /// Even-odd containment in page-normalized space. The input path is the
+    /// exact closed region shown to the user, so replacement operations do not
+    /// accidentally affect Pins merely near its rectangular crop.
+    static func contains(_ point: PageNormalizedPoint, in closedPath: [PageNormalizedPoint]) -> Bool {
+        guard point.isFiniteAndInUnitBounds, closedPath.count >= 4 else { return false }
+        var inside = false
+        var previousIndex = closedPath.count - 1
+        for index in closedPath.indices {
+            let current = closedPath[index]
+            let previous = closedPath[previousIndex]
+            if (current.y > point.y) != (previous.y > point.y),
+               point.x < (previous.x - current.x) * (point.y - current.y)
+                    / (previous.y - current.y) + current.x {
+                inside.toggle()
+            }
+            previousIndex = index
+        }
+        return inside
+    }
+
     static func cropRoundTripMaximumError(path: [PageNormalizedPoint], bounds: PageNormalizedRect) -> Double {
         path.reduce(0) { result, point in
             let crop = CropNormalizedPoint(
@@ -59,6 +79,8 @@ enum MagicLassoGeometry {
         return closed.first == closed.last
             && closedPath(from: degenerate) == nil
             && closedPath(from: open) == nil
+            && contains(PageNormalizedPoint(x: 0.5, y: 0.4), in: closed)
+            && !contains(PageNormalizedPoint(x: 0.05, y: 0.05), in: closed)
             && cropRoundTripMaximumError(path: closed, bounds: bounds) <= 1e-6
     }
 

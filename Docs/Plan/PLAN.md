@@ -1601,6 +1601,14 @@ and a concrete return contract.
 
 ### Session log
 
+- 2026-07-21 — `CONTRACT:` Phillip specified regional replacement semantics for
+  accumulated guidance. Closing a new Magic Lasso now cancels prior analysis
+  and persistently removes selected-layer, current-page Pins anchored inside
+  the exact lasso polygon, including every descendant branch. Other regions and
+  layers are preserved. The signed Release build under
+  `tmp/build/pc18-regional-disposal/` succeeded, installed, and normally
+  launched on only Phillip's pinned iPad
+  `2DD98ECC-A26A-5730-943B-01DD63DC4117`.
 - 2026-07-21 — Phillip's current-app screenshot proved the prior schema repair
   did not clear the live provider rejection. `CONTRACT:` PC-18 normal Release
   Check/Explain no longer depends on provider structured output or model Pin

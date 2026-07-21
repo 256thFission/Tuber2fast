@@ -858,6 +858,14 @@ revision. This rewrite retains their accepted constraints:
 
 ## Session log
 
+- 2026-07-21 — Phillip defined immediate regional Pin disposal: `CONTRACT:` a
+  newly closed Magic Lasso now cancels any in-flight analysis and removes every
+  existing current-page Pin anchored inside the exact polygon on the selected
+  Agentic Layer before showing the new action menu. Removal cascades through
+  conversation descendants and persists immediately; Pins outside the polygon
+  and on other layers remain intact. The signed Release build under
+  `tmp/build/pc18-regional-disposal/` succeeded, installed, and normally
+  launched on only iPad `2DD98ECC-A26A-5730-943B-01DD63DC4117`.
 - 2026-07-21 — Phillip's post-redeploy screenshot proved the structured-Pin
   correction still failed on the live ChatGPT/Codex route and that accumulated
   generic Pins made the experience look instructionally empty. `CONTRACT:` the
