@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import Security
 
 enum OpenAICodexConstants {
     static let issuer = URL(string: "https://auth.openai.com")!
@@ -36,8 +37,8 @@ struct OpenAICodexAccess: Sendable {
     let generation: UUID
 }
 
-/// The product-facing capabilities supported by the temporary, memory-only
-/// OpenAI session. Notebook code can retain this route as a request snapshot,
+/// The product-facing capabilities supported by the temporary OpenAI session.
+/// Notebook code can retain this route as a request snapshot,
 /// but cannot read its authorization material or endpoint.
 enum AgentCapability: Sendable {
     case insight
@@ -114,6 +115,57 @@ enum OpenAICodexNetworking {
     }
 }
 
+private struct RefreshTokenStore {
+    private let service = "com.tubernotes.app.openai-refresh"
+    private let account = "openai-codex"
+
+    func load() -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+        var item: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
+              let data = item as? Data,
+              let token = String(data: data, encoding: .utf8),
+              !token.isEmpty else { return nil }
+        return token
+    }
+
+    func save(_ token: String) throws {
+        guard let data = token.data(using: .utf8), !data.isEmpty else {
+            throw KeychainError.invalidToken
+        }
+        delete()
+        let attributes: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+            kSecValueData as String: data
+        ]
+        let status = SecItemAdd(attributes as CFDictionary, nil)
+        guard status == errSecSuccess else { throw KeychainError.status(status) }
+    }
+
+    func delete() {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account
+        ]
+        SecItemDelete(query as CFDictionary)
+    }
+
+    private enum KeychainError: Error {
+        case invalidToken
+        case status(OSStatus)
+    }
+}
+
 @MainActor
 final class OpenAICodexLoginSession: ObservableObject {
     enum Phase: Equatable, Sendable {
@@ -122,6 +174,7 @@ final class OpenAICodexLoginSession: ObservableObject {
         case awaitingUser(code: String, verificationURL: URL)
         case polling(code: String, verificationURL: URL)
         case exchanging
+        case refreshing
         case signedIn
         case failed(message: String)
     }
@@ -184,11 +237,13 @@ final class OpenAICodexLoginSession: ObservableObject {
     private struct TokenResponse: Decodable {
         let idToken: String?
         let accessToken: String
+        let refreshToken: String?
         let expiresIn: TimeInterval?
 
         enum CodingKeys: String, CodingKey {
             case idToken = "id_token"
             case accessToken = "access_token"
+            case refreshToken = "refresh_token"
             case expiresIn = "expires_in"
         }
     }
@@ -222,6 +277,7 @@ final class OpenAICodexLoginSession: ObservableObject {
     }
 
     private let session: URLSession
+    private let refreshStore = RefreshTokenStore()
     private var credential: Credential?
     private var attemptTask: Task<Void, Never>?
     private var attemptID: UUID?
@@ -231,11 +287,15 @@ final class OpenAICodexLoginSession: ObservableObject {
             requestTimeout: 30,
             resourceTimeout: 30
         )
+        Task { [weak self] in
+            await self?.resumeCachedSession()
+        }
     }
 
-    /// Starts a fresh, memory-only device authorization attempt.
+    /// Starts a fresh device authorization attempt and abandons any prior grant.
     func start() {
         clearAttemptAndCredential()
+        refreshStore.delete()
 
         let id = UUID()
         attemptID = id
@@ -264,7 +324,7 @@ final class OpenAICodexLoginSession: ObservableObject {
 
     func cancel() {
         switch phase {
-        case .requestingCode, .awaitingUser, .polling, .exchanging, .failed:
+        case .requestingCode, .awaitingUser, .polling, .exchanging, .refreshing, .failed:
             clearAttemptAndCredential()
             phase = .signedOut
         case .signedOut, .signedIn:
@@ -274,7 +334,24 @@ final class OpenAICodexLoginSession: ObservableObject {
 
     func signOut() {
         clearAttemptAndCredential()
+        refreshStore.delete()
         phase = .signedOut
+    }
+
+    var canResumeCachedSession: Bool {
+        refreshStore.load() != nil
+    }
+
+    func resumeCachedSession() async {
+        guard attemptTask == nil, credential == nil,
+              let refreshToken = refreshStore.load() else { return }
+        let id = UUID()
+        attemptID = id
+        phase = .refreshing
+        attemptTask = Task { [weak self] in
+            guard let self else { return }
+            await self.runRefresh(refreshToken: refreshToken, id: id)
+        }
     }
 
     func access(model: String) -> OpenAICodexAccess? {
@@ -310,8 +387,17 @@ final class OpenAICodexLoginSession: ObservableObject {
     /// Clears only the session that minted the failed request.
     func invalidate(generation: UUID) {
         guard credential?.generation == generation else { return }
-        clearAttemptAndCredential()
-        phase = .signedOut
+        credential = nil
+        attemptTask?.cancel()
+        attemptTask = nil
+        attemptID = nil
+        if canResumeCachedSession {
+            Task { [weak self] in
+                await self?.resumeCachedSession()
+            }
+        } else {
+            phase = .signedOut
+        }
     }
 
     private func runAttempt(id: UUID) async {
@@ -361,7 +447,7 @@ final class OpenAICodexLoginSession: ObservableObject {
                     phase = .exchanging
                     let tokens = try await exchange(authorization)
                     try requireCurrentAttempt(id, before: deadline, clock: clock)
-                    try establishSession(tokens: tokens, generation: id)
+                    try establishSession(tokens: tokens, generation: id, fallbackRefreshToken: nil)
                     scheduleExpiry(generation: id)
                     return
                 }
@@ -370,6 +456,28 @@ final class OpenAICodexLoginSession: ObservableObject {
             // Cancellation is always paired with a synchronous state transition.
         } catch let error as LoginError {
             fail(error, id: id)
+        } catch {
+            fail(.unavailable, id: id)
+        }
+    }
+
+    private func runRefresh(refreshToken: String, id: UUID) async {
+        do {
+            let tokens = try await refresh(refreshToken: refreshToken)
+            guard attemptID == id, !Task.isCancelled else { return }
+            try establishSession(tokens: tokens, generation: id, fallbackRefreshToken: refreshToken)
+            scheduleExpiry(generation: id)
+        } catch is CancellationError {
+            return
+        } catch let error as LoginError {
+            guard attemptID == id else { return }
+            if case .exchangeRejected = error {
+                refreshStore.delete()
+            }
+            credential = nil
+            attemptID = nil
+            attemptTask = nil
+            phase = .failed(message: error.userMessage)
         } catch {
             fail(.unavailable, id: id)
         }
@@ -442,14 +550,40 @@ final class OpenAICodexLoginSession: ObservableObject {
         return decoded
     }
 
-    private func establishSession(tokens: TokenResponse, generation: UUID) throws {
+    private func refresh(refreshToken: String) async throws -> TokenResponse {
+        let fields = [
+            ("grant_type", "refresh_token"),
+            ("refresh_token", try nonempty(refreshToken)),
+            ("client_id", OpenAICodexConstants.clientID)
+        ]
+        var request = baseRequest(url: OpenAICodexConstants.tokenEndpoint)
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        request.httpBody = formEncoded(fields).data(using: .utf8)
+        let (data, response) = try await responseData(for: request)
+        guard (200 ... 299).contains(response.statusCode) else {
+            throw response.statusCode >= 500 ? LoginError.unavailable : LoginError.exchangeRejected
+        }
+        let decoded: TokenResponse = try decode(data)
+        _ = try nonempty(decoded.accessToken)
+        return decoded
+    }
+
+    private func establishSession(
+        tokens: TokenResponse,
+        generation: UUID,
+        fallbackRefreshToken: String?
+    ) throws {
         let accessToken = try nonempty(tokens.accessToken)
         let expiresIn = tokens.expiresIn ?? 3_600
+        guard expiresIn.isFinite, expiresIn > 0 else {
+            throw LoginError.malformedResponse
+        }
         let expiresAt = Date.now.addingTimeInterval(expiresIn)
         let accountID = Self.extractAccountID(idToken: tokens.idToken, accessToken: tokens.accessToken)
 
-        // Only the access token and optional routing claim survive this call. The ID and
-        // refresh tokens, authorization code, and verifier are deliberately not retained.
+        if let refreshToken = try tokens.refreshToken.map(nonempty) ?? fallbackRefreshToken {
+            try refreshStore.save(refreshToken)
+        }
         credential = Credential(
             accessToken: accessToken,
             accountID: accountID,
@@ -459,9 +593,8 @@ final class OpenAICodexLoginSession: ObservableObject {
         phase = .signedIn
     }
 
-    /// Replaces the login task with a maintenance task that captures no authorization
-    /// code, verifier, refresh token, ID token, device ID, or user code. Returning from
-    /// `runAttempt` then releases its short-lived authorization response values.
+    /// Replaces the login task with a maintenance task that captures only the access
+    /// generation. Reusable refresh access remains isolated in the Keychain store.
     private func scheduleExpiry(generation: UUID) {
         attemptID = nil
         attemptTask = Task { [weak self] in
@@ -485,6 +618,7 @@ final class OpenAICodexLoginSession: ObservableObject {
         attemptID = nil
         attemptTask = nil
         phase = .signedOut
+        await resumeCachedSession()
     }
 
     private func waitForNextPoll(

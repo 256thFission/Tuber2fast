@@ -641,7 +641,7 @@ struct AgentProviderAccessPopup: View {
         }
         .onChange(of: openAILogin.phase) { _, phase in
             switch phase {
-            case .exchanging, .signedIn, .failed, .signedOut:
+            case .exchanging, .refreshing, .signedIn, .failed, .signedOut:
                 shouldPresentFreshSignIn = false
                 embeddedBrowser = nil
                 ephemeralAuthentication.cancel()
@@ -671,7 +671,7 @@ struct AgentProviderAccessPopup: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Temporary OpenAI sign-in")
                 .font(.subheadline.weight(.semibold))
-            Text("Authorize in your browser to use ChatGPT-backed OpenAI access in this app. Access stays only in memory, so relaunch, expiry, or an authorization failure requires signing in again. Saved API keys are never used for this access method.")
+            Text("Authorize once to use ChatGPT-backed OpenAI access. TuberNotes keeps reusable session access in this iPad's Keychain and refreshes short-lived access automatically; sign-in returns only if OpenAI rejects the refresh. Saved API keys are never used for this access method.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
 
@@ -700,11 +700,14 @@ struct AgentProviderAccessPopup: View {
                     openAILogin.cancel()
                 }
 
+            case .refreshing:
+                loginProgress("Refreshing OpenAI session…")
+
             case .signedIn:
-                Label("Signed in for this app run", systemImage: "checkmark.circle.fill")
+                Label("Signed in", systemImage: "checkmark.circle.fill")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.green)
-                Text("Sign out clears only TuberNotes' in-memory access. It does not revoke the browser-authorized grant.")
+                Text("Sign out clears TuberNotes' in-memory access and its saved Keychain refresh credential. It does not revoke the browser-authorized grant.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Button("Sign out", role: .destructive) {
@@ -715,10 +718,20 @@ struct AgentProviderAccessPopup: View {
                 Text(message)
                     .font(.caption)
                     .foregroundStyle(.red)
-                Button("Retry") {
-                    startFreshSignIn()
+                if openAILogin.canResumeCachedSession {
+                    Button("Retry saved session") {
+                        Task { await openAILogin.resumeCachedSession() }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    Button("Sign in again") {
+                        startFreshSignIn()
+                    }
+                } else {
+                    Button("Sign in again") {
+                        startFreshSignIn()
+                    }
+                    .buttonStyle(.borderedProminent)
                 }
-                .buttonStyle(.borderedProminent)
             }
 
             Text("Temporary convenience only; this is not the production TuberNotes gateway or a promise of third-party OpenAI support.")

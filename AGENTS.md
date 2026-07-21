@@ -16,8 +16,9 @@ implementation-first go mode:
   collection, or human judgment. Resolve implementation questions from the
   current contracts and PC-10 plan.
 - PC-10 targets the normal Release app, not a Debug-only surface. Temporary
-  OpenAI account access may be compiled into Release only under the memory-only,
-  no-refresh, no-reusable-secret boundary in `SPEC.md` section 10.1.
+  OpenAI account access may be compiled into Release only under the
+  Keychain-isolated refresh, memory-only access-token, no-provider-secret
+  boundary in `SPEC.md` section 10.1.
 - After implementation is complete, device preflight, Release build, install,
   and a normal no-scenario launch on Phillip's explicitly named iPad may run.
   They are delivery steps, not behavioral acceptance, and must not launch a

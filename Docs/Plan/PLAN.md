@@ -823,6 +823,21 @@ device-authorization route. The production gateway remains required for a
 distributable service; reusable secrets, refresh persistence, and credential
 reuse from other applications remain forbidden.
 
+Shared-contract log — 2026-07-21: `CONTRACT:` at Phillip's direction, replace
+relogin-on-every-launch with a device-only Keychain refresh grant. Access tokens
+and account routing remain memory-only; launch, expiry, and matching 401/403
+silently refresh; rejected refresh and explicit sign-out delete the Keychain
+item and require normal sign-in. No password, 2FA value, identity token,
+authorization code, verifier, copied credential, or provider API secret is
+persisted.
+
+- 2026-07-21 — Implemented the device-only Keychain refresh grant, rotated-token
+  replacement, launch/expiry/authorization-rejection refresh, and destructive
+  cleanup on sign-out or rejected refresh. Fresh sign-in clears an older grant
+  before account selection. Generic unsigned Release build succeeded under
+  `tmp/build/pc10-keychain-refresh/`; no harness, device action, automated
+  account login, or provider request ran. Phillip owns the live refresh verdict.
+
 ## Active line — PC-11: OpenAI-backed drawing refinement
 
 Status: **stopped — private Codex route rejected image generation; lasso hero redirected to guidance Pins**

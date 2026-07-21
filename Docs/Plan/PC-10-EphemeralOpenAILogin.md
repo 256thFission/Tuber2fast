@@ -13,9 +13,10 @@ the resulting runtime access for the normal Agentic Layer.
 
 Phillip explicitly requested an OpenCode-style "Log in with OpenAI" plan and
 accepted a hacky implementation that may require relogin. This authorizes a
-bounded normal-Release implementation using memory-only temporary access. It
-does not authorize credentials copied from another app, token persistence or
-refresh, or an unattended live-account smoke test.
+bounded normal-Release implementation using memory-only access tokens and a
+device-only Keychain refresh grant returned directly to TuberNotes. It does not
+authorize credentials copied from another app, identity/access-token
+persistence, or an unattended live-account smoke test.
 
 The existing app/scenario test harness is currently out of sync with expected
 behavior and must not be used for PC-10. Do not edit, launch, or cite `RootView`
@@ -327,6 +328,22 @@ demo. Never invent another unofficial login or copy credentials from another app
 
 ## Session log
 
+- 2026-07-21 — Phillip explicitly superseded the original no-refresh decision
+  because repeated 2FA sign-in harms demo reliability. `CONTRACT:` persist only
+  the returned refresh token in this iPad's device-only Keychain; keep access
+  tokens and account routing in memory; silently refresh on launch, expiry, and
+  matching authorization rejection; delete the Keychain item on rejected
+  refresh or explicit sign-out. Passwords, 2FA values, ID tokens, authorization
+  codes, verifiers, copied app credentials, and automated live-account checks
+  remain forbidden.
+- 2026-07-21 — Implemented the Keychain refresh grant and silent restoration
+  path. Fresh sign-in deletes any older grant before account selection;
+  successful exchange stores only a returned refresh token with
+  `AfterFirstUnlockThisDeviceOnly`; rotated tokens replace it; sign-out and
+  rejected refresh delete it. Generic unsigned Release build succeeded at
+  `tmp/build/pc10-keychain-refresh/DerivedData/Build/Products/Release-iphoneos/TuberNotes.app`.
+  No scenario/test harness, device action, automated login, or provider request
+  ran; Phillip owns the live refresh verdict.
 - 2026-07-20 — Planned an ephemeral Debug-only device-code login from current
   `main` at `05d4af3`. Chose relog on launch/expiry and no refresh persistence.
   Scoped the milestone to the normal Agentic Layer insight path. At Phillip's
