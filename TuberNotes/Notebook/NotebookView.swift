@@ -1223,6 +1223,7 @@ struct NotebookView: View {
                     PinOverlayView(
                         pins: vm.activeAgenticPins,
                         allowsConversationRequests: true,
+                        labelBehavior: .pageAnchoredCompact,
                         onEvent: { event in
                             switch event {
                             case let .moved(annotationID, target):

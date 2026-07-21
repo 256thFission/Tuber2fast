@@ -8,6 +8,7 @@ struct PinOverlayView: View {
     let onEvent: ((PinOverlayEvent) -> Void)?
     private let usesNormalizedFitProjection: Bool
     private let allowsConversationRequests: Bool
+    private let labelBehavior: PinLabelBehavior
 
     @State private var expandedAnnotationID: UUID?
     @State private var draggedTargets: [UUID: PageNormalizedPoint] = [:]
@@ -18,6 +19,7 @@ struct PinOverlayView: View {
         projectAnchor: @escaping AnchorProjector,
         initiallyExpandedAnnotationID: UUID? = nil,
         allowsConversationRequests: Bool = true,
+        labelBehavior: PinLabelBehavior = .adaptive,
         onEvent: ((PinOverlayEvent) -> Void)? = nil
     ) {
         self.annotations = annotations
@@ -25,6 +27,7 @@ struct PinOverlayView: View {
         self.onEvent = onEvent
         self.usesNormalizedFitProjection = false
         self.allowsConversationRequests = allowsConversationRequests
+        self.labelBehavior = labelBehavior
         _expandedAnnotationID = State(initialValue: initiallyExpandedAnnotationID)
     }
 
@@ -48,16 +51,18 @@ struct PinOverlayView: View {
                 for: displayedAnnotations,
                 expandedAnnotationID: expandedAnnotationID,
                 in: proxy.size,
+                labelBehavior: labelBehavior,
                 projectAnchor: effectiveProjector
             )
             let placements = resolvedPlacements.map { placement in
                 guard let offset = draggedLabelOffsets[placement.id] else { return placement }
                 return placement.keepingLabelOffset(offset, in: proxy.size)
             }
+            let annotationsByID = Dictionary(uniqueKeysWithValues: annotations.map { ($0.id, $0) })
 
             ZStack(alignment: .topLeading) {
-                ForEach(placements) { placement in
-                    if let annotation = annotations.first(where: { $0.id == placement.id }) {
+                ForEach(placements, id: \.id) { placement in
+                    if let annotation = annotationsByID[placement.id] {
                         PinConnector(anchor: placement.anchor, labelFrame: placement.labelFrame)
                         PinAnchor(
                             annotation: annotation,
@@ -87,6 +92,7 @@ struct PinOverlayView: View {
                         PinCard(
                             annotation: annotation,
                             isExpanded: annotation.id == expandedAnnotationID,
+                            isCompact: labelBehavior == .pageAnchoredCompact,
                             canMove: canMovePins,
                             onConversationRequested: conversationAction(for: annotation),
                             onCitationSelected: { citation in
@@ -212,6 +218,7 @@ extension PinOverlayView {
     init(
         pins: [Pin],
         allowsConversationRequests: Bool = false,
+        labelBehavior: PinLabelBehavior = .adaptive,
         onEvent: ((PinOverlayEvent) -> Void)? = nil
     ) {
         self.annotations = pins
@@ -219,6 +226,7 @@ extension PinOverlayView {
         self.onEvent = onEvent
         self.usesNormalizedFitProjection = true
         self.allowsConversationRequests = allowsConversationRequests
+        self.labelBehavior = labelBehavior
         _expandedAnnotationID = State(initialValue: nil)
     }
 }
@@ -409,6 +417,7 @@ private struct PinHoldProgressCue: View {
 private struct PinCard: View {
     let annotation: PageAnnotation
     let isExpanded: Bool
+    let isCompact: Bool
     let canMove: Bool
     let onConversationRequested: (() -> Void)?
     let onCitationSelected: (Citation) -> Void
@@ -420,13 +429,13 @@ private struct PinCard: View {
                     .foregroundStyle(style.color)
                     .frame(width: 18)
                 Text(annotation.teaser)
-                    .font(.subheadline.weight(.semibold))
+                    .font((isCompact ? Font.footnote : Font.subheadline).weight(.semibold))
                     .foregroundStyle(.primary)
                     .lineLimit(isExpanded ? 2 : 1)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(.horizontal, 10)
-            .frame(minHeight: 48)
+            .padding(.horizontal, isCompact ? 8 : 10)
+            .frame(minHeight: isCompact ? 38 : 48)
             .accessibilityElement(children: .combine)
             .accessibilityLabel(annotation.teaser)
             .accessibilityValue(statusAccessibilityValue)

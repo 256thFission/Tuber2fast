@@ -892,6 +892,13 @@ and stale-result safe; then separately decide whether to add local
 
 ### Session log
 
+- 2026-07-21 — Made hero guidance labels smaller and spatially stable during
+  zoom. The hero overlay now uses fixed compact screen-point dimensions and a
+  deterministic offset from each page-normalized Pin anchor, with no viewport
+  clamping or collision-driven side switching; adaptive behavior elsewhere is
+  unchanged. Generic unsigned Release build succeeded under
+  `tmp/build/pc12-stable-compact-pins/`; device delivery and Phillip's visual
+  verdict remain pending.
 - 2026-07-20 — Three user-requested `gpt-5.6-terra` subagents independently
   inventoried Release/dormant AI surfaces, designed the smallest unification
   seam, and audited user-visible AI lifecycle/safety. Their read-only findings

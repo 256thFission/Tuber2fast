@@ -308,6 +308,14 @@ network request, Debug/scenario harness, or device action.
 
 ## Session log
 
+- 2026-07-21 — Phillip reported that hero Pin labels were oversized and changed
+  apparent placement while zooming. Added a hero-only compact, page-anchored
+  label policy: collapsed labels are 164×38 points, expanded cards are reduced,
+  left/right placement is determined from the persisted page-normalized anchor,
+  and edge/collision avoidance is disabled so zoom/pan cannot switch or clamp
+  the card. Other Pin surfaces retain adaptive placement. Generic unsigned
+  Release build succeeded under `tmp/build/pc12-stable-compact-pins/`; device
+  delivery and Phillip's visual verdict remain pending.
 - 2026-07-21 — Manual Release retry confirmed that the private Codex endpoint
   still did not return the forced `place_pins` function-call dialect. Replaced
   the pretend executable tool with the Responses structured-output contract:
