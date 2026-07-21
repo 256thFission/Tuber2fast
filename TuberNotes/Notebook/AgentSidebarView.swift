@@ -3,11 +3,13 @@ import SafariServices
 import SwiftUI
 import UIKit
 
-/// Frosted question panel for the active Agentic Layer. Its hierarchy is derived
-/// directly from persisted spatial Pins, so the tree and page never diverge.
+/// Frosted question panel for the active Agentic Layer. Spatial fork topology
+/// comes from persisted Pins; each selected Pin supplies its own message tree.
 struct AgentSidebarView: View {
     @ObservedObject var vm: NotebookViewModel
     @Binding var selectedParentThreadID: UUID?
+    @Binding var selectedMessageID: UUID?
+    @Binding var forkedFromMessageID: UUID?
 #if DEBUG
     @AppStorage(AgentProviderAccess.credentialStorageKey) private var credential = ""
     @AppStorage(AgentProviderAccess.providerStorageKey) private var providerRaw = AgentProvider.openAI.rawValue
@@ -75,6 +77,18 @@ struct AgentSidebarView: View {
         guard let selectedParentThreadID else { return nil }
         return activeLayer?.conversations.first { $0.threadID == selectedParentThreadID }
     }
+    private var selectedMessagePreview: String? {
+        guard let selectedParent else { return nil }
+        let contextMessageID = forkedFromMessageID
+            ?? selectedParent.conversationMessages?.last?.id
+            ?? selectedParent.threadID
+        if contextMessageID == selectedParent.threadID {
+            return previewText(selectedParent.body, limit: 90)
+        }
+        return selectedParent.conversationMessages?
+            .first(where: { $0.id == contextMessageID })
+            .map { previewText($0.body, limit: 90) }
+    }
     private var sidebarShape: RoundedRectangle {
         RoundedRectangle(cornerRadius: 24, style: .continuous)
     }
@@ -119,6 +133,11 @@ struct AgentSidebarView: View {
             }
             selectedParentThreadID = threadID
         }
+        .onChange(of: vm.newestAgentMessageID) { _, messageID in
+            guard let messageID else { return }
+            selectedMessageID = messageID
+            forkedFromMessageID = nil
+        }
     }
 
     private var sidebarBody: some View {
@@ -131,6 +150,8 @@ struct AgentSidebarView: View {
 
                     Button {
                         selectedParentThreadID = nil
+                        selectedMessageID = nil
+                        forkedFromMessageID = nil
                         onOpenFullChat()
                     } label: {
                         Label("Start a conversation", systemImage: "square.and.pencil")
@@ -162,13 +183,15 @@ struct AgentSidebarView: View {
         .safeAreaInset(edge: .bottom, spacing: 0) {
             PinChatComposer(
                 text: $prompt,
-                continuationLabel: selectedParent.map { previewText($0.teaser, limit: 90) },
+                continuationLabel: selectedMessagePreview,
+                isForking: forkedFromMessageID != nil,
                 isSending: vm.isAnalyzing,
                 canSend: vm.canAnalyzeCurrentPage,
                 failureMessage: vm.agentError,
                 onSend: submitPrompt,
                 onCancel: vm.cancelAnalysis,
-                onRetry: vm.retryLastAnalysis
+                onRetry: vm.retryLastAnalysis,
+                onCancelFork: { forkedFromMessageID = nil }
             )
         }
     }
@@ -177,7 +200,7 @@ struct AgentSidebarView: View {
         let pageNumber = selectedParent.flatMap { annotation in
             vm.notebook.pages.firstIndex { $0.id == annotation.pageID }.map { $0 + 1 }
         } ?? (vm.currentIndex + 1)
-        let alternatives = selectedParent.map(branchAlternatives) ?? []
+        let alternatives = selectedParent.map(forkedPins) ?? []
         return PinChatContextHeader(
             layerName: activeLayer?.name ?? "Agentic Layer",
             pageLabel: "Page \(pageNumber)",
@@ -192,29 +215,34 @@ struct AgentSidebarView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 16) {
                     if let selectedParent {
-                        let conversations = activeLayer?.conversations ?? []
-                        let chain = AgentConversationTreeBuilder.chain(to: selectedParent, in: conversations)
-                        ForEach(chain) { message in
-                            PinChatTurnView(
-                                userPrompt: literalUserPrompt(for: message),
-                                assistantMarkdown: message.body,
-                                isFocused: message.id == selectedParent.id
-                            )
-                            .id(message.threadID)
+                        ForEach(PinMessageTreeBuilder.items(for: selectedParent)) { item in
+                            messageTreeNode(item, in: selectedParent)
+                                .id(item.id)
                         }
 
                         if let pendingQuestion = vm.pendingAnalysisQuestion,
                            vm.pendingAnalysisParentThreadID == selectedParent.threadID {
+                            if vm.pendingAnalysisCreatesFork {
+                                Label("Creating one forked Pin", systemImage: "arrow.triangle.branch")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                            }
                             PinChatPendingTurnView(userPrompt: pendingQuestion)
                                 .id("pending-analysis")
                         }
 
-                        let alternatives = branchAlternatives(for: selectedParent)
-                        if !alternatives.isEmpty {
+                        let unanchoredForks = forkedPins(from: selectedParent).filter { fork in
+                            guard let sourceMessageID = fork.forkedFromMessageID else { return true }
+                            return sourceMessageID != selectedParent.threadID
+                                && selectedParent.conversationMessages?.contains(where: {
+                                    $0.id == sourceMessageID
+                                }) != true
+                        }
+                        if !unanchoredForks.isEmpty {
                             VStack(alignment: .leading, spacing: 8) {
-                                Text("Other paths")
+                                Text("Earlier forked conversations")
                                     .font(.subheadline.weight(.semibold))
-                                ForEach(alternatives) { alternative in
+                                ForEach(unanchoredForks) { alternative in
                                     branchRow(for: alternative)
                                 }
                             }
@@ -246,7 +274,9 @@ struct AgentSidebarView: View {
             }
             .onAppear { scrollToFocused(using: proxy) }
             .onChange(of: selectedParentThreadID) { _, _ in scrollToFocused(using: proxy) }
+            .onChange(of: selectedMessageID) { _, _ in scrollToFocused(using: proxy) }
             .onChange(of: vm.newestAgentThreadID) { _, _ in scrollToFocused(using: proxy) }
+            .onChange(of: vm.newestAgentMessageID) { _, _ in scrollToFocused(using: proxy) }
         }
     }
 
@@ -311,36 +341,26 @@ struct AgentSidebarView: View {
         let submitted = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !submitted.isEmpty else { return }
         let parent = selectedParentThreadID
-        vm.analyzeCurrentPage(question: submitted, parentThreadID: parent)
+        let message = forkedFromMessageID
+            ?? selectedParent?.conversationMessages?.last?.id
+            ?? selectedParent?.threadID
+        vm.analyzeCurrentPage(
+            question: submitted,
+            parentThreadID: parent,
+            parentMessageID: message,
+            createsFork: forkedFromMessageID != nil
+        )
+        forkedFromMessageID = nil
         prompt = ""
-    }
-
-    private func literalUserPrompt(for annotation: PageAnnotation) -> String? {
-        guard let prompt = annotation.userPrompt?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !prompt.isEmpty else { return nil }
-        return prompt
     }
 
     private func previewText(_ source: String, limit: Int = 240) -> String {
         MarkdownTextProjection.plainText(from: source, limit: limit)
     }
 
-    private func branchAlternatives(for annotation: PageAnnotation) -> [PageAnnotation] {
+    private func forkedPins(from annotation: PageAnnotation) -> [PageAnnotation] {
         let conversations = activeLayer?.conversations ?? []
-        var result: [PageAnnotation] = []
-        var seen = Set<UUID>()
-        if let parentThreadID = annotation.parentThreadID {
-            for sibling in conversations where sibling.parentThreadID == parentThreadID
-                && sibling.id != annotation.id
-                && seen.insert(sibling.id).inserted {
-                result.append(sibling)
-            }
-        }
-        for child in conversations where child.parentThreadID == annotation.threadID
-            && seen.insert(child.id).inserted {
-            result.append(child)
-        }
-        return result
+        return conversations.filter { $0.parentThreadID == annotation.threadID }
     }
 
     private func branchRow(for annotation: PageAnnotation) -> some View {
@@ -359,16 +379,90 @@ struct AgentSidebarView: View {
             onSelect: {
                 if let pageNumber { vm.go(to: pageNumber - 1) }
                 selectedParentThreadID = annotation.threadID
+                selectedMessageID = annotation.threadID
+                forkedFromMessageID = nil
             }
         )
     }
 
+    private func messageTreeNode(
+        _ item: PinMessageTreeItem,
+        in pin: PageAnnotation
+    ) -> some View {
+        let isSelected = item.id == selectedMessageID
+        let messageForks = forkedPins(from: pin).filter {
+            $0.forkedFromMessageID == item.id
+        }
+        return HStack(alignment: .top, spacing: 8) {
+            if item.depth > 0 {
+                VStack(spacing: 0) {
+                    Circle()
+                        .fill(Color.indigo.opacity(0.75))
+                        .frame(width: 7, height: 7)
+                    Rectangle()
+                        .fill(Color.indigo.opacity(0.32))
+                        .frame(width: 2)
+                }
+                .frame(width: 12)
+                .accessibilityHidden(true)
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                PinChatTurnView(
+                    userPrompt: item.userPrompt,
+                    assistantMarkdown: item.body,
+                    isFocused: isSelected
+                )
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    selectedMessageID = item.id
+                    forkedFromMessageID = nil
+                }
+
+                HStack {
+                    if item.id == pin.threadID {
+                        Label("Initial Pin summary", systemImage: "mappin.and.ellipse")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button {
+                        selectedMessageID = item.id
+                        forkedFromMessageID = item.id
+                    } label: {
+                        Label("Fork from here", systemImage: "arrow.triangle.branch")
+                            .font(.caption.weight(.semibold))
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(vm.isAnalyzing)
+                    .accessibilityHint("The next message creates one new Pin")
+                    .accessibilityIdentifier("pin-chat-fork-\(item.id.uuidString)")
+                }
+                .padding(.horizontal, 12)
+
+                ForEach(messageForks) { fork in
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: "arrow.triangle.branch")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.indigo)
+                            .frame(width: 18, height: 18)
+                            .accessibilityHidden(true)
+                        branchRow(for: fork)
+                    }
+                    .padding(.leading, 18)
+                }
+            }
+        }
+        .padding(.leading, CGFloat(min(item.depth, 6)) * 18)
+        .accessibilityElement(children: .contain)
+    }
+
     private func scrollToFocused(using proxy: ScrollViewProxy) {
-        guard let selectedParentThreadID else { return }
+        guard let focusedID = selectedMessageID ?? selectedParentThreadID else { return }
         Task { @MainActor in
             await Task.yield()
             withAnimation(.easeOut(duration: 0.22)) {
-                proxy.scrollTo(selectedParentThreadID, anchor: .top)
+                proxy.scrollTo(focusedID, anchor: .top)
             }
         }
     }
@@ -423,6 +517,8 @@ struct AgentSidebarView: View {
                 Spacer()
                 Button {
                     selectedParentThreadID = nil
+                    selectedMessageID = nil
+                    forkedFromMessageID = nil
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                 }
@@ -457,7 +553,7 @@ struct AgentSidebarView: View {
         .accessibilityIdentifier("agent-conversation-tree")
     }
 
-    /// One conversation root and its branch subtree, collapsible. Roots that
+    /// One conversation root and its forked-Pin subtree, collapsible. Roots that
     /// contain the current selection stay expanded so the selected node is
     /// always visible.
     private func rootGroupView(_ group: AgentConversationRootGroup) -> some View {
@@ -504,7 +600,7 @@ struct AgentSidebarView: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Conversation root: \(previewText(group.root.teaser, limit: 160))")
-            .accessibilityValue(isExpanded ? "Expanded, \(branchCount) branches" : "Collapsed, \(branchCount) branches")
+            .accessibilityValue(isExpanded ? "Expanded, \(branchCount) forks" : "Collapsed, \(branchCount) forks")
             .accessibilityIdentifier("agent-root-\(group.root.id.uuidString)")
 
             if isExpanded {
@@ -525,6 +621,8 @@ struct AgentSidebarView: View {
                 vm.go(to: pageIndex)
             }
             selectedParentThreadID = item.annotation.threadID
+            selectedMessageID = item.annotation.threadID
+            forkedFromMessageID = nil
             onOpenFullChat()
         } label: {
             HStack(alignment: .top, spacing: 8) {
@@ -550,7 +648,7 @@ struct AgentSidebarView: View {
                         if let pageNumber { Text("Page \(pageNumber)") }
                         if item.childCount > 0 {
                             Text("·")
-                            Text("\(item.childCount) repl\(item.childCount == 1 ? "y" : "ies")")
+                            Text("\(item.childCount) fork\(item.childCount == 1 ? "" : "s")")
                         }
                     }
                     .font(.caption2)
@@ -568,16 +666,30 @@ struct AgentSidebarView: View {
         .padding(.leading, CGFloat(min(item.depth, 5)) * 14)
         .accessibilityLabel(item.annotation.userPrompt.map { previewText($0, limit: 160) }
             ?? previewText(item.annotation.teaser, limit: 160))
-        .accessibilityValue("\(pageAccessibilityValue)depth \(item.depth), \(item.childCount) replies")
-        .accessibilityHint("Continues this conversation from this response")
+        .accessibilityValue("\(pageAccessibilityValue)depth \(item.depth), \(item.childCount) forks")
+        .accessibilityHint("Opens this Pin's conversation")
         .accessibilityAddTraits(selected ? .isSelected : [])
         .accessibilityIdentifier("agent-conversation-node-\(item.annotation.id.uuidString)")
     }
 
     private func validateSelectedParent() {
-        guard let selectedParentThreadID else { return }
-        if activeLayer?.conversations.contains(where: { $0.threadID == selectedParentThreadID }) != true {
+        guard let selectedParentThreadID else {
+            selectedMessageID = nil
+            forkedFromMessageID = nil
+            return
+        }
+        guard let pin = activeLayer?.conversations.first(where: { $0.threadID == selectedParentThreadID }) else {
             self.selectedParentThreadID = nil
+            selectedMessageID = nil
+            forkedFromMessageID = nil
+            return
+        }
+        let knownMessageIDs = Set((pin.conversationMessages ?? []).map(\.id)).union([pin.threadID])
+        if selectedMessageID.map(knownMessageIDs.contains) != true {
+            selectedMessageID = pin.conversationMessages?.last?.id ?? pin.threadID
+        }
+        if forkedFromMessageID.map(knownMessageIDs.contains) == false {
+            forkedFromMessageID = nil
         }
     }
 
@@ -602,9 +714,66 @@ struct AgentSidebarView: View {
     private var emptyState: some View {
         VStack(alignment: .leading, spacing: 10) {
             Image(systemName: "scribble.variable").font(.title2).foregroundStyle(.secondary)
-            Text("Ask about the page to start a conversation. Then select any Pin here—or use Continue on the page—to follow up from that response.")
+            Text("Ask about the page to start a conversation. Open any Pin to continue its message tree, or explicitly fork a message to create another Pin.")
                 .font(.subheadline).foregroundStyle(.secondary)
         }
+    }
+}
+
+private struct PinMessageTreeItem: Identifiable {
+    let id: UUID
+    let parentID: UUID?
+    let userPrompt: String?
+    let body: String
+    let depth: Int
+}
+
+private enum PinMessageTreeBuilder {
+    /// The Pin annotation is the implicit root message. Persisted follow-ups
+    /// form a cycle-safe tree beneath it; malformed or orphaned messages remain
+    /// visible as additional roots rather than disappearing.
+    static func items(for pin: PageAnnotation) -> [PinMessageTreeItem] {
+        let messages = pin.conversationMessages ?? []
+        var visited = Set<UUID>()
+        var result: [PinMessageTreeItem] = []
+
+        func appendRoot() {
+            guard visited.insert(pin.threadID).inserted else { return }
+            result.append(
+                PinMessageTreeItem(
+                    id: pin.threadID,
+                    parentID: nil,
+                    userPrompt: pin.userPrompt,
+                    body: pin.body,
+                    depth: 0
+                )
+            )
+            for child in messages where child.parentMessageID == pin.threadID {
+                append(child, depth: 1)
+            }
+        }
+
+        func append(_ message: PinConversationMessage, depth: Int) {
+            guard visited.insert(message.id).inserted else { return }
+            result.append(
+                PinMessageTreeItem(
+                    id: message.id,
+                    parentID: message.parentMessageID,
+                    userPrompt: message.userPrompt,
+                    body: message.body,
+                    depth: depth
+                )
+            )
+            for child in messages where child.parentMessageID == message.id {
+                append(child, depth: depth + 1)
+            }
+        }
+
+        appendRoot()
+        for orphan in messages where !visited.contains(orphan.id) {
+            append(orphan, depth: 0)
+        }
+        return result
     }
 }
 
@@ -665,21 +834,6 @@ private enum AgentConversationTreeBuilder {
             }
         }
         return groups
-    }
-
-    /// The ancestor chain from the root down to (and including) `annotation`,
-    /// cycle-safe: walking stops if a parent link loops.
-    static func chain(to annotation: PageAnnotation, in annotations: [PageAnnotation]) -> [PageAnnotation] {
-        var chain: [PageAnnotation] = [annotation]
-        var visited: Set<UUID> = [annotation.id]
-        var current = annotation
-        while let parentThreadID = current.parentThreadID,
-              let parent = annotations.first(where: { $0.threadID == parentThreadID }),
-              visited.insert(parent.id).inserted {
-            chain.append(parent)
-            current = parent
-        }
-        return chain.reversed()
     }
 
     static func items(from annotations: [PageAnnotation]) -> [AgentConversationTreeItem] {

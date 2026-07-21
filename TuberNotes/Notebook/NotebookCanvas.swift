@@ -283,7 +283,8 @@ struct NotebookCanvas: UIViewRepresentable {
         func clearLassoSelection() { lassoSelection = [] }
 
         func completeLasso(_ points: [CGPoint], _ view: ZoomablePageView?) {
-            guard let view, points.count > 2 else {
+            guard let view, points.count > 2,
+                  points.allSatisfy({ $0.x.isFinite && $0.y.isFinite }) else {
                 lassoSelection = []
                 parent.onLassoChanged(nil)
                 view?.lassoView.clear()
@@ -297,13 +298,15 @@ struct NotebookCanvas: UIViewRepresentable {
                 rect = rect.union(drawing.strokes[i].renderBounds)
             }
             if rect.isNull {
-                let xs = points.map(\.x), ys = points.map(\.y)
-                rect = CGRect(x: xs.min()!, y: ys.min()!, width: xs.max()! - xs.min()!, height: ys.max()! - ys.min()!)
+                guard let first = points.first else { return }
+                rect = points.dropFirst().reduce(CGRect(origin: first, size: .zero)) {
+                    $0.union(CGRect(origin: $1, size: .zero))
+                }
             }
             rect = rect
                 .insetBy(dx: -8, dy: -8)
                 .intersection(CGRect(origin: .zero, size: NotebookPageLayout.size))
-            guard !rect.isNull, rect.width > 0, rect.height > 0 else {
+            guard isFinitePositive(rect) else {
                 lassoSelection = []
                 parent.onLassoChanged(nil)
                 view.lassoView.clear()
@@ -323,7 +326,7 @@ struct NotebookCanvas: UIViewRepresentable {
 
             let temp = PKDrawing(strokes: selected)
             let bounds = temp.bounds
-            guard !bounds.isNull else { return false }
+            guard isFinitePositive(bounds) else { return false }
 
             var image: UIImage?
             UITraitCollection(userInterfaceStyle: .light).performAsCurrent {
@@ -392,7 +395,7 @@ struct NotebookCanvas: UIViewRepresentable {
             for i in lassoSelection where drawing.strokes.indices.contains(i) {
                 rect = rect.union(drawing.strokes[i].renderBounds)
             }
-            if !rect.isNull {
+            if isFinitePositive(rect) {
                 rect = rect.insetBy(dx: -8, dy: -8)
                 view.lassoView.showSelection(rect)
                 parent.onLassoChanged(normalize(rect))
@@ -427,6 +430,13 @@ struct NotebookCanvas: UIViewRepresentable {
             guard !bounded.isNull else { return .zero }
             return CGRect(x: bounded.minX / page.width, y: bounded.minY / page.height,
                           width: bounded.width / page.width, height: bounded.height / page.height)
+        }
+
+        private func isFinitePositive(_ rect: CGRect) -> Bool {
+            !rect.isNull
+                && rect.minX.isFinite && rect.minY.isFinite
+                && rect.width.isFinite && rect.height.isFinite
+                && rect.width > 0 && rect.height > 0
         }
 
         // MARK: Hold-to-straighten
@@ -698,10 +708,19 @@ final class ImageLayerView: UIView {
                 views[placed.id] = iv
                 return iv
             }()
+            let frame = denormalize(placed.rect)
+            guard frame.minX.isFinite, frame.minY.isFinite,
+                  frame.width.isFinite, frame.height.isFinite,
+                  frame.width > 0, frame.height > 0 else {
+                v.isHidden = true
+                continue
+            }
+            v.isHidden = false
             if v.image == nil { v.image = placed.image }
             v.transform = .identity
-            v.frame = denormalize(placed.rect)
-            v.transform = CGAffineTransform(rotationAngle: placed.rotationRadians)
+            v.frame = frame
+            let rotation = placed.rotationRadians.isFinite ? placed.rotationRadians : 0
+            v.transform = CGAffineTransform(rotationAngle: rotation)
         }
         refreshSelection()
     }

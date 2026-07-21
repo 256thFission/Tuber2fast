@@ -61,8 +61,11 @@ final class NotebookViewModel: ObservableObject {
     @Published var agentError: String?
     @Published var interventionNotice: InterventionNotice?
     @Published private(set) var newestAgentThreadID: UUID?
+    @Published private(set) var newestAgentMessageID: UUID?
     @Published private(set) var pendingAnalysisQuestion: String?
     @Published private(set) var pendingAnalysisParentThreadID: UUID?
+    @Published private(set) var pendingAnalysisParentMessageID: UUID?
+    @Published private(set) var pendingAnalysisCreatesFork = false
 
     private let store: NotebookStore
     private var saveTask: Task<Void, Never>?
@@ -70,6 +73,8 @@ final class NotebookViewModel: ObservableObject {
     private var activeAnalysisRequestID: UUID?
     private var lastAnalysisQuestion: String?
     private var lastAnalysisParentThreadID: UUID?
+    private var lastAnalysisParentMessageID: UUID?
+    private var lastAnalysisCreatesFork = false
     private var lastGuidanceQuestion: String?
     private var lastGuidanceSelection: SelectionArtifact?
     private var lastInterventionIntent: InvestigationIntent?
@@ -982,6 +987,8 @@ final class NotebookViewModel: ObservableObject {
     func analyzeCurrentPage(
         question: String? = nil,
         parentThreadID: UUID? = nil,
+        parentMessageID: UUID? = nil,
+        createsFork: Bool = false,
         selection suppliedSelection: SelectionArtifact? = nil
     ) {
         guard !isAnalyzing else { return }
@@ -1001,9 +1008,29 @@ final class NotebookViewModel: ObservableObject {
             agentError = "That conversation is no longer available on this layer."
             return
         }
+        if createsFork, parentPin == nil {
+            agentError = "Choose a message before forking a conversation."
+            return
+        }
         if let parentPin, parentPin.pageID != currentPageID {
             agentError = "Open the previous Pin's page before continuing this conversation."
             return
+        }
+        var resolvedParentMessageID: UUID? = nil
+        if let parentPin {
+            if let parentMessageID {
+                guard parentMessageID == parentPin.threadID
+                        || parentPin.conversationMessages?.contains(where: {
+                            $0.id == parentMessageID
+                        }) == true
+                else {
+                    agentError = "That message is no longer available in this conversation."
+                    return
+                }
+                resolvedParentMessageID = parentMessageID
+            } else {
+                resolvedParentMessageID = latestMessageID(in: parentPin)
+            }
         }
         guard let selection = suppliedSelection ?? makeSelectionSnapshot(preferredBounds: parentPin?.targetRegion) else {
             agentError = "Draw or add something first, then ask about it."
@@ -1014,16 +1041,20 @@ final class NotebookViewModel: ObservableObject {
         let submittedQuestion = continuationQuestion(
             trimmedQuestion,
             parent: parentPin,
-            conversations: notebook.agenticLayers[layerIndex].conversations
+            parentMessageID: resolvedParentMessageID
         )
-        let childThreadID = UUID()
+        let responseID = UUID()
         lastAnalysisQuestion = question
         lastAnalysisParentThreadID = parentThreadID
+        lastAnalysisParentMessageID = resolvedParentMessageID
+        lastAnalysisCreatesFork = createsFork
         lastGuidanceSelection = nil
         lastInterventionIntent = nil
         let requestID = beginAnalysis(
             question: trimmedQuestion ?? (parentPin == nil ? "Guide this page" : "Explain this further"),
-            parentThreadID: parentThreadID
+            parentThreadID: parentThreadID,
+            parentMessageID: resolvedParentMessageID,
+            createsFork: createsFork
         )
         agentError = nil
         let client = AgentInsightClientFactory.make()
@@ -1057,32 +1088,55 @@ final class NotebookViewModel: ObservableObject {
                     finishAnalysis(requestID)
                     return
                 }
-                let target = continuationTarget(
-                    parent: parentPin,
-                    in: notebook.agenticLayers[destinationLayerIndex].conversations,
-                    fallback: PageNormalizedPoint(
-                        x: selection.pageBounds.x + selection.pageBounds.width / 2,
-                        y: selection.pageBounds.y + selection.pageBounds.height / 2
+                if let parentPin, !createsFork,
+                   let pinIndex = notebook.agenticLayers[destinationLayerIndex].conversations.firstIndex(where: {
+                       $0.threadID == parentPin.threadID
+                   }),
+                   let resolvedParentMessageID {
+                    var messages = notebook.agenticLayers[destinationLayerIndex]
+                        .conversations[pinIndex].conversationMessages ?? []
+                    messages.append(
+                        PinConversationMessage(
+                            id: responseID,
+                            parentMessageID: resolvedParentMessageID,
+                            userPrompt: trimmedQuestion ?? "Explain this further.",
+                            body: insight.body
+                        )
                     )
-                )
-                notebook.agenticLayers[destinationLayerIndex].conversations.append(
-                    PageAnnotation(
-                        id: UUID(),
-                        pageID: selection.pageID,
-                        threadID: childThreadID,
-                        parentThreadID: parentPin?.threadID,
-                        userPrompt: trimmedQuestion,
-                        target: target,
-                        targetRegion: selection.pageBounds,
-                        kind: .explanation,
-                        teaser: trimmedQuestion
-                            ?? (parentPin == nil ? "Learning guidance" : "Deeper explanation"),
-                        body: insight.body,
-                        citations: [],
-                        status: .complete
+                    notebook.agenticLayers[destinationLayerIndex]
+                        .conversations[pinIndex].conversationMessages = messages
+                    newestAgentThreadID = parentPin.threadID
+                    newestAgentMessageID = responseID
+                } else {
+                    let target = continuationTarget(
+                        parent: parentPin,
+                        in: notebook.agenticLayers[destinationLayerIndex].conversations,
+                        fallback: PageNormalizedPoint(
+                            x: selection.pageBounds.x + selection.pageBounds.width / 2,
+                            y: selection.pageBounds.y + selection.pageBounds.height / 2
+                        )
                     )
-                )
-                newestAgentThreadID = childThreadID
+                    notebook.agenticLayers[destinationLayerIndex].conversations.append(
+                        PageAnnotation(
+                            id: UUID(),
+                            pageID: selection.pageID,
+                            threadID: responseID,
+                            parentThreadID: createsFork ? parentPin?.threadID : nil,
+                            forkedFromMessageID: createsFork ? resolvedParentMessageID : nil,
+                            userPrompt: trimmedQuestion,
+                            target: target,
+                            targetRegion: selection.pageBounds,
+                            kind: .explanation,
+                            teaser: trimmedQuestion
+                                ?? (parentPin == nil ? "Learning guidance" : "Forked explanation"),
+                            body: insight.body,
+                            citations: [],
+                            status: .complete
+                        )
+                    )
+                    newestAgentThreadID = responseID
+                    newestAgentMessageID = responseID
+                }
                 finishAnalysis(requestID)
                 persistNow()
             } catch is CancellationError {
@@ -1107,14 +1161,23 @@ final class NotebookViewModel: ObservableObject {
         isAnalyzing = false
         pendingAnalysisQuestion = nil
         pendingAnalysisParentThreadID = nil
+        pendingAnalysisParentMessageID = nil
+        pendingAnalysisCreatesFork = false
         task?.cancel()
     }
 
-    private func beginAnalysis(question: String?, parentThreadID: UUID?) -> UUID {
+    private func beginAnalysis(
+        question: String?,
+        parentThreadID: UUID?,
+        parentMessageID: UUID? = nil,
+        createsFork: Bool = false
+    ) -> UUID {
         let requestID = UUID()
         activeAnalysisRequestID = requestID
         pendingAnalysisQuestion = question
         pendingAnalysisParentThreadID = parentThreadID
+        pendingAnalysisParentMessageID = parentMessageID
+        pendingAnalysisCreatesFork = createsFork
         isAnalyzing = true
         return requestID
     }
@@ -1130,6 +1193,8 @@ final class NotebookViewModel: ObservableObject {
         isAnalyzing = false
         pendingAnalysisQuestion = nil
         pendingAnalysisParentThreadID = nil
+        pendingAnalysisParentMessageID = nil
+        pendingAnalysisCreatesFork = false
     }
 
     func retryLastAnalysis() {
@@ -1137,7 +1202,12 @@ final class NotebookViewModel: ObservableObject {
         if let selection = lastGuidanceSelection, let intent = lastInterventionIntent {
             requestIntervention(selection: selection, intent: intent)
         } else {
-            analyzeCurrentPage(question: lastAnalysisQuestion, parentThreadID: lastAnalysisParentThreadID)
+            analyzeCurrentPage(
+                question: lastAnalysisQuestion,
+                parentThreadID: lastAnalysisParentThreadID,
+                parentMessageID: lastAnalysisParentMessageID,
+                createsFork: lastAnalysisCreatesFork
+            )
         }
     }
 
@@ -1156,6 +1226,7 @@ final class NotebookViewModel: ObservableObject {
         }
         notebook.agenticLayers[layerIndex].conversations.removeAll { removedThreads.contains($0.threadID) }
         if newestAgentThreadID.map(removedThreads.contains) == true { newestAgentThreadID = nil }
+        if newestAgentThreadID == nil { newestAgentMessageID = nil }
         persistNow()
     }
 
@@ -1193,6 +1264,7 @@ final class NotebookViewModel: ObservableObject {
             removedThreads.contains($0.threadID)
         }
         if newestAgentThreadID.map(removedThreads.contains) == true { newestAgentThreadID = nil }
+        if newestAgentThreadID == nil { newestAgentMessageID = nil }
         persistNow()
         return originalCount - notebook.agenticLayers[layerIndex].conversations.count
     }
@@ -1200,16 +1272,19 @@ final class NotebookViewModel: ObservableObject {
     private func continuationQuestion(
         _ question: String?,
         parent: PageAnnotation?,
-        conversations: [PageAnnotation]
+        parentMessageID: UUID?
     ) -> String? {
         guard let parent else { return question }
         let followUp = question ?? "Explain this further."
-        let history = continuationHistory(endingAt: parent, in: conversations)
-            .map { annotation in
+        let history = continuationHistory(
+            endingAt: parent,
+            messageID: parentMessageID
+        )
+            .map { turn in
                 """
                 <turn>
-                User: \(escapedConversationContext(annotation.userPrompt ?? annotation.teaser))
-                Assistant: \(escapedConversationContext(annotation.body))
+                User: \(escapedConversationContext(turn.userPrompt))
+                Assistant: \(escapedConversationContext(turn.body))
                 </turn>
                 """
             }
@@ -1227,41 +1302,57 @@ final class NotebookViewModel: ObservableObject {
         """
     }
 
+    private struct ConversationContextTurn {
+        var userPrompt: String
+        var body: String
+    }
+
     private func continuationHistory(
         endingAt parent: PageAnnotation,
-        in conversations: [PageAnnotation]
-    ) -> [PageAnnotation] {
+        messageID: UUID?
+    ) -> [ConversationContextTurn] {
         let maxContinuationTurns = 6
         let maxContinuationContextCharacters = 4_000
-        var byThreadID: [UUID: PageAnnotation] = [:]
-        for annotation in conversations where byThreadID[annotation.threadID] == nil {
-            byThreadID[annotation.threadID] = annotation
-        }
-        var newestFirst: [PageAnnotation] = []
+        let messages = parent.conversationMessages ?? []
+        var newestFirst: [ConversationContextTurn] = []
         var visited = Set<UUID>()
-        var cursor: PageAnnotation? = parent
+        var cursorID = messageID ?? latestMessageID(in: parent)
 
-        while let annotation = cursor,
-              newestFirst.count < maxContinuationTurns,
-              visited.insert(annotation.threadID).inserted {
-            newestFirst.append(annotation)
-            cursor = annotation.parentThreadID.flatMap { byThreadID[$0] }
+        while newestFirst.count < maxContinuationTurns,
+              visited.insert(cursorID).inserted {
+            if cursorID == parent.threadID {
+                newestFirst.append(
+                    ConversationContextTurn(
+                        userPrompt: parent.userPrompt ?? parent.teaser,
+                        body: parent.body
+                    )
+                )
+                break
+            }
+            guard let message = messages.first(where: { $0.id == cursorID }) else { break }
+            newestFirst.append(
+                ConversationContextTurn(userPrompt: message.userPrompt, body: message.body)
+            )
+            cursorID = message.parentMessageID
         }
 
         var remainingCharacters = maxContinuationContextCharacters
-        var boundedNewestFirst: [PageAnnotation] = []
-        for annotation in newestFirst {
+        var boundedNewestFirst: [ConversationContextTurn] = []
+        for turn in newestFirst {
             guard remainingCharacters > 0 else { break }
-            var bounded = annotation
-            let boundedTeaser = String(bounded.teaser.prefix(min(500, remainingCharacters)))
-            remainingCharacters -= boundedTeaser.count
-            let boundedBody = String(bounded.body.prefix(min(1_600, remainingCharacters)))
+            let boundedPrompt = String(turn.userPrompt.prefix(min(500, remainingCharacters)))
+            remainingCharacters -= boundedPrompt.count
+            let boundedBody = String(turn.body.prefix(min(1_600, remainingCharacters)))
             remainingCharacters -= boundedBody.count
-            bounded.teaser = boundedTeaser
-            bounded.body = boundedBody
-            boundedNewestFirst.append(bounded)
+            boundedNewestFirst.append(
+                ConversationContextTurn(userPrompt: boundedPrompt, body: boundedBody)
+            )
         }
         return Array(boundedNewestFirst.reversed())
+    }
+
+    private func latestMessageID(in pin: PageAnnotation) -> UUID {
+        pin.conversationMessages?.last?.id ?? pin.threadID
     }
 
     private func escapedConversationContext(_ value: String) -> String {

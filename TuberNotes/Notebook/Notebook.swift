@@ -1,3 +1,4 @@
+import ImageIO
 import PencilKit
 import SwiftUI
 import UIKit
@@ -124,6 +125,8 @@ struct NotebookSettings: Codable, Equatable {
 /// An image placed on a page. `rect` is normalized (0...1) in page space and
 /// images render *under* the ink so you can annotate on top of them.
 struct PlacedImage: Identifiable, Codable, Equatable {
+    private static let maximumDisplayPixelDimension = 4_096
+
     let id: UUID
     var imageData: Data
     var rect: CGRect
@@ -141,7 +144,12 @@ struct PlacedImage: Identifiable, Codable, Equatable {
         self.rotationRadians = rotationRadians
     }
 
-    var image: UIImage? { UIImage(data: imageData) }
+    /// The original import remains in `imageData`; UIKit receives a bounded
+    /// display decode so a large camera photo cannot consume its full decoded
+    /// pixel footprint merely by appearing on a notebook page.
+    var image: UIImage? {
+        downsampledImage(maximumPixelDimension: Self.maximumDisplayPixelDimension)
+    }
 
     private enum CodingKeys: String, CodingKey {
         case id, imageData, rect, rotationRadians
@@ -156,15 +164,34 @@ struct PlacedImage: Identifiable, Codable, Equatable {
     }
 
     func draw(in rect: CGRect) {
-        guard let image else { return }
-        guard rotationRadians != 0, let context = UIGraphicsGetCurrentContext() else {
+        guard rect.minX.isFinite, rect.minY.isFinite,
+              rect.width.isFinite, rect.height.isFinite,
+              rect.width > 0, rect.height > 0 else { return }
+
+        let context = UIGraphicsGetCurrentContext()
+        let maximumPixelDimension = context.map {
+            let transform = $0.ctm
+            let horizontalScale = hypot(transform.a, transform.b)
+            let verticalScale = hypot(transform.c, transform.d)
+            let requested = ceil(max(rect.width * horizontalScale, rect.height * verticalScale))
+            guard requested.isFinite, requested > 0 else {
+                return Self.maximumDisplayPixelDimension
+            }
+            return max(1, Int(min(requested, CGFloat(Self.maximumDisplayPixelDimension))))
+        } ?? Self.maximumDisplayPixelDimension
+        guard let image = downsampledImage(maximumPixelDimension: maximumPixelDimension) else {
+            return
+        }
+
+        let safeRotation = rotationRadians.isFinite ? rotationRadians : 0
+        guard safeRotation != 0, let context else {
             image.draw(in: rect)
             return
         }
 
         context.saveGState()
         context.translateBy(x: rect.midX, y: rect.midY)
-        context.rotate(by: rotationRadians)
+        context.rotate(by: safeRotation)
         image.draw(in: CGRect(
             x: -rect.width / 2,
             y: -rect.height / 2,
@@ -172,6 +199,25 @@ struct PlacedImage: Identifiable, Codable, Equatable {
             height: rect.height
         ))
         context.restoreGState()
+    }
+
+    private func downsampledImage(maximumPixelDimension: Int) -> UIImage? {
+        guard maximumPixelDimension > 0,
+              let source = CGImageSourceCreateWithData(imageData as CFData, nil) else {
+            return nil
+        }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: maximumPixelDimension,
+        ]
+        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(
+            source,
+            0,
+            options as CFDictionary
+        ) else { return nil }
+        return UIImage(cgImage: cgImage)
     }
 }
 

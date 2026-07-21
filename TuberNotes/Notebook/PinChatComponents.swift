@@ -33,7 +33,7 @@ struct PinChatContextHeader: View {
                     }
                     if branchCount > 0 {
                         Text("·")
-                        Text("\(branchCount) \(branchCount == 1 ? "branch" : "branches")")
+                        Text("\(branchCount) \(branchCount == 1 ? "fork" : "forks")")
                     }
                 }
                 .font(.caption)
@@ -181,7 +181,7 @@ struct PinChatBranchRow: View {
                         if let pageLabel { Text(pageLabel) }
                         if descendantCount > 0 {
                             if pageLabel != nil { Text("·") }
-                            Text("\(descendantCount) \(descendantCount == 1 ? "reply" : "replies")")
+                            Text("\(descendantCount) \(descendantCount == 1 ? "fork" : "forks")")
                         }
                     }
                     .font(.caption2)
@@ -201,7 +201,7 @@ struct PinChatBranchRow: View {
         .buttonStyle(.plain)
         .accessibilityLabel(promptPreview)
         .accessibilityValue(branchAccessibilityValue)
-        .accessibilityHint("Opens this conversation branch")
+        .accessibilityHint("Opens this forked conversation")
         .accessibilityAddTraits(isSelected ? .isSelected : [])
         .accessibilityIdentifier("pin-chat-branch")
     }
@@ -210,7 +210,7 @@ struct PinChatBranchRow: View {
         [
             pageLabel,
             responsePreview.isEmpty ? nil : responsePreview,
-            descendantCount > 0 ? "\(descendantCount) replies" : nil,
+            descendantCount > 0 ? "\(descendantCount) forks" : nil,
         ]
         .compactMap { $0 }
         .joined(separator: ", ")
@@ -220,23 +220,38 @@ struct PinChatBranchRow: View {
 struct PinChatComposer: View {
     @Binding var text: String
     let continuationLabel: String?
+    let isForking: Bool
     let isSending: Bool
     let canSend: Bool
     let failureMessage: String?
     let onSend: () -> Void
     let onCancel: () -> Void
     let onRetry: () -> Void
+    let onCancelFork: () -> Void
 
     @FocusState private var isComposerFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if let continuationLabel, !continuationLabel.isEmpty {
-                Label(continuationLabel, systemImage: "arrowshape.turn.up.left.fill")
+                HStack(spacing: 8) {
+                    Label(
+                        "\(isForking ? "Forking" : "Continuing") from \(continuationLabel)",
+                        systemImage: isForking ? "arrow.triangle.branch" : "arrowshape.turn.up.left.fill"
+                    )
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                    .accessibilityLabel("Continuing from \(continuationLabel)")
+                    if isForking {
+                        Spacer(minLength: 4)
+                        Button(action: onCancelFork) {
+                            Image(systemName: "xmark.circle.fill")
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                        .accessibilityLabel("Cancel fork")
+                    }
+                }
             }
 
             if let failureMessage, !failureMessage.isEmpty {
@@ -267,7 +282,7 @@ struct PinChatComposer: View {
                         onSend()
                     }
                     .accessibilityLabel("Message")
-                    .accessibilityHint(continuationLabel == nil ? "Starts a new conversation" : "Sends a follow-up")
+                    .accessibilityHint(composerAccessibilityHint)
 
                 if isSending {
                     Button(action: onCancel) {
@@ -308,5 +323,10 @@ struct PinChatComposer: View {
 
     private var sendIsEnabled: Bool {
         canSend && !isSending && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var composerAccessibilityHint: String {
+        if isForking { return "Sends a fork and creates one new Pin" }
+        return continuationLabel == nil ? "Starts a new conversation" : "Sends a follow-up to this Pin"
     }
 }

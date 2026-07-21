@@ -5,10 +5,19 @@ struct PageAnnotation: Identifiable, Codable, Equatable, Sendable {
     let pageID: UUID
     let threadID: UUID
     var parentThreadID: UUID? = nil
+    /// The exact message in the parent Pin from which this spatial Pin was
+    /// explicitly forked. Ordinary replies stay in `conversationMessages` and
+    /// never create another PageAnnotation.
+    var forkedFromMessageID: UUID? = nil
     /// Literal user-authored question for this turn. Older annotations decode
     /// `nil`; their teaser remains Pin context and is never presented as a
     /// fabricated user message.
     var userPrompt: String? = nil
+    /// Follow-up turns owned by this Pin. `nil` preserves decoding of notebooks
+    /// written before Pin conversations stored messages independently from Pins.
+    /// The annotation itself is the implicit root message, identified by
+    /// `threadID`.
+    var conversationMessages: [PinConversationMessage]? = nil
     var target: PageNormalizedPoint
     var targetRegion: PageNormalizedRect?
     var kind: AnnotationKind
@@ -16,6 +25,15 @@ struct PageAnnotation: Identifiable, Codable, Equatable, Sendable {
     var body: String
     var citations: [Citation]
     var status: AnnotationStatus
+}
+
+struct PinConversationMessage: Identifiable, Codable, Equatable, Sendable {
+    let id: UUID
+    /// Either the owning Pin's `threadID` (the initial summary) or another
+    /// message ID in the same Pin.
+    var parentMessageID: UUID
+    var userPrompt: String
+    var body: String
 }
 
 enum AnnotationKind: String, Codable, Equatable, Sendable {

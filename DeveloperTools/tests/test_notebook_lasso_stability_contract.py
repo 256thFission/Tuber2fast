@@ -21,8 +21,6 @@ class NotebookLassoStabilityContractTests(unittest.TestCase):
         self.assertIn("vm.activateLasso()", self.toolbar)
         self.assertIn("vm.deactivateLasso()", self.toolbar)
         self.assertIn("vm.deactivateLasso(preservingSelection: true)", self.toolbar)
-        self.assertNotIn("isLassoActive = true", self.toolbar)
-        self.assertNotIn("isLassoActive = false", self.toolbar)
         self.assertIn("currentDrawingLayerID = id\n        deactivateLasso()", self.view_model)
         self.assertIn("currentDrawingLayerID = layer.id\n        deactivateLasso()", self.view_model)
 
@@ -33,6 +31,9 @@ class NotebookLassoStabilityContractTests(unittest.TestCase):
         self.assertIn("parent.onLassoChanged(nil)", complete_lasso)
         self.assertIn("view?.lassoView.clear()", complete_lasso)
         self.assertIn("view.lassoView.clear()", complete_lasso)
+        self.assertIn("points.allSatisfy({ $0.x.isFinite && $0.y.isFinite })", complete_lasso)
+        self.assertNotIn("min()!", complete_lasso)
+        self.assertNotIn("max()!", complete_lasso)
 
     def test_active_in_progress_loop_survives_parent_view_updates(self):
         self.assertIn("if !isLassoActive {", self.canvas)
@@ -44,8 +45,13 @@ class NotebookLassoStabilityContractTests(unittest.TestCase):
         )[0]
         self.assertIn(".highPriorityGesture(lassoHoldGesture)", lasso_button)
         self.assertIn(".simultaneousGesture(", lasso_button)
-        self.assertIn("TapGesture().onEnded { _ in activateLassoTool() }", lasso_button)
-        self.assertIn("private func activateLassoTool()", lasso_button)
+        self.assertIn("TapGesture().onEnded { _ in activateLasso() }", lasso_button)
+        self.assertIn("private func activateLasso()", lasso_button)
+        activation = lasso_button.split("private func activateLasso()", 1)[1]
+        self.assertIn("vm.activateLasso()", activation)
+        self.assertIn("vm.deactivateLasso()", activation)
+        self.assertNotIn("isLassoActive = true", activation)
+        self.assertNotIn("isLassoActive = false", activation)
 
     def test_selection_and_move_stay_inside_logical_page(self):
         self.assertIn(

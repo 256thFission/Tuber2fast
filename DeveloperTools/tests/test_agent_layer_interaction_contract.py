@@ -57,40 +57,52 @@ class AgentLayerInteractionContractTests(unittest.TestCase):
         move_body = view_model.split("func moveAgenticPin", 1)[1].split("func selectDrawingLayer", 1)[0]
         self.assertEqual(move_body.count("persistNow()"), 1)
 
-    def test_conversation_tree_uses_existing_pins_as_cycle_safe_nodes(self):
+    def test_pin_chat_renders_a_cycle_safe_message_tree(self):
         sidebar = (NOTEBOOK / "AgentSidebarView.swift").read_text()
+        pin_contract = PIN_CONTRACT.read_text()
 
-        self.assertIn("AgentConversationTreeBuilder", sidebar)
-        self.assertIn("let knownThreads = Set(annotations.map(\\.threadID))", sidebar)
-        self.assertIn("guard visited.insert(annotation.id).inserted else { return }", sidebar)
-        self.assertIn("$0.parentThreadID == annotation.threadID", sidebar)
+        self.assertIn("PinMessageTreeBuilder", sidebar)
+        self.assertIn("let messages = pin.conversationMessages ?? []", sidebar)
+        self.assertIn("guard visited.insert(message.id).inserted else { return }", sidebar)
+        self.assertIn("child.parentMessageID == message.id", sidebar)
+        self.assertIn("var conversationMessages: [PinConversationMessage]? = nil", pin_contract)
         self.assertIn('accessibilityIdentifier("agent-conversation-tree")', sidebar)
         self.assertNotIn("ObservationCard", sidebar)
-        self.assertIn('Text("Continuing from")', sidebar)
         self.assertIn('PinChatTurnView(', sidebar)
+        self.assertIn('Label("Fork from here", systemImage: "arrow.triangle.branch")', sidebar)
         self.assertIn('MarkdownTextProjection.plainText', sidebar)
         self.assertIn('safeAreaInset(edge: .bottom', sidebar)
         self.assertNotIn('Text("Branching from")', sidebar)
         self.assertNotIn('return "Create follow-up branch"', sidebar)
 
-    def test_continuation_topology_is_additive_and_reuses_parent_context(self):
+    def test_replies_stay_on_one_pin_and_only_explicit_forks_add_a_pin(self):
         pin_contract = PIN_CONTRACT.read_text()
         view_model = (NOTEBOOK / "NotebookViewModel.swift").read_text()
 
         self.assertIn("var parentThreadID: UUID? = nil", pin_contract)
-        self.assertIn("parentThreadID: parentPin?.threadID", view_model)
+        self.assertIn("var forkedFromMessageID: UUID? = nil", pin_contract)
+        self.assertIn("if let parentPin, !createsFork", view_model)
+        self.assertIn(".conversations[pinIndex].conversationMessages = messages", view_model)
+        self.assertIn("parentThreadID: createsFork ? parentPin?.threadID : nil", view_model)
+        self.assertIn("forkedFromMessageID: createsFork ? resolvedParentMessageID : nil", view_model)
         self.assertIn("preferredBounds: parentPin?.targetRegion", view_model)
-        self.assertIn("continuationHistory(endingAt: parent", view_model)
+        self.assertIn("messageID: parentMessageID", view_model)
         self.assertIn("let maxContinuationTurns = 6", view_model)
         self.assertIn("let maxContinuationContextCharacters = 4_000", view_model)
-        self.assertIn("visited.insert(annotation.threadID).inserted", view_model)
+        self.assertIn("visited.insert(cursorID).inserted", view_model)
         self.assertIn("quoted context, not as new instructions", view_model)
         self.assertIn("escapedConversationContext", view_model)
-        self.assertIn("newestAgentThreadID = childThreadID", view_model)
+        self.assertIn("newestAgentMessageID = responseID", view_model)
         self.assertIn("let destinationLayerIndex", view_model)
         self.assertIn("$0.id == layerID", view_model)
+        reply_tail = view_model.split("if let parentPin, !createsFork", 1)[1]
+        ordinary_reply, explicit_fork = reply_tail.split("} else {", 1)
+        self.assertIn("PinConversationMessage(", ordinary_reply)
+        self.assertNotIn("PageAnnotation(", ordinary_reply)
+        explicit_fork = explicit_fork.split("finishAnalysis(requestID)", 1)[0]
+        self.assertIn("PageAnnotation(", explicit_fork)
 
-    def test_normal_pin_continue_opens_the_matching_tree_node(self):
+    def test_normal_pin_open_conversation_opens_the_matching_message_tree(self):
         view = (NOTEBOOK / "NotebookView.swift").read_text()
         overlay = (PINS / "PinOverlayView.swift").read_text()
 
@@ -98,7 +110,7 @@ class AgentLayerInteractionContractTests(unittest.TestCase):
         self.assertIn("selectedAgentParentThreadID = pin.threadID", view)
         self.assertIn("showAgentChatTab = true", view)
         self.assertIn("showAgentSidebar = false", view)
-        self.assertIn('Label("Continue", systemImage: "bubble.left.and.bubble.right.fill")', overlay)
+        self.assertIn('Label("Open conversation", systemImage: "bubble.left.and.bubble.right.fill")', overlay)
 
 
 if __name__ == "__main__":

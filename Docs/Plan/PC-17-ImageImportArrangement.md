@@ -94,6 +94,21 @@ page.
   only the previously logged unrelated 13-versus-19-field verifier fixture
   failure. Diff hygiene passes. Device verification remains blocked by the same
   unavailable Xcode/pinned-iPad prerequisite.
+- 2026-07-21 — Regular-lasso crash follow-up: traced image pages through toolbar
+  mode changes and selection-evidence composition. The ordinary tap path was
+  bypassing `NotebookViewModel.activateLasso()`, allowing image arrangement and
+  lasso input to remain active together; it now uses the same exclusive model
+  transition as the hold path. Placed photos now use bounded ImageIO display
+  decodes (the original imported bytes remain unchanged), lasso/page composition
+  sizes its transient decode to the destination pixels, and malformed image
+  rectangles or rotation values no longer reach UIKit/Core Graphics. Focused
+  lasso/image checks pass 13/13; nearby notebook/export checks pass 40/41 and
+  the complete host suite passes 76/80. All four failures are outside this
+  change: two concurrently changing Agent-provider assertions, one stale
+  refinement-lasso binding assertion, and the previously logged 13-versus-19
+  verifier fixture mismatch. Diff hygiene passes. Release build, launch, crash
+  diagnostics, and normal-app interaction remain uncollected because this Linux
+  host has no Xcode toolchain and no explicitly named physical iPad was supplied.
 
 Shared-contract log — 2026-07-21: `CONTRACT:` extend persisted `PlacedImage`
 with `rotationRadians` so canvas arrangement survives save, reload, archive,

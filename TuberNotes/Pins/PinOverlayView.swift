@@ -475,12 +475,12 @@ private struct PinCard: View {
                         Spacer(minLength: 4)
                         if let onConversationRequested {
                             Button(action: onConversationRequested) {
-                                Label("Continue", systemImage: "bubble.left.and.bubble.right.fill")
+                                Label("Open conversation", systemImage: "bubble.left.and.bubble.right.fill")
                                     .font(.caption.weight(.semibold))
                             }
                             .buttonStyle(.bordered)
                             .controlSize(.small)
-                            .accessibilityLabel("Continue conversation")
+                            .accessibilityLabel("Open conversation")
                         }
                     }
                     .padding(.horizontal, 10)

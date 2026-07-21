@@ -6,6 +6,8 @@ import UniformTypeIdentifiers
 struct LibraryView: View {
     @ObservedObject var store: NotebookStore
 
+    @AppStorage(GestureWelcomeLightbox.dismissedStorageKey)
+    private var didDismissGestureWelcome = false
     @State private var path: [UUID] = []
     @State private var showingNew = false
     @State private var newTitle = ""
@@ -17,6 +19,7 @@ struct LibraryView: View {
     @State private var openingNotebookID: UUID?
     @State private var isImportingSPUD = false
     @State private var importError: String?
+    @State private var showGestureWelcome = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private let columns = [GridItem(.adaptive(minimum: 150, maximum: 200), spacing: 20)]
@@ -40,6 +43,12 @@ struct LibraryView: View {
             }
             .toolbar {
                 ToolbarItemGroup(placement: .topBarTrailing) {
+                    Button { showGestureWelcome = true } label: {
+                        Image(systemName: "questionmark.circle")
+                    }
+                    .accessibilityLabel("Gesture guide")
+                    .accessibilityIdentifier("library-gesture-guide")
+
                     Button { isImportingSPUD = true } label: {
                         Image(systemName: "square.and.arrow.down")
                     }
@@ -90,6 +99,19 @@ struct LibraryView: View {
                 Button("Cancel", role: .cancel) { pendingDeletion = nil }
             } message: {
                 Text("This notebook and all of its pages will be permanently deleted.")
+            }
+        }
+        .allowsHitTesting(!showGestureWelcome)
+        .accessibilityHidden(showGestureWelcome)
+        .overlay {
+            if showGestureWelcome {
+                GestureWelcomeLightbox(onDismiss: dismissGestureWelcome)
+                    .transition(.opacity)
+            }
+        }
+        .onAppear {
+            if !didDismissGestureWelcome {
+                showGestureWelcome = true
             }
         }
     }
@@ -217,6 +239,11 @@ struct LibraryView: View {
         newTitle = ""
         newCover = .indigo
         newTemplate = .linedMedium
+    }
+
+    private func dismissGestureWelcome() {
+        didDismissGestureWelcome = true
+        showGestureWelcome = false
     }
 
     // MARK: Rename

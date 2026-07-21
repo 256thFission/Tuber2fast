@@ -652,7 +652,7 @@ Swift toolchain or pinned device session.
 
 ## Active line — PC-7: Agentic Layer, conversation-tree, and movable-Pin interaction cleanup
 
-Status: **page-edge glow inset repaired — host-checked; physical-device verification blocked**
+Status: **Pin message-tree/fork semantics implemented — host-checked; physical-device verification blocked**
 
 Target branch: `sive/dev`
 
@@ -661,9 +661,10 @@ Child work-line: [`PC-7-AgentLayerPinInteraction.md`](PC-7-AgentLayerPinInteract
 Summary: make the normal notebook's Agentic Layer read as one of two honest
 user-visible states—hidden or active—without conflating an open layer picker
 with active page content. Reuse the existing page-normalized Pin contract to
-make conversation Pins draggable and persisted; render those durable Pins as
-cycle-safe conversation history in the normal Agent sidebar; remove dead follow-up
-affordances; and route supported Pin follow-ups into the matching tree node.
+make conversation Pins draggable and persisted; keep ordinary follow-up
+messages on their owning Pin; render a cycle-safe message tree in full Pin
+Chat; remove dead follow-up affordances; and create a child Pin only when the
+user explicitly forks a chosen message.
 
 Shared-contract log — 2026-07-20: `CONTRACT:` add
 `PinOverlayEvent.moved(annotationID:target:)` so the Pins-owned drag gesture can
@@ -676,6 +677,15 @@ Shared-contract log — 2026-07-20: `CONTRACT:` add optional
 express lineage topology without a second conversation store. Older notebook
 and SPUD payloads decode the missing optional value as a root; page identity,
 annotation identity, and existing thread IDs are unchanged.
+
+Shared-contract log — 2026-07-21: `CONTRACT:` add
+`PinConversationMessage`, optional `PageAnnotation.conversationMessages`, and
+optional `PageAnnotation.forkedFromMessageID`. The Pin remains the implicit
+root message identified by `threadID`; ordinary replies persist beneath that
+root without adding spatial annotations, while an explicit fork records the
+exact source message and creates one child Pin. Missing optional fields keep
+older notebook/SPUD payloads readable; page and coordinate identities are
+unchanged.
 
 The bounded follow-up is implemented: same-lineage replies read as conversation
 continuation, bounded cycle-safe history is isolated as quoted agent context
@@ -708,6 +718,16 @@ host checks pass 21/21; evidence is under
 `tmp/verify/pc-7-agentic-page-edge-glow/`. This Linux host has no Xcode tools
 or pinned-device session, so build, screenshot, crash/console, and physical
 visual evidence remain blocked.
+
+The clarified Pin-message follow-up is implemented: expanded Pins say “Open
+conversation,” full Pin Chat shows the initial Pin summary and its indented
+cycle-safe message tree, every message exposes “Fork from here,” ordinary
+responses append only `PinConversationMessage`, and only an explicit fork
+appends a new `PageAnnotation`. Focused plus nearby checks pass 21/21; evidence
+is under `tmp/verify/pc-7-pin-message-forks/`. The full host suite is 76/80 with
+four unrelated pre-existing/concurrent failures retained in its log. Canonical
+Release build/launch and physical visual/interaction evidence remain blocked
+by the unavailable Apple host and explicitly pinned iPad.
 
 ## Active line — PC-8: drawing tool recovery after erasing
 
@@ -1279,6 +1299,14 @@ page.
   unrelated stale verifier fixture failing. Diff hygiene passes. Physical build
   and interaction/edge-quality checks remain blocked because no Xcode toolchain
   or explicitly pinned iPad is available.
+- 2026-07-21 — Regular-lasso/image stability follow-up routes the normal lasso
+  tap through the model's exclusive mode transition, bounds transient placed-
+  image decodes during display and selection composition without changing
+  original import bytes, and rejects non-finite image display geometry before
+  UIKit/Core Graphics. Focused checks pass 13/13; nearby checks pass 40/41 and
+  the full host suite passes 76/80, with only unrelated concurrent/stale
+  contract assertions failing. Xcode/Release/device crash evidence remains
+  unavailable on this Linux host without an explicitly named physical iPad.
 
 Shared-contract log — 2026-07-21: `CONTRACT:` extend persisted `PlacedImage`
 with `rotationRadians` so canvas arrangement survives save, reload, archive,
@@ -1740,3 +1768,107 @@ conversation surfaces are prohibited and provide no acceptance evidence.
   is under `tmp/build/pc19-pin-chat-markdown*/`. No deprecated review surface
   was used. Phillip's current normal-app interaction/visual verdict is the only
   remaining gate.
+
+## Active line — PC-20: visual page-settings lightbox
+
+Status: **implementation complete — host-checked; Release/device verification blocked**
+
+Target branch: `sive/dev`
+
+Owner: Notebook presentation only; persisted page-template, drawing, zoom,
+image-arrangement, and spatial contracts remain unchanged.
+
+### Objective and user-visible outcome
+
+Replace the compact template menu with a calm page-settings lightbox that
+keeps the current page actions together and makes every paper template
+recognizable before selection. The current template remains visibly selected,
+selection applies immediately to the current page, and existing straight-line,
+finger-drawing, zoom, and image-arrangement controls remain reachable.
+
+### Scope
+
+- `TuberNotes/Notebook/NotebookView.swift`
+- existing `PageTemplate` presentation properties, only if needed for a
+  faithful preview
+- this PC-20 section and session log
+
+### Non-goals and dependencies
+
+- no persisted enum, page model, rendering, coordinate, Pencil, zoom, image,
+  or toolbar-settings contract changes;
+- no redesign of the notebook toolbar or page canvas;
+- no Debug scenario, recorded route, fixture-driven UI, or behavioral
+  acceptance evidence;
+- final visual taste and interaction quality remain Phillip's judgment in the
+  normal Release app.
+
+### Work and verification
+
+1. Replace the template `Menu` trigger with a page-settings lightbox trigger.
+2. Add an accessible visual template gallery and preserve the existing actions
+   in clearly labeled sections.
+3. Run source/diff hygiene checks and a canonical signed Release build,
+   install, and normal launch on the explicitly pinned iPad when available.
+4. Mechanically inspect for clipping, overlap, missing state, and crashes;
+   leave visual taste and interaction feel to Phillip.
+
+### Acceptance evidence and stop conditions
+
+- all ten templates have distinct previews and an unambiguous selected state;
+- template selection and every former menu action remain available;
+- the lightbox dismisses directly and exposes clear accessibility labels;
+- the final diff remains limited to PC-20 and preserves collaborator work;
+- stop after successful Release delivery and mechanical inspection, when the
+  named iPad is unavailable, or after two verification failures without a
+  narrower fix.
+
+### Session log
+
+- 2026-07-21 — Started the bounded replacement on `sive/dev`. Existing
+  collaborator edits in `PinContracts.swift` and `NotebookViewModel.swift` are
+  preserved and outside PC-20 scope.
+- 2026-07-21 — Replaced the compact template menu with a large native modal
+  Page Settings surface. All ten templates render lightweight live previews
+  from the existing type/spacing semantics with explicit selected state;
+  straight-line snapping, finger drawing, page lock, zoom, and conditional
+  image arrangement are organized beneath the gallery. Accessibility labels,
+  values, hints, identifiers, and a direct Done action are present. Source
+  inventory and `git diff --check` pass, and the PC-20 edit remained limited to
+  `NotebookView.swift` plus this plan section. Concurrent collaborator changes
+  elsewhere in the shared worktree were not modified. Release compile,
+  install, launch, visual inspection, console/crash collection, and Phillip's
+  judgment remain open because this Linux host has no Swift/Xcode toolchain or
+  pinned iPad session.
+
+## Active line — PC-21: gesture welcome lightbox
+
+Status: **implementation complete — host-checked; Release/device verification blocked**
+
+Target branch: `sive/dev`
+
+Owner: App/Notebook presentation. No gesture, spatial, document, or provider
+contract changes.
+
+Plan: [`PC-21-GestureWelcomeLightbox.md`](PC-21-GestureWelcomeLightbox.md)
+
+User-visible outcome: first-time users see a dismissible overview of the
+shipping gesture system over the normal library, and can reopen it later from
+the library Help action. Release delivery and mechanical inspection are the
+agent evidence boundary; Phillip owns final gesture-discoverability and visual
+taste acceptance in the normal app.
+
+### Session log
+
+- 2026-07-21 — Created the bounded PC-21 work line after tracing the current
+  Release gesture contracts. Implementation will be isolated to library
+  presentation, one new lightbox view, and project membership while preserving
+  the in-progress PC-20 and collaborator changes.
+- 2026-07-21 — Implemented the first-run/reopen gesture guide within the PC-21
+  scope. Six cards describe only shipping interactions; dismissal persistence,
+  reduced motion, adaptive scrolling, modal input/accessibility isolation, and
+  the library Help action are present. Project/source membership and diff
+  hygiene pass; gesture-adjacent host checks are 19/20 with one unrelated stale
+  `NotebookView` refinement-lasso assertion. Evidence:
+  `tmp/verify/pc-21-gesture-welcome-lightbox/summary.txt`. Release/device and
+  Phillip's human judgments remain blocked/open on this Linux host.

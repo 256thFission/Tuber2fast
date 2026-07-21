@@ -46,14 +46,15 @@ neutral white/gray treatment.
 a Pin at the selection center on the active Agentic Layer, so closing the panel
 does not discard the visual result.
 
-The question panel derives a cycle-safe conversation history from those same
-persisted Pins. Selecting a response continues the same lineage from that
-point; the next response reuses its page region and bounded lineage context,
-persists an optional parent-thread link, and becomes the active continuation.
-Returning to an earlier response can diverge from the later path, but ordinary
-follow-ups are presented as continuation rather than branching. Expand a
-completed Pin to Continue from it directly. Drag the Pin dot to move its
-page-normalized anchor; the original semantic selection region stays unchanged.
+Each Pin keeps its initial spatial summary as the root of a persisted,
+cycle-safe message tree. Ordinary follow-ups append messages to that same Pin;
+they reuse its page region and bounded message context without adding spatial
+annotations. Every message exposes an explicit Fork action. Sending that fork
+creates one child Pin with the parent Pin and source-message links, and no other
+follow-up path creates an additional Pin. Expand a completed Pin and choose
+Open conversation to enter its message tree directly. Drag the Pin dot to move
+its page-normalized anchor; the original semantic selection region stays
+unchanged.
 
 ## Visual character
 
