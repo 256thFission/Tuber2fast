@@ -1947,3 +1947,15 @@ Status: **implementation merged and Release-delivered — Phillip's verdict pend
   `tmp/build/merge-sive-dev-device/`. No Debug scenario or behavioral fixture
   was used; Phillip's normal-app visual, interaction, and message-thread/fork
   verdict remains the acceptance gate.
+- 2026-07-21 — Phillip reported that the normal Release app could not expand
+  to full-screen landscape on iPadOS 26.5.2. Apple documents that the legacy
+  `UIRequiresFullScreen` compatibility mode preserves a fixed scene size but
+  does not present the scene full screen on iPadOS 26 windowing. Added
+  `UIRequiresFullScreenIgnoredStartingWithVersion = 26` so iPadOS 26+ uses
+  resizable scene behavior and can expand to full-screen landscape, while
+  retaining the compatibility mode on older supported iPadOS versions.
+- 2026-07-21 — The signed Release build, install, normal launch, shipped-plist
+  inspection, and live-process query passed on Phillip's iPadOS 26.5.2 device
+  `2DD98ECC-A26A-5730-943B-01DD63DC4117` (PID 2671). Evidence is under
+  `tmp/build/ipados26-fullscreen/`. Phillip's live landscape full-screen verdict
+  remains required; no behavioral success is claimed yet.
