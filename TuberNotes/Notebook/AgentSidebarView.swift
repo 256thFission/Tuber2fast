@@ -21,6 +21,7 @@ struct AgentSidebarView: View {
     @State private var expandedRootIDs: Set<UUID> = []
     var isFullChatTab = false
     var onClose: () -> Void
+    var onOpenFullChat: () -> Void = {}
     var onEditProviderAccess: () -> Void
 
     private var hasSelection: Bool { vm.lassoRect != nil }
@@ -74,15 +75,17 @@ struct AgentSidebarView: View {
         guard let selectedParentThreadID else { return nil }
         return activeLayer?.conversations.first { $0.threadID == selectedParentThreadID }
     }
-    private var sidebarShape: UnevenRoundedRectangle {
-        UnevenRoundedRectangle(topLeadingRadius: 24, bottomLeadingRadius: 24, style: .continuous)
+    private var sidebarShape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: 24, style: .continuous)
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            header
-            Divider().overlay(.white.opacity(0.1))
-            ScrollView { content.padding(16) }
+        Group {
+            if isFullChatTab {
+                fullChatBody
+            } else {
+                sidebarBody
+            }
         }
         .frame(width: isFullChatTab ? nil : 340)
         .frame(maxWidth: isFullChatTab ? .infinity : nil)
@@ -99,17 +102,151 @@ struct AgentSidebarView: View {
             )
         )
         .shadow(color: .black.opacity(0.4), radius: 26, x: -8, y: 0)
-        .padding(.vertical, 8)
-        .padding(.trailing, 8)
+        .padding(.vertical, isFullChatTab ? 0 : 8)
+        .padding(.trailing, isFullChatTab ? 0 : 8)
         .environment(\.colorScheme, .dark)
         .accessibilityIdentifier("assistant-sidebar")
         .onAppear { validateSelectedParent() }
         .onChange(of: vm.selectedLayerID) { _, _ in validateSelectedParent() }
         .onChange(of: vm.newestAgentThreadID) { _, threadID in
             guard let threadID,
-                  activeLayer?.conversations.contains(where: { $0.threadID == threadID }) == true
+                  let annotation = activeLayer?.conversations.first(where: { $0.threadID == threadID })
             else { return }
+            if isFullChatTab,
+               let pageIndex = vm.notebook.pages.firstIndex(where: { $0.id == annotation.pageID }),
+               pageIndex != vm.currentIndex {
+                vm.go(to: pageIndex)
+            }
             selectedParentThreadID = threadID
+        }
+    }
+
+    private var sidebarBody: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            header
+            Divider().overlay(.white.opacity(0.1))
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    selectionChip
+
+                    Button {
+                        selectedParentThreadID = nil
+                        onOpenFullChat()
+                    } label: {
+                        Label("Start a conversation", systemImage: "square.and.pencil")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!vm.canAnalyzeCurrentPage)
+                    .accessibilityHint("Opens Pin Chat for the current page")
+
+                    compactAnalysisState
+
+                    if treeItems.isEmpty && !vm.isAnalyzing {
+                        emptyState.padding(.top, 8)
+                    } else {
+                        conversationTree
+                    }
+                }
+                .padding(16)
+            }
+        }
+    }
+
+    private var fullChatBody: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            fullChatHeader
+            Divider().overlay(.white.opacity(0.1))
+            fullChatTranscript
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            PinChatComposer(
+                text: $prompt,
+                continuationLabel: selectedParent.map { previewText($0.teaser, limit: 90) },
+                isSending: vm.isAnalyzing,
+                canSend: vm.canAnalyzeCurrentPage,
+                failureMessage: vm.agentError,
+                onSend: submitPrompt,
+                onCancel: vm.cancelAnalysis,
+                onRetry: vm.retryLastAnalysis
+            )
+        }
+    }
+
+    private var fullChatHeader: some View {
+        let pageNumber = selectedParent.flatMap { annotation in
+            vm.notebook.pages.firstIndex { $0.id == annotation.pageID }.map { $0 + 1 }
+        } ?? (vm.currentIndex + 1)
+        let alternatives = selectedParent.map(branchAlternatives) ?? []
+        return PinChatContextHeader(
+            layerName: activeLayer?.name ?? "Agentic Layer",
+            pageLabel: "Page \(pageNumber)",
+            pinContext: selectedParent.map { previewText($0.teaser, limit: 100) },
+            branchCount: alternatives.count,
+            onClose: onClose
+        )
+    }
+
+    private var fullChatTranscript: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 16) {
+                    if let selectedParent {
+                        let conversations = activeLayer?.conversations ?? []
+                        let chain = AgentConversationTreeBuilder.chain(to: selectedParent, in: conversations)
+                        ForEach(chain) { message in
+                            PinChatTurnView(
+                                userPrompt: literalUserPrompt(for: message),
+                                assistantMarkdown: message.body,
+                                isFocused: message.id == selectedParent.id
+                            )
+                            .id(message.threadID)
+                        }
+
+                        if let pendingQuestion = vm.pendingAnalysisQuestion,
+                           vm.pendingAnalysisParentThreadID == selectedParent.threadID {
+                            PinChatPendingTurnView(userPrompt: pendingQuestion)
+                                .id("pending-analysis")
+                        }
+
+                        let alternatives = branchAlternatives(for: selectedParent)
+                        if !alternatives.isEmpty {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Other paths")
+                                    .font(.subheadline.weight(.semibold))
+                                ForEach(alternatives) { alternative in
+                                    branchRow(for: alternative)
+                                }
+                            }
+                            .padding(.top, 4)
+                        }
+                    } else {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Image(systemName: "bubble.left.and.bubble.right")
+                                .font(.title2)
+                                .foregroundStyle(.indigo)
+                            Text("Start a Pin Chat")
+                                .font(.headline)
+                            Text("Ask about the current page. The response will stay attached to this page as a Pin.")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(20)
+
+                        if let pendingQuestion = vm.pendingAnalysisQuestion,
+                           vm.pendingAnalysisParentThreadID == nil {
+                            PinChatPendingTurnView(userPrompt: pendingQuestion)
+                                .id("pending-analysis")
+                        }
+                    }
+                }
+                .frame(maxWidth: 760)
+                .frame(maxWidth: .infinity)
+                .padding(20)
+            }
+            .onAppear { scrollToFocused(using: proxy) }
+            .onChange(of: selectedParentThreadID) { _, _ in scrollToFocused(using: proxy) }
+            .onChange(of: vm.newestAgentThreadID) { _, _ in scrollToFocused(using: proxy) }
         }
     }
 
@@ -132,175 +269,108 @@ struct AgentSidebarView: View {
     }
 
     @ViewBuilder
-    private var content: some View {
-        selectionChip
-        continuationContextChip
-
-        TextField(
-            selectedParent == nil ? "Ask about this page…" : "Ask a follow-up…",
-            text: $prompt,
-            axis: .vertical
-        )
-            .textFieldStyle(.plain)
-            .lineLimit(1...3)
-            .padding(10)
-            .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.white.opacity(0.12)))
-
-        Button {
-            guard vm.canAnalyzeCurrentPage else { return }
-            guard !isTemporarySignInRequired else {
-                onEditProviderAccess()
-                return
+    private var compactAnalysisState: some View {
+        if vm.isAnalyzing {
+            HStack(spacing: 8) {
+                ProgressView()
+                Text("Assistant is responding…")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("Cancel") { vm.cancelAnalysis() }
+                    .font(.caption.weight(.semibold))
             }
-            if let selectedParentThreadID {
-                vm.analyzeCurrentPage(
-                    question: prompt.isEmpty ? nil : prompt,
-                    parentThreadID: selectedParentThreadID
-                )
-            } else {
-                vm.analyzeCurrentPage(question: prompt.isEmpty ? nil : prompt)
+        } else if let error = vm.agentError {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                Button("Open Pin Chat to retry") { onOpenFullChat() }
+                    .font(.caption.weight(.semibold))
             }
-        } label: {
-            Label(analyzeTitle, systemImage: "mappin.and.ellipse")
-                .frame(maxWidth: .infinity)
         }
-        .buttonStyle(.borderedProminent)
-        .disabled(vm.isAnalyzing || !vm.canAnalyzeCurrentPage)
-        .accessibilityHint(
-            isTemporarySignInRequired
-                ? "Opens OpenAI sign-in."
-                : (!vm.canAnalyzeCurrentPage ? "Add ink or an image to analyze." : "")
-        )
-        .padding(.top, 4)
 
         if !isProviderConfigured {
             Button { onEditProviderAccess() } label: {
-                Text(providerConfigurationPrompt)
-                    .font(.caption)
+                Text(providerConfigurationPrompt).font(.caption)
             }
             .foregroundStyle(.secondary)
-            .padding(.top, 4)
             .accessibilityLabel("Agent provider access")
             .accessibilityValue(providerAccessValue)
             .accessibilityHint("Configure a provider for live analysis")
             .accessibilityIdentifier("assistant-provider-access")
         }
-
-        if vm.isAnalyzing {
-            HStack(spacing: 8) {
-                ProgressView()
-                Text("Placing guidance Pins…").font(.subheadline).foregroundStyle(.secondary)
-                Spacer()
-                Button("Cancel") { vm.cancelAnalysis() }
-            }
-            .padding(.top, 12)
-        }
-
-        if let error = vm.agentError {
-            VStack(alignment: .leading, spacing: 5) {
-                Text(error).font(.caption).foregroundStyle(.red)
-                Button("Retry") { vm.retryLastAnalysis() }
-                    .font(.caption.weight(.semibold))
-            }
-            .padding(.top, 8)
-        }
-
-        if treeItems.isEmpty && !vm.isAnalyzing {
-            emptyState.padding(.top, 20)
-        } else {
-            if let selectedParent {
-                threadView(for: selectedParent).padding(.top, 16)
-            }
-            conversationTree.padding(.top, 16)
-        }
     }
 
-    // MARK: Thread view
+    private func submitPrompt() {
+        guard vm.canAnalyzeCurrentPage, !vm.isAnalyzing else { return }
+        guard !isTemporarySignInRequired else {
+            onEditProviderAccess()
+            return
+        }
+        let submitted = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !submitted.isEmpty else { return }
+        let parent = selectedParentThreadID
+        vm.analyzeCurrentPage(question: submitted, parentThreadID: parent)
+        prompt = ""
+    }
 
-    /// The full conversation thread for the selected node: every exchange from
-    /// its root down to the node, rendered chat-style, plus its child branches.
-    private func threadView(for annotation: PageAnnotation) -> some View {
+    private func literalUserPrompt(for annotation: PageAnnotation) -> String? {
+        guard let prompt = annotation.userPrompt?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !prompt.isEmpty else { return nil }
+        return prompt
+    }
+
+    private func previewText(_ source: String, limit: Int = 240) -> String {
+        MarkdownTextProjection.plainText(from: source, limit: limit)
+    }
+
+    private func branchAlternatives(for annotation: PageAnnotation) -> [PageAnnotation] {
         let conversations = activeLayer?.conversations ?? []
-        let chain = AgentConversationTreeBuilder.chain(to: annotation, in: conversations)
-        let children = conversations.filter { $0.parentThreadID == annotation.threadID }
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Label("Thread", systemImage: "text.bubble")
-                    .font(.subheadline.weight(.semibold))
-                Spacer()
-                Text("\(chain.count) exchange\(chain.count == 1 ? "" : "s")")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-            }
-
-            ForEach(chain) { message in
-                threadMessage(message, isFocused: message.id == annotation.id)
-            }
-
-            if !children.isEmpty {
-                Text("Branches from here")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .padding(.top, 2)
-                ForEach(children) { child in
-                    Button {
-                        selectedParentThreadID = child.threadID
-                    } label: {
-                        HStack(spacing: 7) {
-                            Image(systemName: "arrow.turn.down.right")
-                                .font(.caption2.weight(.bold))
-                                .foregroundStyle(.indigo)
-                            Text(child.teaser)
-                                .font(.caption.weight(.semibold))
-                                .lineLimit(1)
-                            Spacer(minLength: 4)
-                            Image(systemName: "chevron.right")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 8)
-                        .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 9))
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityIdentifier("thread-branch-\(child.id.uuidString)")
-                }
+        var result: [PageAnnotation] = []
+        var seen = Set<UUID>()
+        if let parentThreadID = annotation.parentThreadID {
+            for sibling in conversations where sibling.parentThreadID == parentThreadID
+                && sibling.id != annotation.id
+                && seen.insert(sibling.id).inserted {
+                result.append(sibling)
             }
         }
-        .padding(12)
-        .background(.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 14))
-        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(.indigo.opacity(0.35)))
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("agent-thread-view")
+        for child in conversations where child.parentThreadID == annotation.threadID
+            && seen.insert(child.id).inserted {
+            result.append(child)
+        }
+        return result
     }
 
-    /// One exchange in a thread: the prompt (teaser) as the user's bubble and
-    /// the answer (body) as the agent's reply beneath it.
-    private func threadMessage(_ annotation: PageAnnotation, isFocused: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Spacer(minLength: 24)
-                Text(annotation.teaser)
-                    .font(.caption.weight(.semibold))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 7)
-                    .background(Color.indigo.opacity(isFocused ? 0.85 : 0.45), in: RoundedRectangle(cornerRadius: 11))
-                    .foregroundStyle(.white)
+    private func branchRow(for annotation: PageAnnotation) -> some View {
+        let pageNumber = vm.notebook.pages.firstIndex { $0.id == annotation.pageID }.map { $0 + 1 }
+        let descendants = AgentConversationTreeBuilder.descendantCount(
+            of: annotation,
+            in: activeLayer?.conversations ?? []
+        )
+        return PinChatBranchRow(
+            promptPreview: annotation.userPrompt.map { previewText($0, limit: 100) }
+                ?? previewText(annotation.teaser, limit: 100),
+            responsePreview: previewText(annotation.body, limit: 180),
+            pageLabel: pageNumber.map { "Page \($0)" },
+            descendantCount: descendants,
+            isSelected: annotation.threadID == selectedParentThreadID,
+            onSelect: {
+                if let pageNumber { vm.go(to: pageNumber - 1) }
+                selectedParentThreadID = annotation.threadID
             }
-            HStack {
-                Text(annotation.body)
-                    .font(.caption)
-                    .foregroundStyle(.primary.opacity(0.92))
-                    .lineLimit(isFocused ? nil : 3)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 7)
-                    .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 11))
-                Spacer(minLength: 24)
+        )
+    }
+
+    private func scrollToFocused(using proxy: ScrollViewProxy) {
+        guard let selectedParentThreadID else { return }
+        Task { @MainActor in
+            await Task.yield()
+            withAnimation(.easeOut(duration: 0.22)) {
+                proxy.scrollTo(selectedParentThreadID, anchor: .top)
             }
         }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(annotation.teaser). \(annotation.body)")
     }
 
     private var analyzeTitle: String {
@@ -401,9 +471,6 @@ struct AgentSidebarView: View {
                 withAnimation(.snappy(duration: 0.22)) {
                     if isExpanded {
                         expandedRootIDs.remove(group.id)
-                        // A collapsed root can't keep the selection pinned open;
-                        // clear it so the disclosure actually closes.
-                        if containsSelection { selectedParentThreadID = nil }
                     } else {
                         expandedRootIDs.insert(group.id)
                     }
@@ -417,7 +484,7 @@ struct AgentSidebarView: View {
                     Image(systemName: "point.3.connected.trianglepath.dotted")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.indigo)
-                    Text(group.root.teaser)
+                    Text(previewText(group.root.teaser, limit: 100))
                         .font(.caption.weight(.semibold))
                         .lineLimit(1)
                     Spacer(minLength: 4)
@@ -436,7 +503,7 @@ struct AgentSidebarView: View {
                 .contentShape(RoundedRectangle(cornerRadius: 10))
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Conversation root: \(group.root.teaser)")
+            .accessibilityLabel("Conversation root: \(previewText(group.root.teaser, limit: 160))")
             .accessibilityValue(isExpanded ? "Expanded, \(branchCount) branches" : "Collapsed, \(branchCount) branches")
             .accessibilityIdentifier("agent-root-\(group.root.id.uuidString)")
 
@@ -458,6 +525,7 @@ struct AgentSidebarView: View {
                 vm.go(to: pageIndex)
             }
             selectedParentThreadID = item.annotation.threadID
+            onOpenFullChat()
         } label: {
             HStack(alignment: .top, spacing: 8) {
                 if item.depth > 0 {
@@ -470,10 +538,11 @@ struct AgentSidebarView: View {
                     .foregroundStyle(selected ? Color.white : Color.indigo)
                     .frame(width: 18, height: 18)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(item.annotation.teaser)
+                    Text(item.annotation.userPrompt.map { previewText($0, limit: 120) }
+                        ?? previewText(item.annotation.teaser, limit: 120))
                         .font(.caption.weight(.semibold))
                         .lineLimit(2)
-                    Text(item.annotation.body)
+                    Text(previewText(item.annotation.body, limit: 180))
                         .font(.caption2)
                         .foregroundStyle(selected ? Color.white.opacity(0.78) : Color.secondary)
                         .lineLimit(selected ? 3 : 1)
@@ -497,7 +566,8 @@ struct AgentSidebarView: View {
         }
         .buttonStyle(.plain)
         .padding(.leading, CGFloat(min(item.depth, 5)) * 14)
-        .accessibilityLabel(item.annotation.teaser)
+        .accessibilityLabel(item.annotation.userPrompt.map { previewText($0, limit: 160) }
+            ?? previewText(item.annotation.teaser, limit: 160))
         .accessibilityValue("\(pageAccessibilityValue)depth \(item.depth), \(item.childCount) replies")
         .accessibilityHint("Continues this conversation from this response")
         .accessibilityAddTraits(selected ? .isSelected : [])
@@ -639,6 +709,18 @@ private enum AgentConversationTreeBuilder {
             append(orphanedCycle, depth: 0)
         }
         return result
+    }
+
+    static func descendantCount(of annotation: PageAnnotation, in annotations: [PageAnnotation]) -> Int {
+        var count = 0
+        var pending = annotations.filter { $0.parentThreadID == annotation.threadID }
+        var visited: Set<UUID> = [annotation.id]
+        while let next = pending.popLast() {
+            guard visited.insert(next.id).inserted else { continue }
+            count += 1
+            pending.append(contentsOf: annotations.filter { $0.parentThreadID == next.threadID })
+        }
+        return count
     }
 }
 

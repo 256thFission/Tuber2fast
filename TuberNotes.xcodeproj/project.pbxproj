@@ -65,6 +65,8 @@
 		D10000000000000000000015 /* NotebookUndoBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000115 /* NotebookUndoBridge.swift */; };
 		D10000000000000000000016 /* PencilInteractionController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000116 /* PencilInteractionController.swift */; };
 		D10000000000000000000017 /* PencilShortcutPalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000117 /* PencilShortcutPalette.swift */; };
+		D19000000000000000000001 /* MarkdownMessageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D19000000000000000000101 /* MarkdownMessageView.swift */; };
+		D19000000000000000000002 /* PinChatComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = D19000000000000000000102 /* PinChatComponents.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -126,6 +128,8 @@
 		D10000000000000000000115 /* NotebookUndoBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotebookUndoBridge.swift; sourceTree = "<group>"; };
 		D10000000000000000000116 /* PencilInteractionController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PencilInteractionController.swift; sourceTree = "<group>"; };
 		D10000000000000000000117 /* PencilShortcutPalette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PencilShortcutPalette.swift; sourceTree = "<group>"; };
+		D19000000000000000000101 /* MarkdownMessageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownMessageView.swift; sourceTree = "<group>"; };
+		D19000000000000000000102 /* PinChatComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PinChatComponents.swift; sourceTree = "<group>"; };
 		E13000000000000000000101 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -273,6 +277,8 @@
 			children = (
 				D10000000000000000000107 /* AgentInsight.swift */,
 				D10000000000000000000108 /* AgentSidebarView.swift */,
+				D19000000000000000000101 /* MarkdownMessageView.swift */,
+				D19000000000000000000102 /* PinChatComponents.swift */,
 				D10000000000000000000109 /* AmbientBackground.swift */,
 				D1000000000000000000010A /* GlassStyle.swift */,
 				D1000000000000000000010B /* LibraryView.swift */,
@@ -403,6 +409,8 @@
 				D10000000000000000000006 /* TuberNoteArchive.swift in Sources */,
 				D10000000000000000000007 /* AgentInsight.swift in Sources */,
 				D10000000000000000000008 /* AgentSidebarView.swift in Sources */,
+				D19000000000000000000001 /* MarkdownMessageView.swift in Sources */,
+				D19000000000000000000002 /* PinChatComponents.swift in Sources */,
 				D10000000000000000000009 /* AmbientBackground.swift in Sources */,
 				D1000000000000000000000A /* GlassStyle.swift in Sources */,
 				D1000000000000000000000B /* LibraryView.swift in Sources */,

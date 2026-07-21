@@ -3,8 +3,38 @@ import UIKit
 
 /// Result of asking the agent to look at a page selection.
 struct AgentInsight: Equatable {
-    let summary: String
-    let items: [String]
+    /// The complete bounded assistant response exactly as returned by the text
+    /// extractor. Markdown remains source text here; interpretation belongs to
+    /// the presentation layer.
+    let body: String
+
+    init(body: String) {
+        self.body = body
+    }
+
+    /// Compatibility initializer for deterministic/demo responses that are
+    /// authored as a summary plus bullets. New provider responses use `body`.
+    init(summary: String, items: [String]) {
+        body = ([summary] + items.map { "- \($0)" }).joined(separator: "\n")
+    }
+
+    /// Transitional projections for callers that have not yet adopted `body`.
+    /// They never mutate or replace the canonical response source.
+    var summary: String {
+        body.split(separator: "\n", omittingEmptySubsequences: true)
+            .first
+            .map(String.init) ?? body
+    }
+
+    var items: [String] {
+        body.split(separator: "\n", omittingEmptySubsequences: true).compactMap { line in
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard trimmed.hasPrefix("- ") || trimmed.hasPrefix("• ") || trimmed.hasPrefix("* ") else {
+                return nil
+            }
+            return String(trimmed.dropFirst(2))
+        }
+    }
 }
 
 /// Boundary for "look at what I circled and tell me what you see". Complements the
@@ -75,22 +105,7 @@ private func defaultInsightPrompt(_ question: String?) -> String {
 }
 
 private func parseInsight(_ text: String) -> AgentInsight {
-    let lines = text
-        .split(separator: "\n")
-        .map { $0.trimmingCharacters(in: .whitespaces) }
-        .filter { !$0.isEmpty }
-
-    var summary = ""
-    var items: [String] = []
-    for line in lines {
-        if line.hasPrefix("- ") || line.hasPrefix("• ") || line.hasPrefix("* ") {
-            items.append(String(line.dropFirst(2)))
-        } else if summary.isEmpty {
-            summary = line
-        }
-    }
-    if summary.isEmpty { summary = text }
-    return AgentInsight(summary: summary, items: items)
+    AgentInsight(body: text)
 }
 
 #if DEBUG

@@ -1663,3 +1663,39 @@ and a concrete return contract.
   authority boundary, four dependency folds, bounded subagent assignments with
   non-overlapping file leases and return contracts, fold-in gates, and
   coordinator-only device/live-provider/final-judgment work.
+
+## Active line — PC-19: coherent Pin Chat and safe Markdown
+
+Status: **in progress — Fold 1 contracts frozen**
+
+Target branch: `main`
+
+Child work-line:
+[`PC-19-PinChatMarkdown.md`](PC-19-PinChatMarkdown.md)
+
+Owner: coordinator-owned Notebook/App integration; Pins spatial behavior and
+AgentHarness provider/auth routing remain unchanged.
+
+Summary: preserve complete bounded assistant responses as the existing
+`PageAnnotation.body` text, render assistant-only safe Markdown through a
+bounded reusable block renderer, derive syntax-free compact/accessibility
+projections, and give the narrow Agentic Layer sidebar and full Pin Chat
+distinct navigation/reading roles. Existing notebook/SPUD compatibility,
+thread lineage, page identity, Pin anchors, retry/cancel behavior, credentials,
+and provider routing remain intact. Deprecated review/feedback/scenario
+conversation surfaces are prohibited and provide no acceptance evidence.
+
+### Session log
+
+- 2026-07-21 — Fold 1 completed read-only against `main` at `15f27ea`.
+  Architecture, Markdown safety, and current-product iPad reviewers independently
+  identified the lossy `AgentInsight` transform, synthetic-teaser semantics,
+  duplicated sidebar/full-chat composition, raw Markdown preview/accessibility
+  leakage, and scroll-away composer. The coordinator froze one source-preserving
+  Markdown contract and one split UI contract in the child plan; Fold 2 begins
+  with non-overlapping file leases. No prohibited deprecated tooling was used.
+- 2026-07-21 — `CONTRACT:` add optional persisted
+  `PageAnnotation.userPrompt` so new turns can distinguish literal user text
+  from provider-authored Pin teasers without migrating existing notebooks or
+  SPUD archives. Missing values are context-only; body source, IDs, lineage,
+  page-normalized geometry, credentials, and provider routing are unchanged.

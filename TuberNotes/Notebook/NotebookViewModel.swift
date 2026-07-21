@@ -61,10 +61,13 @@ final class NotebookViewModel: ObservableObject {
     @Published var agentError: String?
     @Published var interventionNotice: InterventionNotice?
     @Published private(set) var newestAgentThreadID: UUID?
+    @Published private(set) var pendingAnalysisQuestion: String?
+    @Published private(set) var pendingAnalysisParentThreadID: UUID?
 
     private let store: NotebookStore
     private var saveTask: Task<Void, Never>?
     private var analysisTask: Task<Void, Never>?
+    private var activeAnalysisRequestID: UUID?
     private var lastAnalysisQuestion: String?
     private var lastAnalysisParentThreadID: UUID?
     private var lastGuidanceQuestion: String?
@@ -582,8 +585,10 @@ final class NotebookViewModel: ObservableObject {
 
     func deleteCurrentPage() {
         guard notebook.pages.count > 1 else { return }
+        let removedPageID = currentPageID
         pageTurnDirection = currentIndex < notebook.pages.count - 1 ? .forward : .backward
         notebook.pages.remove(at: currentIndex)
+        removeConversations(forDeletedPage: removedPageID)
         currentIndex = min(currentIndex, notebook.pages.count - 1)
         selectFirstDrawingLayerForCurrentPage()
         resetZoom()
@@ -594,10 +599,12 @@ final class NotebookViewModel: ObservableObject {
     func deletePage(at index: Int) {
         guard notebook.pages.count > 1, notebook.pages.indices.contains(index) else { return }
         let currentID = currentPageID
+        let removedPageID = notebook.pages[index].id
         if index == currentIndex {
             pageTurnDirection = index < notebook.pages.count - 1 ? .forward : .backward
         }
         notebook.pages.remove(at: index)
+        removeConversations(forDeletedPage: removedPageID)
         if let idx = notebook.pages.firstIndex(where: { $0.id == currentID }) {
             currentIndex = idx
         } else {
@@ -606,6 +613,34 @@ final class NotebookViewModel: ObservableObject {
         }
         selectFirstDrawingLayerForCurrentPage()
         persistNow()
+    }
+
+    private func removeConversations(forDeletedPage pageID: UUID) {
+        for layerIndex in notebook.agenticLayers.indices {
+            var removedThreads = Set(
+                notebook.agenticLayers[layerIndex].conversations
+                    .filter { $0.pageID == pageID }
+                    .map(\.threadID)
+            )
+            var changed = true
+            while changed {
+                changed = false
+                for annotation in notebook.agenticLayers[layerIndex].conversations
+                where annotation.parentThreadID.map(removedThreads.contains) == true {
+                    changed = removedThreads.insert(annotation.threadID).inserted || changed
+                }
+            }
+            notebook.agenticLayers[layerIndex].conversations.removeAll {
+                removedThreads.contains($0.threadID)
+            }
+        }
+        if newestAgentThreadID.map({ threadID in
+            notebook.agenticLayers.allSatisfy { layer in
+                !layer.conversations.contains { $0.threadID == threadID }
+            }
+        }) == true {
+            newestAgentThreadID = nil
+        }
     }
 
     /// Reorder a page, keeping the currently-viewed page in view.
@@ -695,7 +730,7 @@ final class NotebookViewModel: ObservableObject {
         lastGuidanceQuestion = nil
         lastGuidanceSelection = selection
         lastInterventionIntent = intent
-        isAnalyzing = true
+        let requestID = beginAnalysis(question: nil, parentThreadID: nil)
         agentError = nil
         interventionNotice = nil
         let client = OpenAICodexPinClient(route: route)
@@ -711,16 +746,16 @@ final class NotebookViewModel: ObservableObject {
                       lastGuidanceSelection?.id == selectionID,
                       notebook.pages.first(where: { $0.id == selection.pageID }) == originatingPage
                 else {
-                    isAnalyzing = false
-                    analysisTask = nil
+                    finishAnalysis(requestID)
                     return
                 }
                 guard let destinationLayerIndex = notebook.agenticLayers.firstIndex(where: {
                     $0.id == layerID && $0.isVisible
                 }) else {
-                    agentError = "That Agentic Layer was removed before guidance completed."
-                    isAnalyzing = false
-                    analysisTask = nil
+                    if ownsAnalysis(requestID) {
+                        agentError = "That Agentic Layer was removed before guidance completed."
+                    }
+                    finishAnalysis(requestID)
                     return
                 }
                 switch outcome {
@@ -735,9 +770,10 @@ final class NotebookViewModel: ObservableObject {
                         citations: []
                     )
                     guard let annotation = self.annotation(fromGuidanceDraft: draft, selection: selection) else {
-                        agentError = "The guidance response contained an invalid Pin location."
-                        isAnalyzing = false
-                        analysisTask = nil
+                        if ownsAnalysis(requestID) {
+                            agentError = "The guidance response contained an invalid Pin location."
+                        }
+                        finishAnalysis(requestID)
                         return
                     }
                     notebook.agenticLayers[destinationLayerIndex].conversations.append(annotation)
@@ -773,12 +809,11 @@ final class NotebookViewModel: ObservableObject {
                         style: .noAction
                     )
                 }
-                isAnalyzing = false
-                analysisTask = nil
+                finishAnalysis(requestID)
             } catch is CancellationError {
-                isAnalyzing = false
-                analysisTask = nil
+                finishAnalysis(requestID)
             } catch let error as AgentError {
+                guard ownsAnalysis(requestID) else { return }
                 if case .openAISignInRequired(let expiredGeneration) = error {
                     OpenAICodexLoginSession.shared.invalidate(generation: expiredGeneration)
                 }
@@ -790,12 +825,12 @@ final class NotebookViewModel: ObservableObject {
                 default:
                     agentError = error.localizedDescription
                 }
-                isAnalyzing = false
-                analysisTask = nil
+                finishAnalysis(requestID)
             } catch {
-                agentError = "Couldn’t place guidance Pins. Try again; your lasso is unchanged."
-                isAnalyzing = false
-                analysisTask = nil
+                if ownsAnalysis(requestID) {
+                    agentError = "Couldn’t place guidance Pins. Try again; your lasso is unchanged."
+                }
+                finishAnalysis(requestID)
             }
         }
     }
@@ -965,7 +1000,10 @@ final class NotebookViewModel: ObservableObject {
         lastAnalysisParentThreadID = parentThreadID
         lastGuidanceSelection = nil
         lastInterventionIntent = nil
-        isAnalyzing = true
+        let requestID = beginAnalysis(
+            question: trimmedQuestion ?? (parentPin == nil ? "Guide this page" : "Explain this further"),
+            parentThreadID: parentThreadID
+        )
         agentError = nil
         let client = AgentInsightClientFactory.make()
         let capturedGeneration = client.generation
@@ -980,19 +1018,22 @@ final class NotebookViewModel: ObservableObject {
                       originatingPage != nil,
                       notebook.pages.first(where: { $0.id == selection.pageID }) == originatingPage,
                       suppliedSelection == nil || suppliedSelection?.id == selectionID
-                else { return }
+                else {
+                    finishAnalysis(requestID)
+                    return
+                }
                 if let capturedGeneration,
                    !OpenAICodexLoginSession.shared.isCurrent(generation: capturedGeneration) {
-                    isAnalyzing = false
-                    analysisTask = nil
+                    finishAnalysis(requestID)
                     return
                 }
                 guard let destinationLayerIndex = notebook.agenticLayers.firstIndex(where: {
                     $0.id == layerID && $0.isVisible
                 }) else {
-                    agentError = "That Agentic Layer was removed before the response completed."
-                    isAnalyzing = false
-                    analysisTask = nil
+                    if ownsAnalysis(requestID) {
+                        agentError = "That Agentic Layer was removed before the response completed."
+                    }
+                    finishAnalysis(requestID)
                     return
                 }
                 let target = continuationTarget(
@@ -1003,50 +1044,71 @@ final class NotebookViewModel: ObservableObject {
                         y: selection.pageBounds.y + selection.pageBounds.height / 2
                     )
                 )
-                let body = ([insight.summary] + insight.items.map { "• \($0)" })
-                    .joined(separator: "\n")
                 notebook.agenticLayers[destinationLayerIndex].conversations.append(
                     PageAnnotation(
                         id: UUID(),
                         pageID: selection.pageID,
                         threadID: childThreadID,
                         parentThreadID: parentPin?.threadID,
+                        userPrompt: trimmedQuestion,
                         target: target,
                         targetRegion: selection.pageBounds,
                         kind: .explanation,
                         teaser: trimmedQuestion
                             ?? (parentPin == nil ? "Agent insight" : "Follow-up"),
-                        body: body,
+                        body: insight.body,
                         citations: [],
                         status: .complete
                     )
                 )
                 newestAgentThreadID = childThreadID
-                isAnalyzing = false
-                analysisTask = nil
+                finishAnalysis(requestID)
                 persistNow()
             } catch is CancellationError {
-                isAnalyzing = false
-                analysisTask = nil
+                finishAnalysis(requestID)
             } catch let error as AgentError {
                 if case .openAISignInRequired(let generation) = error {
                     OpenAICodexLoginSession.shared.invalidate(generation: generation)
                 }
-                agentError = error.localizedDescription
-                isAnalyzing = false
-                analysisTask = nil
+                if ownsAnalysis(requestID) { agentError = error.localizedDescription }
+                finishAnalysis(requestID)
             } catch {
-                agentError = error.localizedDescription
-                isAnalyzing = false
-                analysisTask = nil
+                if ownsAnalysis(requestID) { agentError = error.localizedDescription }
+                finishAnalysis(requestID)
             }
         }
     }
 
     func cancelAnalysis() {
-        analysisTask?.cancel()
+        let task = analysisTask
+        activeAnalysisRequestID = nil
         analysisTask = nil
         isAnalyzing = false
+        pendingAnalysisQuestion = nil
+        pendingAnalysisParentThreadID = nil
+        task?.cancel()
+    }
+
+    private func beginAnalysis(question: String?, parentThreadID: UUID?) -> UUID {
+        let requestID = UUID()
+        activeAnalysisRequestID = requestID
+        pendingAnalysisQuestion = question
+        pendingAnalysisParentThreadID = parentThreadID
+        isAnalyzing = true
+        return requestID
+    }
+
+    private func ownsAnalysis(_ requestID: UUID) -> Bool {
+        activeAnalysisRequestID == requestID
+    }
+
+    private func finishAnalysis(_ requestID: UUID) {
+        guard ownsAnalysis(requestID) else { return }
+        activeAnalysisRequestID = nil
+        analysisTask = nil
+        isAnalyzing = false
+        pendingAnalysisQuestion = nil
+        pendingAnalysisParentThreadID = nil
     }
 
     func retryLastAnalysis() {
@@ -1087,7 +1149,7 @@ final class NotebookViewModel: ObservableObject {
             .map { annotation in
                 """
                 <turn>
-                User: \(escapedConversationContext(annotation.teaser))
+                User: \(escapedConversationContext(annotation.userPrompt ?? annotation.teaser))
                 Assistant: \(escapedConversationContext(annotation.body))
                 </turn>
                 """

@@ -435,6 +435,7 @@ struct PageAnnotation: Codable, Identifiable, Sendable {
     let id: UUID
     let pageID: UUID
     let threadID: UUID
+    var userPrompt: String?
     var target: PageNormalizedPoint
     var targetRegion: PageNormalizedRect?
     var kind: AnnotationKind
@@ -467,6 +468,12 @@ enum AnnotationStatus: String, Codable, Sendable {
     case failed
 }
 ```
+
+`userPrompt` is optional and contains only a literal user-authored question for
+the annotation's turn. A missing value is backward-compatible and means the
+Pin teaser is context, not a user quotation. Assistant Markdown remains the
+ordinary bounded source string in `body`; presentation may derive safe rendered
+and plain-text projections without rewriting persisted content.
 
 The agent first produces a crop-relative draft:
 

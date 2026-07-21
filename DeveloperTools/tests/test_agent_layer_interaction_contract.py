@@ -50,7 +50,7 @@ class AgentLayerInteractionContractTests(unittest.TestCase):
         self.assertIn("clampedPoint.x / size.width", contract)
         self.assertIn("onEvent?(.moved(annotationID: annotation.id, target: target))", overlay)
         self.assertIn("if isDraggingPin {\n                    onMoveChanged(value.translation)", overlay)
-        self.assertIn('coordinateSpace: .named(PinOverlayCoordinateSpace.name)', overlay)
+        self.assertIn('coordinateSpace: .named(PinOverlayView.dragSpaceName)', overlay)
         self.assertIn("keepingLabelOffset", overlay)
         self.assertIn("return PinOverlayPlacement(", overlay)
         self.assertIn("guard target.isFiniteAndInUnitBounds else { return }", view_model)
@@ -67,7 +67,9 @@ class AgentLayerInteractionContractTests(unittest.TestCase):
         self.assertIn('accessibilityIdentifier("agent-conversation-tree")', sidebar)
         self.assertNotIn("ObservationCard", sidebar)
         self.assertIn('Text("Continuing from")', sidebar)
-        self.assertIn('return "Continue conversation"', sidebar)
+        self.assertIn('PinChatTurnView(', sidebar)
+        self.assertIn('MarkdownTextProjection.plainText', sidebar)
+        self.assertIn('safeAreaInset(edge: .bottom', sidebar)
         self.assertNotIn('Text("Branching from")', sidebar)
         self.assertNotIn('return "Create follow-up branch"', sidebar)
 
@@ -94,7 +96,8 @@ class AgentLayerInteractionContractTests(unittest.TestCase):
 
         self.assertIn("allowsConversationRequests: true", view)
         self.assertIn("selectedAgentParentThreadID = pin.threadID", view)
-        self.assertIn("withAnimation { showAgentSidebar = true }", view)
+        self.assertIn("showAgentChatTab = true", view)
+        self.assertIn("showAgentSidebar = false", view)
         self.assertIn('Label("Continue", systemImage: "bubble.left.and.bubble.right.fill")', overlay)
 
 

@@ -5,6 +5,10 @@ struct PageAnnotation: Identifiable, Codable, Equatable, Sendable {
     let pageID: UUID
     let threadID: UUID
     var parentThreadID: UUID? = nil
+    /// Literal user-authored question for this turn. Older annotations decode
+    /// `nil`; their teaser remains Pin context and is never presented as a
+    /// fabricated user message.
+    var userPrompt: String? = nil
     var target: PageNormalizedPoint
     var targetRegion: PageNormalizedRect?
     var kind: AnnotationKind

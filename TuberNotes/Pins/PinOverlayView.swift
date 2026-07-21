@@ -317,7 +317,7 @@ private struct PinAnchor: View {
         }
         .shadow(color: style.color.opacity(0.30), radius: 4, y: 2)
         .accessibilityAddTraits(.isButton)
-        .accessibilityLabel(annotation.teaser)
+        .accessibilityLabel(MarkdownTextProjection.plainText(from: annotation.teaser, limit: 160))
         .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
         .accessibilityHint(accessibilityHint)
         .accessibilityAddTraits(isExpanded ? .isSelected : [])
@@ -450,7 +450,7 @@ private struct PinCard: View {
                 Image(systemName: style.symbol)
                     .foregroundStyle(style.color)
                     .frame(width: 18)
-                Text(annotation.teaser)
+                Text(MarkdownTextProjection.plainText(from: annotation.teaser, limit: 120))
                     .font((isCompact ? Font.footnote : Font.subheadline).weight(.semibold))
                     .foregroundStyle(.primary)
                     .lineLimit(isExpanded ? 2 : 1)
@@ -459,7 +459,7 @@ private struct PinCard: View {
             .padding(.horizontal, isCompact ? 8 : 10)
             .frame(minHeight: isCompact ? 38 : 48)
             .accessibilityElement(children: .combine)
-            .accessibilityLabel(annotation.teaser)
+            .accessibilityLabel(MarkdownTextProjection.plainText(from: annotation.teaser, limit: 160))
             .accessibilityValue(statusAccessibilityValue)
             .accessibilityIdentifier("pin-card-\(annotation.id.uuidString)")
 
@@ -524,10 +524,15 @@ private struct PinCard: View {
         switch annotation.status {
         case .streaming:
             VStack(alignment: .leading, spacing: 9) {
-                Text(annotation.body.isEmpty ? "Preparing explanation…" : annotation.body)
-                    .font(.body)
-                    .foregroundStyle(.primary)
-                    .textSelection(.enabled)
+                if annotation.body.isEmpty {
+                    Text("Preparing explanation…")
+                        .font(.body)
+                        .foregroundStyle(.primary)
+                } else {
+                    MarkdownMessageView(source: annotation.body)
+                        .font(.body)
+                        .foregroundStyle(.primary)
+                }
                 HStack(spacing: 7) {
                     ProgressView()
                         .controlSize(.small)
@@ -539,13 +544,20 @@ private struct PinCard: View {
                 .accessibilityLabel("Explanation is still streaming")
             }
         case .complete:
-            Text(annotation.body.isEmpty ? "No additional explanation." : annotation.body)
-                .font(isCompact ? .callout : .body)
-                .foregroundStyle(.primary)
-                .textSelection(.enabled)
+            if annotation.body.isEmpty {
+                Text("No additional explanation.")
+                    .font(isCompact ? .callout : .body)
+                    .foregroundStyle(.primary)
+            } else {
+                MarkdownMessageView(source: annotation.body)
+                    .font(isCompact ? .callout : .body)
+                    .foregroundStyle(.primary)
+            }
         case .failed:
             Label(
-                annotation.body.isEmpty ? "This Pin could not be completed." : annotation.body,
+                annotation.body.isEmpty
+                    ? "This Pin could not be completed."
+                    : MarkdownTextProjection.plainText(from: annotation.body, limit: 500),
                 systemImage: "exclamationmark.triangle.fill"
             )
             .font(.body)
@@ -570,7 +582,7 @@ private struct CitationRow: View {
 
     var body: some View {
         Group {
-            if let url = citation.url {
+            if let url = safeURL {
                 Link(destination: url) {
                     label
                 }
@@ -584,6 +596,14 @@ private struct CitationRow: View {
         }
         .accessibilityLabel(accessibilityLabel)
         .accessibilityIdentifier("citation-\(citation.id.uuidString)")
+    }
+
+    private var safeURL: URL? {
+        guard let url = citation.url,
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              url.host?.isEmpty == false else { return nil }
+        return url
     }
 
     private var label: some View {

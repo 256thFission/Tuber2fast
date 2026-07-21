@@ -130,6 +130,12 @@ struct NotebookView: View {
                         selectedParentThreadID: $selectedAgentParentThreadID,
                         isFullChatTab: false,
                         onClose: { withAnimation { showAgentSidebar = false } },
+                        onOpenFullChat: {
+                            withAnimation {
+                                showAgentSidebar = false
+                                showAgentChatTab = true
+                            }
+                        },
                         onEditProviderAccess: { withAnimation { showProviderAccessPopup = true } }
                     )
                 }
@@ -147,6 +153,7 @@ struct NotebookView: View {
                     selectedParentThreadID: $selectedAgentParentThreadID,
                     isFullChatTab: true,
                     onClose: { withAnimation { showAgentChatTab = false } },
+                    onOpenFullChat: {},
                     onEditProviderAccess: { withAnimation { showProviderAccessPopup = true } }
                 )
                 .padding(.horizontal, 34)
@@ -174,6 +181,8 @@ struct NotebookView: View {
                 .padding(.trailing, showAgentSidebar ? sidebarShift : 0)
             }
             .zIndex(7)
+            .opacity(showAgentChatTab ? 0 : 1)
+            .allowsHitTesting(!showAgentChatTab)
 
             if pencilPaletteAnchor != nil {
                 pencilPaletteLayer
