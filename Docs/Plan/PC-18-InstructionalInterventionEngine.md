@@ -858,6 +858,21 @@ revision. This rewrite retains their accepted constraints:
 
 ## Session log
 
+- 2026-07-21 — Phillip's post-redeploy screenshot proved the structured-Pin
+  correction still failed on the live ChatGPT/Codex route and that accumulated
+  generic Pins made the experience look instructionally empty. `CONTRACT:` the
+  normal Release Check/Explain path now uses the authenticated image-capable
+  insight response rather than provider structured output. It requests an
+  answer/key point plus reasoning and a next step, bounds and screens the
+  returned Markdown, derives a compact plain-text teaser, and anchors exactly
+  one accepted response to the selection center through the existing crop-to-
+  page transform. `[NO_ACTION]`, generic labels, context requests, and
+  observational prose produce no Pin and no toast. Typed intervention contracts
+  remain available for future gateway/tool integration. The signed Release
+  build succeeded under `tmp/build/pc18-teaching-route/`, installed, and
+  normally launched on only iPad
+  `2DD98ECC-A26A-5730-943B-01DD63DC4117`. Phillip's repeat of the visible
+  `2 + 2` selection is the required live account/model and teaching verdict.
 - 2026-07-21 — Phillip's first normal-app test exposed a live structured-output
   rejection and instructionally poor fallback language. The correction keeps
   the existing typed evidence and geometry contracts but replaces the provider-

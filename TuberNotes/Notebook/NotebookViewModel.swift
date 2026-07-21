@@ -697,8 +697,8 @@ final class NotebookViewModel: ObservableObject {
 
     // MARK: Agentic Layer questions
 
-    /// The normal Release hero path: analyze the lasso crop, receive strict
-    /// crop-normalized drafts, and persist only page-normalized annotations.
+    /// The normal Release hero path: ask the image-capable model to teach from
+    /// the selected evidence, then anchor exactly one response to that region.
     /// No AI request mutates ink, images, or lasso geometry.
     func requestIntervention(
         selection suppliedSelection: SelectionArtifact? = nil,
@@ -721,7 +721,7 @@ final class NotebookViewModel: ObservableObject {
         let model = OpenAICodexConstants.supportedModels.contains(stored ?? "")
             ? stored!
             : OpenAICodexConstants.defaultModel
-        guard let route = OpenAICodexLoginSession.shared.route(for: .structuredPins, model: model) else {
+        guard let route = OpenAICodexLoginSession.shared.route(for: .insight, model: model) else {
             agentError = "Sign in with OpenAI to place guidance Pins."
             return
         }
@@ -733,14 +733,17 @@ final class NotebookViewModel: ObservableObject {
         let requestID = beginAnalysis(question: nil, parentThreadID: nil)
         agentError = nil
         interventionNotice = nil
-        let client = OpenAICodexPinClient(route: route)
-        let generation = client.generation
+        let client = OpenAICodexVisionClient(route: route)
+        let generation = route.generation
         let originatingPage = currentPage
         let selectionID = selection.id
         analysisTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let outcome = try await client.intervene(for: selection, intent: intent)
+                let insight = try await client.analyzeTeaching(
+                    selection,
+                    instruction: teachingPrompt(for: intent)
+                )
                 guard !Task.isCancelled,
                       OpenAICodexLoginSession.shared.isCurrent(generation: generation),
                       lastGuidanceSelection?.id == selectionID,
@@ -758,43 +761,29 @@ final class NotebookViewModel: ObservableObject {
                     finishAnalysis(requestID)
                     return
                 }
-                switch outcome {
-                case let .spatialGuidance(guidance, _):
-                    let draft = PinDraft(
-                        id: UUID(),
-                        target: guidance.target,
-                        targetRegion: nil,
-                        kind: guidance.kind,
-                        teaser: guidance.teaser,
-                        body: guidance.body + (guidance.studyCue.map { "\n\n\($0)" } ?? ""),
-                        citations: []
-                    )
-                    guard let annotation = self.annotation(fromGuidanceDraft: draft, selection: selection) else {
-                        if ownsAnalysis(requestID) {
-                            agentError = "The guidance response contained an invalid Pin location."
-                        }
-                        finishAnalysis(requestID)
-                        return
-                    }
-                    notebook.agenticLayers[destinationLayerIndex].conversations.append(annotation)
-                    newestAgentThreadID = annotation.threadID
-                    persistNow()
-                case let .transientConfirmation(confirmation, _):
-                    let notice = InterventionNotice(
-                        message: confirmation.message,
-                        style: .confirmation
-                    )
-                    interventionNotice = notice
-                    Task { [weak self] in
-                        try? await Task.sleep(for: .seconds(3))
-                        guard self?.interventionNotice == notice else { return }
-                        self?.interventionNotice = nil
-                    }
-                case .needsInput, .noAction:
-                    // A silent non-result keeps the lasso available without
-                    // interrupting the student with a clarification/no-action toast.
+                guard let body = acceptedTeachingBody(insight.body) else {
+                    // Genuinely unreadable or generic/observational output is a
+                    // silent non-result. The selection remains available to retry.
                     interventionNotice = nil
+                    finishAnalysis(requestID)
+                    return
                 }
+                let draft = PinDraft(
+                    id: UUID(),
+                    target: CropNormalizedPoint(x: 0.5, y: 0.5),
+                    targetRegion: nil,
+                    kind: intent == .check ? .issue : .explanation,
+                    teaser: teachingTeaser(from: body, intent: intent),
+                    body: body,
+                    citations: []
+                )
+                guard let annotation = self.annotation(fromGuidanceDraft: draft, selection: selection) else {
+                    finishAnalysis(requestID)
+                    return
+                }
+                notebook.agenticLayers[destinationLayerIndex].conversations.append(annotation)
+                newestAgentThreadID = annotation.threadID
+                persistNow()
                 finishAnalysis(requestID)
             } catch is CancellationError {
                 finishAnalysis(requestID)
@@ -805,9 +794,9 @@ final class NotebookViewModel: ObservableObject {
                 }
                 switch error {
                 case .parse:
-                    agentError = "OpenAI responded, but TuberNotes couldn’t read a valid structured Pin result. Try again."
+                    agentError = "OpenAI returned an unreadable teaching response. Try again."
                 case .unavailable:
-                    agentError = "OpenAI rejected or could not complete image-guided Pin placement for this account or model."
+                    agentError = "OpenAI couldn’t complete this teaching request. Try again."
                 default:
                     agentError = error.localizedDescription
                 }
@@ -819,6 +808,52 @@ final class NotebookViewModel: ObservableObject {
                 finishAnalysis(requestID)
             }
         }
+    }
+
+    private func teachingPrompt(for intent: InvestigationIntent) -> String {
+        let task = switch intent {
+        case .check:
+            "Check the selected student work. Solve or verify it yourself. If it is wrong, identify the exact error, explain why, and show the corrected reasoning. If it is correct, confirm the result and explain the shortest useful self-check."
+        case .explain:
+            "Explain the selected work as a tutor. Identify the central idea, reason through it, and give the student a concrete next step or self-check. If the selection contains a direct question, answer it directly."
+        case .ask:
+            "Answer the selected student question directly and explain the reasoning."
+        }
+        return """
+        \(task)
+
+        Begin with one short line stating the answer or key learning point, then give a concise explanation in readable Markdown. Do not merely describe, classify, label, or transcribe the image. Do not say “incomplete question,” request more context, or use generic headings such as “Follow-up branch,” “Question shown,” or “Practice/test label.” Do not invent unreadable facts. Only when the decisive content is genuinely unreadable or ambiguous, return exactly [NO_ACTION].
+        """
+    }
+
+    private func acceptedTeachingBody(_ source: String) -> String? {
+        let trimmed = source.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != "[NO_ACTION]" else { return nil }
+        let body = String(trimmed.prefix(12_000))
+        let plain = MarkdownTextProjection.plainText(from: body, limit: 2_000)
+        let normalized = plain.folding(
+            options: [.caseInsensitive, .diacriticInsensitive],
+            locale: Locale(identifier: "en_US_POSIX")
+        )
+        let forbidden = [
+            "incomplete question", "follow-up branch", "follow up branch",
+            "practice/test label", "question shown", "provide more context",
+            "need more context", "i can see", "the image shows",
+            "the selected region contains"
+        ]
+        guard plain.count >= 8,
+              !forbidden.contains(where: normalized.contains) else { return nil }
+        return body
+    }
+
+    private func teachingTeaser(from body: String, intent: InvestigationIntent) -> String {
+        let projected = MarkdownTextProjection.plainText(from: body, limit: 120)
+        let firstLine = projected.split(whereSeparator: \.isNewline).first.map(String.init)
+        let candidate = firstLine?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !candidate.isEmpty {
+            return String(candidate.prefix(44))
+        }
+        return intent == .check ? "Check this reasoning" : "Understand this step"
     }
 
     private func annotation(

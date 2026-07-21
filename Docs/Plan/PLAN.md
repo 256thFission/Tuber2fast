@@ -1601,6 +1601,17 @@ and a concrete return contract.
 
 ### Session log
 
+- 2026-07-21 — Phillip's current-app screenshot proved the prior schema repair
+  did not clear the live provider rejection. `CONTRACT:` PC-18 normal Release
+  Check/Explain no longer depends on provider structured output or model Pin
+  coordinates. It uses the authenticated multimodal insight route, accepts only
+  bounded non-observational teaching Markdown, derives a compact plain-text
+  answer title, and anchors one response to the selected region with existing
+  crop-to-page geometry. Unreadable/generic/context-seeking results remain
+  silent. The signed Release build under `tmp/build/pc18-teaching-route/`
+  succeeded, installed, and normally launched on only Phillip's pinned iPad
+  `2DD98ECC-A26A-5730-943B-01DD63DC4117`; his repeat live interaction is the
+  remaining verdict.
 - 2026-07-21 — Phillip's first normal Release test found that the live
   structured-Pin request could be rejected before inference and that generic
   clarification/observational copy violated the learning interaction. PC-18's

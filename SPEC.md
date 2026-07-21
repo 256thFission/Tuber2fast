@@ -622,7 +622,24 @@ Deferred tools:
 
 ### 10.6 PC-18 intervention decision
 
-Check and Explain use one versioned, schema-constrained multimodal decision:
+The normal Release Check and Explain actions use the authenticated multimodal
+insight route and persist at most one teaching response anchored to the active
+selection. The app, not the model, owns the spatial target: it uses the center
+of the bounded evidence crop and converts that point through the existing
+crop-to-page transform. This avoids making model-generated coordinate precision
+or provider-specific structured-output support a prerequisite for a useful
+teaching answer.
+
+The prompt requires a direct answer or key learning point, explanatory
+reasoning, and a concrete next step or self-check. It explicitly rejects image
+transcription, observational labels, context-seeking, and generic follow-up
+copy. The model may return exactly `[NO_ACTION]` only when decisive content is
+genuinely unreadable or ambiguous. The app bounds the persisted Markdown,
+projects it to plain text for the compact title, rejects known observational or
+generic output, and produces no toast for a non-result.
+
+The versioned schema-constrained intervention types remain the bounded contract
+for future gateway/tool integration:
 
 ```swift
 enum InterventionOutcome: Sendable, Equatable {
@@ -641,12 +658,12 @@ electrophilic destination, leaving group, formed/broken bonds, and observed
 electron-flow edges. Schema shape alone is insufficient; the bounded semantic
 validator rejects unsupported or contradictory claims.
 
-Only `spatialGuidance` converts to one `PinDraft` and creates a persisted
-annotation/chat root. The other three outcomes are successful, selection-
-attached, transient results and leave notebook persistence unchanged. Empty-Pin
-success is therefore first-class. Notebook rechecks cancellation, login
-generation, selection identity, page content, destination layer existence and
-visibility, and crop-to-page containment before applying any spatial result.
+When that typed route is used, only `spatialGuidance` converts to one `PinDraft`.
+For the current normal Release insight route, one accepted teaching body creates
+one `PinDraft`; `[NO_ACTION]` or rejected generic output creates none. Notebook
+rechecks cancellation, login generation, selection identity, page content,
+destination layer existence and visibility, and crop-to-page containment before
+applying either spatial result.
 
 ## 11. Knowledge architecture
 

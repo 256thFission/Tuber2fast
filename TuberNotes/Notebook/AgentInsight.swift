@@ -225,6 +225,19 @@ struct OpenAICodexVisionClient: AgentInsightClient {
     }
 
     func analyze(_ selection: SelectionArtifact, question: String?) async throws -> AgentInsight {
+        try await perform(selection, prompt: defaultInsightPrompt(question))
+    }
+
+    /// The intervention path supplies its complete teaching policy so it is
+    /// not diluted by the general conversation prompt.
+    func analyzeTeaching(
+        _ selection: SelectionArtifact,
+        instruction: String
+    ) async throws -> AgentInsight {
+        try await perform(selection, prompt: instruction)
+    }
+
+    private func perform(_ selection: SelectionArtifact, prompt: String) async throws -> AgentInsight {
         let crop = selection.crop
         let dataURL = "data:\(crop.mediaType);base64,\(crop.imageData.base64EncodedString())"
         let body: [String: Any] = [
@@ -234,7 +247,7 @@ struct OpenAICodexVisionClient: AgentInsightClient {
             "input": [[
                 "role": "user",
                 "content": [
-                    ["type": "input_text", "text": defaultInsightPrompt(question)],
+                    ["type": "input_text", "text": prompt],
                     ["type": "input_image", "image_url": dataURL, "detail": "original"]
                 ]
             ]]
