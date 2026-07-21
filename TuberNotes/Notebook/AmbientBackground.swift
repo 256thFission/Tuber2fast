@@ -227,6 +227,27 @@ final class PassivePencilTouchRecognizer: UIGestureRecognizer {
     private func report(_ touches: Set<UITouch>) {
         guard let referenceView,
               let touch = touches.first(where: { $0.type == .pencil }) else { return }
+        guard let window = referenceView.window ?? view?.window else { return }
+        let windowPoint = touch.location(in: window)
+        // Ripples belong to the page surface only. A blocklist of "chrome"
+        // classes is unreliable (SwiftUI buttons and material panels hit-test
+        // as opaque hosting views), so whitelist instead: only report touches
+        // whose hit view lives inside the zoomable page hierarchy. Pencil
+        // input on the toolbar, popovers, the sidebar, the page strip, or any
+        // other panel never spawns a ripple.
+        guard let hit = window.hitTest(windowPoint, with: nil),
+              Self.isPageSurface(hit) else { return }
         onTouch?(touch.location(in: referenceView))
+    }
+
+    /// True when the view is (a descendant of) the notebook's zoomable page
+    /// container — the only surface allowed to produce ambient ripples.
+    private static func isPageSurface(_ view: UIView) -> Bool {
+        var current: UIView? = view
+        while let candidate = current {
+            if candidate is ZoomablePageView { return true }
+            current = candidate.superview
+        }
+        return false
     }
 }

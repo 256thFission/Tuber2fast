@@ -520,7 +520,11 @@ final class NotebookViewModel: ObservableObject {
     }
 
     /// Reorder a page, keeping the currently-viewed page in view.
-    func movePage(from: Int, to: Int) {
+    ///
+    /// Pass `persist: false` for live reordering (e.g. every slot crossing of a
+    /// drag): a synchronous whole-notebook encode + disk write per crossing is
+    /// what made the strip drag hitch. The caller saves once on drop.
+    func movePage(from: Int, to: Int, persist: Bool = true) {
         guard notebook.pages.indices.contains(from) else { return }
         let target = max(0, min(to, notebook.pages.count - 1))
         guard target != from else { return }
@@ -530,7 +534,7 @@ final class NotebookViewModel: ObservableObject {
         if let idx = notebook.pages.firstIndex(where: { $0.id == currentID }) {
             currentIndex = idx
         }
-        persistNow()
+        if persist { persistNow() }
     }
 
     func go(to index: Int) {

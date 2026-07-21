@@ -19,6 +19,8 @@ struct NotebookCanvas: UIViewRepresentable {
     let pageScrollDirection: NotebookPageScrollDirection
     let fingerDrawing: Bool
     let isLassoActive: Bool
+    let isRefinementActive: Bool
+    let lassoRect: CGRect?
     let snapStraight: Bool
     let images: [PlacedImage]
     let isArrangingImages: Bool
@@ -36,6 +38,9 @@ struct NotebookCanvas: UIViewRepresentable {
     var onPencilShowPalette: (CGPoint, Bool) -> Void
     var onLongPress: () -> Void
     var onZoomChanged: (CGFloat) -> Void
+    /// Fired at pinch-zoom boundaries (true on begin, false on end) so the UI
+    /// can surface transient zoom chrome without publishing per-frame state.
+    var onZoomActivity: (Bool) -> Void
     var onLassoChanged: (CGRect?) -> Void
     var onImagesChanged: ([PlacedImage]) -> Void
     var onSelectImage: (UUID?) -> Void
@@ -135,6 +140,11 @@ struct NotebookCanvas: UIViewRepresentable {
         view.setBackgroundDrawingData(backgroundDrawingData)
         view.onPageViewportChange = onPageViewportChange
         applyMode(to: view)
+        // Clear only when the lasso mode is turned off. While the mode is on,
+        // `lassoRect` is nil for the entire time the user is drawing the loop,
+        // and SwiftUI re-runs this update on every publish (viewport reports,
+        // hover, ripples) — clearing here used to wipe the loop mid-draw and
+        // made the lasso unusable.
         if !isLassoActive {
             view.lassoView.clear()
             context.coordinator.clearLassoSelection()
@@ -159,7 +169,10 @@ struct NotebookCanvas: UIViewRepresentable {
         view.imageLayer.isEditing = isArrangingImages
         view.imageLayer.selectedID = selectedImageID
 
-        let interacting = isLassoActive || isArrangingImages
+        // Refinement counts as an interacting mode: while its overlay is up the
+        // page canvas must not ink and the scroll view must not pan/zoom, so
+        // the Pencil draws the refinement lasso instead of writing on the page.
+        let interacting = isLassoActive || isArrangingImages || isRefinementActive
         view.canvasView.isUserInteractionEnabled = !interacting
         view.scrollView.isScrollEnabled = !interacting && !isPageLocked
         view.scrollView.pinchGestureRecognizer?.isEnabled = !interacting && !isPageLocked
@@ -464,6 +477,7 @@ struct NotebookCanvas: UIViewRepresentable {
         func scrollViewWillBeginZooming(_ scrollView: UIScrollView, with view: UIView?) {
             programmaticZoomTarget = nil
             isUserZooming = true
+            parent.onZoomActivity(true)
         }
         func scrollViewDidScroll(_ scrollView: UIScrollView) { view?.reportPageViewport() }
         func scrollViewDidZoom(_ scrollView: UIScrollView) {
@@ -482,6 +496,7 @@ struct NotebookCanvas: UIViewRepresentable {
             isUserZooming = false
             self.view?.recenter()
             parent.onZoomChanged(scale)
+            parent.onZoomActivity(false)
         }
 
         @objc func longPress(_ gr: UILongPressGestureRecognizer) {
@@ -518,6 +533,7 @@ struct NotebookCanvas: UIViewRepresentable {
             guard let scrollView = view?.scrollView else { return false }
             let pageFitsViewport = scrollView.zoomScale <= 1.02
             let hasCompetingMode = parent.isLassoActive
+                || parent.isRefinementActive
                 || parent.isArrangingImages
                 || parent.fingerDrawing
                 || parent.isPageLocked

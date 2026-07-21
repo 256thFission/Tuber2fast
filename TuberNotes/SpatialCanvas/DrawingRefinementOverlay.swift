@@ -54,8 +54,15 @@ struct DrawingRefinementOverlay: View {
                 }
             }
             .onAppear {
-                guard selection == nil, let initialSelection else { return }
-                selection = initialSelection
+                guard selection == nil else { return }
+                if let initialSelection {
+                    selection = initialSelection
+                } else {
+                    // Arm the lasso immediately: entering refinement mode from
+                    // the toolbar should let the user draw the selection right
+                    // away instead of requiring a second in-overlay button tap.
+                    isLassoActive = true
+                }
             }
             .onChange(of: isLassoActive) { _, isActive in
                 lassoPoints = []

@@ -6,6 +6,9 @@ import SwiftUI
 struct PageStripView: View {
     @ObservedObject var vm: NotebookViewModel
 
+    /// Stable coordinate space the reorder drag is measured in.
+    private static let dragSpaceName = "page-strip-drag-space"
+
     // Cell geometry — kept in sync with StripCell (40pt wide) + HStack spacing.
     private let cellWidth: CGFloat = 40
     private let cellSpacing: CGFloat = 10
@@ -37,6 +40,9 @@ struct PageStripView: View {
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
+                // Fixed reference frame for the reorder drag; the cells
+                // themselves move (offset + reorder) while it's in flight.
+                .coordinateSpace(name: Self.dragSpaceName)
             }
             .scrollDisabled(isDragging)
             .onChange(of: vm.currentIndex) { _, index in
@@ -114,8 +120,12 @@ struct PageStripView: View {
     // MARK: Reorder gesture
 
     private func reorderGesture(id: UUID) -> some Gesture {
+        // Translation is measured in the strip's fixed coordinate space. The
+        // dragged cell moves with the drag (offset) and jumps slots (reorder),
+        // so measuring in its own local space fed the drag back into itself —
+        // that feedback was the reorder "tweaking".
         LongPressGesture(minimumDuration: 0.3)
-            .sequenced(before: DragGesture(minimumDistance: 0))
+            .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .named(Self.dragSpaceName)))
             .onChanged { value in
                 guard case .second(true, let drag?) = value else { return }
 
@@ -136,10 +146,21 @@ struct PageStripView: View {
                     let start = pickupIndex ?? 0
                     let delta = Int((tx / stride).rounded())
                     let target = max(0, min(start + delta, vm.pageCount - 1))
+                    let compensated = CGSize(width: tx - CGFloat(delta) * stride, height: ty)
                     if let current = vm.notebook.pages.firstIndex(where: { $0.id == id }), current != target {
-                        withAnimation(.easeInOut(duration: 0.18)) { vm.movePage(from: current, to: target) }
+                        // Reorder in memory only — a full save per slot crossing
+                        // made the drag hitch (onEnded persists once on drop) —
+                        // and animate the lifted cell's slot compensation inside
+                        // the same transaction as the reorder, so its layout
+                        // jump and offset counter-jump cancel instead of
+                        // producing a visible jerk at every crossing.
+                        withAnimation(.easeInOut(duration: 0.18)) {
+                            vm.movePage(from: current, to: target, persist: false)
+                            dragOffset = compensated
+                        }
+                    } else {
+                        dragOffset = compensated
                     }
-                    dragOffset = CGSize(width: tx - CGFloat(delta) * stride, height: ty)
                 }
             }
             .onEnded { _ in
@@ -164,6 +185,12 @@ private struct StripCell: View {
     let number: Int
     let isCurrent: Bool
 
+    /// Rendering a fresh thumbnail bitmap in `body` re-ran for every cell on
+    /// every drag frame and was the main source of the strip's reorder lag.
+    /// The bitmap is now rendered once and only re-rendered when the page's
+    /// content actually changes.
+    @State private var thumbnail: UIImage?
+
     private let w: CGFloat = 40
     private var h: CGFloat { 40 * NotebookPageLayout.aspect }
 
@@ -171,9 +198,15 @@ private struct StripCell: View {
         VStack(spacing: 4) {
             ZStack {
                 RoundedRectangle(cornerRadius: 5).fill(.white)
-                if let image = page.renderThumbnail(maxWidth: 80) {
+                if let image = thumbnail {
                     Image(uiImage: image).resizable().scaledToFit()
                 }
+            }
+            .onAppear {
+                if thumbnail == nil { thumbnail = page.renderThumbnail(maxWidth: 80) }
+            }
+            .onChange(of: page) { _, updated in
+                thumbnail = updated.renderThumbnail(maxWidth: 80)
             }
             .frame(width: w, height: h)
             .clipShape(RoundedRectangle(cornerRadius: 5))
@@ -185,6 +218,7 @@ private struct StripCell: View {
             Text("\(number)")
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(isCurrent ? Color.accentColor : Color.secondary)
+                .contentTransition(.numericText())
         }
     }
 }

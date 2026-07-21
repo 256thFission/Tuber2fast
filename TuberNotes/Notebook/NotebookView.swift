@@ -55,6 +55,15 @@ struct NotebookView: View {
     @State private var addPageHoldToken = UUID()
     @State private var didAddPageDuringCurrentGesture = false
     @State private var addPageHoldCompletionCount = 0
+    @State private var pageContainerWidth: CGFloat = 1024
+    // The zoom capsule is transient chrome: visible while a pinch is in flight
+    // or briefly after any zoom change, hidden the rest of the time.
+    @State private var isZoomHUDVisible = false
+    @State private var isPinchZooming = false
+    @State private var zoomHUDHideTask: Task<Void, Never>?
+
+    /// Horizontal room the sidebar occupies (340pt panel + 8pt trailing inset).
+    private let sidebarShift: CGFloat = 356
 
     init(notebook: Notebook, store: NotebookStore) {
         _vm = StateObject(wrappedValue: NotebookViewModel(notebook: notebook, store: store))
@@ -73,6 +82,8 @@ struct NotebookView: View {
                 .ignoresSafeArea()
                 .allowsHitTesting(false)
 
+            // When the assistant sidebar is open, the strip and the page keep
+            // to the space left of it instead of sliding under the frost.
             VStack(spacing: 0) {
                 if showStrip {
                     PageStripView(vm: vm)
@@ -80,8 +91,27 @@ struct NotebookView: View {
                 }
                 pageArea
             }
+            .padding(.trailing, showAgentSidebar ? sidebarShift : 0)
+            .animation(.spring(response: 0.36, dampingFraction: 0.86), value: showAgentSidebar)
 
             if showAgentSidebar {
+                // Opaque near-black field behind the panel, matching the menu
+                // backdrop, so page content never reads through the frost.
+                HStack(spacing: 0) {
+                    Spacer(minLength: 0)
+                    LinearGradient(
+                        colors: [
+                            Color(red: 0.05, green: 0.05, blue: 0.07),
+                            Color(red: 0.02, green: 0.02, blue: 0.03),
+                        ],
+                        startPoint: .top, endPoint: .bottom
+                    )
+                    .frame(width: sidebarShift)
+                    .ignoresSafeArea()
+                }
+                .transition(.move(edge: .trailing))
+                .zIndex(4.5)
+
                 HStack(spacing: 0) {
                     Spacer(minLength: 0)
                     AgentSidebarView(
@@ -111,7 +141,7 @@ struct NotebookView: View {
                     onAskAgent: { withAnimation { showAgentSidebar = true } }
                 )
                 .padding(.bottom, 14)
-                .padding(.trailing, showAgentSidebar ? 348 : 0)
+                .padding(.trailing, showAgentSidebar ? sidebarShift : 0)
             }
             .zIndex(7)
 
@@ -918,6 +948,17 @@ struct NotebookView: View {
         withAnimation(.easeOut(duration: 0.16)) { pencilPaletteAnchor = nil }
     }
 
+    /// Shows the zoom capsule and schedules it to fade out after a short dwell.
+    private func flashZoomHUD() {
+        withAnimation(.easeOut(duration: 0.16)) { isZoomHUDVisible = true }
+        zoomHUDHideTask?.cancel()
+        zoomHUDHideTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(1_400))
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeIn(duration: 0.25)) { isZoomHUDVisible = false }
+        }
+    }
+
     // MARK: Interactive page turn
 
     private func handlePageFlipChanged(_ translation: CGFloat) {
@@ -1119,6 +1160,8 @@ struct NotebookView: View {
             pageScrollDirection: vm.settings.pageScrollDirection,
             fingerDrawing: fingerDrawing,
             isLassoActive: vm.isLassoActive,
+            isRefinementActive: isRefinementActive,
+            lassoRect: vm.lassoRect,
             snapStraight: snapStraight,
             images: vm.currentPage.images,
             isArrangingImages: vm.isArrangingImages,
@@ -1136,6 +1179,10 @@ struct NotebookView: View {
             },
             onLongPress: { withAnimation { showPages = true } },
             onZoomChanged: { vm.zoomScale = $0 },
+            onZoomActivity: { zooming in
+                withAnimation(.easeOut(duration: 0.16)) { isPinchZooming = zooming }
+                if !zooming { flashZoomHUD() }
+            },
             onLassoChanged: { vm.lassoRect = $0 },
             onImagesChanged: { vm.updateImages($0) },
             onSelectImage: { vm.selectImage($0) },
@@ -1193,12 +1240,16 @@ struct NotebookView: View {
             .position(x: pageViewportFrame.midX, y: pageViewportFrame.midY)
         }
         .overlay(alignment: .topTrailing) {
-            if !isPageLocked {
+            // Only surface the zoom capsule while the user is actively zooming
+            // (pinch in flight, or shortly after any zoom change) — it no
+            // longer sits permanently in the corner.
+            if !isPageLocked && (isZoomHUDVisible || isPinchZooming) {
                 zoomControls
                     .padding(12)
                     .transition(.opacity.combined(with: .scale(scale: 0.92)))
             }
         }
+        .onChange(of: vm.zoomScale) { _, _ in flashZoomHUD() }
         .clipped()
         .padding(.horizontal, 12)
         .padding(.top, 8)

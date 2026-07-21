@@ -9,6 +9,7 @@ struct AgentSidebarView: View {
     @AppStorage(AgentProviderAccess.providerStorageKey) private var providerRaw = AgentProvider.openAI.rawValue
     @AppStorage(AgentProviderAccess.modelStorageKey) private var model = ""
     @State private var prompt = ""
+    @State private var expandedRootIDs: Set<UUID> = []
     var onClose: () -> Void
     var onEditProviderAccess: () -> Void
 
@@ -50,6 +51,9 @@ struct AgentSidebarView: View {
         .frame(width: 340)
         .frame(maxHeight: .infinity)
         .background(.ultraThinMaterial, in: sidebarShape)
+        // Opaque near-black base beneath the frost so page content never
+        // shows through the panel, matching the menu backdrops.
+        .background(sidebarShape.fill(Color(red: 0.05, green: 0.05, blue: 0.07).opacity(0.92)))
         .overlay(
             sidebarShape.strokeBorder(
                 LinearGradient(colors: [.white.opacity(0.5), .white.opacity(0.12)],
@@ -145,8 +149,98 @@ struct AgentSidebarView: View {
         if treeItems.isEmpty && !vm.isAnalyzing {
             emptyState.padding(.top, 20)
         } else {
+            if let selectedParent {
+                threadView(for: selectedParent).padding(.top, 16)
+            }
             conversationTree.padding(.top, 16)
         }
+    }
+
+    // MARK: Thread view
+
+    /// The full conversation thread for the selected node: every exchange from
+    /// its root down to the node, rendered chat-style, plus its child branches.
+    private func threadView(for annotation: PageAnnotation) -> some View {
+        let conversations = activeLayer?.conversations ?? []
+        let chain = AgentConversationTreeBuilder.chain(to: annotation, in: conversations)
+        let children = conversations.filter { $0.parentThreadID == annotation.threadID }
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label("Thread", systemImage: "text.bubble")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Text("\(chain.count) exchange\(chain.count == 1 ? "" : "s")")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+
+            ForEach(chain) { message in
+                threadMessage(message, isFocused: message.id == annotation.id)
+            }
+
+            if !children.isEmpty {
+                Text("Branches from here")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 2)
+                ForEach(children) { child in
+                    Button {
+                        selectedParentThreadID = child.threadID
+                    } label: {
+                        HStack(spacing: 7) {
+                            Image(systemName: "arrow.turn.down.right")
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(.indigo)
+                            Text(child.teaser)
+                                .font(.caption.weight(.semibold))
+                                .lineLimit(1)
+                            Spacer(minLength: 4)
+                            Image(systemName: "chevron.right")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
+                        .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 9))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("thread-branch-\(child.id.uuidString)")
+                }
+            }
+        }
+        .padding(12)
+        .background(.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(.indigo.opacity(0.35)))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("agent-thread-view")
+    }
+
+    /// One exchange in a thread: the prompt (teaser) as the user's bubble and
+    /// the answer (body) as the agent's reply beneath it.
+    private func threadMessage(_ annotation: PageAnnotation, isFocused: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Spacer(minLength: 24)
+                Text(annotation.teaser)
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .background(Color.indigo.opacity(isFocused ? 0.85 : 0.45), in: RoundedRectangle(cornerRadius: 11))
+                    .foregroundStyle(.white)
+            }
+            HStack {
+                Text(annotation.body)
+                    .font(.caption)
+                    .foregroundStyle(.primary.opacity(0.92))
+                    .lineLimit(isFocused ? nil : 3)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 11))
+                Spacer(minLength: 24)
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(annotation.teaser). \(annotation.body)")
     }
 
     private var analyzeTitle: String {
@@ -207,22 +301,85 @@ struct AgentSidebarView: View {
     }
 
     private var conversationTree: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        let groups = AgentConversationTreeBuilder.rootGroups(from: activeLayer?.conversations ?? [])
+        return VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Label("Conversation history", systemImage: "list.bullet.indent")
+                Label("Conversations", systemImage: "list.bullet.indent")
                     .font(.subheadline.weight(.semibold))
                 Spacer()
-                Text("\(treeItems.count)")
+                Text("\(groups.count) root\(groups.count == 1 ? "" : "s") · \(treeItems.count)")
                     .font(.caption.monospacedDigit().weight(.semibold))
                     .foregroundStyle(.secondary)
             }
 
-            ForEach(treeItems) { item in
-                conversationNode(item)
+            ForEach(groups) { group in
+                rootGroupView(group)
             }
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("agent-conversation-tree")
+    }
+
+    /// One conversation root and its branch subtree, collapsible. Roots that
+    /// contain the current selection stay expanded so the selected node is
+    /// always visible.
+    private func rootGroupView(_ group: AgentConversationRootGroup) -> some View {
+        let containsSelection = selectedParentThreadID.map { id in
+            group.items.contains { $0.annotation.threadID == id }
+        } ?? false
+        let isExpanded = expandedRootIDs.contains(group.id) || containsSelection
+        let branchCount = group.items.count - 1
+        return VStack(alignment: .leading, spacing: 6) {
+            Button {
+                withAnimation(.snappy(duration: 0.22)) {
+                    if isExpanded {
+                        expandedRootIDs.remove(group.id)
+                        // A collapsed root can't keep the selection pinned open;
+                        // clear it so the disclosure actually closes.
+                        if containsSelection { selectedParentThreadID = nil }
+                    } else {
+                        expandedRootIDs.insert(group.id)
+                    }
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 14)
+                    Image(systemName: "point.3.connected.trianglepath.dotted")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.indigo)
+                    Text(group.root.teaser)
+                        .font(.caption.weight(.semibold))
+                        .lineLimit(1)
+                    Spacer(minLength: 4)
+                    if branchCount > 0 {
+                        Text("\(branchCount)")
+                            .font(.caption2.monospacedDigit().weight(.bold))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(.white.opacity(0.10), in: Capsule())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.horizontal, 9)
+                .padding(.vertical, 8)
+                .background(.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 10))
+                .contentShape(RoundedRectangle(cornerRadius: 10))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Conversation root: \(group.root.teaser)")
+            .accessibilityValue(isExpanded ? "Expanded, \(branchCount) branches" : "Collapsed, \(branchCount) branches")
+            .accessibilityIdentifier("agent-root-\(group.root.id.uuidString)")
+
+            if isExpanded {
+                ForEach(group.items) { item in
+                    conversationNode(item)
+                }
+                .transition(.opacity)
+            }
+        }
     }
 
     private func conversationNode(_ item: AgentConversationTreeItem) -> some View {
@@ -322,7 +479,72 @@ private struct AgentConversationTreeItem: Identifiable {
     var id: UUID { annotation.id }
 }
 
+/// A conversation root and its full subtree in display order (root first).
+private struct AgentConversationRootGroup: Identifiable {
+    let root: PageAnnotation
+    let items: [AgentConversationTreeItem]
+
+    var id: UUID { root.id }
+}
+
 private enum AgentConversationTreeBuilder {
+    /// Depth-first subtree per root, cycle-safe. Each group's `items` starts
+    /// with the root itself, matching the flat `items(from:)` ordering.
+    static func rootGroups(from annotations: [PageAnnotation]) -> [AgentConversationRootGroup] {
+        let knownThreads = Set(annotations.map(\.threadID))
+        let roots = annotations.filter { annotation in
+            guard let parent = annotation.parentThreadID else { return true }
+            return !knownThreads.contains(parent)
+        }
+        var visited = Set<UUID>()
+        var groups: [AgentConversationRootGroup] = []
+
+        func subtree(_ annotation: PageAnnotation, depth: Int, into items: inout [AgentConversationTreeItem]) {
+            guard visited.insert(annotation.id).inserted else { return }
+            let children = annotations.filter { $0.parentThreadID == annotation.threadID }
+            items.append(AgentConversationTreeItem(
+                annotation: annotation,
+                depth: depth,
+                childCount: children.count
+            ))
+            for child in children {
+                subtree(child, depth: depth + 1, into: &items)
+            }
+        }
+
+        for root in roots {
+            var items: [AgentConversationTreeItem] = []
+            subtree(root, depth: 0, into: &items)
+            if !items.isEmpty {
+                groups.append(AgentConversationRootGroup(root: root, items: items))
+            }
+        }
+        // Orphaned cycles still surface, each as its own group.
+        for orphanedCycle in annotations where !visited.contains(orphanedCycle.id) {
+            var items: [AgentConversationTreeItem] = []
+            subtree(orphanedCycle, depth: 0, into: &items)
+            if !items.isEmpty {
+                groups.append(AgentConversationRootGroup(root: orphanedCycle, items: items))
+            }
+        }
+        return groups
+    }
+
+    /// The ancestor chain from the root down to (and including) `annotation`,
+    /// cycle-safe: walking stops if a parent link loops.
+    static func chain(to annotation: PageAnnotation, in annotations: [PageAnnotation]) -> [PageAnnotation] {
+        var chain: [PageAnnotation] = [annotation]
+        var visited: Set<UUID> = [annotation.id]
+        var current = annotation
+        while let parentThreadID = current.parentThreadID,
+              let parent = annotations.first(where: { $0.threadID == parentThreadID }),
+              visited.insert(parent.id).inserted {
+            chain.append(parent)
+            current = parent
+        }
+        return chain.reversed()
+    }
+
     static func items(from annotations: [PageAnnotation]) -> [AgentConversationTreeItem] {
         let knownThreads = Set(annotations.map(\.threadID))
         let roots = annotations.filter { annotation in

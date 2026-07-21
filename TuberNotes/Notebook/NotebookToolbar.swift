@@ -19,6 +19,7 @@ struct NotebookToolbar: View {
     @State private var isColorScrubbing = false
     @State private var pressStartWidth: CGFloat = 0
     @State private var colorScrubStartIndex = 0
+    @State private var lastLassoToggle: Date?
 
     var body: some View {
         Group {
@@ -280,7 +281,7 @@ struct NotebookToolbar: View {
 
     private var lassoButton: some View {
         Button {
-            activateLassoTool()
+            activateLasso()
         } label: {
             Image(systemName: "lasso")
                 .font(.system(size: 17, weight: .medium))
@@ -295,10 +296,7 @@ struct NotebookToolbar: View {
                 .animation(.spring(response: 0.22, dampingFraction: 0.62), value: isLassoActive)
         }
         .highPriorityGesture(lassoHoldGesture)
-        // As with the writing tools, the high-priority hold can consume the
-        // Button's short tap inside the adaptive horizontal toolbar.
-        .simultaneousGesture(
-            TapGesture().onEnded { _ in activateLassoTool() }
+            TapGesture().onEnded { _ in activateLasso() }
         )
         .accessibilityIdentifier("tool-lasso")
         .accessibilityLabel("Selection lasso")
@@ -306,10 +304,25 @@ struct NotebookToolbar: View {
         .accessibilityAddTraits(isLassoActive ? [.isSelected] : [])
     }
 
-    private func activateLassoTool() {
+    /// Tap toggles: activate the selection lasso, or deactivate it when it is
+    /// already the active mode. A single physical tap can invoke this twice
+    /// (Button action + the simultaneous TapGesture that survives the
+    /// high-priority hold), so duplicate invocations inside one tap window are
+    /// coalesced — otherwise the toggle would cancel itself.
+    private func activateLasso() {
+        let now = Date()
+        if let last = lastLassoToggle, now.timeIntervalSince(last) < 0.25 { return }
+        lastLassoToggle = now
         isLassoHeld = false
-        vm.activateLasso()
-        isRefinementActive = false
+        if isLassoActive {
+            isLassoActive = false
+            vm.clearLasso()
+        } else {
+            isLassoActive = true
+            isRefinementActive = false
+            vm.isAgenticLayersActive = false
+        }
+    }
     }
 
     private var lassoHoldGesture: some Gesture {
@@ -337,9 +350,14 @@ struct NotebookToolbar: View {
             isRefinementActive.toggle()
             if !isRefinementActive { isRefinementLassoActive = false }
         } label: {
+            // The badged lasso glyph draws wider and higher than the plain
+            // lasso at the same point size; render it slightly smaller and pin
+            // it to the same fixed 34×34 cell so the two lassos line up and the
+            // toolbar spacing stays even.
             Image(systemName: "lasso.badge.sparkles")
-                .font(.system(size: 17, weight: .medium))
-                .frame(width: 34, height: 34)
+                .font(.system(size: 15, weight: .medium))
+                .imageScale(.medium)
+                .frame(width: 34, height: 34, alignment: .center)
                 .foregroundStyle(isRefinementActive ? Color.white : Color.primary)
                 .background {
                     if isRefinementActive {

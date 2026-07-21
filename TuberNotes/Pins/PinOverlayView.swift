@@ -9,6 +9,11 @@ struct PinOverlayView: View {
     private let usesNormalizedFitProjection: Bool
     private let allowsConversationRequests: Bool
 
+    /// Stable coordinate space for pin drags. Measuring translation in the
+    /// dragged pin's own (moving) local space fed the drag back into itself and
+    /// made moves jitter; this space does not move with the pin.
+    static let dragSpaceName = "pin-overlay-drag-space"
+
     @State private var expandedAnnotationID: UUID?
     @State private var draggedTargets: [UUID: PageNormalizedPoint] = [:]
     @State private var draggedLabelOffsets: [UUID: CGSize] = [:]
@@ -102,7 +107,7 @@ struct PinOverlayView: View {
                     }
                 }
             }
-            .coordinateSpace(name: PinOverlayCoordinateSpace.name)
+            .coordinateSpace(name: PinOverlayView.dragSpaceName)
         }
         .allowsHitTesting(!annotations.isEmpty)
         .onChange(of: annotations.map(\.id)) { _, annotationIDs in
@@ -149,13 +154,20 @@ struct PinOverlayView: View {
             )
         }
         let original = projectAnchor(annotation.target)
-        draggedTargets[annotation.id] = PinOverlayLayout.pageNormalizedPoint(
+        let target = PinOverlayLayout.pageNormalizedPoint(
             forOverlayPoint: CGPoint(
                 x: original.x + translation.width,
                 y: original.y + translation.height
             ),
             in: size
         )
+        // Per-frame drag updates must not animate; implicit animations made
+        // the dot rubber-band behind the finger.
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            draggedTargets[annotation.id] = target
+        }
     }
 
     private func commitMove(
@@ -304,7 +316,10 @@ private struct PinAnchor: View {
     }
 
     private var touchGesture: some Gesture {
-        DragGesture(minimumDistance: 0, coordinateSpace: .named(PinOverlayCoordinateSpace.name))
+        // Translation is measured in the overlay's fixed coordinate space, not
+        // the pin's own local space — the pin repositions in response to this
+        // gesture, and a moving reference frame made dragging jitter and lag.
+        DragGesture(minimumDistance: 0, coordinateSpace: .named(PinOverlayView.dragSpaceName))
             .onChanged { value in
                 beginTouchIfNeeded()
                 let distance = hypot(value.translation.width, value.translation.height)
