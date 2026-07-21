@@ -63,7 +63,12 @@ struct PinOverlayView: View {
             ZStack(alignment: .topLeading) {
                 ForEach(placements, id: \.id) { placement in
                     if let annotation = annotationsByID[placement.id] {
-                        PinConnector(anchor: placement.anchor, labelFrame: placement.labelFrame)
+                        let showsLabel = labelBehavior != .pageAnchoredCompact
+                            || expandedAnnotationID == nil
+                            || expandedAnnotationID == placement.id
+                        if showsLabel {
+                            PinConnector(anchor: placement.anchor, labelFrame: placement.labelFrame)
+                        }
                         PinAnchor(
                             annotation: annotation,
                             isExpanded: annotation.id == expandedAnnotationID,
@@ -89,22 +94,24 @@ struct PinOverlayView: View {
                             onConversationRequested: conversationAction(for: annotation)
                         )
                             .position(placement.anchor)
-                        PinCard(
-                            annotation: annotation,
-                            isExpanded: annotation.id == expandedAnnotationID,
-                            isCompact: labelBehavior == .pageAnchoredCompact,
-                            canMove: canMovePins,
-                            onConversationRequested: conversationAction(for: annotation),
-                            onCitationSelected: { citation in
-                                onEvent?(.citationSelected(annotationID: annotation.id, citationID: citation.id))
-                            }
-                        )
-                        .frame(
-                            width: placement.labelFrame.width,
-                            height: placement.labelFrame.height,
-                            alignment: .topLeading
-                        )
-                        .position(x: placement.labelFrame.midX, y: placement.labelFrame.midY)
+                        if showsLabel {
+                            PinCard(
+                                annotation: annotation,
+                                isExpanded: annotation.id == expandedAnnotationID,
+                                isCompact: labelBehavior == .pageAnchoredCompact,
+                                canMove: canMovePins,
+                                onConversationRequested: conversationAction(for: annotation),
+                                onCitationSelected: { citation in
+                                    onEvent?(.citationSelected(annotationID: annotation.id, citationID: citation.id))
+                                }
+                            )
+                            .frame(
+                                width: placement.labelFrame.width,
+                                height: placement.labelFrame.height,
+                                alignment: .topLeading
+                            )
+                            .position(x: placement.labelFrame.midX, y: placement.labelFrame.midY)
+                        }
                     }
                 }
             }
@@ -442,7 +449,7 @@ private struct PinCard: View {
             .accessibilityIdentifier("pin-card-\(annotation.id.uuidString)")
 
             if isExpanded {
-                if canMove || onConversationRequested != nil {
+                if !isCompact, canMove || onConversationRequested != nil {
                     Divider()
                     HStack(spacing: 10) {
                         if canMove {
@@ -518,7 +525,7 @@ private struct PinCard: View {
             }
         case .complete:
             Text(annotation.body.isEmpty ? "No additional explanation." : annotation.body)
-                .font(.body)
+                .font(isCompact ? .callout : .body)
                 .foregroundStyle(.primary)
                 .textSelection(.enabled)
         case .failed:

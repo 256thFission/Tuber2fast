@@ -25,8 +25,10 @@ struct OpenAICodexPinClient: Sendable {
         }
         let questionText = question?.trimmingCharacters(in: .whitespacesAndNewlines)
         let instruction = """
-        Inspect this cropped notebook selection. Return JSON matching the supplied schema with 1 to 8 useful guidance Pins for the original selected region.
-        Every x/y coordinate is normalized within this crop, not the full page. Use concise, specific guidance grounded in visible content.
+        Act as a precise tutor for this cropped notebook selection. Return JSON matching the supplied schema with 1 to 4 high-value guidance Pins for the original selected region.
+        Every x/y coordinate is normalized within this crop, not the full page. Each Pin must do at least one real teaching job: explain reasoning, verify a step and say why, identify an error and give the correction, or provide a concrete next step.
+        Never spend a Pin merely transcribing visible text, identifying a heading/label, saying that a question or answer is shown, describing the page layout, or restating an obvious word/number. If the crop is sparse, return one genuinely useful Pin instead of filler.
+        Keep teaser under 44 characters. Keep body to 1–2 specific sentences under 280 characters. Put the Pin on the exact work it discusses.
         \(questionText?.isEmpty == false ? "User focus: \(questionText!)" : "")
         """
         let dataURL = "data:\(selection.crop.mediaType);base64,\(selection.crop.imageData.base64EncodedString())"
@@ -38,7 +40,7 @@ struct OpenAICodexPinClient: Sendable {
                 "pins": [
                     "type": "array",
                     "minItems": 1,
-                    "maxItems": 8,
+                    "maxItems": 4,
                     "items": [
                         "type": "object",
                         "additionalProperties": false,
@@ -47,8 +49,8 @@ struct OpenAICodexPinClient: Sendable {
                             "x": ["type": "number", "minimum": 0, "maximum": 1],
                             "y": ["type": "number", "minimum": 0, "maximum": 1],
                             "kind": ["type": "string", "enum": ["confirmation", "issue", "explanation", "source", "uncertainty", "suggestion"]],
-                            "teaser": ["type": "string", "maxLength": 120],
-                            "body": ["type": "string", "maxLength": 2000]
+                            "teaser": ["type": "string", "minLength": 3, "maxLength": 44],
+                            "body": ["type": "string", "minLength": 18, "maxLength": 280]
                         ]
                     ]
                 ]
@@ -131,17 +133,17 @@ enum ResponsesPinTranslator {
               let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               Set(object.keys) == ["pins"],
               let rawPins = object["pins"] as? [[String: Any]],
-              (1...8).contains(rawPins.count),
+              (1...4).contains(rawPins.count),
               rawPins.allSatisfy({ Set($0.keys) == ["x", "y", "kind", "teaser", "body"] })
         else { throw AgentError.parse }
 
-        return try rawPins.map { raw in
+        let decoded = try rawPins.map { raw in
             guard let x = number(raw["x"]), let y = number(raw["y"]),
                   let kindRaw = raw["kind"] as? String, let kind = AnnotationKind(rawValue: kindRaw),
                   let teaser = raw["teaser"] as? String, let body = raw["body"] as? String,
                   !teaser.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                   !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                  teaser.count <= 120, body.count <= 2_000,
+                  (3...44).contains(teaser.count), (18...280).contains(body.count),
                   CropNormalizedPoint(x: x, y: y).isFiniteAndInUnitBounds
             else { throw AgentError.parse }
             return PinDraft(
@@ -154,6 +156,9 @@ enum ResponsesPinTranslator {
                 citations: []
             )
         }
+        let useful = decoded.filter { isInstructionallyUseful($0) }
+        guard !useful.isEmpty else { throw AgentError.parse }
+        return useful
     }
 
     private static func responseObject(from data: Data) throws -> [String: Any]? {
@@ -184,5 +189,16 @@ enum ResponsesPinTranslator {
         guard let number = value as? NSNumber,
               CFGetTypeID(number) != CFBooleanGetTypeID() else { return nil }
         return number.doubleValue.isFinite ? number.doubleValue : nil
+    }
+
+    private static func isInstructionallyUseful(_ draft: PinDraft) -> Bool {
+        let normalized = "\(draft.teaser) \(draft.body)".lowercased()
+        let shallowPatterns = [
+            "is labeled", "is labelled", "practice/test label", "question shown",
+            "answer shown", "visible text", "shown here", "appears to be",
+            "likely a practice", "page is labeled", "page is labelled"
+        ]
+        guard !shallowPatterns.contains(where: normalized.contains) else { return false }
+        return draft.body.split(whereSeparator: \.isWhitespace).count >= 6
     }
 }

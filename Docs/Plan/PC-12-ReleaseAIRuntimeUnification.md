@@ -308,6 +308,16 @@ network request, Debug/scenario harness, or device action.
 
 ## Session log
 
+- 2026-07-21 — Phillip's screenshot at
+  `/Users/phil/Downloads/Screenshot 2026-07-21 at 12.13.58 AM.png` showed the
+  quality contract failing: “Practice/test label” merely narrated OCR, while an
+  expanded card obscured two sibling labels. Tightened generation to 1–4 short
+  tutoring moves, explicitly banned transcription/meta-label filler, and added
+  a local semantic filter for shallow patterns. Reduced compact expanded cards
+  to 228×126 points, removed their instructional drag row, and hide sibling
+  labels (not Pin dots) while one is expanded. Generic unsigned Release build
+  succeeded under `tmp/build/pc12-instructional-pins/`; device delivery and
+  Phillip's regenerated-result verdict remain pending.
 - 2026-07-21 — Phillip reported that hero Pin labels were oversized and changed
   apparent placement while zooming. Added a hero-only compact, page-anchored
   label policy: collapsed labels are 164×38 points, expanded cards are reduced,

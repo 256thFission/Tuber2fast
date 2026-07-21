@@ -133,7 +133,7 @@ enum PinOverlayLayout {
         case .adaptive:
             isExpanded ? CGSize(width: 304, height: 208) : CGSize(width: 208, height: 48)
         case .pageAnchoredCompact:
-            isExpanded ? CGSize(width: 264, height: 180) : CGSize(width: 164, height: 38)
+            isExpanded ? CGSize(width: 228, height: 126) : CGSize(width: 164, height: 38)
         }
         return CGSize(
             width: min(desired.width, availableWidth),
