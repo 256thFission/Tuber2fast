@@ -52,8 +52,68 @@ class ArchiveExportContractTests(unittest.TestCase):
             "var isVisible: Bool",
         ):
             self.assertIn(notebook_field, notebook_source)
-        self.assertIn("TuberNoteArchiveCodec.encode(notebook: vm.notebook)", view_source)
+        self.assertIn("TuberNoteArchiveCodec.encode(notebook: exportNotebook)", view_source)
         self.assertIn("TuberNoteArchiveCodec.encode(notebook: notebook)", view_model_source)
+
+    def test_export_page_scope_precedes_both_formats(self):
+        source = NOTEBOOK_VIEW_SOURCE.read_text()
+
+        self.assertIn("@State private var exportPageScope = ExportPageScope.entireDocument", source)
+        self.assertIn("@State private var selectedExportPageIDs = Set<UUID>()", source)
+        self.assertIn("private enum ExportPageScope: Hashable", source)
+        self.assertIn('Text("Entire Document").tag(ExportPageScope.entireDocument)', source)
+        self.assertIn('Text("Choose Pages").tag(ExportPageScope.selectedPages)', source)
+        self.assertIn('accessibilityIdentifier("export-page-scope")', source)
+        self.assertIn("selectedExportPageIDs.insert(vm.currentPageID)", source)
+        self.assertIn("selectedExportPageIDs = Set(vm.notebook.pages.map(\\.id))", source)
+        self.assertIn("selectedExportPageIDs.removeAll()", source)
+        self.assertEqual(source.count(".disabled(exportPages.isEmpty)"), 2)
+        self.assertIn("exportPageScope = .entireDocument", source)
+        self.assertIn("openExportOptions()", source)
+
+        pages_body = re.search(
+            r"private var exportPages: \[NotebookPage\] \{(.*?)\n    \}\n\n"
+            r"    private var exportPageSummary",
+            source,
+            flags=re.DOTALL,
+        )
+        self.assertIsNotNone(pages_body)
+        self.assertIn("return vm.notebook.pages", pages_body.group(1))
+        self.assertIn(
+            "return vm.notebook.pages.filter { selectedExportPageIDs.contains($0.id) }",
+            pages_body.group(1),
+        )
+
+    def test_selected_spud_filters_pages_and_pins(self):
+        source = NOTEBOOK_VIEW_SOURCE.read_text()
+
+        notebook_body = re.search(
+            r"private var exportNotebook: Notebook \{(.*?)\n    \}\n\n"
+            r"    private func openExportOptions",
+            source,
+            flags=re.DOTALL,
+        )
+        self.assertIsNotNone(notebook_body)
+        body = notebook_body.group(1)
+        self.assertIn("let pages = exportPages", body)
+        self.assertIn("let exportPageIDs = Set(pages.map(\\.id))", body)
+        self.assertIn("pages: pages", body)
+        self.assertIn("filtered.conversations = layer.conversations.filter", body)
+        self.assertIn("exportPageIDs.contains($0.pageID)", body)
+        self.assertIn("agenticLayers: layers", body)
+
+        spud_body = re.search(
+            r"private func prepareSPUDExport\(\) \{(.*?)\n    \}\n\n"
+            r"    private func queueExportPresentation",
+            source,
+            flags=re.DOTALL,
+        )
+        self.assertIsNotNone(spud_body)
+        self.assertIn("guard !exportPages.isEmpty else { return }", spud_body.group(1))
+        self.assertIn(
+            "TuberNoteArchiveCodec.encode(notebook: exportNotebook)",
+            spud_body.group(1),
+        )
 
     def test_spud_import_is_security_scoped_and_collision_safe(self):
         archive_source = ARCHIVE_SOURCE.read_text()
@@ -120,10 +180,14 @@ class ArchiveExportContractTests(unittest.TestCase):
         signature = signature_match.group(1)
 
         self.assertIn("from drawings: [PKDrawing]", signature)
+        self.assertIn("workspaceBackgrounds: [UIImage] = []", signature)
         for forbidden_type in ("PageAnnotation", "ConversationLayer", "Citation", "Pin"):
             self.assertNotIn(forbidden_type, signature)
         self.assertIn("let compressedPages = drawings.map", source)
-        self.assertIn("for compressedStrokes in compressedPages", source)
+        self.assertIn(
+            "for (pageIndex, compressedStrokes) in compressedPages.enumerated()",
+            source,
+        )
         self.assertIn("rendererContext.beginPage()", source)
 
         view_source = NOTEBOOK_VIEW_SOURCE.read_text()
@@ -133,9 +197,51 @@ class ArchiveExportContractTests(unittest.TestCase):
             flags=re.DOTALL,
         )
         self.assertIsNotNone(export_call)
-        self.assertIn(r"from: vm.notebook.pages.map(\.drawing)", export_call.group(1))
+        self.assertIn(r"from: pages.map(\.drawing)", export_call.group(1))
         self.assertNotIn("conversation", export_call.group(1).lower())
         self.assertNotIn("annotation", export_call.group(1).lower())
+
+    def test_pdf_workspace_background_is_opt_in_and_beneath_ink(self):
+        view_source = NOTEBOOK_VIEW_SOURCE.read_text()
+        pdf_source = PDF_SOURCE.read_text()
+
+        self.assertIn("@State private var includePDFWorkspaceBackground = false", view_source)
+        self.assertIn(
+            'Toggle("Include workspace background", isOn: $includePDFWorkspaceBackground)',
+            view_source,
+        )
+        self.assertIn(
+            'accessibilityIdentifier("pdf-include-workspace-background")',
+            view_source,
+        )
+        self.assertIn("includePDFWorkspaceBackground = false", view_source)
+        self.assertIn(
+            "? pages.map { renderWorkspaceBackground(for: $0) }",
+            view_source,
+        )
+        self.assertIn("workspaceBackgrounds: backgrounds", view_source)
+
+        renderer_body = re.search(
+            r"private func renderWorkspaceBackground\(for page: NotebookPage\) -> UIImage \{"
+            r"(.*?)\n    \}\n\n"
+            r"    private func prepareSPUDExport",
+            view_source,
+            flags=re.DOTALL,
+        )
+        self.assertIsNotNone(renderer_body)
+        body = renderer_body.group(1)
+        self.assertIn("PaperSheetView(frame: pageBounds)", body)
+        self.assertIn("paperView.template = page.template", body)
+        self.assertIn("paperView.layer.render", body)
+        self.assertIn("for placedImage in page.images", body)
+        self.assertIn("placedImage.rect.minX * pageBounds.width", body)
+        for forbidden_type in ("Pin", "Conversation", "Citation"):
+            self.assertNotIn(forbidden_type, body)
+
+        self.assertIn("for (pageIndex, compressedStrokes) in compressedPages.enumerated()", pdf_source)
+        background_draw = "workspaceBackgrounds[pageIndex].draw(in: pageBounds)"
+        self.assertIn(background_draw, pdf_source)
+        self.assertLess(pdf_source.index(background_draw), pdf_source.index("for stroke in compressedStrokes"))
 
     def test_export_filename_describes_complete_notebook(self):
         source = NOTEBOOK_VIEW_SOURCE.read_text()

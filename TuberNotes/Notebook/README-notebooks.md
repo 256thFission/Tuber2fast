@@ -21,7 +21,12 @@ zoomable PencilKit page with a compact floating toolbar.
   Pin, citation, or conversation markup. `.spud` preserves the full notebook,
   including page identities, templates, images, drawing layers, Pins, Agentic
   Layer visibility, cover, settings, and timestamps. SPUD is a prerelease,
-  version-3-only format; earlier experimental versions are not accepted.
+  version-3-only format; earlier experimental versions are not accepted. Before
+  Files opens, choose the entire document or any set of numbered pages. Custom
+  exports keep notebook order, and custom SPUD files retain only Pins attached
+  to the selected pages. PDF also offers an opt-in workspace background that
+  adds each selected page's paper template and placed images beneath vector ink;
+  Pins, conversations, citations, and app chrome remain excluded.
 
 ## Agentic layers and Pins
 

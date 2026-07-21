@@ -137,7 +137,8 @@ struct PDFExportResult {
 /// The sole PDF-emission seam for note ink. Every stroke is compressed and
 /// independently validated immediately before its vector path is written.
 ///
-/// Privacy contract: PDF export is intentionally drawing-only. Pin annotations,
+/// Privacy contract: PDF export is drawing-only by default. Callers may opt into
+/// pre-rendered paper and placed-image workspace backgrounds. Pin annotations,
 /// conversation layers, citations, and their text must never be accepted here or
 /// emitted as PDF annotations, metadata, or page content.
 enum NotePDFExporter {
@@ -147,6 +148,7 @@ enum NotePDFExporter {
 
     static func makePDF(
         from drawings: [PKDrawing],
+        workspaceBackgrounds: [UIImage] = [],
         pageBounds: CGRect,
         tolerance: CGFloat = defaultTolerance
     ) -> PDFExportResult {
@@ -159,11 +161,14 @@ enum NotePDFExporter {
         let format = UIGraphicsPDFRendererFormat()
         let renderer = UIGraphicsPDFRenderer(bounds: pageBounds, format: format)
         let data = renderer.pdfData { rendererContext in
-            for compressedStrokes in compressedPages {
+            for (pageIndex, compressedStrokes) in compressedPages.enumerated() {
                 rendererContext.beginPage()
                 let context = rendererContext.cgContext
                 context.setFillColor(UIColor.white.cgColor)
                 context.fill(pageBounds)
+                if workspaceBackgrounds.indices.contains(pageIndex) {
+                    workspaceBackgrounds[pageIndex].draw(in: pageBounds)
+                }
 
                 for stroke in compressedStrokes {
                     draw(stroke, in: context)

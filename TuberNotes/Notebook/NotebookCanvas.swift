@@ -16,6 +16,7 @@ struct NotebookCanvas: UIViewRepresentable {
     let width: CGFloat
     let template: PageTemplate
     let zoomScale: CGFloat
+    let pageScrollDirection: NotebookPageScrollDirection
     let fingerDrawing: Bool
     let isLassoActive: Bool
     let snapStraight: Bool
@@ -491,12 +492,19 @@ struct NotebookCanvas: UIViewRepresentable {
             // Window-relative translation is stable while SwiftUI offsets the
             // canvas in response to this gesture.
             let referenceView = recognizer.view?.window
-            let translation = recognizer.translation(in: referenceView).x
+            let translationVector = recognizer.translation(in: referenceView)
+            let velocityVector = recognizer.velocity(in: referenceView)
+            let translation = parent.pageScrollDirection == .horizontal
+                ? translationVector.x
+                : translationVector.y
+            let velocity = parent.pageScrollDirection == .horizontal
+                ? velocityVector.x
+                : velocityVector.y
             switch recognizer.state {
             case .began, .changed:
                 parent.onFlipChanged(translation)
             case .ended:
-                parent.onFlipEnded(translation, recognizer.velocity(in: referenceView).x)
+                parent.onFlipEnded(translation, velocity)
             case .cancelled, .failed:
                 parent.onFlipEnded(translation, 0)
             default:
@@ -515,7 +523,22 @@ struct NotebookCanvas: UIViewRepresentable {
                 || parent.isPageLocked
             guard pageFitsViewport, !hasCompetingMode else { return false }
             let velocity = pan.velocity(in: pan.view)
-            return abs(velocity.x) > abs(velocity.y) * 1.2
+            switch parent.pageScrollDirection {
+            case .horizontal:
+                return abs(velocity.x) > abs(velocity.y) * 1.2
+            case .vertical:
+                guard abs(velocity.y) > abs(velocity.x) * 1.2 else { return false }
+                let topOffset = -scrollView.adjustedContentInset.top
+                let bottomOffset = max(
+                    topOffset,
+                    scrollView.contentSize.height - scrollView.bounds.height
+                        + scrollView.adjustedContentInset.bottom
+                )
+                let edgeTolerance: CGFloat = 2
+                return velocity.y > 0
+                    ? scrollView.contentOffset.y <= topOffset + edgeTolerance
+                    : scrollView.contentOffset.y >= bottomOffset - edgeTolerance
+            }
         }
 
         func gestureRecognizer(_ g: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }

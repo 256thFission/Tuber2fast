@@ -133,7 +133,11 @@ struct NotebookToolbar: View {
 
     @ViewBuilder
     private var pageNavigationControls: some View {
-        iconButton("chevron.left", label: "Previous page", enabled: vm.canGoBack) {
+        iconButton(
+            vm.settings.pageScrollDirection.previousSymbolName,
+            label: "Previous page",
+            enabled: vm.canGoBack
+        ) {
             withAnimation(.easeInOut) { vm.goBack() }
         }
         .accessibilityIdentifier("toolbar-prev-page")
@@ -149,7 +153,10 @@ struct NotebookToolbar: View {
         .accessibilityIdentifier("toolbar-page-indicator")
 
         if vm.canGoForward {
-            iconButton("chevron.right", label: "Next page") {
+            iconButton(
+                vm.settings.pageScrollDirection.nextSymbolName,
+                label: "Next page"
+            ) {
                 withAnimation(.easeInOut) { vm.goForward() }
             }
             .accessibilityIdentifier("toolbar-next-page")
@@ -804,6 +811,14 @@ struct NotebookToolbarSettingsView: View {
                         .accessibilityIdentifier("settings-agentic-layers")
                 }
                 .font(.subheadline)
+
+                Picker("Page scroll direction", selection: $vm.settings.pageScrollDirection) {
+                    ForEach(NotebookPageScrollDirection.allCases) { direction in
+                        Text(direction.label).tag(direction)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .accessibilityIdentifier("settings-page-scroll-direction")
 
                 Divider()
 

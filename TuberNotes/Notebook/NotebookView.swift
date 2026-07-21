@@ -27,10 +27,13 @@ struct NotebookView: View {
     @State private var showExportOptions = false
     @State private var showFileExporter = false
     @State private var exportContentType = UTType.pdf
+    @State private var exportPageScope = ExportPageScope.entireDocument
+    @State private var selectedExportPageIDs = Set<UUID>()
     @State private var pendingExportPresentation: PendingExportPresentation?
     @State private var isPageLocked = false
     @State private var pickerItem: PhotosPickerItem?
     @State private var pdfTolerance = Double(NotePDFExporter.defaultTolerance)
+    @State private var includePDFWorkspaceBackground = false
     @State private var exportDocument = NotebookExportDocument()
     @State private var exportError: String?
     @State private var pageViewportFrame = CGRect.zero
@@ -39,7 +42,7 @@ struct NotebookView: View {
     @State private var pencilPaletteMode: PencilShortcutPalette.Mode = .full
     @State private var flipOffset: CGFloat = 0
     @State private var isFlipAnimating = false
-    @State private var pageContainerWidth: CGFloat = 1024
+    @State private var pageContainerSize = CGSize(width: 1024, height: 1024)
 
     init(notebook: Notebook, store: NotebookStore) {
         _vm = StateObject(wrappedValue: NotebookViewModel(notebook: notebook, store: store))
@@ -157,7 +160,7 @@ struct NotebookView: View {
         }
         .sheet(isPresented: $showExportOptions, onDismiss: presentPendingExport) {
             exportOptions
-                .presentationDetents([.height(380)])
+                .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
         .fileExporter(
@@ -198,6 +201,8 @@ struct NotebookView: View {
         .onChange(of: vm.isArrangingImages) { _, active in
             if active { dismissPencilPalette() }
         }
+        .onChange(of: vm.settings) { _, _ in vm.scheduleSave() }
+        .onChange(of: vm.settings.pageScrollDirection) { _, _ in flipOffset = 0 }
         .onDisappear { vm.persistNow() }
     }
 
@@ -286,7 +291,7 @@ struct NotebookView: View {
 
     private var exportButton: some View {
         Button {
-            showExportOptions = true
+            openExportOptions()
         } label: {
             Image(systemName: "square.and.arrow.up")
         }
@@ -371,75 +376,252 @@ struct NotebookView: View {
     }
 
     private var exportOptions: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            HStack {
-                Text("Export Note")
-                    .font(.headline)
-                Spacer()
-                Button {
-                    dismissExportOptions()
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.secondary)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                HStack {
+                    Text("Export Note")
+                        .font(.headline)
+                    Spacer()
+                    Button {
+                        dismissExportOptions()
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Close export options")
+                    .accessibilityIdentifier("export-options-close")
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Close export options")
-                .accessibilityIdentifier("export-options-close")
+
+                Text("Pages")
+                    .font(.subheadline.weight(.semibold))
+
+                Picker("Pages", selection: exportPageScopeBinding) {
+                    Text("Entire Document").tag(ExportPageScope.entireDocument)
+                    Text("Choose Pages").tag(ExportPageScope.selectedPages)
+                }
+                .pickerStyle(.segmented)
+                .accessibilityIdentifier("export-page-scope")
+
+                if exportPageScope == .selectedPages {
+                    exportPagePicker
+                }
+
+                Text(exportPageSummary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("export-page-summary")
+
+                Divider()
+
+                Text("PDF Compression")
+                    .font(.subheadline.weight(.semibold))
+
+                Toggle("Include workspace background", isOn: $includePDFWorkspaceBackground)
+                    .accessibilityIdentifier("pdf-include-workspace-background")
+
+                Text("Adds each page’s paper template and placed images beneath the ink.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Slider(value: $pdfTolerance, in: 0.05...2, step: 0.05) {
+                    Text("Compression")
+                } minimumValueLabel: {
+                    Text("Low")
+                } maximumValueLabel: {
+                    Text("High")
+                }
+                .accessibilityIdentifier("pdf-compression-slider")
+
+                Text("Maximum stroke deviation: \(pdfTolerance, specifier: "%.2f") pt")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Button {
+                    preparePDFExport()
+                } label: {
+                    Label("Export PDF", systemImage: "square.and.arrow.up")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(exportPages.isEmpty)
+                .accessibilityIdentifier("pdf-export-confirm")
+
+                Divider()
+
+                Button(action: prepareSPUDExport) {
+                    Label("Export SPUD", systemImage: "archivebox")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .disabled(exportPages.isEmpty)
+                .accessibilityIdentifier("spud-export-confirm")
             }
-
-            Text("PDF Compression")
-                .font(.subheadline.weight(.semibold))
-
-            Slider(value: $pdfTolerance, in: 0.05...2, step: 0.05) {
-                Text("Compression")
-            } minimumValueLabel: {
-                Text("Low")
-            } maximumValueLabel: {
-                Text("High")
-            }
-            .accessibilityIdentifier("pdf-compression-slider")
-
-            Text("Maximum stroke deviation: \(pdfTolerance, specifier: "%.2f") pt")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            Button {
-                preparePDFExport()
-            } label: {
-                Label("Export PDF", systemImage: "square.and.arrow.up")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-            .accessibilityIdentifier("pdf-export-confirm")
-
-            Divider()
-
-            Button(action: prepareSPUDExport) {
-                Label("Export SPUD", systemImage: "archivebox")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.bordered)
-            .accessibilityIdentifier("spud-export-confirm")
+            .padding(20)
         }
-        .padding(20)
-        .frame(width: 330)
+        .frame(width: 360)
+    }
+
+    private var exportPagePicker: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Select pages")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("All") {
+                    selectedExportPageIDs = Set(vm.notebook.pages.map(\.id))
+                }
+                Button("Clear") {
+                    selectedExportPageIDs.removeAll()
+                }
+            }
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(vm.notebook.pages.indices, id: \.self) { index in
+                        let page = vm.notebook.pages[index]
+                        let isSelected = selectedExportPageIDs.contains(page.id)
+                        Button {
+                            toggleExportPage(page.id)
+                        } label: {
+                            HStack(spacing: 5) {
+                                Text("\(index + 1)")
+                                    .monospacedDigit()
+                                if isSelected {
+                                    Image(systemName: "checkmark")
+                                        .font(.caption2.weight(.bold))
+                                }
+                            }
+                            .frame(minWidth: 38)
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(isSelected ? Color.indigo : Color.secondary)
+                        .accessibilityLabel("Page \(index + 1)")
+                        .accessibilityAddTraits(isSelected ? .isSelected : [])
+                        .accessibilityIdentifier("export-page-\(index + 1)")
+                    }
+                }
+            }
+        }
+    }
+
+    private var exportPageScopeBinding: Binding<ExportPageScope> {
+        Binding(
+            get: { exportPageScope },
+            set: { scope in
+                exportPageScope = scope
+                if scope == .selectedPages, selectedExportPageIDs.isEmpty {
+                    selectedExportPageIDs.insert(vm.currentPageID)
+                }
+            }
+        )
+    }
+
+    private var exportPages: [NotebookPage] {
+        switch exportPageScope {
+        case .entireDocument:
+            return vm.notebook.pages
+        case .selectedPages:
+            return vm.notebook.pages.filter { selectedExportPageIDs.contains($0.id) }
+        }
+    }
+
+    private var exportPageSummary: String {
+        let count = exportPages.count
+        if exportPageScope == .entireDocument {
+            return "All \(count) page\(count == 1 ? "" : "s") will be exported."
+        }
+        guard count > 0 else { return "Choose at least one page to export." }
+        return "\(count) selected page\(count == 1 ? "" : "s") will be exported in notebook order."
+    }
+
+    private var exportNotebook: Notebook {
+        let pages = exportPages
+        guard pages.count != vm.notebook.pages.count else { return vm.notebook }
+        let exportPageIDs = Set(pages.map(\.id))
+        let layers = vm.notebook.agenticLayers.map { layer in
+            var filtered = layer
+            filtered.conversations = layer.conversations.filter {
+                exportPageIDs.contains($0.pageID)
+            }
+            return filtered
+        }
+        return Notebook(
+            id: vm.notebook.id,
+            title: vm.notebook.title,
+            cover: vm.notebook.cover,
+            pages: pages,
+            agenticLayers: layers,
+            createdAt: vm.notebook.createdAt,
+            updatedAt: vm.notebook.updatedAt,
+            settings: vm.notebook.settings
+        )
+    }
+
+    private func openExportOptions() {
+        exportPageScope = .entireDocument
+        selectedExportPageIDs.removeAll()
+        includePDFWorkspaceBackground = false
+        showExportOptions = true
+    }
+
+    private func toggleExportPage(_ pageID: UUID) {
+        if selectedExportPageIDs.contains(pageID) {
+            selectedExportPageIDs.remove(pageID)
+        } else {
+            selectedExportPageIDs.insert(pageID)
+        }
     }
 
     private func preparePDFExport() {
+        let pages = exportPages
+        guard !pages.isEmpty else { return }
         vm.persistNow()
+        let backgrounds = includePDFWorkspaceBackground
+            ? pages.map { renderWorkspaceBackground(for: $0) }
+            : []
         exportDocument = NotebookExportDocument(data: NotePDFExporter.makePDF(
-            from: vm.notebook.pages.map(\.drawing),
+            from: pages.map(\.drawing),
+            workspaceBackgrounds: backgrounds,
             pageBounds: CGRect(origin: .zero, size: NotebookPageLayout.size),
             tolerance: CGFloat(pdfTolerance)
         ).data)
         queueExportPresentation(.pdf)
     }
 
+    private func renderWorkspaceBackground(for page: NotebookPage) -> UIImage {
+        let pageBounds = CGRect(origin: .zero, size: NotebookPageLayout.size)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        let renderer = UIGraphicsImageRenderer(
+            size: NotebookPageLayout.size,
+            format: format
+        )
+        return renderer.image { rendererContext in
+            let paperView = PaperSheetView(frame: pageBounds)
+            paperView.template = page.template
+            paperView.layer.render(in: rendererContext.cgContext)
+
+            for placedImage in page.images {
+                guard let image = placedImage.image else { continue }
+                image.draw(in: CGRect(
+                    x: placedImage.rect.minX * pageBounds.width,
+                    y: placedImage.rect.minY * pageBounds.height,
+                    width: placedImage.rect.width * pageBounds.width,
+                    height: placedImage.rect.height * pageBounds.height
+                ))
+            }
+        }
+    }
+
     private func prepareSPUDExport() {
+        guard !exportPages.isEmpty else { return }
         vm.persistNow()
         do {
             exportDocument = NotebookExportDocument(
-                data: try TuberNoteArchiveCodec.encode(notebook: vm.notebook)
+                data: try TuberNoteArchiveCodec.encode(notebook: exportNotebook)
             )
             queueExportPresentation(.spud)
         } catch {
@@ -656,7 +838,12 @@ struct NotebookView: View {
     }
 
     private var pageTurnDistance: CGFloat {
-        max(pageContainerWidth, 320)
+        switch vm.settings.pageScrollDirection {
+        case .horizontal:
+            max(pageContainerSize.width, 320)
+        case .vertical:
+            max(pageContainerSize.height, 320)
+        }
     }
 
     private var pageTurnTransition: AnyTransition {
@@ -664,14 +851,23 @@ struct NotebookView: View {
         switch vm.pageTurnDirection {
         case .forward:
             return .asymmetric(
-                insertion: .offset(x: distance, y: 0),
-                removal: .offset(x: -distance, y: 0)
+                insertion: pageTurnTransitionOffset(distance),
+                removal: pageTurnTransitionOffset(-distance)
             )
         case .backward:
             return .asymmetric(
-                insertion: .offset(x: -distance, y: 0),
-                removal: .offset(x: distance, y: 0)
+                insertion: pageTurnTransitionOffset(-distance),
+                removal: pageTurnTransitionOffset(distance)
             )
+        }
+    }
+
+    private func pageTurnTransitionOffset(_ distance: CGFloat) -> AnyTransition {
+        switch vm.settings.pageScrollDirection {
+        case .horizontal:
+            .offset(x: distance, y: 0)
+        case .vertical:
+            .offset(x: 0, y: distance)
         }
     }
 
@@ -692,6 +888,7 @@ struct NotebookView: View {
             width: vm.activeWidth,
             template: vm.currentTemplate,
             zoomScale: vm.zoomScale,
+            pageScrollDirection: vm.settings.pageScrollDirection,
             fingerDrawing: fingerDrawing,
             isLassoActive: vm.isLassoActive,
             snapStraight: snapStraight,
@@ -778,13 +975,16 @@ struct NotebookView: View {
         .padding(.horizontal, 12)
         .padding(.top, 8)
         .padding(.bottom, showsWorkingToolbar ? 74 : 12)
-        .offset(x: flipOffset)
+        .offset(
+            x: vm.settings.pageScrollDirection == .horizontal ? flipOffset : 0,
+            y: vm.settings.pageScrollDirection == .vertical ? flipOffset : 0
+        )
         .background(
             GeometryReader { geometry in
                 Color.clear
-                    .onAppear { pageContainerWidth = geometry.size.width }
-                    .onChange(of: geometry.size.width) { _, width in
-                        pageContainerWidth = width
+                    .onAppear { pageContainerSize = geometry.size }
+                    .onChange(of: geometry.size) { _, size in
+                        pageContainerSize = size
                     }
             }
         )
@@ -801,6 +1001,11 @@ private enum PendingExportPresentation {
     case pdf
     case spud
     case error(String)
+}
+
+private enum ExportPageScope: Hashable {
+    case entireDocument
+    case selectedPages
 }
 
 private struct AgenticModeGlow: View {

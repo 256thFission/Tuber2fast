@@ -469,7 +469,7 @@ reliably open the system file exporter.
 
 ## Active line — PC-9: complete notebook PDF and SPUD export
 
-Status: **follow-up implemented — host-checked; physical import/export verification blocked**
+Status: **follow-up implemented — host-checked; physical background export verification blocked**
 
 Target branch: `sive/dev`
 
@@ -483,7 +483,10 @@ one drawing-only page for every notebook page in order, while SPUD losslessly
 contains the complete editable notebook, including page identities, templates,
 images, drawing layers, Agentic Layers, cover, settings, and timestamps. The
 library can import that SPUD as a new notebook without overwriting an existing
-notebook that has the same archived identity.
+notebook that has the same archived identity. Before Files appears for either
+format, the user can export the entire notebook or choose one or more pages.
+PDF can optionally include each selected page's working background—its paper
+template and placed images—beneath the ink.
 
 ### Scope
 
@@ -504,7 +507,9 @@ notebook that has the same archived identity.
 - Do not change the system file-exporter presentation, redesign the library,
   add PDF import to the normal notebook library, or emit Pins/conversations/
   citations into PDF.
-- Preserve the existing compressed, drawing-only PDF privacy contract.
+- Preserve compressed vector ink and the default drawing-only PDF behavior;
+  workspace background is opt-in and never includes Pins, conversations,
+  citations, selection chrome, or ambient app UI.
 - This prerelease format supports version 3 only; remove version 1/2 fields,
   encoders, decoders, and migration adapters rather than carrying dead schema.
 - Canonical build and interaction inspection require an explicitly named,
@@ -518,7 +523,11 @@ notebook that has the same archived identity.
 4. Add library import that clones the decoded notebook under a fresh identity.
 5. Extend focused source checks for page ordering, completeness, filenames,
    version rejection, importer wiring, and collision-safe persistence.
-6. On the pinned iPad, export and re-import a deterministic multi-page notebook;
+6. Add a pre-export entire-document/selected-pages control shared by PDF and
+   SPUD; selected SPUD payloads retain only Pins belonging to exported pages.
+7. Add an opt-in PDF workspace-background layer containing the selected pages'
+   paper templates and placed images beneath their vector ink.
+8. On the pinned iPad, export and re-import a deterministic multi-page notebook;
    inspect PDF page count and imported SPUD page/content identity.
 
 ### Acceptance evidence and stop conditions
@@ -529,6 +538,12 @@ notebook that has the same archived identity.
   version other than 3 is rejected.
 - Importing SPUD creates and opens a new library notebook, preserves page and
   content identities, and never overwrites an existing notebook ID.
+- The export-options sheet defaults to the entire document, can choose pages by
+  number, preserves notebook order, and blocks both formats when none are chosen.
+- Selected-page PDF contains exactly the chosen pages; selected-page SPUD keeps
+  exactly those pages and filters every Agentic Layer to Pins on those pages.
+- PDF workspace background defaults off. When enabled, each exported page uses
+  its own paper template and placed images under ink, with no Pin/agent content.
 - Both exported filenames describe the notebook, not one selected page.
 - Existing export presentation/cancellation checks remain green.
 - Stop after host and device evidence is collected, after two verification
@@ -578,6 +593,39 @@ notebook that has the same archived identity.
   `tmp/verify/pc-9-complete-document-export/summary.txt`. Physical Files export,
   re-import, visible content, screenshot, console, and crash evidence remain
   blocked by the absent Xcode/Swift host and pinned iPad session.
+- 2026-07-20 — Reopened to add page scope before the system file picker for both
+  formats. The bounded design keeps the existing sheet/exporter handoff,
+  defaults to the entire document, and derives ordered selected-page payloads
+  without changing SPUD v3, import, or PDF privacy contracts.
+- 2026-07-20 — Added Entire Document/Choose Pages scope to the export sheet,
+  numbered page toggles with All/Clear actions, current-page initialization for
+  custom selection, an explicit empty-selection state, and shared disabling for
+  both format actions. PDF now receives the selected pages in notebook order;
+  selected-page SPUD rebuilds the notebook with those pages and filters every
+  Agentic Layer to Pins on exported page IDs. The existing sheet-dismissal →
+  single-file-exporter lifecycle is unchanged. Focused checks pass 10/10 and
+  `git diff --check` passes. After the concurrent PC-12 contract was updated,
+  the broader host suite passes 58/59; the only failure is the pre-existing
+  verifier argument mismatch. Concurrent PC-12 edits in `NotebookView` and this
+  plan were preserved. Updated evidence
+  is under `tmp/verify/pc-9-complete-document-export/summary.txt`. Build, Files
+  interaction, selected PDF/SPUD inspection, screenshots, console, and crash
+  evidence remain blocked by the absent Xcode/Swift host and pinned iPad.
+- 2026-07-20 — Reopened for an optional PDF working-background control. Traced
+  the visible notebook background to `PaperSheetView` plus `PlacedImage` content
+  beneath PencilKit ink. The bounded implementation will reuse that renderer,
+  remain off by default, and leave SPUD and PDF privacy exclusions unchanged.
+- 2026-07-20 — Added an off-by-default Include workspace background PDF option.
+  For the chosen pages it renders the existing paper template and normalized
+  placed images into a page-sized background, then draws compressed vector ink
+  above it; Pins, conversations, citations, selection chrome, and app UI remain
+  excluded. Focused archive/export checks pass 11/11 and `git diff --check`
+  passes. The broader host suite passes 59/60; its sole failure remains the
+  unrelated scenario-verifier helper mismatch (13 supplied arguments versus 19
+  expected). Concurrent PC-12 edits were preserved. Evidence is under
+  `tmp/verify/pc-9-complete-document-export/summary.txt`. Canonical build and
+  visible PDF inspection remain blocked because this Linux host has no Xcode or
+  Swift toolchain and no explicitly pinned physical-iPad session.
 
 ## Active line — PC-6: agent provider unification
 
@@ -828,3 +876,81 @@ must remain recoverable inside the logical page.
   Canonical Xcode build, `blank-canvas` interaction, screenshots, console/crash
   collection, and Pencil feel remain blocked on this Linux host without an
   explicitly pinned physical iPad session.
+
+## Active line — PC-12: selectable page scroll direction
+
+Status: **implementation complete — host-checked; physical-device verification blocked**
+
+Target branch: `sive/dev`
+
+Owner: App/Notebook integration; `SpatialCanvas` retains ownership of page
+coordinates, Pencil input, and zoomed-page panning.
+
+### Objective and user-visible outcome
+
+Let a user choose Vertical or Horizontal in notebook Settings and use that axis
+for one-finger page navigation. Preserve Horizontal as the default for existing
+notebooks and persist the selection with the notebook.
+
+### Scope
+
+- `TuberNotes/Notebook/Notebook.swift`
+- `TuberNotes/Notebook/NotebookView.swift`
+- `TuberNotes/Notebook/NotebookCanvas.swift`
+- `TuberNotes/Notebook/NotebookToolbar.swift`
+- one focused host regression check under `DeveloperTools/tests/`
+- the existing page-turn source contract updated for axis-aware transitions
+- this PC-12 section and session log
+
+### Non-goals and dependencies
+
+- no continuous multi-page canvas, page-coordinate change, Pencil gesture
+  change, zoom/pan redesign, toolbar redesign, or global app preference;
+- canonical build and interaction inspection require an Apple/Xcode host and an
+  explicitly pinned physical iPad.
+
+### Work and verification
+
+1. Add an archive-compatible per-notebook scroll-direction setting.
+2. Expose a labeled Vertical/Horizontal picker in Notebook Controls.
+3. Apply the selected axis to page-swipe recognition, interactive offset, and
+   page transition while leaving zoomed-page panning unchanged.
+4. Run focused persistence/source checks, nearby host tests, and diff hygiene.
+5. On the explicitly pinned iPad, run `notebook-pages` and inspect both axes in
+   the normal notebook Settings path, including clipping, overlap, crashes, and
+   Pin stability.
+
+### Acceptance evidence and stop conditions
+
+- the setting is discoverable, defaults to Horizontal, persists per notebook,
+  and older notebook data decodes to Horizontal;
+- both axes turn forward/backward in the expected physical direction and use a
+  matching transition; perpendicular swipes do not turn pages;
+- zoomed-page panning, Pencil input, page coordinates, and Pins remain unchanged;
+- stop after evidence is collected, when the exact-device prerequisite is
+  unavailable, or after two device verification failures without a narrower
+  repair.
+
+### Session log
+
+- 2026-07-20 — Started from clean `sive/dev` at `b33a040`. Confirmed current
+  page navigation is horizontal-only and owned by the notebook canvas gesture
+  seam. Began the smallest per-notebook persisted-axis change; no coordinate or
+  architecture ownership change is planned.
+- 2026-07-20 — Added the per-notebook Horizontal/Vertical segmented setting,
+  tolerant legacy decoding, debounced setting persistence, axis-aware page
+  offsets/transitions, matching navigation glyphs, and vertical edge arbitration
+  that preserves ordinary within-page panning. Focused and nearby notebook/
+  archive checks pass 27/27, Python syntax and `git diff --check` pass, and the
+  final PC-12 diff stayed in scope. Evidence is under
+  `tmp/verify/pc-12-scroll-direction/summary.txt`. Canonical Xcode build,
+  `notebook-pages`, physical Settings/swipe inspection, screenshots, console,
+  crash diagnostics, and interaction quality remain blocked because this Linux
+  host has no Xcode/Swift toolchain or explicitly pinned physical iPad. The
+  concurrent PC-9 export edits were preserved and are not attributed here.
+
+Shared-contract log — 2026-07-20: `CONTRACT:` extend persisted
+`NotebookSettings` with `pageScrollDirection` and add
+`NotebookPageScrollDirection` so a notebook can retain the user's chosen page
+navigation axis. Missing values decode as Horizontal; page identity, spatial
+coordinates, archive version, and existing setting keys are unchanged.

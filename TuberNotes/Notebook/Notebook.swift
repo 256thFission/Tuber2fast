@@ -61,13 +61,62 @@ struct Notebook: Identifiable, Codable, Equatable {
     }
 }
 
+enum NotebookPageScrollDirection: String, Codable, CaseIterable, Identifiable {
+    case horizontal
+    case vertical
+
+    var id: Self { self }
+    var label: String { rawValue.capitalized }
+    var previousSymbolName: String { self == .horizontal ? "chevron.left" : "chevron.up" }
+    var nextSymbolName: String { self == .horizontal ? "chevron.right" : "chevron.down" }
+}
+
 struct NotebookSettings: Codable, Equatable {
-    var showsPageNavigation = true
-    var showsWritingTools = true
-    var showsLayers = true
-    var showsExport = true
-    var showsPageLock = true
-    var favoriteColors = [InkPalette.default, "#E11D2E", "#F4B400", "#1A73E8"]
+    var showsPageNavigation: Bool
+    var showsWritingTools: Bool
+    var showsLayers: Bool
+    var showsExport: Bool
+    var showsPageLock: Bool
+    var favoriteColors: [String]
+    var pageScrollDirection: NotebookPageScrollDirection
+
+    init(
+        showsPageNavigation: Bool = true,
+        showsWritingTools: Bool = true,
+        showsLayers: Bool = true,
+        showsExport: Bool = true,
+        showsPageLock: Bool = true,
+        favoriteColors: [String] = [InkPalette.default, "#E11D2E", "#F4B400", "#1A73E8"],
+        pageScrollDirection: NotebookPageScrollDirection = .horizontal
+    ) {
+        self.showsPageNavigation = showsPageNavigation
+        self.showsWritingTools = showsWritingTools
+        self.showsLayers = showsLayers
+        self.showsExport = showsExport
+        self.showsPageLock = showsPageLock
+        self.favoriteColors = favoriteColors
+        self.pageScrollDirection = pageScrollDirection
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case showsPageNavigation, showsWritingTools, showsLayers, showsExport, showsPageLock
+        case favoriteColors, pageScrollDirection
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        showsPageNavigation = try container.decodeIfPresent(Bool.self, forKey: .showsPageNavigation) ?? true
+        showsWritingTools = try container.decodeIfPresent(Bool.self, forKey: .showsWritingTools) ?? true
+        showsLayers = try container.decodeIfPresent(Bool.self, forKey: .showsLayers) ?? true
+        showsExport = try container.decodeIfPresent(Bool.self, forKey: .showsExport) ?? true
+        showsPageLock = try container.decodeIfPresent(Bool.self, forKey: .showsPageLock) ?? true
+        favoriteColors = try container.decodeIfPresent([String].self, forKey: .favoriteColors)
+            ?? [InkPalette.default, "#E11D2E", "#F4B400", "#1A73E8"]
+        pageScrollDirection = try container.decodeIfPresent(
+            NotebookPageScrollDirection.self,
+            forKey: .pageScrollDirection
+        ) ?? .horizontal
+    }
 }
 
 // MARK: - Page
