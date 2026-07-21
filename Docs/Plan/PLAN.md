@@ -898,8 +898,10 @@ and stale-result safe; then separately decide whether to add local
   and locally filters known shallow patterns. Compact expanded cards are
   228×126 points, omit the drag-help row, and temporarily hide sibling labels
   while retaining their Pin dots. Generic unsigned Release build succeeded
-  under `tmp/build/pc12-instructional-pins/`; device delivery and Phillip's
-  regenerated-result verdict remain pending.
+  under `tmp/build/pc12-instructional-pins/`. Commit `2a84f84` then passed
+  exact-iPad preflight, fresh signed Release build, install, and normal launch
+  from `tmp/build/pc12-instructional-pins-device/`. No automated provider call
+  or scenario ran; Phillip's regenerated-result verdict remains pending.
 - 2026-07-21 — Made hero guidance labels smaller and spatially stable during
   zoom. The hero overlay now uses fixed compact screen-point dimensions and a
   deterministic offset from each page-normalized Pin anchor, with no viewport

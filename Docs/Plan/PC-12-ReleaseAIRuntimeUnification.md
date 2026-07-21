@@ -317,7 +317,10 @@ network request, Debug/scenario harness, or device action.
   to 228×126 points, removed their instructional drag row, and hide sibling
   labels (not Pin dots) while one is expanded. Generic unsigned Release build
   succeeded under `tmp/build/pc12-instructional-pins/`; device delivery and
-  Phillip's regenerated-result verdict remain pending.
+  Phillip's regenerated-result verdict remain pending. Commit `2a84f84` then
+  passed exact-iPad preflight, fresh signed Release build, install, and normal
+  launch from `tmp/build/pc12-instructional-pins-device/`. No automated provider
+  call or scenario ran.
 - 2026-07-21 — Phillip reported that hero Pin labels were oversized and changed
   apparent placement while zooming. Added a hero-only compact, page-anchored
   label policy: collapsed labels are 164×38 points, expanded cards are reduced,
