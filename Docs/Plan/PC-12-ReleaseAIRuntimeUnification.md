@@ -315,7 +315,10 @@ network request, Debug/scenario harness, or device action.
   and edge/collision avoidance is disabled so zoom/pan cannot switch or clamp
   the card. Other Pin surfaces retain adaptive placement. Generic unsigned
   Release build succeeded under `tmp/build/pc12-stable-compact-pins/`; device
-  delivery and Phillip's visual verdict remain pending.
+  delivery then passed exact-iPad preflight, fresh signed Release build,
+  install, and normal launch from `tmp/build/pc12-stable-compact-pins-device/`.
+  No scenario or automated provider call ran; Phillip's visual zoom verdict
+  remains pending.
 - 2026-07-21 — Manual Release retry confirmed that the private Codex endpoint
   still did not return the forced `place_pins` function-call dialect. Replaced
   the pretend executable tool with the Responses structured-output contract:

@@ -897,8 +897,10 @@ and stale-result safe; then separately decide whether to add local
   deterministic offset from each page-normalized Pin anchor, with no viewport
   clamping or collision-driven side switching; adaptive behavior elsewhere is
   unchanged. Generic unsigned Release build succeeded under
-  `tmp/build/pc12-stable-compact-pins/`; device delivery and Phillip's visual
-  verdict remain pending.
+  `tmp/build/pc12-stable-compact-pins/`. Commit `da2b93d` then passed exact-iPad
+  preflight, fresh signed Release build, install, and normal launch from
+  `tmp/build/pc12-stable-compact-pins-device/`. No scenario or automated
+  provider call ran; Phillip's visual zoom verdict remains pending.
 - 2026-07-20 — Three user-requested `gpt-5.6-terra` subagents independently
   inventoried Release/dormant AI surfaces, designed the smallest unification
   seam, and audited user-visible AI lifecycle/safety. Their read-only findings
