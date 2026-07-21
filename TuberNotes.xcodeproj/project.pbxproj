@@ -39,6 +39,7 @@
 		D10000000000000000000004 /* DrawingRefinementOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000104 /* DrawingRefinementOverlay.swift */; };
 		D10000000000000000000005 /* PDFStrokeCompression.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000105 /* PDFStrokeCompression.swift */; };
 		D10000000000000000000006 /* TuberNoteArchive.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000106 /* TuberNoteArchive.swift */; };
+		D10000000000000000000018 /* LassoGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000118 /* LassoGeometry.swift */; };
 		D10000000000000000000007 /* AgentInsight.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000107 /* AgentInsight.swift */; };
 		D10000000000000000000008 /* AgentSidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000108 /* AgentSidebarView.swift */; };
 		D10000000000000000000009 /* AmbientBackground.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000109 /* AmbientBackground.swift */; };
@@ -92,6 +93,7 @@
 		D10000000000000000000104 /* DrawingRefinementOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DrawingRefinementOverlay.swift; sourceTree = "<group>"; };
 		D10000000000000000000105 /* PDFStrokeCompression.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PDFStrokeCompression.swift; sourceTree = "<group>"; };
 		D10000000000000000000106 /* TuberNoteArchive.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TuberNoteArchive.swift; sourceTree = "<group>"; };
+		D10000000000000000000118 /* LassoGeometry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LassoGeometry.swift; sourceTree = "<group>"; };
 		D10000000000000000000107 /* AgentInsight.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentInsight.swift; sourceTree = "<group>"; };
 		D10000000000000000000108 /* AgentSidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentSidebarView.swift; sourceTree = "<group>"; };
 		D10000000000000000000109 /* AmbientBackground.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AmbientBackground.swift; sourceTree = "<group>"; };
@@ -162,6 +164,7 @@
 				A00000000000000000000104 /* PencilCanvas.swift */,
 				A00000000000000000000128 /* MagicLasso.swift */,
 				D10000000000000000000104 /* DrawingRefinementOverlay.swift */,
+				D10000000000000000000118 /* LassoGeometry.swift */,
 				D10000000000000000000105 /* PDFStrokeCompression.swift */,
 				D10000000000000000000106 /* TuberNoteArchive.swift */,
 			);
@@ -364,6 +367,7 @@
 				D10000000000000000000002 /* ConversationLayer.swift in Sources */,
 				D10000000000000000000003 /* ConversationLayerOverlayView.swift in Sources */,
 				D10000000000000000000004 /* DrawingRefinementOverlay.swift in Sources */,
+				D10000000000000000000018 /* LassoGeometry.swift in Sources */,
 				D10000000000000000000005 /* PDFStrokeCompression.swift in Sources */,
 				D10000000000000000000006 /* TuberNoteArchive.swift in Sources */,
 				D10000000000000000000007 /* AgentInsight.swift in Sources */,

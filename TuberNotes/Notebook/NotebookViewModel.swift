@@ -410,10 +410,16 @@ final class NotebookViewModel: ObservableObject {
         scheduleSave()
     }
 
-    /// Commits a raster refinement into the page and removes source strokes
-    /// intersecting the refined region. Refinement is document state, never an
-    /// Agentic Layer or Pin.
-    func applyDrawingRefinement(imageData: Data, normalizedRect: CGRect) {
+    /// Commits a raster refinement into the page and removes the source strokes
+    /// it replaces. Refinement is document state, never an Agentic Layer or Pin.
+    /// With a closed lasso polygon, only strokes fully enclosed by it are
+    /// removed; without one, falls back to the selection rect. Either way a
+    /// stroke that merely crosses the region survives rather than vanishing.
+    func applyDrawingRefinement(
+        imageData: Data,
+        normalizedRect: CGRect,
+        normalizedPath: [CGPoint] = []
+    ) {
         guard notebook.pages.indices.contains(currentIndex),
               let layerIndex = notebook.pages[currentIndex].drawingLayers.firstIndex(where: {
                   $0.id == currentDrawingLayerID
@@ -427,8 +433,19 @@ final class NotebookViewModel: ObservableObject {
             width: normalizedRect.width * pageSize.width,
             height: normalizedRect.height * pageSize.height
         )
+        let pagePath = normalizedPath.map {
+            CGPoint(x: $0.x * pageSize.width, y: $0.y * pageSize.height)
+        }
         var drawing = notebook.pages[currentIndex].drawingLayers[layerIndex].drawing
-        drawing.strokes = drawing.strokes.filter { !$0.renderBounds.intersects(pageRect) }
+        drawing.strokes = drawing.strokes.filter { stroke in
+            guard stroke.renderBounds.intersects(pageRect) else { return true }
+            if pagePath.count >= 4 {
+                return !stroke.path.allSatisfy {
+                    LassoGeometry.contains($0.location.applying(stroke.transform), in: pagePath)
+                }
+            }
+            return !pageRect.contains(stroke.renderBounds)
+        }
         notebook.pages[currentIndex].drawingLayers[layerIndex].drawingData = drawing.dataRepresentation()
         notebook.pages[currentIndex].images.append(
             PlacedImage(imageData: imageData, rect: normalizedRect)

@@ -7,7 +7,7 @@ struct DrawingRefinementOverlay: View {
     let client: any DrawingRefinementClient
     let initialSelection: CGRect?
     let pageSize: CGSize
-    let onApply: (Data, CGRect) -> Void
+    let onApply: (Data, CGRect, [CGPoint]) -> Void
     let onClose: () -> Void
 
     @State private var isLassoActive = false
@@ -15,6 +15,9 @@ struct DrawingRefinementOverlay: View {
     /// Page-normalized selection. Keeping this out of transient view pixels
     /// lets it follow the paper continuously through zoom and pan.
     @State private var selection: CGRect?
+    /// Page-normalized closed lasso polygon backing `selection`. Empty when the
+    /// selection came from a rect (initial selection) or an unclosed lasso.
+    @State private var selectionPath: [CGPoint] = []
     @State private var refinedImage: UIImage?
     @State private var refinedImageData: Data?
     @State private var isRefining = false
@@ -72,6 +75,7 @@ struct DrawingRefinementOverlay: View {
                     isLassoActive.toggle()
                     if isLassoActive {
                         selection = nil
+                        selectionPath = []
                         refinedImage = nil
                         refinedImageData = nil
                     }
@@ -118,7 +122,7 @@ struct DrawingRefinementOverlay: View {
             HStack(spacing: 8) {
                 if let refinedImageData {
                     Button {
-                        onApply(refinedImageData, normalized(rect, in: canvasSize))
+                        onApply(refinedImageData, normalized(rect, in: canvasSize), selectionPath)
                         onClose()
                     } label: {
                         Label("Apply", systemImage: "checkmark")
@@ -195,6 +199,9 @@ struct DrawingRefinementOverlay: View {
                     return
                 }
                 selection = normalized(bounds, in: canvasSize)
+                selectionPath = LassoGeometry.closedPath(
+                    from: lassoPoints.map { normalizedPoint($0, in: canvasSize) }
+                ) ?? []
                 lassoPoints = []
                 isLassoActive = false
             }
@@ -253,6 +260,13 @@ struct DrawingRefinementOverlay: View {
                 }
             }
         }
+    }
+
+    private func normalizedPoint(_ point: CGPoint, in canvasSize: CGSize) -> CGPoint {
+        CGPoint(
+            x: point.x / max(canvasSize.width, 1),
+            y: point.y / max(canvasSize.height, 1)
+        )
     }
 
     private func normalized(_ rect: CGRect, in canvasSize: CGSize) -> CGRect {
