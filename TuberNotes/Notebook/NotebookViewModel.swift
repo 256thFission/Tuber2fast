@@ -189,10 +189,20 @@ final class NotebookViewModel: ObservableObject {
     func updateImages(_ images: [PlacedImage]) {
         guard notebook.pages.indices.contains(currentIndex) else { return }
         notebook.pages[currentIndex].images = images
-        scheduleSave()
+        persistNow()
     }
 
     func selectImage(_ id: UUID?) { selectedImageID = id }
+
+    func rotateSelectedImage(by radians: CGFloat = .pi / 2) {
+        guard notebook.pages.indices.contains(currentIndex),
+              let id = selectedImageID,
+              let index = notebook.pages[currentIndex].images.firstIndex(where: { $0.id == id })
+        else { return }
+        let angle = notebook.pages[currentIndex].images[index].rotationRadians + radians
+        notebook.pages[currentIndex].images[index].rotationRadians = atan2(sin(angle), cos(angle))
+        persistNow()
+    }
 
     func deleteSelectedImage() {
         guard notebook.pages.indices.contains(currentIndex), let id = selectedImageID else { return }
@@ -574,14 +584,13 @@ final class NotebookViewModel: ObservableObject {
             UIColor.white.setFill()
             context.fill(pageRect)
             for placed in images {
-                guard let image = placed.image else { continue }
                 let rect = CGRect(
                     x: placed.rect.minX * pageRect.width,
                     y: placed.rect.minY * pageRect.height,
                     width: placed.rect.width * pageRect.width,
                     height: placed.rect.height * pageRect.height
                 )
-                image.draw(in: rect)
+                placed.draw(in: rect)
             }
             drawing.image(from: pageRect, scale: 1).draw(in: pageRect)
         }

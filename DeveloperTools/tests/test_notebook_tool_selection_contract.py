@@ -27,6 +27,16 @@ class NotebookToolSelectionContractTests(unittest.TestCase):
         )
         self.assertIn("vm.selectTool(tool)", tool_button)
 
+    def test_selected_pen_border_uses_the_current_pen_width(self):
+        source = TOOLBAR.read_text()
+        tool_button = source[
+            source.index("private func toolButton"):
+            source.index("private var lassoButton")
+        ]
+
+        self.assertIn("if selected && tool == .pen", tool_button)
+        self.assertIn("lineWidth: vm.width(for: tool)", tool_button)
+
     def test_color_button_keeps_tap_picker_and_priority_favorite_scrub(self):
         source = TOOLBAR.read_text()
         color_button = source[

@@ -246,7 +246,12 @@ struct NotebookToolbar: View {
                 .foregroundStyle(selected ? selectedToolForeground(for: tool) : Color.primary)
                 .background { if selected { Circle().fill(fill) } }
                 .overlay {
-                    if selected && tool != .eraser && selectedToolNeedsOutline {
+                    if selected && tool == .pen {
+                        Circle().strokeBorder(
+                            selectedToolForeground(for: tool).opacity(0.55),
+                            lineWidth: vm.width(for: tool)
+                        )
+                    } else if selected && tool != .eraser && selectedToolNeedsOutline {
                         Circle().strokeBorder(.primary.opacity(0.35), lineWidth: 1)
                     }
                 }

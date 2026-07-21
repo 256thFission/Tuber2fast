@@ -657,9 +657,11 @@ final class ImageLayerView: UIView {
 
         let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
         let pinch = UIPinchGestureRecognizer(target: self, action: #selector(handlePinch(_:)))
+        let rotation = UIRotationGestureRecognizer(target: self, action: #selector(handleRotation(_:)))
         let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
-        pan.delegate = self; pinch.delegate = self
-        addGestureRecognizer(pan); addGestureRecognizer(pinch); addGestureRecognizer(tap)
+        pan.delegate = self; pinch.delegate = self; rotation.delegate = self
+        addGestureRecognizer(pan); addGestureRecognizer(pinch)
+        addGestureRecognizer(rotation); addGestureRecognizer(tap)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not used") }
@@ -681,7 +683,9 @@ final class ImageLayerView: UIView {
                 return iv
             }()
             if v.image == nil { v.image = placed.image }
+            v.transform = .identity
             v.frame = denormalize(placed.rect)
+            v.transform = CGAffineTransform(rotationAngle: placed.rotationRadians)
         }
         refreshSelection()
     }
@@ -706,14 +710,25 @@ final class ImageLayerView: UIView {
 
     private func commit(_ id: UUID) {
         guard let v = views[id], let idx = images.firstIndex(where: { $0.id == id }) else { return }
-        images[idx].rect = normalize(v.frame)
+        let unrotatedFrame = CGRect(
+            x: v.center.x - v.bounds.width / 2,
+            y: v.center.y - v.bounds.height / 2,
+            width: v.bounds.width,
+            height: v.bounds.height
+        )
+        images[idx].rect = normalize(unrotatedFrame)
+        images[idx].rotationRadians = atan2(v.transform.b, v.transform.a)
         onChange?(images)
     }
 
     @objc private func handleTap(_ gr: UITapGestureRecognizer) {
         guard isEditing else { return }
         let p = gr.location(in: self)
-        let hit = images.reversed().first { denormalize($0.rect).contains(p) }
+        let hit = images.reversed().first { placed in
+            guard let view = views[placed.id] else { return false }
+            let localPoint = view.convert(p, from: self)
+            return view.point(inside: localPoint, with: nil)
+        }
         selectedID = hit?.id
         onSelect?(hit?.id)
     }
@@ -722,9 +737,9 @@ final class ImageLayerView: UIView {
         guard isEditing, let id = selectedID, let v = views[id] else { return }
         let t = gr.translation(in: self)
         v.center = CGPoint(x: v.center.x + t.x, y: v.center.y + t.y)
+        keepReachable(v)
         gr.setTranslation(.zero, in: self)
-        interacting = gr.state == .began || gr.state == .changed
-        if gr.state == .ended || gr.state == .cancelled { interacting = false; commit(id) }
+        updateInteractionState(for: id, gestureState: gr.state)
     }
 
     @objc private func handlePinch(_ gr: UIPinchGestureRecognizer) {
@@ -733,9 +748,59 @@ final class ImageLayerView: UIView {
         b.size.width = max(40, min(b.width * gr.scale, bounds.width * 2))
         b.size.height = max(40, min(b.height * gr.scale, bounds.height * 2))
         v.bounds = b
+        keepReachable(v)
         gr.scale = 1
-        interacting = gr.state == .began || gr.state == .changed
-        if gr.state == .ended || gr.state == .cancelled { interacting = false; commit(id) }
+        updateInteractionState(for: id, gestureState: gr.state)
+    }
+
+    @objc private func handleRotation(_ gr: UIRotationGestureRecognizer) {
+        guard isEditing, let id = selectedID, let v = views[id] else { return }
+        v.transform = v.transform.rotated(by: gr.rotation)
+        keepReachable(v)
+        gr.rotation = 0
+        updateInteractionState(for: id, gestureState: gr.state)
+    }
+
+    /// A transformed image may be larger than the page, but its center remains
+    /// reachable so a user can always select, move, resize, or delete it later.
+    private func keepReachable(_ view: UIView) {
+        guard !bounds.isEmpty else { return }
+        let frame = view.frame
+        var center = view.center
+
+        if frame.width <= bounds.width {
+            if frame.minX < bounds.minX { center.x += bounds.minX - frame.minX }
+            if frame.maxX > bounds.maxX { center.x -= frame.maxX - bounds.maxX }
+        } else {
+            center.x = bounds.midX
+        }
+
+        if frame.height <= bounds.height {
+            if frame.minY < bounds.minY { center.y += bounds.minY - frame.minY }
+            if frame.maxY > bounds.maxY { center.y -= frame.maxY - bounds.maxY }
+        } else {
+            center.y = bounds.midY
+        }
+
+        view.center = center
+    }
+
+    private func updateInteractionState(for id: UUID, gestureState: UIGestureRecognizer.State) {
+        if gestureState == .began || gestureState == .changed {
+            interacting = true
+            return
+        }
+        guard gestureState == .ended || gestureState == .cancelled || gestureState == .failed else {
+            return
+        }
+
+        interacting = gestureRecognizers?.contains { gesture in
+            let changesImage = gesture is UIPanGestureRecognizer
+                || gesture is UIPinchGestureRecognizer
+                || gesture is UIRotationGestureRecognizer
+            return changesImage && (gesture.state == .began || gesture.state == .changed)
+        } ?? false
+        if !interacting { commit(id) }
     }
 }
 

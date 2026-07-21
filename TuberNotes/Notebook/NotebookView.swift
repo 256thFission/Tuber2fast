@@ -1,6 +1,8 @@
+import CoreImage
 import PhotosUI
 import SwiftUI
 import UniformTypeIdentifiers
+import Vision
 
 /// Editor for a single notebook: a GoodNotes-style vertical page (paper is drawn
 /// inside the scrolling canvas), the floating menu bar, and the page navigator.
@@ -32,6 +34,11 @@ struct NotebookView: View {
     @State private var pendingExportPresentation: PendingExportPresentation?
     @State private var isPageLocked = false
     @State private var pickerItem: PhotosPickerItem?
+    @State private var pendingImageImport: PendingImageImport?
+    @State private var removesImportedImageBackground = false
+    @State private var isPreparingImageImport = false
+    @State private var imageImportTask: Task<Void, Never>?
+    @State private var imageImportError: String?
     @State private var pdfTolerance = Double(NotePDFExporter.defaultTolerance)
     @State private var includePDFWorkspaceBackground = false
     @State private var exportDocument = NotebookExportDocument()
@@ -43,6 +50,11 @@ struct NotebookView: View {
     @State private var flipOffset: CGFloat = 0
     @State private var isFlipAnimating = false
     @State private var pageContainerSize = CGSize(width: 1024, height: 1024)
+    @State private var isAddPageHoldActive = false
+    @State private var addPageHoldProgress: CGFloat = 0
+    @State private var addPageHoldToken = UUID()
+    @State private var didAddPageDuringCurrentGesture = false
+    @State private var addPageHoldCompletionCount = 0
 
     init(notebook: Notebook, store: NotebookStore) {
         _vm = StateObject(wrappedValue: NotebookViewModel(notebook: notebook, store: store))
@@ -163,6 +175,12 @@ struct NotebookView: View {
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
+        .sheet(item: $pendingImageImport) { pending in
+            imageImportOptions(for: pending)
+                .presentationDetents([.medium])
+                .presentationDragIndicator(.visible)
+                .interactiveDismissDisabled(isPreparingImageImport)
+        }
         .fileExporter(
             isPresented: $showFileExporter,
             document: exportDocument,
@@ -177,12 +195,20 @@ struct NotebookView: View {
         } message: {
             Text(exportError ?? "The file could not be exported.")
         }
+        .alert("Couldn’t import image", isPresented: imageImportErrorBinding) {
+            Button("OK", role: .cancel) { imageImportError = nil }
+        } message: {
+            Text(imageImportError ?? "The image could not be prepared.")
+        }
         .onChange(of: pickerItem) { _, item in
             guard let item else { return }
             Task {
                 if let data = try? await item.loadTransferable(type: Data.self),
                    let image = UIImage(data: data) {
-                    vm.addImage(data: data, aspect: image.size.width / max(image.size.height, 1))
+                    pendingImageImport = PendingImageImport(data: data, preview: image)
+                    removesImportedImageBackground = false
+                } else {
+                    imageImportError = "TuberNotes couldn’t read that photo."
                 }
                 pickerItem = nil
             }
@@ -202,8 +228,16 @@ struct NotebookView: View {
             if active { dismissPencilPalette() }
         }
         .onChange(of: vm.settings) { _, _ in vm.scheduleSave() }
-        .onChange(of: vm.settings.pageScrollDirection) { _, _ in flipOffset = 0 }
-        .onDisappear { vm.persistNow() }
+        .onChange(of: vm.settings.pageScrollDirection) { _, _ in
+            cancelAddPageHold()
+            flipOffset = 0
+        }
+        .onDisappear {
+            cancelAddPageHold()
+            imageImportTask?.cancel()
+            imageImportTask = nil
+            vm.persistNow()
+        }
     }
 
     private var templateMenu: some View {
@@ -357,9 +391,14 @@ struct NotebookView: View {
     private var arrangeControls: some View {
         VStack {
             HStack(spacing: 10) {
-                Label("Move & pinch to resize", systemImage: "hand.draw")
+                Label("Move, pinch, or twist", systemImage: "hand.draw")
                     .font(.footnote.weight(.medium))
                 Divider().frame(height: 18)
+                Button { vm.rotateSelectedImage() } label: {
+                    Label("Rotate", systemImage: "rotate.right")
+                }
+                .disabled(vm.selectedImageID == nil)
+                .accessibilityIdentifier("rotate-selected-image")
                 Button(role: .destructive) { vm.deleteSelectedImage() } label: {
                     Label("Delete", systemImage: "trash")
                 }
@@ -372,6 +411,89 @@ struct NotebookView: View {
             .background(.ultraThinMaterial, in: Capsule())
             .padding(.top, 12)
             Spacer()
+        }
+    }
+
+    private func imageImportOptions(for pending: PendingImageImport) -> some View {
+        NavigationStack {
+            VStack(spacing: 18) {
+                ZStack {
+                    CheckerboardBackground()
+                    Image(uiImage: pending.preview)
+                        .resizable()
+                        .scaledToFit()
+                }
+                .frame(maxWidth: .infinity, maxHeight: 230)
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+
+                Toggle(isOn: $removesImportedImageBackground) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Make background transparent")
+                        Text("Keeps the foreground subjects using on-device image processing.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .disabled(isPreparingImageImport)
+                .accessibilityIdentifier("image-import-remove-background")
+
+                Button {
+                    importPendingImage(pending)
+                } label: {
+                    HStack {
+                        if isPreparingImageImport { ProgressView() }
+                        Text(isPreparingImageImport ? "Preparing…" : "Add to Page")
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(isPreparingImageImport)
+                .accessibilityIdentifier("image-import-confirm")
+            }
+            .padding(20)
+            .navigationTitle("Import Image")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { pendingImageImport = nil }
+                        .disabled(isPreparingImageImport)
+                }
+            }
+        }
+    }
+
+    private func importPendingImage(_ pending: PendingImageImport) {
+        guard !isPreparingImageImport else { return }
+        imageImportTask?.cancel()
+        isPreparingImageImport = true
+        let shouldRemoveBackground = removesImportedImageBackground
+        let importID = pending.id
+
+        imageImportTask = Task {
+            defer {
+                isPreparingImageImport = false
+                imageImportTask = nil
+            }
+            do {
+                let data = shouldRemoveBackground
+                    ? try await ImageBackgroundRemover.removeBackground(from: pending.data)
+                    : pending.data
+                try Task.checkCancellation()
+                guard pendingImageImport?.id == importID else { return }
+                guard let image = UIImage(data: data) else {
+                    throw ImageBackgroundRemovalError.unreadableResult
+                }
+                vm.addImage(
+                    data: data,
+                    aspect: image.size.width / max(image.size.height, 1)
+                )
+                pendingImageImport = nil
+                removesImportedImageBackground = false
+            } catch is CancellationError {
+                return
+            } catch {
+                imageImportError = error.localizedDescription
+            }
         }
     }
 
@@ -605,8 +727,7 @@ struct NotebookView: View {
             paperView.layer.render(in: rendererContext.cgContext)
 
             for placedImage in page.images {
-                guard let image = placedImage.image else { continue }
-                image.draw(in: CGRect(
+                placedImage.draw(in: CGRect(
                     x: placedImage.rect.minX * pageBounds.width,
                     y: placedImage.rect.minY * pageBounds.height,
                     width: placedImage.rect.width * pageBounds.width,
@@ -688,6 +809,13 @@ struct NotebookView: View {
         Binding(
             get: { exportError != nil },
             set: { if !$0 { exportError = nil } }
+        )
+    }
+
+    private var imageImportErrorBinding: Binding<Bool> {
+        Binding(
+            get: { imageImportError != nil },
+            set: { if !$0 { imageImportError = nil } }
         )
     }
 
@@ -793,7 +921,13 @@ struct NotebookView: View {
     // MARK: Interactive page turn
 
     private func handlePageFlipChanged(_ translation: CGFloat) {
-        guard !isFlipAnimating else { return }
+        guard !isFlipAnimating, !didAddPageDuringCurrentGesture else { return }
+        if !vm.canGoForward, translation <= -addPageHoldActivationDistance {
+            beginAddPageHoldIfNeeded()
+        } else {
+            cancelAddPageHold()
+        }
+
         var offset = translation
         if (offset < 0 && !vm.canGoForward) || (offset > 0 && !vm.canGoBack) {
             offset *= 0.28
@@ -802,7 +936,16 @@ struct NotebookView: View {
     }
 
     private func handlePageFlipEnded(_ translation: CGFloat, velocity: CGFloat) {
+        cancelAddPageHold()
+        let addedPage = didAddPageDuringCurrentGesture
+        didAddPageDuringCurrentGesture = false
         guard !isFlipAnimating else { return }
+        if addedPage {
+            withAnimation(.interactiveSpring(response: 0.35, dampingFraction: 0.82)) {
+                flipOffset = 0
+            }
+            return
+        }
         let width = pageTurnDistance
         let threshold = width * 0.28
         let turnsForward = (translation < -threshold || velocity < -800) && vm.canGoForward
@@ -818,6 +961,65 @@ struct NotebookView: View {
             }
         }
     }
+
+    private func beginAddPageHoldIfNeeded() {
+        guard !isAddPageHoldActive,
+              !didAddPageDuringCurrentGesture,
+              !vm.canGoForward else { return }
+
+        let token = UUID()
+        addPageHoldToken = token
+        addPageHoldProgress = 0
+        isAddPageHoldActive = true
+
+        DispatchQueue.main.async {
+            guard token == addPageHoldToken, isAddPageHoldActive else { return }
+            withAnimation(.linear(duration: addPageHoldDuration)) {
+                addPageHoldProgress = 1
+            }
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + addPageHoldDuration) {
+            guard token == addPageHoldToken,
+                  isAddPageHoldActive,
+                  !didAddPageDuringCurrentGesture,
+                  !vm.canGoForward else { return }
+            didAddPageDuringCurrentGesture = true
+            addPageHoldCompletionCount += 1
+            cancelAddPageHold()
+            completeAddedPageFlip(width: pageTurnDistance)
+        }
+    }
+
+    private func cancelAddPageHold() {
+        guard isAddPageHoldActive || addPageHoldProgress != 0 else { return }
+        addPageHoldToken = UUID()
+        withAnimation(.easeOut(duration: 0.12)) {
+            isAddPageHoldActive = false
+            addPageHoldProgress = 0
+        }
+    }
+
+    private func completeAddedPageFlip(width: CGFloat) {
+        isFlipAnimating = true
+        withAnimation(.easeOut(duration: 0.18)) {
+            flipOffset = -width
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
+            vm.addPage()
+            flipOffset = width
+            DispatchQueue.main.async {
+                withAnimation(.easeOut(duration: 0.20)) { flipOffset = 0 }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.20) {
+                    isFlipAnimating = false
+                }
+            }
+        }
+    }
+
+    private var addPageHoldActivationDistance: CGFloat { 72 }
+    private var addPageHoldDuration: TimeInterval { 0.7 }
 
     private func completePageFlip(forward: Bool, width: CGFloat) {
         isFlipAnimating = true
@@ -872,10 +1074,36 @@ struct NotebookView: View {
     }
 
     private var pageArea: some View {
-        pageComposition
-            .id(vm.currentPageID)
-            .transition(pageTurnTransition)
-            .accessibilityIdentifier("notebook-page-area")
+        ZStack {
+            pageComposition
+                .id(vm.currentPageID)
+                .transition(pageTurnTransition)
+
+            if isAddPageHoldActive {
+                addPageHoldOverlay
+                    .transition(.opacity.combined(with: .scale(scale: 0.94)))
+            }
+        }
+        .sensoryFeedback(.success, trigger: addPageHoldCompletionCount)
+        .accessibilityIdentifier("notebook-page-area")
+    }
+
+    @ViewBuilder
+    private var addPageHoldOverlay: some View {
+        switch vm.settings.pageScrollDirection {
+        case .horizontal:
+            HStack {
+                Spacer(minLength: 0)
+                AddPageHoldIndicator(progress: addPageHoldProgress)
+                    .padding(.trailing, 22)
+            }
+        case .vertical:
+            VStack {
+                Spacer(minLength: 0)
+                AddPageHoldIndicator(progress: addPageHoldProgress)
+                    .padding(.bottom, showsWorkingToolbar ? 88 : 22)
+            }
+        }
     }
 
     private var pageComposition: some View {
@@ -994,6 +1222,135 @@ struct NotebookView: View {
         vm.settings.showsWritingTools
             || vm.settings.showsLayers
             || vm.settings.showsPageNavigation
+    }
+}
+
+private struct AddPageHoldIndicator: View {
+    let progress: CGFloat
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ZStack {
+                Circle()
+                    .stroke(Color.accentColor.opacity(0.2), lineWidth: 3)
+                Circle()
+                    .trim(from: 0, to: progress)
+                    .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+                Image(systemName: "plus")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(Color.accentColor)
+            }
+            .frame(width: 28, height: 28)
+
+            Text("Hold to add page")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.primary)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(.ultraThinMaterial, in: Capsule())
+        .overlay {
+            Capsule().stroke(Color.primary.opacity(0.1), lineWidth: 1)
+        }
+        .shadow(color: .black.opacity(0.12), radius: 10, y: 4)
+        .allowsHitTesting(false)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Hold to add page")
+        .accessibilityValue("\(Int((progress * 100).rounded())) percent")
+        .accessibilityIdentifier("add-page-hold-indicator")
+    }
+}
+
+private struct PendingImageImport: Identifiable {
+    let id = UUID()
+    let data: Data
+    let preview: UIImage
+}
+
+private struct CheckerboardBackground: View {
+    var body: some View {
+        Canvas { context, size in
+            let square: CGFloat = 14
+            let rows = Int(ceil(size.height / square))
+            let columns = Int(ceil(size.width / square))
+            for row in 0..<rows {
+                for column in 0..<columns where (row + column).isMultiple(of: 2) {
+                    context.fill(
+                        Path(CGRect(
+                            x: CGFloat(column) * square,
+                            y: CGFloat(row) * square,
+                            width: square,
+                            height: square
+                        )),
+                        with: .color(.secondary.opacity(0.12))
+                    )
+                }
+            }
+        }
+        .background(Color(uiColor: .systemBackground))
+        .accessibilityHidden(true)
+    }
+}
+
+private enum ImageBackgroundRemovalError: LocalizedError {
+    case noForegroundSubject
+    case unreadableResult
+
+    var errorDescription: String? {
+        switch self {
+        case .noForegroundSubject:
+            return "No clear foreground subject was found. Try importing the original image instead."
+        case .unreadableResult:
+            return "TuberNotes couldn’t create a transparent image from that photo."
+        }
+    }
+}
+
+private enum ImageBackgroundRemover {
+    private static let context = CIContext()
+    private static let maximumPixelDimension: CGFloat = 2_560
+
+    static func removeBackground(from data: Data) async throws -> Data {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                continuation.resume(with: Result {
+                    guard var sourceImage = CIImage(
+                        data: data,
+                        options: [.applyOrientationProperty: true]
+                    ), !sourceImage.extent.isEmpty else {
+                        throw ImageBackgroundRemovalError.unreadableResult
+                    }
+                    let longestDimension = max(sourceImage.extent.width, sourceImage.extent.height)
+                    let scale = min(1, maximumPixelDimension / longestDimension)
+                    if scale < 1 {
+                        sourceImage = sourceImage.transformed(
+                            by: CGAffineTransform(scaleX: scale, y: scale)
+                        )
+                    }
+
+                    let request = VNGenerateForegroundInstanceMaskRequest()
+                    let handler = VNImageRequestHandler(ciImage: sourceImage, options: [:])
+                    try handler.perform([request])
+                    guard let observation = request.results?.first,
+                          !observation.allInstances.isEmpty else {
+                        throw ImageBackgroundRemovalError.noForegroundSubject
+                    }
+
+                    let buffer = try observation.generateMaskedImage(
+                        ofInstances: observation.allInstances,
+                        from: handler,
+                        croppedToInstancesExtent: false
+                    )
+                    let image = CIImage(cvPixelBuffer: buffer)
+                    guard let cgImage = context.createCGImage(image, from: image.extent),
+                          let pngData = UIImage(cgImage: cgImage).pngData() else {
+                        throw ImageBackgroundRemovalError.unreadableResult
+                    }
+                    return pngData
+                })
+            }
+        }
     }
 }
 

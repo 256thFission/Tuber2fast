@@ -127,14 +127,52 @@ struct PlacedImage: Identifiable, Codable, Equatable {
     let id: UUID
     var imageData: Data
     var rect: CGRect
+    var rotationRadians: CGFloat
 
-    init(id: UUID = UUID(), imageData: Data, rect: CGRect) {
+    init(
+        id: UUID = UUID(),
+        imageData: Data,
+        rect: CGRect,
+        rotationRadians: CGFloat = 0
+    ) {
         self.id = id
         self.imageData = imageData
         self.rect = rect
+        self.rotationRadians = rotationRadians
     }
 
     var image: UIImage? { UIImage(data: imageData) }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, imageData, rect, rotationRadians
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        imageData = try container.decode(Data.self, forKey: .imageData)
+        rect = try container.decode(CGRect.self, forKey: .rect)
+        rotationRadians = try container.decodeIfPresent(CGFloat.self, forKey: .rotationRadians) ?? 0
+    }
+
+    func draw(in rect: CGRect) {
+        guard let image else { return }
+        guard rotationRadians != 0, let context = UIGraphicsGetCurrentContext() else {
+            image.draw(in: rect)
+            return
+        }
+
+        context.saveGState()
+        context.translateBy(x: rect.midX, y: rect.midY)
+        context.rotate(by: rotationRadians)
+        image.draw(in: CGRect(
+            x: -rect.width / 2,
+            y: -rect.height / 2,
+            width: rect.width,
+            height: rect.height
+        ))
+        context.restoreGState()
+    }
 }
 
 struct NotebookPage: Identifiable, Codable, Equatable {
@@ -217,10 +255,9 @@ struct NotebookPage: Identifiable, Codable, Equatable {
             UIColor.white.setFill()
             ctx.fill(CGRect(origin: .zero, size: size))
             for placed in images {
-                guard let ui = placed.image else { continue }
                 let r = CGRect(x: placed.rect.minX * size.width, y: placed.rect.minY * size.height,
                                width: placed.rect.width * size.width, height: placed.rect.height * size.height)
-                ui.draw(in: r)
+                placed.draw(in: r)
             }
             let d = drawing
             if !d.bounds.isNull {

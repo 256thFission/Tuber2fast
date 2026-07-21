@@ -980,6 +980,207 @@ Shared-contract log — 2026-07-20: `CONTRACT:` extend persisted
 navigation axis. Missing values decode as Horizontal; page identity, spatial
 coordinates, archive version, and existing setting keys are unchanged.
 
+## Active line — PC-17: image import arrangement
+
+Status: **implemented — host-checked; physical-device verification blocked**
+
+Target branch: `sive/dev`
+
+Child work-line: [`PC-17-ImageImportArrangement.md`](PC-17-ImageImportArrangement.md)
+
+Owner: App/Notebook owns import presentation and document persistence;
+`SpatialCanvas` owns image gestures and page-relative placement.
+
+### Objective and user-visible outcome
+
+Let imported images rotate while they are being arranged, and offer an
+at-import option that removes a photo's background before placing it on the
+page.
+
+### Scope and non-goals
+
+- Limit product edits to `Notebook.swift`, `NotebookView.swift`,
+  `NotebookViewModel.swift`, and `NotebookCanvas.swift`, plus one focused host
+  check and this work-line documentation.
+- Do not change the drawing-refinement backend, product-agent boundary, Pencil,
+  Pins, conversations, page navigation, or normalized image-placement
+  coordinates.
+
+### Acceptance evidence and stop conditions
+
+- rotation persists backward-compatibly and renders consistently in every
+  placed-image composition;
+- arrangement supports a two-finger twist and visible clockwise Rotate action;
+- import offers off-by-default, on-device foreground extraction that stores PNG
+  alpha and reports progress or failure;
+- stop after focused/nearby host evidence and the required notebook scenarios,
+  or when the exact-device prerequisite is unavailable.
+
+### Session log
+
+- 2026-07-21 — Confirmed rotation and import-time transparency are both absent.
+  Began a bounded implementation using persisted rotation plus the iOS 17
+  on-device Vision foreground-instance mask; the existing refinement provider
+  and normalized image rect remain unchanged.
+- 2026-07-21 — Implemented backward-compatible rotation with free twist and a
+  visible clockwise action, rotation-aware selection and every placed-image
+  composition, plus an import sheet whose off-by-default transparency option
+  extracts all foreground instances as PNG alpha off the UI thread. Focused and
+  nearby contracts pass 28/28 and diff hygiene passes. The full host suite
+  passes 70/71; its sole failure is the separately logged stale verifier test
+  supplying 13 fields to a 19-field runtime assertion. Evidence is under
+  `tmp/verify/pc-17-image-import-arrangement/summary.txt`. Physical build,
+  `blank-notebook`, `notebook-pages`, screenshots, console/crash collection,
+  transparency edges, and twist feel remain blocked on this Linux host without
+  Xcode or a pinned iPad session.
+- 2026-07-21 — Stability follow-up made completed image transforms
+  immediate-persistence operations, keeps every transformed image reachable on
+  the page, normalizes button rotation, and prevents cancelled/stale foreground
+  jobs from placing late results. Transparent imports now honor capture
+  orientation, reuse one thread-safe Core Image context, and cap their longest
+  processed edge at 2,560 pixels before PNG encoding. Strengthened focused and
+  nearby checks pass 30/30; the complete host suite passes 72/73 with only the
+  unrelated stale verifier fixture failing. Diff hygiene passes. Physical build
+  and interaction/edge-quality checks remain blocked because no Xcode toolchain
+  or explicitly pinned iPad is available.
+
+Shared-contract log — 2026-07-21: `CONTRACT:` extend persisted `PlacedImage`
+with `rotationRadians` so canvas arrangement survives save, reload, archive,
+and export. Missing values decode as zero; image bytes, normalized rects, page
+coordinates, and archive version are unchanged.
+
+## Active line — PC-16: pen-width selection border
+
+Status: **implementation complete — host-checked; physical-device verification blocked**
+
+Target branch: `sive/dev`
+
+Owner: App/Notebook toolbar UI; `SpatialCanvas` retains ownership of Pencil
+input, canvas coordinates, and rendered ink.
+
+### Objective and user-visible outcome
+
+Make the selected Pen button's circular border use the Pen's selected point
+width, so the toolbar itself gives an immediate proportional width preview.
+
+### Scope
+
+- `TuberNotes/Notebook/NotebookToolbar.swift`
+- the focused toolbar source regression check
+- this PC-16 plan section and session log
+
+### Non-goals and dependencies
+
+- no PencilKit tool, persisted width, width range, gesture, color, layout,
+  spatial-coordinate, or shared-contract changes;
+- no visual redesign of Pencil, Highlighter, or Eraser selection states;
+- canonical build and visual inspection require an Apple/Xcode host and an
+  explicitly pinned physical iPad.
+
+### Work and verification
+
+1. Bind the selected Pen border line width directly to its current width.
+2. Preserve the existing button frame, tap/hold gestures, color treatment,
+   and accessibility value.
+3. Add a focused source assertion, run the toolbar check, and inspect the diff.
+4. Run `blank-notebook` on the pinned iPad and inspect minimum/default/maximum
+   Pen widths for clipping, overlap, and a truthful proportional preview.
+
+### Acceptance evidence and stop conditions
+
+- the selected Pen border uses `vm.width(for: .pen)` without altering the
+  canvas width value or selection gesture;
+- the 34-point button footprint and neighboring tool layout remain unchanged;
+- stop after evidence is collected, when the exact-device prerequisite is
+  unavailable, or after two device failures without a narrower repair.
+
+### Session log
+
+- 2026-07-21 — Traced the selected writing-tool treatment to
+  `NotebookToolbar.toolButton` and confirmed the model already exposes the
+  current per-tool point width. Began a Pen-only visual binding; no canvas or
+  shared contract change is planned.
+- 2026-07-21 — Bound the selected Pen's inset contrast border directly to
+  `vm.width(for: tool)` while preserving its 34-point frame, filled selection
+  treatment, gestures, and accessibility value. Added a focused source
+  regression assertion; all four toolbar selection tests pass and
+  `git diff --check` passes. Final diff inspection found only the requested
+  toolbar change, its narrow check, and this PC-16 record; unrelated PC-15
+  work remains untouched. Xcode build, `blank-notebook` launch, screenshots,
+  console/crash collection, and minimum/default/maximum-width visual checks
+  remain blocked because this host has no Xcode toolchain or pinned physical-
+  iPad session. No shared contract changed.
+
+## Active line — PC-15: end-pull page creation
+
+Status: **implementation complete — host-checked; physical-device verification blocked**
+
+Target branch: `sive/dev`
+
+Child work-line: [`PC-15-EndPullAddPage.md`](PC-15-EndPullAddPage.md)
+
+Owner: App/Notebook integration; `SpatialCanvas` retains ownership of Pencil,
+page coordinates, zoom, and within-page panning.
+
+### Objective and user-visible outcome
+
+On the final notebook page, continuing the configured page-navigation gesture
+forward reveals progress. Holding for 0.7 seconds adds exactly one new page;
+releasing or moving back early cancels.
+
+### Scope
+
+- `TuberNotes/Notebook/NotebookView.swift`
+- one focused source regression check under `DeveloperTools/tests/`
+- the PC-15 child work-line and this status/log
+
+### Non-goals and dependencies
+
+- no page model, persistence, template, spatial-coordinate, Pencil, zoom/pan,
+  toolbar, or settings-contract changes;
+- no continuous multi-page canvas or replacement of explicit add-page buttons;
+- canonical build and interaction inspection require an Apple/Xcode host and an
+  explicitly pinned physical iPad.
+
+### Work and verification
+
+1. Extend the existing axis-aware page-turn state with a final-page forward
+   hold, cancellation, and one-add-per-gesture latch.
+2. Show non-intercepting progress at the configured forward edge.
+3. Reuse `NotebookViewModel.addPage()` and the existing page-turn animation.
+4. Run focused and nearby host checks plus diff hygiene.
+5. Run `blank-notebook` and `notebook-pages` on the pinned iPad and inspect both
+   completion and cancellation in Horizontal and Vertical modes.
+
+### Acceptance evidence and stop conditions
+
+- the indicator appears only after a deliberate forward pull on the last page;
+- completion adds and displays exactly one page, while early release/reversal
+  adds none, and a continuous gesture cannot add repeatedly;
+- normal page turns, explicit add buttons, zoom/pan, Pencil, and page identity
+  remain unchanged;
+- stop after evidence is collected, when the exact-device prerequisite is
+  unavailable, or after two device failures without a narrower repair.
+
+### Session log
+
+- 2026-07-21 — Traced the current axis-aware `NotebookCanvas` pan into
+  `NotebookView`'s interactive page-turn state and confirmed page insertion is
+  already App-owned by `NotebookViewModel.addPage()`. Began the smallest
+  view-state-only extension; no shared contract or ownership change is planned.
+- 2026-07-21 — Added a 72-point final-page forward-pull threshold, a 0.7-second
+  visible progress hold, early-release/reversal cancellation, success feedback,
+  the existing animated `addPage()` path, and a one-add-per-finger-gesture latch
+  that ignores late updates until release. The indicator follows the selected
+  Horizontal/Vertical forward edge without intercepting input. The 10 focused
+  and nearby notebook checks pass; the complete host suite passes 65/66 with
+  only the previously logged unrelated verifier-truthfulness fixture mismatch
+  (19 expected arguments, 13 supplied). Python syntax and diff hygiene pass.
+  Evidence is under `tmp/verify/pc-15-end-pull-add-page/summary.txt`. Xcode
+  build, `blank-notebook`, `notebook-pages`, physical interaction, screenshots,
+  console, and crash checks remain blocked because this host has no Xcode
+  toolchain or configured physical-iPad session. No shared contract changed.
+
 ## Active line — PC-14: favorite color scrub
 
 Status: **implementation complete — host-checked; physical-device verification blocked**
