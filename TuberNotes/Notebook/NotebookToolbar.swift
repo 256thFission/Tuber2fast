@@ -296,6 +296,10 @@ struct NotebookToolbar: View {
                 .animation(.spring(response: 0.22, dampingFraction: 0.62), value: isLassoActive)
         }
         .highPriorityGesture(lassoHoldGesture)
+        // The high-priority hold shows the usage hint, but it consumes the
+        // Button's short tap — observe the tap simultaneously so the button
+        // actually activates the lasso (same pattern as the tool buttons).
+        .simultaneousGesture(
             TapGesture().onEnded { _ in activateLasso() }
         )
         .accessibilityIdentifier("tool-lasso")
@@ -322,7 +326,6 @@ struct NotebookToolbar: View {
             isRefinementActive = false
             vm.isAgenticLayersActive = false
         }
-    }
     }
 
     private var lassoHoldGesture: some Gesture {
