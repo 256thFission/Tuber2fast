@@ -62,6 +62,17 @@ enum AgentProvider: String, CaseIterable, Equatable, Identifiable, Sendable {
     }
 }
 
+/// Non-secret preference for how OpenAI requests are authorized. Temporary ChatGPT
+/// credentials are deliberately not represented here and never enter UserDefaults.
+enum AgentAccessMethod: String, CaseIterable, Equatable, Identifiable, Sendable {
+    static let storageKey = "tuber.openaiAccessMethod"
+
+    case apiKey
+    case chatGPTTemporary
+
+    var id: String { rawValue }
+}
+
 /// AgentHarness-owned provider access shared by the sidebar insight and streamed Pin clients.
 /// The compatibility storage key remains `tuber.openaiKey`, but its value is treated as the
 /// locally supplied credential for the selected provider and is never written to diagnostics.
@@ -104,6 +115,14 @@ struct AgentProviderAccess: Equatable, Sendable {
             model: defaults.string(forKey: modelStorageKey)
         )
     }
+}
+
+/// A request-scoped authorization snapshot for the normal Agentic Layer.
+/// The provider case preserves the Debug API-key/right.codes path. Temporary
+/// ChatGPT access is minted by the in-memory login session in every build.
+enum AgentRuntimeAccess: Sendable {
+    case provider(AgentProviderAccess)
+    case openAICodex(OpenAICodexAccess)
 }
 
 enum AgentProviderNetworking {

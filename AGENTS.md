@@ -2,6 +2,35 @@
 
 TuberNotes is a one-week iPad hackathon. Prioritize: (1) hero interaction quality, (2) spatial correctness, (3) demo reliability, (4) AI capability, and (5) conventional note-app completeness.
 
+## PC-10 go-mode override
+
+Until Phillip explicitly lifts this override, PC-10 OpenAI-login work runs in
+implementation-first go mode:
+
+- Complete the scoped implementation before conducting review or verification.
+- Do not run or modify scenario/recorded-agent harnesses, adapter tests,
+  reproduction harnesses, visual-verification tooling, device-verification
+  scripts, human-device-loop sessions, or other behavioral verification for
+  PC-10.
+- Do not interrupt implementation for incremental review, screenshots, evidence
+  collection, or human judgment. Resolve implementation questions from the
+  current contracts and PC-10 plan.
+- PC-10 targets the normal Release app, not a Debug-only surface. Temporary
+  OpenAI account access may be compiled into Release only under the
+  Keychain-isolated refresh, memory-only access-token, no-provider-secret
+  boundary in `SPEC.md` section 10.1.
+- After implementation is complete, device preflight, Release build, install,
+  and a normal no-scenario launch on Phillip's explicitly named iPad may run.
+  They are delivery steps, not behavioral acceptance, and must not launch a
+  test/scenario harness.
+- Phillip alone performs final behavioral verification in the normal app. Do
+  not claim behavioral success before his verdict.
+
+This section overrides conflicting Debug-only and
+build/launch/scenario/review requirements below for PC-10 only. Security
+boundaries, ownership rules, secret handling, and destructive-action rules
+remain fully active.
+
 ## Rules
 
 - Prefer the smallest implementation that proves the current milestone. For a small change, make a small change.

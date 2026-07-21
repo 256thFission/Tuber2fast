@@ -32,6 +32,9 @@
 		A00000000000000000000017 /* ResponsesSSEDecoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000117 /* ResponsesSSEDecoder.swift */; };
 		A00000000000000000000018 /* DebugCodexTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000118 /* DebugCodexTransport.swift */; };
 		A00000000000000000000019 /* DebugCodexAgentClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000119 /* DebugCodexAgentClient.swift */; };
+		A0000000000000000000001A /* OpenAICodexLoginSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000011A /* OpenAICodexLoginSession.swift */; };
+		E10000000000000000000001 /* OpenAICodexResponsesTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = E10000000000000000000101 /* OpenAICodexResponsesTransport.swift */; };
+		E10000000000000000000002 /* OpenAICodexPinClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = E10000000000000000000102 /* OpenAICodexPinClient.swift */; };
 		C00000000000000000000001 /* DocumentStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00000000000000000000101 /* DocumentStore.swift */; };
 		D10000000000000000000001 /* DrawingRefinementClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000101 /* DrawingRefinementClient.swift */; };
 		D10000000000000000000002 /* ConversationLayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000102 /* ConversationLayer.swift */; };
@@ -87,6 +90,9 @@
 		A00000000000000000000117 /* ResponsesSSEDecoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResponsesSSEDecoder.swift; sourceTree = "<group>"; };
 		A00000000000000000000118 /* DebugCodexTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugCodexTransport.swift; sourceTree = "<group>"; };
 		A00000000000000000000119 /* DebugCodexAgentClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugCodexAgentClient.swift; sourceTree = "<group>"; };
+		A0000000000000000000011A /* OpenAICodexLoginSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAICodexLoginSession.swift; sourceTree = "<group>"; };
+		E10000000000000000000101 /* OpenAICodexResponsesTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAICodexResponsesTransport.swift; sourceTree = "<group>"; };
+		E10000000000000000000102 /* OpenAICodexPinClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAICodexPinClient.swift; sourceTree = "<group>"; };
 		C00000000000000000000101 /* DocumentStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentStore.swift; sourceTree = "<group>"; };
 		D10000000000000000000101 /* DrawingRefinementClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DrawingRefinementClient.swift; sourceTree = "<group>"; };
 		D10000000000000000000102 /* ConversationLayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationLayer.swift; sourceTree = "<group>"; };
@@ -192,6 +198,9 @@
 				A00000000000000000000117 /* ResponsesSSEDecoder.swift */,
 				A00000000000000000000118 /* DebugCodexTransport.swift */,
 				A00000000000000000000119 /* DebugCodexAgentClient.swift */,
+				A0000000000000000000011A /* OpenAICodexLoginSession.swift */,
+				E10000000000000000000101 /* OpenAICodexResponsesTransport.swift */,
+				E10000000000000000000102 /* OpenAICodexPinClient.swift */,
 				D10000000000000000000101 /* DrawingRefinementClient.swift */,
 			);
 			path = AgentHarness;
@@ -366,6 +375,9 @@
 				A00000000000000000000017 /* ResponsesSSEDecoder.swift in Sources */,
 				A00000000000000000000018 /* DebugCodexTransport.swift in Sources */,
 				A00000000000000000000019 /* DebugCodexAgentClient.swift in Sources */,
+				A0000000000000000000001A /* OpenAICodexLoginSession.swift in Sources */,
+				E10000000000000000000001 /* OpenAICodexResponsesTransport.swift in Sources */,
+				E10000000000000000000002 /* OpenAICodexPinClient.swift in Sources */,
 				C00000000000000000000001 /* DocumentStore.swift in Sources */,
 				D10000000000000000000001 /* DrawingRefinementClient.swift in Sources */,
 				D10000000000000000000002 /* ConversationLayer.swift in Sources */,

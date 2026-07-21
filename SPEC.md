@@ -499,14 +499,26 @@ Development agents, Codex skills, MCP tools, and Xcode tooling are not the agent
 The distributable app must not contain a reusable provider API secret.
 
 ```text
-iPad app
-   → authenticated TuberNotes Agent Gateway
-   → model provider Responses API
+hackathon Release app → OpenAI device authorization + Keychain refresh grant
+production app        → authenticated TuberNotes Agent Gateway
+                      → model provider Responses API
 ```
 
-For the hackathon, a DEBUG-only direct provider adapter will be used. Its credential is supplied locally at runtime and never committed, logged, included in fixtures, or compiled into a distributable build. Release builds must use the gateway interface.
+For the hackathon, the normal Release app may use a temporary OpenAI
+device-authorization adapter. It contains no reusable provider API secret,
+keeps access tokens and account-routing values only in process memory, and may
+store only the refresh token returned to TuberNotes in the iOS Keychain using
+device-only accessibility. It silently refreshes on launch, expiry, or a
+matching 401/403; a rejected or missing refresh token is deleted and requires
+explicit sign-in. Sign-out deletes the Keychain item. Identity tokens,
+authorization codes, and verifiers are never persisted; redirects remain
+rejected; credentials are never copied from another application. This direct
+route remains a replaceable demo transport; a distributable production service
+must use the authenticated TuberNotes Agent Gateway.
 
-“ChatGPT/Codex OAuth” is not an implementation assumption. Authentication will be specified against the chosen gateway when that service is selected.
+The temporary ChatGPT/Codex-compatible route is an explicitly authorized
+hackathon implementation assumption, not a general third-party OAuth contract
+or a substitute for the production gateway decision.
 
 ### 10.2 Harness interface
 

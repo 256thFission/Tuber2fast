@@ -20,6 +20,11 @@ struct PinOverlayPlacement: Identifiable, Equatable {
     let labelFrame: CGRect
 }
 
+enum PinLabelBehavior: Equatable {
+    case adaptive
+    case pageAnchoredCompact
+}
+
 enum PinOverlayLayout {
     static let edgePadding: CGFloat = 12
     static let markerClearance: CGFloat = 24
@@ -29,6 +34,7 @@ enum PinOverlayLayout {
         for annotations: [PageAnnotation],
         expandedAnnotationID: UUID?,
         in size: CGSize,
+        labelBehavior: PinLabelBehavior = .adaptive,
         projectAnchor: (PageNormalizedPoint) -> CGPoint
     ) -> [PinOverlayPlacement] {
         var occupiedFrames: [CGRect] = []
@@ -37,8 +43,24 @@ enum PinOverlayLayout {
             let anchor = projectAnchor(annotation.target)
             let labelSize = labelSize(
                 isExpanded: annotation.id == expandedAnnotationID,
-                containerSize: size
+                containerSize: size,
+                behavior: labelBehavior
             )
+            if labelBehavior == .pageAnchoredCompact {
+                let labelX = annotation.target.x <= 0.5
+                    ? anchor.x + markerClearance
+                    : anchor.x - markerClearance - labelSize.width
+                return PinOverlayPlacement(
+                    id: annotation.id,
+                    anchor: anchor,
+                    labelFrame: CGRect(
+                        x: labelX,
+                        y: anchor.y - labelSize.height / 2,
+                        width: labelSize.width,
+                        height: labelSize.height
+                    )
+                )
+            }
             let bounds = CGRect(origin: .zero, size: size).insetBy(
                 dx: min(edgePadding, size.width / 2),
                 dy: min(edgePadding, size.height / 2)
@@ -100,10 +122,19 @@ enum PinOverlayLayout {
         )
     }
 
-    private static func labelSize(isExpanded: Bool, containerSize: CGSize) -> CGSize {
+    private static func labelSize(
+        isExpanded: Bool,
+        containerSize: CGSize,
+        behavior: PinLabelBehavior
+    ) -> CGSize {
         let availableWidth = max(0, containerSize.width - (edgePadding * 2))
         let availableHeight = max(0, containerSize.height - (edgePadding * 2))
-        let desired = isExpanded ? CGSize(width: 304, height: 208) : CGSize(width: 208, height: 48)
+        let desired: CGSize = switch behavior {
+        case .adaptive:
+            isExpanded ? CGSize(width: 304, height: 208) : CGSize(width: 208, height: 48)
+        case .pageAnchoredCompact:
+            isExpanded ? CGSize(width: 228, height: 126) : CGSize(width: 164, height: 38)
+        }
         return CGSize(
             width: min(desired.width, availableWidth),
             height: min(desired.height, availableHeight)

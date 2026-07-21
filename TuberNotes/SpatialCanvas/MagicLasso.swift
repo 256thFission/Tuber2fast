@@ -5,14 +5,14 @@ import UIKit
 
 enum MagicLassoGeometry {
     static let minimumArea = 0.0025
-    static let closeDistance = 0.06
+    static let closeDistance = 0.25
 
     static func closedPath(from captured: [PageNormalizedPoint]) -> [PageNormalizedPoint]? {
         guard captured.count >= 3, captured.allSatisfy(\.isFiniteAndInUnitBounds) else { return nil }
         var closed = captured
         guard let first = closed.first, let last = closed.last else { return nil }
         guard hypot(last.x - first.x, last.y - first.y) <= closeDistance else { return nil }
-        closed[closed.count - 1] = first
+        if last != first { closed.append(first) }
         guard abs(signedArea(of: closed)) >= minimumArea else { return nil }
         return closed
     }
@@ -183,6 +183,7 @@ final class MagicLassoInputView: UIView {
     var initialPath: [PageNormalizedPoint]? { didSet { setNeedsLayout() } }
     private var captured: [PageNormalizedPoint] = []
     private var appliedInitialPath: [PageNormalizedPoint]?
+    private var appliedBoundsSize: CGSize?
     private let boundaryLayer = CAShapeLayer()
     private let dimLayer = CAShapeLayer()
 
@@ -211,26 +212,37 @@ final class MagicLassoInputView: UIView {
         super.layoutSubviews()
         dimLayer.frame = bounds
         boundaryLayer.frame = bounds
-        guard bounds.width > 0, bounds.height > 0,
-              let initialPath, initialPath != appliedInitialPath else { return }
+        guard bounds.width > 0, bounds.height > 0 else { return }
+        guard let initialPath else {
+            guard appliedInitialPath != nil || appliedBoundsSize != bounds.size else { return }
+            appliedInitialPath = nil
+            appliedBoundsSize = bounds.size
+            captured = []
+            render([], selected: false)
+            return
+        }
+        guard initialPath != appliedInitialPath || appliedBoundsSize != bounds.size else { return }
         appliedInitialPath = initialPath
-        finish(initialPath)
+        appliedBoundsSize = bounds.size
+        captured = initialPath
+        boundaryLayer.strokeColor = UIColor.systemIndigo.cgColor
+        render(initialPath, selected: true)
     }
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard isEnabled, let touch = touches.first, touch.type == .pencil else { return }
+        guard isEnabled, let touch = touches.first else { return }
         captured = [normalized(touch.location(in: self))]
         render(captured, selected: false)
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard isEnabled, let touch = touches.first, touch.type == .pencil else { return }
+        guard isEnabled, let touch = touches.first else { return }
         captured.append(normalized(touch.location(in: self)))
         render(captured, selected: false)
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard isEnabled, let touch = touches.first, touch.type == .pencil else { return }
+        guard isEnabled, let touch = touches.first else { return }
         captured.append(normalized(touch.location(in: self)))
         finish(captured)
     }
@@ -243,11 +255,20 @@ final class MagicLassoInputView: UIView {
     private func finish(_ path: [PageNormalizedPoint]) {
         guard let closed = MagicLassoGeometry.closedPath(from: path) else {
             captured = []
-            render([], selected: false)
+            boundaryLayer.strokeColor = UIColor.systemRed.cgColor
+            render(path, selected: false)
+            UINotificationFeedbackGenerator().notificationOccurred(.warning)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+                guard let self else { return }
+                self.boundaryLayer.strokeColor = UIColor.systemIndigo.cgColor
+                self.render([], selected: false)
+            }
             return
         }
+        boundaryLayer.strokeColor = UIColor.systemIndigo.cgColor
         captured = closed
         render(closed, selected: true)
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         onCapturedPath?(closed, bounds.size)
     }
 
@@ -274,8 +295,18 @@ final class MagicLassoInputView: UIView {
             dim.append(path)
             dim.usesEvenOddFillRule = true
             dimLayer.path = dim.cgPath
+            if boundaryLayer.animation(forKey: "magic-halo-pulse") == nil {
+                let pulse = CABasicAnimation(keyPath: "shadowOpacity")
+                pulse.fromValue = 0.35
+                pulse.toValue = 0.95
+                pulse.duration = 0.85
+                pulse.autoreverses = true
+                pulse.repeatCount = .infinity
+                boundaryLayer.add(pulse, forKey: "magic-halo-pulse")
+            }
         } else {
             dimLayer.path = nil
+            boundaryLayer.removeAnimation(forKey: "magic-halo-pulse")
         }
     }
 }

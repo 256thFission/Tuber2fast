@@ -12,12 +12,15 @@ struct AgentInsight: Equatable {
 /// this one returns human-readable text that is persisted as an Agentic Layer Pin.
 protocol AgentInsightClient: Sendable {
     func analyze(_ selection: SelectionArtifact, question: String?) async throws -> AgentInsight
+    var generation: UUID? { get }
 }
 
 enum AgentError: LocalizedError {
     case server(statusCode: Int)
     case parse
     case unavailable
+    case signInRequired
+    case openAISignInRequired(generation: UUID)
 
     var errorDescription: String? {
         switch self {
@@ -29,12 +32,18 @@ enum AgentError: LocalizedError {
             "The provider request failed (HTTP \(statusCode)). Try again."
         case .parse:         "Couldn't read the assistant's response."
         case .unavailable:   "The agent service is unavailable."
+        case .signInRequired:
+            "Sign in with OpenAI to analyze this page."
+        case .openAISignInRequired:
+            "OpenAI sign-in expired or was rejected. Sign in again and retry."
         }
     }
 }
 
 /// Runs with no provider access so the app is fully functional out of the box.
 struct MockAgentInsightClient: AgentInsightClient {
+    let generation: UUID? = nil
+
     func analyze(_ selection: SelectionArtifact, question: String?) async throws -> AgentInsight {
         try? await Task.sleep(nanoseconds: 700_000_000)
         return AgentInsight(
@@ -45,6 +54,14 @@ struct MockAgentInsightClient: AgentInsightClient {
                 "Add provider access to enable real analysis"
             ]
         )
+    }
+}
+
+struct SignedOutAgentInsightClient: AgentInsightClient {
+    let generation: UUID? = nil
+
+    func analyze(_ selection: SelectionArtifact, question: String?) async throws -> AgentInsight {
+        throw AgentError.signInRequired
     }
 }
 
@@ -103,6 +120,7 @@ private func performInsightRequest(
 struct OpenAIVisionClient: AgentInsightClient {
     let access: AgentProviderAccess
     private let session: URLSession
+    let generation: UUID? = nil
 
     init(
         access: AgentProviderAccess,
@@ -136,6 +154,7 @@ struct OpenAIVisionClient: AgentInsightClient {
 struct RightCodeResponsesClient: AgentInsightClient {
     let access: AgentProviderAccess
     private let session: URLSession
+    let generation: UUID? = nil
 
     init(
         access: AgentProviderAccess,
@@ -166,19 +185,105 @@ struct RightCodeResponsesClient: AgentInsightClient {
 }
 #endif
 
-enum AgentInsightClientFactory {
-    /// Returns the selected provider client when configured, otherwise the offline demo client.
-    static func make(access: AgentProviderAccess?) -> any AgentInsightClient {
-#if DEBUG
-        guard let access else { return MockAgentInsightClient() }
-        switch access.provider {
-        case .openAI:
-            return OpenAIVisionClient(access: access)
-        case .rightCode:
-            return RightCodeResponsesClient(access: access)
+/// Normal-app vision request authorized by a short-lived, memory-only ChatGPT login.
+/// This remains separate from the API-key provider route so failures cannot fall back
+/// to another credential or to demo output.
+struct OpenAICodexVisionClient: AgentInsightClient {
+    private static let maximumResponseBytes = 4 * 1_024 * 1_024
+
+    let route: AgentResponseRoute
+    let transport: OpenAICodexResponsesTransport
+    var generation: UUID? { route.generation }
+
+    init(
+        route: AgentResponseRoute,
+        transport: OpenAICodexResponsesTransport = OpenAICodexResponsesTransport()
+    ) {
+        self.route = route
+        self.transport = transport
+    }
+
+    func analyze(_ selection: SelectionArtifact, question: String?) async throws -> AgentInsight {
+        let crop = selection.crop
+        let dataURL = "data:\(crop.mediaType);base64,\(crop.imageData.base64EncodedString())"
+        let body: [String: Any] = [
+            "model": route.model,
+            "stream": true,
+            "store": false,
+            "input": [[
+                "role": "user",
+                "content": [
+                    ["type": "input_text", "text": defaultInsightPrompt(question)],
+                    ["type": "input_image", "image_url": dataURL, "detail": "original"]
+                ]
+            ]]
+        ]
+
+        do {
+            let requestBody = try JSONSerialization.data(withJSONObject: body)
+            let data = try await transport.send(
+                body: requestBody,
+                route: route,
+                capability: .insight,
+                maximumResponseBytes: Self.maximumResponseBytes
+            )
+            guard let content = try ResponsesTextExtractor.text(from: data) else {
+                throw AgentError.parse
+            }
+            return parseInsight(content)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let error as OpenAICodexTransportError {
+            switch error {
+            case .unauthorized(let generation):
+                throw AgentError.openAISignInRequired(generation: generation)
+            case .invalidResponse:
+                throw AgentError.parse
+            case .unsupported, .unavailable:
+                throw AgentError.unavailable
+            }
+        } catch let error as AgentError {
+            throw error
+        } catch {
+            // Never surface provider bodies, request metadata, or bearer-token-bearing errors.
+            throw AgentError.unavailable
         }
+    }
+}
+
+enum AgentInsightClientFactory {
+    /// Mints a single route at the user action. Normal Notebook code never receives
+    /// a token, endpoint, account ID, or provider response body.
+    @MainActor static func make(runtimeAccess: AgentRuntimeAccess? = nil) -> any AgentInsightClient {
+        if runtimeAccess == nil {
+            let stored = UserDefaults.standard.string(forKey: AgentProviderAccess.modelStorageKey)
+            let model = OpenAICodexConstants.supportedModels.contains(stored ?? "")
+                ? stored!
+                : OpenAICodexConstants.defaultModel
+            guard let route = OpenAICodexLoginSession.shared.route(for: .insight, model: model) else {
+                return SignedOutAgentInsightClient()
+            }
+            return OpenAICodexVisionClient(route: route)
+        }
+        guard let runtimeAccess else { return SignedOutAgentInsightClient() }
+        switch runtimeAccess {
+        case .provider(let access):
+#if DEBUG
+            switch access.provider {
+            case .openAI:
+                return OpenAIVisionClient(access: access)
+            case .rightCode:
+                return RightCodeResponsesClient(access: access)
+            }
 #else
-        return MockAgentInsightClient()
+            _ = access
+            return MockAgentInsightClient()
 #endif
+        case .openAICodex(let access):
+            guard let route = OpenAICodexLoginSession.shared.route(for: .insight, model: access.model) else {
+                return SignedOutAgentInsightClient()
+            }
+            return OpenAICodexVisionClient(route: route)
+        }
     }
 }

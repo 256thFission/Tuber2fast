@@ -10,8 +10,8 @@ zoomable PencilKit page with a compact floating toolbar.
 - Draw with pen, pencil, highlighter, or eraser; change color and stroke width
   from the toolbar.
 - Use the lasso to select and move strokes.
-- Use the adjacent sparkle-lasso to refine a region and apply the result directly
-  to the page; refinement changes drawing/image state, never an Agentic Layer.
+- Use the adjacent sparkle-lasso to analyze a region and place guidance Pins on
+  the original page; it never changes ink or placed images.
 - Add images, pages, and drawing layers without leaving the page.
 - Import a version 3 `.spud` file from the library. The imported document opens
   as a new notebook, preserving its page and content identities without

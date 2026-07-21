@@ -22,6 +22,9 @@ struct DrawingRefinementOverlay: View {
     @State private var refinedImageData: Data?
     @State private var isRefining = false
     @State private var errorMessage: String?
+    @State private var refinementTask: Task<Void, Never>?
+    @State private var retryRect: CGRect?
+    @State private var retryCanvasSize: CGSize?
 
     private let prompt = "Clean up this drawing while preserving its meaning and composition."
 
@@ -74,10 +77,59 @@ struct DrawingRefinementOverlay: View {
             }
         }
         .alert("Couldn’t refine drawing", isPresented: errorIsPresented) {
+            if let retryRect, let retryCanvasSize {
+                Button("Retry") { refine(retryRect, in: retryCanvasSize) }
+            }
             Button("OK", role: .cancel) {}
         } message: {
             Text(errorMessage ?? "Unknown error")
         }
+    }
+
+    private var controls: some View {
+        VStack {
+            HStack {
+                Spacer()
+                Button {
+                    isLassoActive.toggle()
+                    if isLassoActive {
+                        selection = nil
+                        selectionPath = []
+                        refinedImage = nil
+                        refinedImageData = nil
+                    }
+                    lassoPoints = []
+                } label: {
+                    Label(isLassoActive ? "Drawing lasso…" : "Refinement lasso", systemImage: "lasso.badge.sparkles")
+                        .font(.subheadline.weight(.semibold))
+                        .padding(.horizontal, 13)
+                        .padding(.vertical, 10)
+                        .foregroundStyle(isLassoActive ? Color.white : Color.primary)
+                        .background(.ultraThinMaterial, in: Capsule())
+                        .background(isLassoActive ? Color.indigo : Color.clear, in: Capsule())
+                        .overlay(Capsule().strokeBorder(.primary.opacity(0.10)))
+                        .shadow(color: .black.opacity(0.12), radius: 7, y: 3)
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("ai-lasso-button")
+
+                Button {
+                    cancelRefinement()
+                    onClose()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.subheadline.weight(.bold))
+                        .frame(width: 38, height: 38)
+                        .foregroundStyle(.primary)
+                        .background(.ultraThinMaterial, in: Circle())
+                        .overlay(Circle().strokeBorder(.primary.opacity(0.10)))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Close refinement tool")
+            }
+            Spacer()
+        }
+        .padding(16)
     }
 
     private func selectionView(_ rect: CGRect, in canvasSize: CGSize) -> some View {
@@ -110,6 +162,11 @@ struct DrawingRefinementOverlay: View {
                             Label(refinedImage == nil ? "Refine with AI" : "Refine again", systemImage: "sparkles")
                         }
                     }
+                }
+
+                if isRefining {
+                    Button("Cancel") { cancelRefinement() }
+                        .accessibilityIdentifier("cancel-refinement-button")
                 }
             }
             .font(.caption.weight(.bold))
@@ -148,6 +205,11 @@ struct DrawingRefinementOverlay: View {
         .accessibilityLabel("Selected drawing region")
         .accessibilityHint("Long press or right-click for refinement actions")
         .accessibilityIdentifier("drawing-refinement-selection")
+        .accessibilityHint(
+            refinedImageData == nil
+                ? "Preview is non-mutating. Applying replaces only fully enclosed ink with a raster; Undo restores it."
+                : "Preview is non-mutating. Apply replaces only fully enclosed ink with a raster; Undo restores it."
+        )
     }
 
     private var lassoPath: Path {
@@ -210,7 +272,10 @@ struct DrawingRefinementOverlay: View {
         }
 
         isRefining = true
-        Task {
+        retryRect = rect
+        retryCanvasSize = canvasSize
+        refinementTask?.cancel()
+        refinementTask = Task {
             do {
                 let result = try await client.refine(
                     DrawingRefinementRequest(imageData: imageData, prompt: prompt)
@@ -219,17 +284,38 @@ struct DrawingRefinementOverlay: View {
                     throw DrawingRefinementError.invalidResponse
                 }
                 await MainActor.run {
+                    guard !Task.isCancelled else { return }
+                    if let generation = result.generation,
+                       !OpenAICodexLoginSession.shared.isCurrent(generation: generation) {
+                        isRefining = false
+                        refinementTask = nil
+                        return
+                    }
                     refinedImage = image
                     refinedImageData = result.imageData
                     isRefining = false
+                    refinementTask = nil
+                }
+            } catch is CancellationError {
+                await MainActor.run {
+                    isRefining = false
+                    refinementTask = nil
                 }
             } catch {
                 await MainActor.run {
+                    guard !Task.isCancelled else { return }
                     errorMessage = error.localizedDescription
                     isRefining = false
+                    refinementTask = nil
                 }
             }
         }
+    }
+
+    private func cancelRefinement() {
+        refinementTask?.cancel()
+        refinementTask = nil
+        isRefining = false
     }
 
     private func normalizedPoint(_ point: CGPoint, in canvasSize: CGSize) -> CGPoint {

@@ -350,8 +350,13 @@ struct NotebookToolbar: View {
         Button {
             vm.deactivateLasso(preservingSelection: true)
             vm.isAgenticLayersActive = false
-            isRefinementActive.toggle()
-            if !isRefinementActive { isRefinementLassoActive = false }
+            if isRefinementActive {
+                isRefinementActive = false
+                isRefinementLassoActive = false
+            } else {
+                isLassoActive = false
+                isRefinementActive = true
+            }
         } label: {
             // The badged lasso glyph draws wider and higher than the plain
             // lasso at the same point size; render it slightly smaller and pin
@@ -370,9 +375,9 @@ struct NotebookToolbar: View {
                 .symbolEffect(.pulse, options: .speed(1.4), value: isRefinementActive)
                 .animation(.spring(response: 0.22, dampingFraction: 0.62), value: isRefinementActive)
         }
-        .accessibilityIdentifier("tool-refinement-lasso")
-        .accessibilityLabel("Drawing refinement")
-        .accessibilityHint("Select a region to refine and apply directly to the page")
+        .accessibilityIdentifier("tool-magic-eraser")
+        .accessibilityLabel("Magic Eraser")
+        .accessibilityHint("Draw a closed circle with Apple Pencil to reveal AI guidance Pins")
         .accessibilityAddTraits(isRefinementActive ? [.isSelected] : [])
         .anchorPreference(key: RefinementButtonBoundsPreferenceKey.self, value: .bounds) { $0 }
     }

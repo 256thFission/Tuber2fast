@@ -11,20 +11,31 @@ struct NotebookView: View {
     @Environment(\.dismiss) private var dismiss
     @AppStorage("tuber.fingerDrawing") private var fingerDrawing = false
     @AppStorage("tuber.snapStraight") private var snapStraight = true
+#if DEBUG
     @AppStorage(AgentProviderAccess.credentialStorageKey) private var agentCredential = ""
     @AppStorage(AgentProviderAccess.providerStorageKey) private var agentProviderRaw = AgentProvider.openAI.rawValue
+    @AppStorage(AgentAccessMethod.storageKey) private var agentAccessMethodRaw = AgentAccessMethod.apiKey.rawValue
     @AppStorage(AgentProviderAccess.modelStorageKey) private var agentModel = ""
+#endif
+    @ObservedObject private var openAILogin = OpenAICodexLoginSession.shared
     @AppStorage("tuber.pencilDoubleTap") private var pencilDoubleTapEnabled = true
     @AppStorage("tuber.pencilSqueeze") private var pencilSqueezeEnabled = true
     @AppStorage("tuber.pencilHoverPreview") private var pencilHoverPreviewEnabled = true
     @State private var showPages = false
     @State private var showStrip = false
     @State private var showAgentSidebar = false
+    @State private var showAgentChatTab = false
     @State private var selectedAgentParentThreadID: UUID?
     @State private var showProviderAccessPopup = false
     @State private var showToolbarSettings = false
     @State private var openProviderAccessAfterToolbarSettings = false
     @State private var isRefinementActive = false
+    @State private var magicEraserPath: [PageNormalizedPoint] = []
+    @State private var magicEraserSelection: SelectionArtifact?
+    @State private var magicAskText = ""
+    @State private var isMagicAskExpanded = false
+    @State private var pendingGuidanceAfterSignIn: SelectionArtifact?
+    @State private var pendingGuidancePrompt: String?
     @State private var isRefinementLassoActive = false
     @State private var showExportOptions = false
     @State private var showFileExporter = false
@@ -117,12 +128,31 @@ struct NotebookView: View {
                     AgentSidebarView(
                         vm: vm,
                         selectedParentThreadID: $selectedAgentParentThreadID,
+                        isFullChatTab: false,
                         onClose: { withAnimation { showAgentSidebar = false } },
                         onEditProviderAccess: { withAnimation { showProviderAccessPopup = true } }
                     )
                 }
                 .transition(.move(edge: .trailing))
                 .zIndex(5)
+            }
+
+            if showAgentChatTab {
+                Color.black.opacity(0.28)
+                    .ignoresSafeArea()
+                    .transition(.opacity)
+                    .zIndex(5.5)
+                AgentSidebarView(
+                    vm: vm,
+                    selectedParentThreadID: $selectedAgentParentThreadID,
+                    isFullChatTab: true,
+                    onClose: { withAnimation { showAgentChatTab = false } },
+                    onEditProviderAccess: { withAnimation { showProviderAccessPopup = true } }
+                )
+                .padding(.horizontal, 34)
+                .padding(.vertical, 20)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .zIndex(6)
             }
 
             if vm.isArrangingImages {
@@ -244,8 +274,9 @@ struct NotebookView: View {
             }
         }
         .onChange(of: vm.isAgenticLayersActive) { _, isActive in
-            guard !isActive, showAgentSidebar else { return }
-            withAnimation { showAgentSidebar = false }
+            guard !isActive else { return }
+            if showAgentSidebar { withAnimation { showAgentSidebar = false } }
+            if showAgentChatTab { withAnimation { showAgentChatTab = false } }
         }
         .onChange(of: vm.currentDrawingLayerID) { _, _ in
             dismissPencilPalette()
@@ -253,6 +284,30 @@ struct NotebookView: View {
         }
         .onChange(of: vm.isLassoActive) { _, active in
             if active { dismissPencilPalette() }
+        }
+        .onChange(of: isRefinementActive) { _, active in
+            guard active else { return }
+            magicEraserPath = []
+            magicEraserSelection = nil
+            magicAskText = ""
+            isMagicAskExpanded = false
+            dismissPencilPalette()
+        }
+        .onChange(of: openAILogin.phase) { _, phase in
+            guard let selection = pendingGuidanceAfterSignIn, case .signedIn = phase else { return }
+            let prompt = pendingGuidancePrompt
+            pendingGuidanceAfterSignIn = nil
+            pendingGuidancePrompt = nil
+            vm.placeGuidancePins(selection: selection, question: prompt)
+        }
+        .onChange(of: vm.newestAgentThreadID) { _, threadID in
+            guard threadID != nil, !magicEraserPath.isEmpty else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                magicEraserPath = []
+                magicEraserSelection = nil
+                magicAskText = ""
+                isMagicAskExpanded = false
+            }
         }
         .onChange(of: vm.isArrangingImages) { _, active in
             if active { dismissPencilPalette() }
@@ -395,9 +450,16 @@ struct NotebookView: View {
 
     private var isAnalysisAccessConfigured: Bool {
 #if DEBUG
-        analysisProviderAccess != nil
+        let provider = AgentProvider(rawValue: agentProviderRaw) ?? .openAI
+        if provider == .openAI,
+           AgentAccessMethod(rawValue: agentAccessMethodRaw) == .chatGPTTemporary {
+            guard case .signedIn = openAILogin.phase else { return false }
+            return true
+        }
+        return !agentCredential.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 #else
-        false
+        guard case .signedIn = openAILogin.phase else { return false }
+        return true
 #endif
     }
 
@@ -410,6 +472,7 @@ struct NotebookView: View {
 #endif
     }
 
+#if DEBUG
     private var analysisProviderAccess: AgentProviderAccess? {
         AgentProviderAccess(
             provider: AgentProvider(rawValue: agentProviderRaw) ?? .openAI,
@@ -417,6 +480,7 @@ struct NotebookView: View {
             model: agentModel
         )
     }
+#endif
 
     private var arrangeControls: some View {
         VStack {
@@ -1193,11 +1257,20 @@ struct NotebookView: View {
         .id(vm.currentDrawingLayerID)
         .overlay(alignment: .topLeading) {
             ZStack {
+                if !magicEraserPath.isEmpty {
+                    MagicLassoOverlay(
+                        enabled: false,
+                        initialPath: magicEraserPath,
+                        onCapturedPath: handleMagicEraserCapture
+                    )
+                    .allowsHitTesting(false)
+                }
+
                 if vm.isAgenticLayersActive {
-                    AgenticModeGlow(isActive: true)
                     PinOverlayView(
                         pins: vm.activeAgenticPins,
                         allowsConversationRequests: true,
+                        labelBehavior: .pageAnchoredCompact,
                         onEvent: { event in
                             switch event {
                             case let .moved(annotationID, target):
@@ -1207,7 +1280,8 @@ struct NotebookView: View {
                                     return
                                 }
                                 selectedAgentParentThreadID = pin.threadID
-                                withAnimation { showAgentSidebar = true }
+                                showAgentSidebar = false
+                                withAnimation { showAgentChatTab = true }
                             case .expanded(_), .collapsed(_), .citationSelected(_, _):
                                 break
                             }
@@ -1216,24 +1290,56 @@ struct NotebookView: View {
                 }
 
                 if isRefinementActive {
-                    DrawingRefinementOverlay(
-                        drawing: vm.currentDrawingLayer.drawing,
-                        client: DrawingRefinementClientFactory.make(),
-                        initialSelection: vm.lassoRect,
-                        pageSize: NotebookPageLayout.size,
-                        isLassoActive: $isRefinementLassoActive,
-                        onApply: { data, rect, path in
-                            vm.applyDrawingRefinement(
-                                imageData: data,
-                                normalizedRect: rect,
-                                normalizedPath: path
-                            )
-                        },
-                        onClose: {
-                            isRefinementLassoActive = false
-                            isRefinementActive = false
-                        }
+                    MagicLassoOverlay(
+                        enabled: true,
+                        initialPath: nil,
+                        onCapturedPath: handleMagicEraserCapture
                     )
+                }
+
+                if magicEraserSelection != nil,
+                   let selectionBounds = MagicLassoGeometry.pageBounds(of: magicEraserPath) {
+                    GeometryReader { proxy in
+                        MagicEraserContextMenu(
+                            askText: $magicAskText,
+                            isAskExpanded: $isMagicAskExpanded,
+                            isSubmitting: vm.isAnalyzing,
+                            errorMessage: vm.agentError,
+                            onExplain: {
+                                submitMagicGuidance(
+                                    "Explain the selected work clearly. Place short Pins on the most important ideas and relationships."
+                                )
+                            },
+                            onCheck: {
+                                submitMagicGuidance(
+                                    "Check the selected work for mistakes, missing steps, or uncertainty. Place short Pins exactly where attention is needed."
+                                )
+                            },
+                            onAsk: {
+                                let prompt = magicAskText.trimmingCharacters(in: .whitespacesAndNewlines)
+                                guard !prompt.isEmpty else { return }
+                                submitMagicGuidance(prompt)
+                            },
+                            onCancel: {
+                                magicEraserPath = []
+                                magicEraserSelection = nil
+                                magicAskText = ""
+                                isMagicAskExpanded = false
+                                vm.agentError = nil
+                            }
+                        )
+                        .frame(maxWidth: min(proxy.size.width - 24, 520))
+                        .position(
+                            magicMenuPosition(
+                                for: selectionBounds,
+                                in: proxy.size,
+                                isExpanded: isMagicAskExpanded,
+                                hasError: vm.agentError != nil
+                            )
+                        )
+                        .transition(.scale(scale: 0.88).combined(with: .opacity))
+                        .zIndex(20)
+                    }
                 }
             }
             .frame(width: pageViewportFrame.width, height: pageViewportFrame.height)
@@ -1269,10 +1375,151 @@ struct NotebookView: View {
         )
     }
 
+    private func handleMagicEraserCapture(
+        _ path: [PageNormalizedPoint],
+        canvasSize: CGSize
+    ) {
+        _ = canvasSize
+        guard let selection = vm.makeSelectionSnapshot(capturedPath: path) else {
+            vm.agentError = "Circle an area containing ink or an image."
+            magicEraserPath = []
+            return
+        }
+        magicEraserPath = path
+        magicEraserSelection = selection
+        vm.agentError = nil
+        isRefinementActive = false
+        isMagicAskExpanded = false
+        magicAskText = ""
+    }
+
+    private func submitMagicGuidance(_ prompt: String) {
+        guard let selection = magicEraserSelection else { return }
+        vm.isAgenticLayersActive = true
+        if case .signedIn = openAILogin.phase {
+            vm.placeGuidancePins(selection: selection, question: prompt)
+        } else {
+            pendingGuidanceAfterSignIn = selection
+            pendingGuidancePrompt = prompt
+            withAnimation { showProviderAccessPopup = true }
+        }
+    }
+
+    private func magicMenuPosition(
+        for bounds: PageNormalizedRect,
+        in size: CGSize,
+        isExpanded: Bool,
+        hasError: Bool
+    ) -> CGPoint {
+        let menuWidth = min(max(size.width - 24, 0), 520)
+        let halfWidth = menuWidth / 2
+        let halfHeight: CGFloat = if isExpanded {
+            hasError ? 142 : 108
+        } else {
+            hasError ? 102 : 66
+        }
+        let anchorX = CGFloat(bounds.x + bounds.width / 2) * size.width
+        let below = CGFloat(bounds.y + bounds.height) * size.height + halfHeight + 12
+        let above = CGFloat(bounds.y) * size.height - halfHeight - 12
+        let x = min(
+            max(anchorX, halfWidth + 12),
+            max(halfWidth + 12, size.width - halfWidth - 12)
+        )
+        let y = below + halfHeight <= size.height - 10
+            ? below
+            : max(halfHeight + 10, above)
+        return CGPoint(x: x, y: y)
+    }
+
     private var showsWorkingToolbar: Bool {
         vm.settings.showsWritingTools
             || vm.settings.showsLayers
             || vm.settings.showsPageNavigation
+    }
+}
+
+private struct MagicEraserContextMenu: View {
+    @Binding var askText: String
+    @Binding var isAskExpanded: Bool
+    let isSubmitting: Bool
+    let errorMessage: String?
+    let onExplain: () -> Void
+    let onCheck: () -> Void
+    let onAsk: () -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 9) {
+                Label("Selected region", systemImage: "circle.dashed.inset.filled")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if isSubmitting {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Reading…")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                }
+                Button(action: onCancel) {
+                    Image(systemName: "xmark.circle.fill")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .accessibilityLabel("Clear Magic Eraser selection")
+            }
+
+            HStack(spacing: 8) {
+                Button(action: onExplain) {
+                    Label("Explain", systemImage: "lightbulb.fill")
+                }
+                Button(action: onCheck) {
+                    Label("Check", systemImage: "checkmark.seal.fill")
+                }
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        isAskExpanded.toggle()
+                    }
+                } label: {
+                    Label("Ask", systemImage: "text.bubble.fill")
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.regular)
+            .disabled(isSubmitting)
+
+            if let errorMessage, !isSubmitting {
+                Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if isAskExpanded {
+                HStack(spacing: 8) {
+                    TextField("What should the Pins focus on?", text: $askText, axis: .vertical)
+                        .lineLimit(1...3)
+                        .textFieldStyle(.plain)
+                        .padding(.horizontal, 11)
+                        .padding(.vertical, 9)
+                        .background(.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
+                    Button("Send", action: onAsk)
+                        .buttonStyle(.borderedProminent)
+                        .disabled(askText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSubmitting)
+                }
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .padding(12)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(Color.indigo.opacity(0.45), lineWidth: 1)
+        }
+        .shadow(color: .indigo.opacity(0.22), radius: 16, y: 5)
+        .accessibilityIdentifier("magic-eraser-context-menu")
     }
 }
 
