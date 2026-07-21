@@ -487,8 +487,8 @@ private struct PinCard: View {
                 .foregroundStyle(.secondary)
                 .accessibilityLabel("Close Pin")
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 14)
             .frame(minHeight: 52)
 
             if isExpanded {
