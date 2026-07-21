@@ -652,7 +652,7 @@ Swift toolchain or pinned device session.
 
 ## Active line — PC-7: Agentic Layer, conversation-tree, and movable-Pin interaction cleanup
 
-Status: **IPA build regression repaired — host-checked; physical-device re-verification blocked**
+Status: **page-edge glow inset repaired — host-checked; physical-device verification blocked**
 
 Target branch: `sive/dev`
 
@@ -700,6 +700,14 @@ PC-7 plus nearby archive/export and notebook branch-logic checks pass 15/15;
 evidence is under `tmp/verify/pc-7-ipa-build-regression/`. This Linux host has
 no Xcode tools or pinned-device session, so the reporting Apple host must rerun
 the IPA build and the named PC-7 physical-device scenarios.
+
+The bounded page-edge follow-up removes the 4-point horizontal and 10-point
+vertical view-space inset from the active Agentic Layer glow, so its rendering
+frame now matches the reported page viewport bounds. The focused and nearby
+host checks pass 21/21; evidence is under
+`tmp/verify/pc-7-agentic-page-edge-glow/`. This Linux host has no Xcode tools
+or pinned-device session, so build, screenshot, crash/console, and physical
+visual evidence remain blocked.
 
 ## Active line — PC-8: drawing tool recovery after erasing
 

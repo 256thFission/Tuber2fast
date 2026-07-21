@@ -1,6 +1,6 @@
 # PC-7 — Agentic Layer, conversation-tree, and movable-Pin interaction cleanup
 
-Status: **IPA build regression repaired — host-checked; physical-device re-verification blocked**
+Status: **page-edge glow inset repaired — host-checked; physical-device verification blocked**
 
 Target branch: `sive/dev`
 
@@ -213,6 +213,24 @@ Make Agentic Layer interaction direct and truthful in the normal notebook:
   has no `xcodebuild`, `xcrun`, or pinned-device session, so the unsigned IPA
   build and physical-iPad scenarios require re-running on the named Apple host.
 
+- 2026-07-20 — User reported that the active Agentic Layer glow undershoots
+  the page and appears inset. Geometry trace found the glow overlay already
+  receives the exact `pageViewportFrame`; `AgenticModeGlow` then applies an
+  additional 4-point horizontal and 10-point vertical view-space inset.
+  Started a bounded repair to remove only that inset and host-check the edge
+  alignment contract. Page layout, Pin/page-normalized coordinates,
+  interaction, persistence, and glow styling remain unchanged.
+- 2026-07-20 — Removed only the local padding from `AgenticModeGlow`, allowing
+  its rectangles to consume the overlay's exact `pageViewportFrame`. Added a
+  focused contract that retains the full viewport frame and rejects future
+  horizontal or vertical padding inside the glow. Focused plus nearby PC-7,
+  archive/export, and notebook branch-logic checks pass 21/21; logs are under
+  `tmp/verify/pc-7-agentic-page-edge-glow/`, and `git diff --check` passes.
+  Final diff inspection found only the glow, focused regression, and PC-7 plan
+  records. This Linux host exposes neither `xcodebuild`/`xcrun` nor a pinned
+  device session, so the canonical build and physical visual checks could not
+  start and no simulator or alternate target was substituted.
+
 ## Evidence packet — 2026-07-20
 
 ### Objective and changed files
@@ -343,3 +361,27 @@ Make Agentic Layer interaction direct and truthful in the normal notebook:
   adds no new visual or interaction judgment. Stop reason: host/device
   prerequisite absent after the narrow source regression was repaired and
   host-checked.
+
+## Page-edge glow inset evidence packet — 2026-07-20
+
+- Objective: make the active Agentic Layer glow reach the same view-space
+  bounds as the page viewport instead of undershooting it.
+- Changed files: `TuberNotes/Notebook/NotebookView.swift`,
+  `DeveloperTools/tests/test_agent_layer_interaction_contract.py`, this child
+  log, and the parent status board. The product diff removes a 4-point
+  horizontal and 10-point vertical inset; page layout, Pin/page-normalized
+  coordinates, interaction, persistence, and glow colors/animation are
+  unchanged. Final diff stayed in scope.
+- Host evidence: focused contract passes 6/6; focused plus nearby PC-7,
+  archive/export, and notebook branch-logic checks pass 21/21; `git diff
+  --check` passes. Logs:
+  `tmp/verify/pc-7-agentic-page-edge-glow/focused-tests.log` and
+  `tmp/verify/pc-7-agentic-page-edge-glow/nearby-tests.log`.
+- Expected device state: when an Agentic Layer is active, the animated glow
+  reaches all four page viewport edges without shifting page content,
+  intercepting input, or changing Pin placement.
+- Build/device: not run; this Linux host has no `xcodebuild`/`xcrun` and no
+  `.tubernotes-device-session.json`. Physical-iPad inspection, screenshots,
+  attached console/crash diagnostics, clipping/overlap checks, and animation
+  taste remain uncollected. Stop reason: exact Apple host/device prerequisite
+  absent after the bounded repair passed its host evidence.

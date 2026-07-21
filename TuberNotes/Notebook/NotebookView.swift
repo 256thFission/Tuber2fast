@@ -1046,8 +1046,6 @@ private struct AgenticModeGlow: View {
                 .blur(radius: 6)
                 .opacity(isActive ? 0.90 : 0)
         }
-        .padding(.horizontal, 4)
-        .padding(.vertical, 10)
         .allowsHitTesting(false)
         .accessibilityHidden(true)
         .onAppear {

@@ -26,6 +26,19 @@ class AgentLayerInteractionContractTests(unittest.TestCase):
         self.assertIn("agenticGlowColors[index % agenticGlowColors.count]", background)
         self.assertIn("isAgenticLayerActive ? Color.cyan : Color.white", background)
 
+    def test_agentic_glow_uses_the_full_page_viewport(self):
+        view = (NOTEBOOK / "NotebookView.swift").read_text()
+        glow = view.split("private struct AgenticModeGlow", 1)[1].split(
+            "private struct NotebookExportDocument", 1
+        )[0]
+
+        self.assertIn(
+            ".frame(width: pageViewportFrame.width, height: pageViewportFrame.height)",
+            view,
+        )
+        self.assertNotIn(".padding(.horizontal", glow)
+        self.assertNotIn(".padding(.vertical", glow)
+
     def test_pin_move_stays_in_page_normalized_space_and_persists_once(self):
         contract = (PINS / "Pin.swift").read_text()
         overlay = (PINS / "PinOverlayView.swift").read_text()
