@@ -5,6 +5,7 @@ import Foundation
 enum PinOverlayEvent: Equatable {
     case expanded(annotationID: UUID)
     case collapsed(annotationID: UUID)
+    case moved(annotationID: UUID, target: PageNormalizedPoint)
     case conversationRequested(annotationID: UUID)
     case citationSelected(annotationID: UUID, citationID: UUID)
 }
@@ -22,6 +23,7 @@ struct PinOverlayPlacement: Identifiable, Equatable {
 enum PinOverlayLayout {
     static let edgePadding: CGFloat = 12
     static let markerClearance: CGFloat = 24
+    static let dragAnchorPadding: CGFloat = 22
 
     static func placements(
         for annotations: [PageAnnotation],
@@ -73,6 +75,29 @@ enum PinOverlayLayout {
         projectAnchor: (PageNormalizedPoint) -> CGPoint
     ) -> [UUID: CGPoint] {
         Dictionary(uniqueKeysWithValues: annotations.map { ($0.id, projectAnchor($0.target)) })
+    }
+
+    /// Converts an overlay-local drag point back into persistent page-normalized space.
+    /// The overlay is the fitted logical page; transient view points are clamped before conversion.
+    static func pageNormalizedPoint(forOverlayPoint point: CGPoint, in size: CGSize) -> PageNormalizedPoint? {
+        guard size.width.isFinite,
+              size.height.isFinite,
+              size.width > 0,
+              size.height > 0,
+              point.x.isFinite,
+              point.y.isFinite
+        else { return nil }
+
+        let horizontalPadding = min(dragAnchorPadding, size.width / 2)
+        let verticalPadding = min(dragAnchorPadding, size.height / 2)
+        let clampedPoint = CGPoint(
+            x: min(max(point.x, horizontalPadding), size.width - horizontalPadding),
+            y: min(max(point.y, verticalPadding), size.height - verticalPadding)
+        )
+        return PageNormalizedPoint(
+            x: Double(clampedPoint.x / size.width),
+            y: Double(clampedPoint.y / size.height)
+        )
     }
 
     private static func labelSize(isExpanded: Bool, containerSize: CGSize) -> CGSize {

@@ -67,6 +67,8 @@ private enum CodexAdapterChecks {
         try checkAdversarialToolCalls()
         try checkSSEFraming()
         try checkSSEBounds()
+        try checkResponsesTextExtraction()
+        try await checkMissingConfigurationFailure()
         try await checkIncrementalTransport()
         try await checkTransportCancellation()
         try await checkHTTPFailures()
@@ -97,14 +99,55 @@ private enum CodexAdapterChecks {
         let tools = body["tools"] as! [[String: Any]]
         require(tools.count == 1 && tools[0]["strict"] as? Bool == true, "tool must be singular and strict")
 
+        require(AgentProvider.openAI.defaultModel == "gpt-4o-mini", "wrong OpenAI default")
+        require(AgentProvider.rightCode.defaultModel == "gpt-5.5", "wrong gateway default")
+        require(AgentProvider.openAI.route(for: .insight).wireAPI == .chatCompletions, "wrong OpenAI insight wire API")
+        require(AgentProvider.rightCode.route(for: .insight).wireAPI == .responses, "wrong gateway insight wire API")
+        require(AgentProviderAccess(provider: .rightCode, credential: "   ") == nil, "empty credential was accepted")
+        let access = AgentProviderAccess(
+            provider: .rightCode,
+            credential: "synthetic-provider-token",
+            model: "gpt-5.6-terra"
+        )!
+        let providerRequest = try DebugCodexTransport(
+            configuration: DebugCodexConfiguration(access: access)
+        ).request(for: fixtureRequest())
+        require(
+            providerRequest.url == AgentProvider.rightCode.route(for: .pins).endpoint,
+            "shared access selected the wrong gateway endpoint"
+        )
+        require(
+            providerRequest.value(forHTTPHeaderField: "Authorization") == "Bear" + "er synthetic-provider-token",
+            "shared access did not authorize the provider request"
+        )
+        require(providerRequest.value(forHTTPHeaderField: "originator") == nil, "provider request inherited a ChatGPT-only header")
+        let providerBody = try JSONSerialization.jsonObject(with: providerRequest.httpBody!) as! [String: Any]
+        require(providerBody["model"] as? String == "gpt-5.6-terra", "shared model did not reach Pin request")
+        require(providerBody["reasoning"] != nil, "Codex gateway lost its supported request options")
+
+        let openAIAccess = AgentProviderAccess(
+            provider: .openAI,
+            credential: "synthetic-openai-token"
+        )!
+        let openAIRequest = try DebugCodexTransport(
+            configuration: DebugCodexConfiguration(access: openAIAccess)
+        ).request(for: fixtureRequest())
+        let openAIBody = try JSONSerialization.jsonObject(with: openAIRequest.httpBody!) as! [String: Any]
+        require(openAIRequest.url == AgentProvider.openAI.route(for: .pins).endpoint, "wrong OpenAI Pin endpoint")
+        require(openAIBody["reasoning"] == nil && openAIBody["text"] == nil, "OpenAI request received Codex-only options")
+
         var continuationRequest = fixtureRequest()
         continuationRequest = InvestigationRequest(
             id: continuationRequest.id,
             intent: continuationRequest.intent,
             selection: continuationRequest.selection,
-            conversationID: "unsupported-response-id"
+            conversationID: "previous-response-id"
         )
-        expectThrows("accepted unsupported stateful continuation") { _ = try DebugCodexTransport(configuration: config).request(for: continuationRequest) }
+        let continuedRequest = try DebugCodexTransport(
+            configuration: DebugCodexConfiguration(access: access)
+        ).request(for: continuationRequest)
+        let continuedBody = try JSONSerialization.jsonObject(with: continuedRequest.httpBody!) as! [String: Any]
+        require(continuedBody["previous_response_id"] as? String == "previous-response-id", "conversation context was dropped")
     }
 
     private static func checkCanonicalToolCall() throws {
@@ -113,7 +156,7 @@ private enum CodexAdapterChecks {
         guard case let .pinCompleted(pin) = events[2] else { fatalError("missing completed pin") }
         require(pin.target == CropNormalizedPoint(x: 0.25, y: 0.75), "wrong coordinates")
         guard case let .completed(conversationID) = events[4] else { fatalError("missing completion") }
-        require(conversationID == nil, "one-shot adapter advertised unsupported continuation")
+        require(conversationID == "resp_1", "provider conversation ID was dropped")
     }
 
     private static func checkAdversarialToolCalls() throws {
@@ -230,6 +273,37 @@ private enum CodexAdapterChecks {
         expectThrows("record limit did not reject limit plus one") {
             for byte in "data: {}\n\n".utf8 { _ = try exactRecords.feed(byte) }
         }
+    }
+
+    private static func checkResponsesTextExtraction() throws {
+        let plain = Data(#"{"output":[{"content":[{"type":"output_text","text":"Summary\n- Detail"}]}]}"#.utf8)
+        require(try ResponsesTextExtractor.text(from: plain) == "Summary\n- Detail", "plain Responses text was not extracted")
+
+        let stream = Data("""
+        data: {"type":"response.output_text.delta","delta":"Summary"}
+
+        data: {"type":"response.output_text.delta","delta":"\\n- Detail"}
+
+        data: [DONE]
+
+        """.utf8)
+        require(try ResponsesTextExtractor.text(from: stream) == "Summary\n- Detail", "SSE Responses text was not reassembled")
+    }
+
+    private static func checkMissingConfigurationFailure() async throws {
+        let client = AgentClientFactory.make(
+            access: nil,
+            environment: ["TUBER_AGENT_MODE": "provider"]
+        )
+        var events: [AgentEvent] = []
+        for try await event in client.investigate(fixtureRequest()) {
+            events.append(event)
+        }
+        require(events.count == 2, "missing provider access silently selected a recording")
+        guard case let .failed(failure) = events[1] else {
+            fatalError("missing provider access did not fail")
+        }
+        require(failure.code == .unauthorized && failure.recoverable, "provider configuration failure was not recoverable")
     }
 
     private static func checkIncrementalTransport() async throws {

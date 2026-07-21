@@ -33,6 +33,29 @@
 		A00000000000000000000018 /* DebugCodexTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000118 /* DebugCodexTransport.swift */; };
 		A00000000000000000000019 /* DebugCodexAgentClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000119 /* DebugCodexAgentClient.swift */; };
 		C00000000000000000000001 /* DocumentStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00000000000000000000101 /* DocumentStore.swift */; };
+		D10000000000000000000001 /* DrawingRefinementClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000101 /* DrawingRefinementClient.swift */; };
+		D10000000000000000000002 /* ConversationLayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000102 /* ConversationLayer.swift */; };
+		D10000000000000000000003 /* ConversationLayerOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000103 /* ConversationLayerOverlayView.swift */; };
+		D10000000000000000000004 /* DrawingRefinementOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000104 /* DrawingRefinementOverlay.swift */; };
+		D10000000000000000000005 /* PDFStrokeCompression.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000105 /* PDFStrokeCompression.swift */; };
+		D10000000000000000000006 /* TuberNoteArchive.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000106 /* TuberNoteArchive.swift */; };
+		D10000000000000000000007 /* AgentInsight.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000107 /* AgentInsight.swift */; };
+		D10000000000000000000008 /* AgentSidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000108 /* AgentSidebarView.swift */; };
+		D10000000000000000000009 /* AmbientBackground.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000109 /* AmbientBackground.swift */; };
+		D1000000000000000000000A /* GlassStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1000000000000000000010A /* GlassStyle.swift */; };
+		D1000000000000000000000B /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1000000000000000000010B /* LibraryView.swift */; };
+		D1000000000000000000000C /* Notebook.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1000000000000000000010C /* Notebook.swift */; };
+		D1000000000000000000000D /* NotebookCanvas.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1000000000000000000010D /* NotebookCanvas.swift */; };
+		D1000000000000000000000E /* NotebookStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1000000000000000000010E /* NotebookStore.swift */; };
+		D1000000000000000000000F /* NotebookToolbar.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1000000000000000000010F /* NotebookToolbar.swift */; };
+		D10000000000000000000010 /* NotebookView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000110 /* NotebookView.swift */; };
+		D10000000000000000000011 /* NotebookViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000111 /* NotebookViewModel.swift */; };
+		D10000000000000000000012 /* PageFlipOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000112 /* PageFlipOverlay.swift */; };
+		D10000000000000000000013 /* PageStripView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000113 /* PageStripView.swift */; };
+		D10000000000000000000014 /* PageTemplate.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000114 /* PageTemplate.swift */; };
+		D10000000000000000000015 /* NotebookUndoBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000115 /* NotebookUndoBridge.swift */; };
+		D10000000000000000000016 /* PencilInteractionController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000116 /* PencilInteractionController.swift */; };
+		D10000000000000000000017 /* PencilShortcutPalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000117 /* PencilShortcutPalette.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -63,6 +86,29 @@
 		A00000000000000000000118 /* DebugCodexTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugCodexTransport.swift; sourceTree = "<group>"; };
 		A00000000000000000000119 /* DebugCodexAgentClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugCodexAgentClient.swift; sourceTree = "<group>"; };
 		C00000000000000000000101 /* DocumentStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentStore.swift; sourceTree = "<group>"; };
+		D10000000000000000000101 /* DrawingRefinementClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DrawingRefinementClient.swift; sourceTree = "<group>"; };
+		D10000000000000000000102 /* ConversationLayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationLayer.swift; sourceTree = "<group>"; };
+		D10000000000000000000103 /* ConversationLayerOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationLayerOverlayView.swift; sourceTree = "<group>"; };
+		D10000000000000000000104 /* DrawingRefinementOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DrawingRefinementOverlay.swift; sourceTree = "<group>"; };
+		D10000000000000000000105 /* PDFStrokeCompression.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PDFStrokeCompression.swift; sourceTree = "<group>"; };
+		D10000000000000000000106 /* TuberNoteArchive.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TuberNoteArchive.swift; sourceTree = "<group>"; };
+		D10000000000000000000107 /* AgentInsight.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentInsight.swift; sourceTree = "<group>"; };
+		D10000000000000000000108 /* AgentSidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentSidebarView.swift; sourceTree = "<group>"; };
+		D10000000000000000000109 /* AmbientBackground.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AmbientBackground.swift; sourceTree = "<group>"; };
+		D1000000000000000000010A /* GlassStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlassStyle.swift; sourceTree = "<group>"; };
+		D1000000000000000000010B /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryView.swift; sourceTree = "<group>"; };
+		D1000000000000000000010C /* Notebook.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Notebook.swift; sourceTree = "<group>"; };
+		D1000000000000000000010D /* NotebookCanvas.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotebookCanvas.swift; sourceTree = "<group>"; };
+		D1000000000000000000010E /* NotebookStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotebookStore.swift; sourceTree = "<group>"; };
+		D1000000000000000000010F /* NotebookToolbar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotebookToolbar.swift; sourceTree = "<group>"; };
+		D10000000000000000000110 /* NotebookView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotebookView.swift; sourceTree = "<group>"; };
+		D10000000000000000000111 /* NotebookViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotebookViewModel.swift; sourceTree = "<group>"; };
+		D10000000000000000000112 /* PageFlipOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PageFlipOverlay.swift; sourceTree = "<group>"; };
+		D10000000000000000000113 /* PageStripView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PageStripView.swift; sourceTree = "<group>"; };
+		D10000000000000000000114 /* PageTemplate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PageTemplate.swift; sourceTree = "<group>"; };
+		D10000000000000000000115 /* NotebookUndoBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotebookUndoBridge.swift; sourceTree = "<group>"; };
+		D10000000000000000000116 /* PencilInteractionController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PencilInteractionController.swift; sourceTree = "<group>"; };
+		D10000000000000000000117 /* PencilShortcutPalette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PencilShortcutPalette.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -93,6 +139,7 @@
 				A00000000000000000000206 /* AgentHarness */,
 				A00000000000000000000207 /* Knowledge */,
 				A00000000000000000000209 /* DeveloperSupport */,
+				D10000000000000000000201 /* Notebook */,
 			);
 			path = TuberNotes;
 			sourceTree = "<group>";
@@ -114,6 +161,9 @@
 				A00000000000000000000103 /* SpatialCanvasView.swift */,
 				A00000000000000000000104 /* PencilCanvas.swift */,
 				A00000000000000000000128 /* MagicLasso.swift */,
+				D10000000000000000000104 /* DrawingRefinementOverlay.swift */,
+				D10000000000000000000105 /* PDFStrokeCompression.swift */,
+				D10000000000000000000106 /* TuberNoteArchive.swift */,
 			);
 			path = SpatialCanvas;
 			sourceTree = "<group>";
@@ -123,6 +173,8 @@
 			children = (
 				A00000000000000000000105 /* Pin.swift */,
 				A00000000000000000000106 /* PinOverlayView.swift */,
+				D10000000000000000000102 /* ConversationLayer.swift */,
+				D10000000000000000000103 /* ConversationLayerOverlayView.swift */,
 			);
 			path = Pins;
 			sourceTree = "<group>";
@@ -134,6 +186,7 @@
 				A00000000000000000000117 /* ResponsesSSEDecoder.swift */,
 				A00000000000000000000118 /* DebugCodexTransport.swift */,
 				A00000000000000000000119 /* DebugCodexAgentClient.swift */,
+				D10000000000000000000101 /* DrawingRefinementClient.swift */,
 			);
 			path = AgentHarness;
 			sourceTree = "<group>";
@@ -187,6 +240,30 @@
 				C00000000000000000000101 /* DocumentStore.swift */,
 			);
 			path = Persistence;
+			sourceTree = "<group>";
+		};
+		D10000000000000000000201 /* Notebook */ = {
+			isa = PBXGroup;
+			children = (
+				D10000000000000000000107 /* AgentInsight.swift */,
+				D10000000000000000000108 /* AgentSidebarView.swift */,
+				D10000000000000000000109 /* AmbientBackground.swift */,
+				D1000000000000000000010A /* GlassStyle.swift */,
+				D1000000000000000000010B /* LibraryView.swift */,
+				D1000000000000000000010C /* Notebook.swift */,
+				D1000000000000000000010D /* NotebookCanvas.swift */,
+				D1000000000000000000010E /* NotebookStore.swift */,
+				D1000000000000000000010F /* NotebookToolbar.swift */,
+				D10000000000000000000110 /* NotebookView.swift */,
+				D10000000000000000000111 /* NotebookViewModel.swift */,
+				D10000000000000000000112 /* PageFlipOverlay.swift */,
+				D10000000000000000000113 /* PageStripView.swift */,
+				D10000000000000000000114 /* PageTemplate.swift */,
+				D10000000000000000000115 /* NotebookUndoBridge.swift */,
+				D10000000000000000000116 /* PencilInteractionController.swift */,
+				D10000000000000000000117 /* PencilShortcutPalette.swift */,
+			);
+			path = Notebook;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -283,6 +360,29 @@
 				A00000000000000000000018 /* DebugCodexTransport.swift in Sources */,
 				A00000000000000000000019 /* DebugCodexAgentClient.swift in Sources */,
 				C00000000000000000000001 /* DocumentStore.swift in Sources */,
+				D10000000000000000000001 /* DrawingRefinementClient.swift in Sources */,
+				D10000000000000000000002 /* ConversationLayer.swift in Sources */,
+				D10000000000000000000003 /* ConversationLayerOverlayView.swift in Sources */,
+				D10000000000000000000004 /* DrawingRefinementOverlay.swift in Sources */,
+				D10000000000000000000005 /* PDFStrokeCompression.swift in Sources */,
+				D10000000000000000000006 /* TuberNoteArchive.swift in Sources */,
+				D10000000000000000000007 /* AgentInsight.swift in Sources */,
+				D10000000000000000000008 /* AgentSidebarView.swift in Sources */,
+				D10000000000000000000009 /* AmbientBackground.swift in Sources */,
+				D1000000000000000000000A /* GlassStyle.swift in Sources */,
+				D1000000000000000000000B /* LibraryView.swift in Sources */,
+				D1000000000000000000000C /* Notebook.swift in Sources */,
+				D1000000000000000000000D /* NotebookCanvas.swift in Sources */,
+				D1000000000000000000000E /* NotebookStore.swift in Sources */,
+				D1000000000000000000000F /* NotebookToolbar.swift in Sources */,
+				D10000000000000000000010 /* NotebookView.swift in Sources */,
+				D10000000000000000000011 /* NotebookViewModel.swift in Sources */,
+				D10000000000000000000012 /* PageFlipOverlay.swift in Sources */,
+				D10000000000000000000013 /* PageStripView.swift in Sources */,
+				D10000000000000000000014 /* PageTemplate.swift in Sources */,
+				D10000000000000000000015 /* NotebookUndoBridge.swift in Sources */,
+				D10000000000000000000016 /* PencilInteractionController.swift in Sources */,
+				D10000000000000000000017 /* PencilShortcutPalette.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -16,6 +16,10 @@ final class DebugCodexAgentClient: AgentClient, @unchecked Sendable {
         transport = DebugCodexTransport(configuration: configuration)
     }
 
+    convenience init(access: AgentProviderAccess) {
+        self.init(configuration: DebugCodexConfiguration(access: access))
+    }
+
     func investigate(_ request: InvestigationRequest) -> AsyncThrowingStream<AgentEvent, Error> {
         AsyncThrowingStream { continuation in
             let streamToken = UUID()
@@ -236,6 +240,7 @@ private struct ResponsesStreamState {
     private mutating func completeResponse(_ payload: [String: Any]) throws -> [AgentEvent] {
         guard let current = call, let arguments = current.canonicalArguments,
               let response = payload["response"] as? [String: Any],
+              let conversationID = response["id"] as? String, !conversationID.isEmpty,
               response["status"] as? String == "completed",
               let output = response["output"] as? [[String: Any]],
               current.outputIndex >= 0, current.outputIndex < output.count else { throw StreamError.truncated }
@@ -251,7 +256,7 @@ private struct ResponsesStreamState {
         isTerminal = true
         completedSuccessfully = true
         return pins.flatMap { [.pinStarted($0), .pinCompleted($0)] }
-            + [.toolFinished(current.tool), .completed(conversationID: nil)]
+            + [.toolFinished(current.tool), .completed(conversationID: conversationID)]
     }
 
     private static func decodePins(_ arguments: String) throws -> [PinDraft] {

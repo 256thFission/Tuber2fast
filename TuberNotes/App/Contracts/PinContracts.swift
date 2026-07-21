@@ -4,6 +4,7 @@ struct PageAnnotation: Identifiable, Codable, Equatable, Sendable {
     let id: UUID
     let pageID: UUID
     let threadID: UUID
+    var parentThreadID: UUID? = nil
     var target: PageNormalizedPoint
     var targetRegion: PageNormalizedRect?
     var kind: AnnotationKind

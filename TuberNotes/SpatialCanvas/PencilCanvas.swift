@@ -21,8 +21,11 @@ struct PencilCanvas: UIViewRepresentable {
         let canvas = FixtureCanvasView()
         canvas.backgroundColor = .clear
         canvas.isOpaque = false
+        // The canvas sits on permanently white paper, so PencilKit must not
+        // appearance-adjust ink when the surrounding app enters dark mode.
+        canvas.overrideUserInterfaceStyle = .light
         canvas.drawingPolicy = .anyInput
-        canvas.tool = PKInkingTool(.pen, color: .label, width: 3)
+        canvas.tool = PKInkingTool(.pen, color: .black, width: 3)
         canvas.delegate = context.coordinator
         context.coordinator.canvas = canvas
         canvas.pendingFixture = penFixture

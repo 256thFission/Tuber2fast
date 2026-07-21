@@ -36,7 +36,7 @@ struct PenFixture: Codable, Equatable {
                     altitude: $0.altitude ?? .pi / 2
                 )
             }
-            return PKStroke(ink: PKInk(.pen, color: .label), path: PKStrokePath(controlPoints: points, creationDate: Date()))
+            return PKStroke(ink: PKInk(.pen, color: .black), path: PKStrokePath(controlPoints: points, creationDate: Date()))
         }
         return PKDrawing(strokes: strokes)
     }
