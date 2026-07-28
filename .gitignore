@@ -1,0 +1,13 @@
+.DS_Store
+DerivedData/
+*.xcuserstate
+xcuserdata/
+.tubernotes-device-session.json
+tmp/
+
+# XcodeGen owns the project file; project.yml is the source of truth.
+*.xcodeproj
+
+# Gate evidence is regenerated, never reviewed as source.
+Artifacts/
+Docs/

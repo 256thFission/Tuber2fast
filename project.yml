@@ -1,0 +1,73 @@
+name: TuberNotes
+
+options:
+  bundleIdPrefix: com.tubernotes.greenfield
+  deploymentTarget:
+    iOS: "26.0"
+  createIntermediateGroups: true
+  generateEmptyDirectories: false
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_TREAT_WARNINGS_AS_ERRORS: YES
+    GCC_TREAT_WARNINGS_AS_ERRORS: YES
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    DEVELOPMENT_TEAM: AX444DZQ8V
+    CODE_SIGN_STYLE: Automatic
+
+targets:
+  TuberNotes:
+    type: application
+    platform: iOS
+    sources:
+      - path: TuberNotesApp
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.tubernotes.greenfield
+        PRODUCT_NAME: TuberNotes
+        TARGETED_DEVICE_FAMILY: "2"
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: UIInterfaceOrientationPortrait
+        GENERATE_INFOPLIST_FILE: YES
+        ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS: NO
+
+  TuberNotesTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: TuberNotesTests
+    dependencies:
+      - target: TuberNotes
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.tubernotes.greenfield.tests
+        GENERATE_INFOPLIST_FILE: YES
+
+  # Touch delivery is the one path no other target can exercise: unit tests
+  # drive the controller headlessly and the simulator has no Pencil, so an app
+  # that crashed on the first stroke passed every gate.
+  TuberNotesUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: TuberNotesUITests
+    dependencies:
+      - target: TuberNotes
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.tubernotes.greenfield.uitests
+        GENERATE_INFOPLIST_FILE: YES
+
+schemes:
+  TuberNotes:
+    build:
+      targets:
+        TuberNotes: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - TuberNotesTests
+        - TuberNotesUITests
