@@ -34,7 +34,7 @@ extension CanvasFile {
             throw CanvasFileError.unsupportedFormatVersion(formatVersion)
         }
         guard pageWidth.isFinite,
-              pageWidth > 0,
+              pageWidth == PageGeometry.width,
               PageGeometry.isValidHeight(pageHeight),
               pageWidth < pageHeight
         else {

@@ -63,6 +63,13 @@ final class EditorSession {
     /// One call to `DocumentStore.save` has started and has not returned or thrown.
     private var saveInFlight = false
     private var debounceTask: Task<Void, Never>?
+    private var saveWaiters: [CheckedContinuation<Void, Never>] = []
+
+    /// `RootCanvasView.task` may be restarted as views move through the scene
+    /// lifecycle. Exactly one load is allowed to cross the store boundary; later
+    /// callers wait for that attempt instead of racing a second load over live ink.
+    private var startInFlight = false
+    private var startWaiters: [CheckedContinuation<Void, Never>] = []
 
     /// `debounce` is injectable only so tests need not wait 500 ms of real time.
     /// The contract's interval is the default and the only one the app uses.
@@ -80,6 +87,20 @@ final class EditorSession {
     /// and save an empty document. Invalid data fails loudly and leaves the
     /// source file untouched — it is never replaced with a blank drawing.
     func start() async {
+        guard phase == .loading else { return }
+        if startInFlight {
+            await withCheckedContinuation { startWaiters.append($0) }
+            return
+        }
+
+        startInFlight = true
+        defer {
+            startInFlight = false
+            let waiters = startWaiters
+            startWaiters.removeAll()
+            waiters.forEach { $0.resume() }
+        }
+
         do {
             if let file = try await store.load() {
                 documentID = file.documentID
@@ -92,7 +113,16 @@ final class EditorSession {
                 pageID = UUID()
                 pageHeight = PageGeometry.initialHeight
                 canvas.setPageHeight(pageHeight)
-                try await store.save(currentFile(drawingData: canvas.drawingData()))
+                let snapshot = canvas.drawingSnapshot()
+                let drawingData = await snapshot.serialized()
+                try await store.save(
+                    currentFile(
+                        drawingData: drawingData,
+                        documentID: documentID,
+                        pageID: pageID,
+                        pageHeight: pageHeight
+                    )
+                )
             }
             phase = .ready
             CanvasLog.event(
@@ -143,36 +173,77 @@ final class EditorSession {
         debounceTask = Task { [weak self, debounce] in
             try? await Task.sleep(for: debounce)
             guard !Task.isCancelled else { return }
-            await self?.saveIfNeeded()
+            await self?.performAutosavePass()
         }
     }
 
-    /// Serialized: there is never more than one capture/save operation in
-    /// flight, so stale saves cannot exist (`DataContract.md` §5).
-    ///
-    /// The loop rather than recursion is intentional — a document edited
-    /// continuously through many saves must not grow the stack.
+    /// Flushes all currently dirty work. If another caller already owns a save,
+    /// this caller waits for it rather than returning while durability is still
+    /// unresolved.
     func saveIfNeeded() async {
-        while dirty, !saveInFlight {
-            dirty = false
-            saveInFlight = true
+        debounceTask?.cancel()
+        debounceTask = nil
 
-            // The drawing and the height current when it was captured are
-            // written by the same save; a save never pairs one extension's
-            // height with a drawing captured under a different one.
-            let file = currentFile(drawingData: canvas.drawingData())
-
-            do {
-                try await store.save(file)
-                saveInFlight = false
-                lastSaveError = nil
-            } catch {
-                dirty = true
-                saveInFlight = false
-                lastSaveError = String(describing: error)
-                return
+        while true {
+            if saveInFlight {
+                await waitForSavePass()
+                continue
             }
+            guard dirty else { return }
+            await performOneSave()
+            guard lastSaveError == nil else { return }
         }
+    }
+
+    /// One debounced pass only. Edits made while that pass is running receive a
+    /// fresh debounce instead of causing back-to-back whole-drawing
+    /// serializations during continuous Pencil input.
+    private func performAutosavePass() async {
+        guard phase == .ready, dirty, !saveInFlight else { return }
+        await performOneSave()
+        if dirty, lastSaveError == nil {
+            scheduleSave()
+        }
+    }
+
+    private func performOneSave() async {
+        guard dirty, !saveInFlight else { return }
+
+        dirty = false
+        saveInFlight = true
+
+        // Capture drawing and metadata as one generation before either actor can
+        // suspend. A page extension during serialization marks the next
+        // generation dirty instead of pairing new geometry with old ink.
+        let snapshot = canvas.drawingSnapshot()
+        let capturedDocumentID = documentID
+        let capturedPageID = pageID
+        let capturedPageHeight = pageHeight
+        let drawingData = await snapshot.serialized()
+        let file = currentFile(
+            drawingData: drawingData,
+            documentID: capturedDocumentID,
+            pageID: capturedPageID,
+            pageHeight: capturedPageHeight
+        )
+
+        do {
+            try await store.save(file)
+            lastSaveError = nil
+        } catch {
+            dirty = true
+            lastSaveError = String(describing: error)
+        }
+
+        saveInFlight = false
+        let waiters = saveWaiters
+        saveWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+    }
+
+    private func waitForSavePass() async {
+        guard saveInFlight else { return }
+        await withCheckedContinuation { saveWaiters.append($0) }
     }
 
     // MARK: - Lifecycle
@@ -193,7 +264,12 @@ final class EditorSession {
         scheduleSave()
     }
 
-    private func currentFile(drawingData: Data) -> CanvasFile {
+    private func currentFile(
+        drawingData: Data,
+        documentID: UUID,
+        pageID: UUID,
+        pageHeight: Double
+    ) -> CanvasFile {
         CanvasFile(
             formatVersion: CanvasFile.currentFormatVersion,
             documentID: documentID,

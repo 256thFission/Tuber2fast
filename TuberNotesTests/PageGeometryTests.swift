@@ -29,6 +29,8 @@ struct PageGeometryTests {
         #expect(PageGeometry.extended(from: PageGeometry.maximumHeight) == nil)
         #expect(PageGeometry.extended(from: PageGeometry.maximumHeight - PageGeometry.initialHeight)
             == PageGeometry.maximumHeight)
+        #expect(PageGeometry.extended(from: PageGeometry.initialHeight + 1) == nil)
+        #expect(PageGeometry.extended(from: .nan) == nil)
     }
 
     @Test("Exactly the reachable heights are valid")

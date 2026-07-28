@@ -56,15 +56,13 @@ struct CanvasFileTests {
         }
     }
 
-    @Test("Width must be positive, finite, and less than height")
+    @Test("Width must equal the canonical page width")
     func rejectsInvalidWidth() {
         #expect(throws: (any Error).self) { try sampleFile(width: 0).validated() }
         #expect(throws: (any Error).self) { try sampleFile(width: -612).validated() }
         #expect(throws: (any Error).self) { try sampleFile(width: .nan).validated() }
-        // Width must stay below height: the page starts portrait and only grows.
-        #expect(throws: (any Error).self) {
-            try sampleFile(width: PageGeometry.initialHeight + 1).validated()
-        }
+        #expect(throws: (any Error).self) { try sampleFile(width: 500).validated() }
+        #expect(throws: (any Error).self) { try sampleFile(width: 700).validated() }
     }
 
     @Test("The initial and maximum heights are themselves valid")

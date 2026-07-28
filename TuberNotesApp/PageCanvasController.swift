@@ -1,23 +1,35 @@
 import PencilKit
 import SwiftUI
 import UIKit
-import os
 
-private let contractLog = Logger(subsystem: "com.tubernotes.greenfield", category: "contract")
+/// A copied, immutable snapshot of a PencilKit drawing.
+///
+/// In the iOS 26 SDK, `PKDrawing` is a `Sendable` value. Reading the canvas
+/// property takes a value snapshot on the main actor; the value can then cross
+/// to a utility task with compiler-checked transfer safety. The long-term page
+/// store still replaces whole-drawing serialization with a measured,
+/// page-bounded persistence boundary.
+struct DrawingSnapshot: Sendable {
+    private let drawing: PKDrawing
 
-///  re-evaluating the SwiftUI body must never build a second canvas runtime 
-/// The check lives here rather than in `PageCanvasController.init` on purpose.
-/// The reference is weak, so a released controller is correctly no longer "live".
-@MainActor
-private enum LiveCanvas {
-    static weak var hosted: PageCanvasController?
+    @MainActor
+    init(drawing: PKDrawing) {
+        self.drawing = drawing
+    }
 
-    static func registerHosted(_ candidate: PageCanvasController) {
-        if let existing = hosted, existing !== candidate {
-            contractLog.fault("CONTRACT VIOLATION: SwiftUI built a second live canvas runtime")
-            assertionFailure("Exactly one live PageCanvasController is permitted (DataContract §9)")
-        }
-        hosted = candidate
+    func serialized() async -> Data {
+        await Task.detached(priority: .utility) { [self] in
+            let clock = ContinuousClock()
+            let started = clock.now
+            let data = drawing.dataRepresentation()
+            CanvasLog.event(
+                CanvasLog.save, "save",
+                "serialized drawing snapshot; bytes=\(data.count) "
+                    + "duration=\(started.duration(to: clock.now)) "
+                    + "mainThread=\(Thread.isMainThread)"
+            )
+            return data
+        }.value
     }
 }
 
@@ -209,6 +221,10 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
     ///
     /// The zoom floor is not recomputed, because it depends on width alone.
     func setPageHeight(_ height: Double) {
+        precondition(
+            PageGeometry.isValidHeight(height),
+            "PageCanvasController received unreachable page geometry"
+        )
         pageHeight = height
         canvasView.contentSize = CGSize(
             width: PageGeometry.width * canvasView.zoomScale,
@@ -219,12 +235,21 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
 
     // MARK: - Drawing transfer
 
-    /// The opaque bytes used to reconstruct the drawing.
+    /// Takes an independent drawing snapshot for later serialization.
     ///
-    /// Called on the main actor after the debounce fires, never inside
-    /// PencilKit's change callback (`DataContract.md` §5).
-    func drawingData() -> Data {
-        canvasView.drawing.dataRepresentation()
+    /// Copying the live drawing is the only work performed on the main actor.
+    /// The full `dataRepresentation()` traversal runs from the snapshot's
+    /// utility task, after the debounce, never from PencilKit's callback.
+    func drawingSnapshot() -> DrawingSnapshot {
+        let clock = ContinuousClock()
+        let started = clock.now
+        let snapshot = DrawingSnapshot(drawing: canvasView.drawing)
+        CanvasLog.event(
+            CanvasLog.save, "save",
+            "copied drawing snapshot; strokes=\(canvasView.drawing.strokes.count) "
+                + "duration=\(started.duration(to: clock.now))"
+        )
+        return snapshot
     }
 
     /// Installs a loaded drawing before the canvas becomes editable.
@@ -271,7 +296,6 @@ struct PageCanvas: UIViewControllerRepresentable {
     let controller: PageCanvasController
 
     func makeUIViewController(context: Context) -> PageCanvasController {
-        LiveCanvas.registerHosted(controller)
         return controller
     }
 

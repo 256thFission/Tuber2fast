@@ -2,12 +2,6 @@ import SwiftUI
 
 @main
 struct TuberNotesApp: App {
-    @Environment(\.scenePhase) private var scenePhase
-
-    /// One session for the life of the app. `@State` keeps it across body
-    /// re-evaluations, so the canvas it owns is created exactly once.
-    @State private var session = EditorSession(store: DocumentStore(fileURL: documentURL()))
-
     init() {
         CanvasLog.installCrashDiagnostics()
         CanvasLog.event(CanvasLog.lifecycle, "lifecycle", "app launched")
@@ -15,28 +9,30 @@ struct TuberNotesApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootCanvasView(session: session)
-        }
-        .onChange(of: scenePhase) { _, phase in
-            switch phase {
-            case .background, .inactive:
-                Task { await session.flushForBackground() }
-            case .active:
-                session.resumeForForeground()
-            @unknown default:
-                break
-            }
+            EditorSceneView()
         }
     }
+}
 
-    /// A failure here means the app cannot address its own container. Falling
-    /// back to a temporary file would silently discard the user's work on every
-    /// launch, so it fails loudly instead.
-    private static func documentURL() -> URL {
-        do {
-            return try DocumentStore.defaultFileURL()
-        } catch {
-            fatalError("Application Support is unavailable: \(error)")
-        }
+/// Owns the editor lifecycle at the scene boundary rather than in the `App`
+/// value. The spike is explicitly single-scene in `project.yml` because its
+/// fixed document has no same-document commit coordinator; the despiking design
+/// removes that temporary restriction.
+private struct EditorSceneView: View {
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var lifecycle = EditorLifecycle.makeDefault()
+
+    var body: some View {
+        RootCanvasView(session: lifecycle.session)
+            .onChange(of: scenePhase) { _, phase in
+                switch phase {
+                case .background, .inactive:
+                    lifecycle.sceneWillResignActive()
+                case .active:
+                    lifecycle.sceneDidBecomeActive()
+                @unknown default:
+                    break
+                }
+            }
     }
 }

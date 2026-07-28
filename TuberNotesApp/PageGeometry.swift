@@ -34,6 +34,7 @@ enum PageGeometry {
     /// The next height up, or `nil` at the maximum. Returning `nil` rather than
     /// clamping is what lets the caller refuse an extension and change nothing.
     static func extended(from height: Double) -> Double? {
+        guard isValidHeight(height) else { return nil }
         let next = height + initialHeight
         guard next <= maximumHeight else { return nil }
         return next

@@ -4,10 +4,7 @@ import UIKit
 
 @testable import TuberNotes
 
-/// Configuration invariants of the one canvas owner.
-///
-/// One test builds one controller on purpose: creating a second while the first
-/// is alive is itself a contract violation the app asserts on.
+/// Configuration invariants of a canvas runtime.
 @Suite("Canvas runtime", .serialized)
 @MainActor
 struct PageCanvasControllerTests {
@@ -105,6 +102,20 @@ struct PageCanvasControllerTests {
         // Page-space geometry is durable truth; viewport state is not.
         #expect(canvas.drawing.bounds == authored)
         #expect(canvas.drawing.strokes.count == 1)
+    }
+
+    @Test("A copied drawing snapshot serializes without consulting the live canvas")
+    func drawingSnapshotIsIndependent() async throws {
+        let controller = PageCanvasController()
+        controller.canvasView.drawing = strokeAcrossPage()
+        let snapshot = controller.drawingSnapshot()
+
+        controller.canvasView.drawing = PKDrawing()
+
+        let restored = try PKDrawing(data: await snapshot.serialized())
+        #expect(restored.strokes.count == 1)
+        #expect(restored.bounds == strokeAcrossPage().bounds)
+        #expect(controller.canvasView.drawing.strokes.isEmpty)
     }
 
     /// A stroke at known page-space coordinates, well inside the page bounds.

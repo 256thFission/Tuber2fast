@@ -83,6 +83,19 @@ struct EditorSessionTests {
         #expect(try Data(contentsOf: scratch.fileURL) == before)
     }
 
+    @Test("Restarting the view task does not reload over live ink")
+    func repeatedStartIsIdempotent() async throws {
+        let scratch = Scratch()
+        let session = scratch.session()
+        await session.start()
+        session.canvas.canvasView.drawing = strokeAcrossPage()
+
+        await session.start()
+
+        #expect(session.phase == .ready)
+        #expect(session.canvas.canvasView.drawing.strokes.count == 1)
+    }
+
     // MARK: - Page extension
 
     @Test("Extending raises the height by exactly one increment and persists it")

@@ -40,9 +40,10 @@ else
   log "sibling worktree absent; inheritance check not applicable"
 fi
 
-# --- 2. Exactly one owner may import the live UI frameworks ------------------
-# DataContract §2/§3: PageCanvasController is the only owner that imports and
-# operates the live PencilKit view; durable value types import Foundation only.
+# --- 2. UI frameworks stay in declared runtime/lifecycle owners ---------------
+# PageCanvasController operates the live PencilKit view. EditorLifecycle owns
+# the narrow UIApplication background-execution lease. Durable values and the
+# document writer import Foundation only.
 violation=0
 while IFS= read -r f; do
   if grep -qE '^import (PencilKit|UIKit)$' "$f"; then
@@ -52,7 +53,7 @@ while IFS= read -r f; do
     fi
   fi
 done < <(app_swift_sources)
-[ "$violation" -eq 0 ] && pass "PencilKit/UIKit confined to the declared canvas owner"
+[ "$violation" -eq 0 ] && pass "PencilKit/UIKit confined to declared runtime/lifecycle owners"
 
 # --- 3. No custom protocols (DataContract §3) --------------------------------
 if hits="$(grep -rnE '^[[:space:]]*(public |internal |private |fileprivate )?protocol [A-Z]' "$APP_SOURCES" 2>/dev/null)"; then
@@ -101,12 +102,12 @@ while IFS= read -r f; do
 done < <(app_swift_sources)
 [ "$violation" -eq 0 ] && pass "file I/O confined to the document store"
 
-# --- 6. At most one live canvas view (DataContract §9) -----------------------
+# --- 6. One controlled canvas construction site -------------------------------
 count="$(grep -rc 'PKCanvasView(' "$APP_SOURCES" 2>/dev/null | awk -F: '{s+=$2} END {print s+0}')"
 if [ "$count" -gt 1 ]; then
-  fail "$count PKCanvasView instantiations; exactly one live canvas is permitted"
+  fail "$count PKCanvasView instantiations; canvas construction must remain centralized"
 else
-  pass "PKCanvasView instantiation sites: $count (limit 1)"
+  pass "PKCanvasView construction is centralized at $count instantiation site"
 fi
 
 # --- 7. The project file is generated, never committed -----------------------

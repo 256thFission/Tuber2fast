@@ -99,18 +99,10 @@ wolf gets disabled by the next agent, which is worse than not having it.
   the Pencil path" from a code-review opinion into a build error.
 - **Warnings as errors** (`SWIFT_TREAT_WARNINGS_AS_ERRORS`). This caught a
   deprecated `UIWindow(frame:)` in a test within seconds of it being written.
-- **Runtime contract assertions.** `LiveCanvas` in `PageCanvasController.swift`
-  asserts the one-live-canvas rule and logs `CONTRACT VIOLATION` via `os.Logger`;
-  gate 50 greps the simulator console for that string. Cheap, and it fires at the
-  moment of violation rather than during a review that may not happen.
-
-Put an assertion **at the boundary where the risk lives, not where it is
-convenient to write**. The one-canvas check first lived in
-`PageCanvasController.init` and immediately crashed the test run, because the
-test host app legitimately has its own live controller. The contract's actual
-hazard is *SwiftUI rebuilding the canvas*, so the check belongs in
-`makeUIViewController`. Directly constructing a controller in a test is not the
-hazard and must not trip the guard.
+- **Runtime ownership.** Each `EditorSession` constructs and retains its canvas
+  controller once. There is one controlled `PKCanvasView` construction site,
+  but no process-global singleton: future scenes and virtualized page editors
+  must be able to own independent active canvases.
 
 ## When a test fails, find out who is wrong
 
@@ -159,7 +151,8 @@ feels justified. Concretely:
   enforces this, but the gate only knows the names it was told.
 - No file I/O outside `DocumentStore` — which does not exist until G3. Do not
   create it early "since we'll need it".
-- One live `PKCanvasView`. Forever, not just for now.
+- One retained `PKCanvasView` per spike editor session. This is a temporary
+  page-runtime choice, not a process-global product constraint.
 
 ## Ask instead of guessing
 

@@ -21,3 +21,8 @@ Read these documents before adding application code:
 
 No implementation from the previous app may be copied into this branch. The
 old app may be observed as a behavioral reference only.
+
+[`DESPIKING_PROPOSAL.md`](DESPIKING_PROPOSAL.md) describes the planned teardown
+of the one-page spike into a recoverable, virtualized, multipage notebook
+substrate. It is a forward proposal, not a claim that the spike already has
+those properties.

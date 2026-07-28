@@ -28,6 +28,10 @@ targets:
         PRODUCT_NAME: TuberNotes
         TARGETED_DEVICE_FAMILY: "2"
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        # The spike has one fixed document and no same-document coordinator.
+        # Multiple scenes are enabled only after the despiking architecture
+        # supplies scene-scoped sessions and serialized document commits.
+        INFOPLIST_KEY_UIApplicationSupportsMultipleScenes: NO
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: UIInterfaceOrientationPortrait
         GENERATE_INFOPLIST_FILE: YES
         ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS: NO

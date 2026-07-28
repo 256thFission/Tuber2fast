@@ -25,11 +25,12 @@ SIM_NAME="${TN_SIM_NAME:-iPad Pro 11-inch (M5)}"
 # The named physical iPad from the milestone's device gates.
 DEVICE_NAME="${TN_DEVICE_NAME:-Phillip’s iPad}"
 
-# Sources that are allowed to touch the live UI frameworks. This list is the
-# machine-readable form of DataContract.md §2 and §3: PageCanvasController is
-# the only owner permitted to import and operate PencilKit/UIKit. Adding a file
-# here is a contract decision, not a convenience.
+# Sources that are allowed to touch live UI frameworks. PageCanvasController
+# operates PencilKit/UIKit canvas state. EditorLifecycle uses UIApplication only
+# for a bounded background save lease. Adding a file here is an ownership
+# decision, not a convenience.
 UIKIT_ALLOWED_FILES=(
+  "TuberNotesApp/EditorLifecycle.swift"
   "TuberNotesApp/PageCanvasController.swift"
 )
 

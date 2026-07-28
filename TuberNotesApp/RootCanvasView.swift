@@ -28,6 +28,7 @@ struct RootCanvasView: View {
                     // floats along the bottom edge and a bottom-anchored
                     // control collides with it.
                     .overlay(alignment: .topTrailing) { extendControl }
+                    .overlay(alignment: .topLeading) { saveFailure }
             }
         }
         .task { await session.start() }
@@ -45,6 +46,30 @@ struct RootCanvasView: View {
         .disabled(!session.canExtend)
         .padding(24)
         .accessibilityIdentifier("page.extend")
+    }
+
+    @ViewBuilder
+    private var saveFailure: some View {
+        if let message = session.lastSaveError {
+            HStack(spacing: 12) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Changes are not saved")
+                        .font(.headline)
+                    Text(message)
+                        .font(.caption)
+                        .lineLimit(2)
+                }
+                Button("Retry") {
+                    Task { await session.saveIfNeeded() }
+                }
+                .buttonStyle(.bordered)
+            }
+            .padding(12)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+            .padding(24)
+            .accessibilityIdentifier("save.error")
+        }
     }
 
     private func failure(_ message: String) -> some View {

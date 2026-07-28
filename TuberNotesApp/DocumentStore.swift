@@ -76,14 +76,16 @@ actor DocumentStore {
 extension DocumentStore {
     /// The one document of this milestone. A later multi-document milestone owns
     /// naming; this is deliberately a fixed path, not a scheme.
-    static func defaultFileURL() throws -> URL {
-        try FileManager.default
-            .url(
-                for: .applicationSupportDirectory,
-                in: .userDomainMask,
-                appropriateFor: nil,
-                create: true
-            )
-            .appendingPathComponent("JustACanvas.canvas")
+    static func defaultFileURL() -> URL {
+        guard let applicationSupport = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first else {
+            fatalError("Application Support is unavailable")
+        }
+        // Directory creation belongs to `save`, on the store actor. Resolving
+        // the conventional container URL here performs no synchronous creation
+        // while the SwiftUI app value is being initialized.
+        return applicationSupport.appendingPathComponent("JustACanvas.canvas")
     }
 }
