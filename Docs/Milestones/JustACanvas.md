@@ -20,16 +20,18 @@ This is a production-shaped vertical slice, not a mockup.
 4. Select pen or eraser through the system PencilKit tool picker.
 5. Undo and redo through PencilKit/system UI.
 6. Pan and zoom with touch without moving ink relative to the page.
-7. Background and foreground the app and continue drawing.
-8. Wait for a successful autosave.
-9. Force-quit, relaunch, and see exactly the successfully saved drawing.
+7. Extend the page downward when the room runs out, and keep writing.
+8. Background and foreground the app and continue drawing.
+9. Wait for a successful autosave.
+10. Force-quit, relaunch, and see exactly the successfully saved drawing.
 
 ## 3. Included
 
 - a new iPad-only application and Xcode project;
 - one stable document ID and page ID;
-- one fixed portrait page geometry;
-- one `PKCanvasView` hosted by a minimal SwiftUI root;
+- one portrait page: fixed width, and a height that grows downward one increment
+  at a time to a bounded maximum (`DataContract.md` §5a);
+- one `PKCanvasView` per editor session, hosted by a minimal SwiftUI root;
 - PencilKit pen, eraser, system undo, and system redo;
 - touch pan and pinch zoom;
 - one drawing-change callback;
@@ -74,9 +76,9 @@ custom Swift protocols.
 ### Launch
 
 `DocumentStore.load` runs before editing begins. No file means first launch:
-generate IDs, use fixed portrait geometry, create an empty drawing, and save the
-initial file. Invalid or unsupported data shows an error and remains untouched;
-it is never replaced with a blank drawing.
+generate IDs, use the initial portrait geometry, create an empty drawing, and
+save the initial file. Invalid or unsupported data shows an error and remains
+untouched; it is never replaced with a blank drawing.
 
 ### Drawing and autosave
 
@@ -106,7 +108,16 @@ frames are not persisted or published at frame frequency. Ink remains in page
 space through every viewport change.
 
 Finger input navigates and Apple Pencil writes. The initial app may support one
-device orientation to keep geometry fixed.
+device orientation to keep width fixed.
+
+### Page extension
+
+A visible control raises the page by one increment. The editor owns the height,
+refuses an extension at the maximum, and enters the ordinary autosave path. The
+canvas gains addressable area at the bottom and changes nothing else: ink keeps
+its page coordinates, and zoom and content offset are untouched. Extension is a
+user intention, never a consequence of where ink landed, and it is not undoable.
+The rules are normative in `Docs/Architecture/DataContract.md` §5a.
 
 ### Undo and redo
 
@@ -131,7 +142,8 @@ iPad. Simulator and unit tests supplement but do not replace device evidence.
 ### Build and structure
 
 - The new project builds without inherited application code or dependencies.
-- Exactly one live `PKCanvasView` exists throughout the journey.
+- One `PKCanvasView` per editor session throughout the journey, constructed at
+  one code site. A process-global single canvas is explicitly not required.
 - SwiftUI reconstruction does not replace the canvas or undo manager.
 - No custom protocol, document reducer, event bus, repository, package, cache,
   or future-feature placeholder exists.
@@ -146,6 +158,9 @@ iPad. Simulator and unit tests supplement but do not replace device evidence.
 - Invalid format version, invalid geometry, and malformed drawing bytes fail
   without modifying the source file.
 - Background/foreground preserves live changes and eventually saves them.
+- Extend the page, draw below the old boundary, force-quit, and relaunch: the
+  grown height and the new ink both return. An unreachable height and an
+  extension at the maximum are refused without modifying the file.
 
 ### Spatial behavior
 
@@ -153,6 +168,8 @@ iPad. Simulator and unit tests supplement but do not replace device evidence.
 - Ink remains attached to the page through minimum/maximum zoom, pan to every
   edge, and return to the initial viewport.
 - Host-view updates do not reset viewport or drawing state.
+- Extending the page moves no existing ink, changes no zoom scale or content
+  offset, and does not drift the zoom floor as the page grows.
 
 ### Performance invariants
 

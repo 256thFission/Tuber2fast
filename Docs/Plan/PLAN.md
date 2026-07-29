@@ -48,6 +48,26 @@ what its exit requires while conforming to the complete contract.
   conflict: four concrete owners, two editor save booleans, one change callback,
   one binary property-list file, and one awaited atomic save. All future-only
   authorities and fixed performance guesses were removed.
+- 2026-07-29 — Adopted the application implementation from
+  `github.com/256thFission/Tuber2fast.git`, which was authored without `Docs/`
+  and is therefore the origin of the divergences below. `postoai` was reset onto
+  that history and `Docs/` layered back on top.
+- 2026-07-29 — Phillip overruled immutable page geometry. The page grows
+  downward one whole increment at a time to a bounded maximum; width remains
+  immutable per document. A writing surface that cannot be lengthened is not the
+  product, and deferring growth would have built the geometry, zoom, and
+  validation paths twice. New `DataContract.md` §5a is normative; the milestone's
+  "one fixed portrait page geometry" is superseded.
+- 2026-07-29 — Phillip loosened the one-live-canvas rule. The invariant is now
+  one retained `PKCanvasView` per editor session with one construction site, not
+  one per process, because scene-scoped and virtualized page editors must own
+  independent active canvases. The runtime `CONTRACT VIOLATION` assertion that
+  enforced the process-global form is intentionally gone; gate 50 still greps for
+  the string but no longer has an emitter.
+- 2026-07-29 — Accepted `EditorLifecycle` as a fifth owner, superseding "prune
+  Just a Canvas to four owners". It earns the exception in §3 by isolating the
+  UIKit background-execution lease out of `EditorSession`, holds no durable
+  state, and is enumerated in `Tools/lib.sh`.
 
 ## Session log
 
@@ -115,3 +135,28 @@ what its exit requires while conforming to the complete contract.
 - Merged model and atomic persistence implementation into G3. G4 records a fixed
   baseline trace before proposing evidence-based numeric budgets.
 - Scope remained documentation-only; application implementation did not start.
+
+### 2026-07-29 — Remote implementation review and contract reconciliation
+
+- Reviewed every file imported from `Tuber2fast.git`: 29 files at initial import
+  plus the 18-file `306ab29` hardening pass. The code was written without access
+  to `Docs/`, so it cited a `DataContract.md` §5a that did not exist here.
+- Contract amended rather than code reverted, on Phillip's decision: §5a page
+  extension added, §2 owner table extended to five owners with rule 7 (canvas
+  renders the height it is given) and rule 8 (`EditorLifecycle` owns only the
+  lease), §3 UIKit allowance recorded, §4 width/height field rules rewritten,
+  §9 canvas invariant loosened, §11 extension tests required.
+- Milestone updated to match: page growth moved from excluded to included, one
+  canvas per editor session, page-extension behavior and gates added.
+- Adopted `DESPIKING_PROPOSAL.md` as a forward document only. It re-proposes the
+  package/generation machinery the 2026-07-22 pruning pass removed and must not
+  reorder this plan; G4 baseline and G5 verdict still come first.
+- Scope was documentation only. No application code was changed in this session.
+- Open findings recorded against the adopted code, none yet fixed: a failed
+  autosave does not reschedule itself (`EditorSession.performAutosavePass`);
+  `CanvasFile.validated()` couples the durable value to the app's global width
+  constant rather than per-document immutability; `flushForBackground` loops
+  while dirty on a bounded lease; whole-drawing serialization scales with total
+  ink rather than changed content, to be measured at G4.
+- Status board unchanged. G1–G3 code exists but no `Tools/gate.sh` run has been
+  recorded on this branch, and status is not flipped without gate evidence.
