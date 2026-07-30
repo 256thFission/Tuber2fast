@@ -23,10 +23,14 @@ struct EditorSessionTests {
 
         #expect(session.phase == .ready)
 
-        let saved = try await scratch.store.load()
-        #expect(saved != nil)
-        #expect(saved?.pageWidth == PageGeometry.width)
-        #expect(saved?.pageHeight == PageGeometry.height)
+        #expect(try await savedDrawing(scratch.store) != nil)
+
+        let index = try #require(await scratch.store.load())
+        #expect(index.formatVersion == DocumentIndex.currentFormatVersion)
+        #expect(index.pageWidth == PageGeometry.width)
+        #expect(index.pageHeight == PageGeometry.height)
+        #expect(index.pageIDs == [session.currentPageID])
+        #expect(index.currentPageIndex == 0)
     }
 
     @Test("A later launch restores the saved drawing")
@@ -50,7 +54,7 @@ struct EditorSessionTests {
     func invalidDocumentFailsWithoutOverwriting() async throws {
         let scratch = Scratch()
         let garbage = Data("not a canvas".utf8)
-        try garbage.write(to: scratch.fileURL)
+        try scratch.writeGarbageIndex(garbage)
 
         let session = scratch.session()
         await session.start()
@@ -59,7 +63,7 @@ struct EditorSessionTests {
             Issue.record("expected a failed phase, got \(session.phase)")
             return
         }
-        #expect(try Data(contentsOf: scratch.fileURL) == garbage)
+        #expect(try Data(contentsOf: scratch.indexURL) == garbage)
     }
 
     @Test("Loading a document does not mark it dirty")
@@ -75,9 +79,9 @@ struct EditorSessionTests {
 
         // Installing the loaded drawing fires PencilKit's change callback. If
         // that were treated as an edit, this save would rewrite the file.
-        let before = try Data(contentsOf: scratch.fileURL)
+        let before = try Data(contentsOf: scratch.currentPageURL(of: second))
         await second.saveIfNeeded()
-        #expect(try Data(contentsOf: scratch.fileURL) == before)
+        #expect(try Data(contentsOf: scratch.currentPageURL(of: second)) == before)
     }
 
     @Test("Restarting the view task does not reload over live ink")
@@ -100,14 +104,14 @@ struct EditorSessionTests {
         let scratch = Scratch()
         let session = scratch.session()
         await session.start()
-        let initial = try await scratch.store.load()
+        let initial = try await savedDrawing(scratch.store)
 
         session.canvas.canvasView.drawing = strokeAcrossPage()
         // The change callback comes from PencilKit's delegate on the real
         // device; assigning `drawing` fires the same path here.
         try await Task.sleep(for: .milliseconds(120))
 
-        let saved = try await scratch.store.load()
+        let saved = try await savedDrawing(scratch.store)
         #expect(saved != initial)
         try expectSavedStroke(in: saved)
     }
@@ -135,7 +139,7 @@ struct EditorSessionTests {
         await session.saveIfNeeded()
 
         #expect(session.lastSaveError == nil)
-        try expectSavedStroke(in: await scratch.store.load())
+        try expectSavedStroke(in: await savedDrawing(scratch.store))
     }
 
     @Test("A transient save failure retries itself with no user action")
@@ -167,9 +171,9 @@ struct EditorSessionTests {
 
         try await waitUntil("the retry succeeds by itself") {
             guard session.lastSaveError == nil else { return false }
-            return try await scratch.store.load() != nil
+            return try await savedDrawing(scratch.store) != nil
         }
-        try expectSavedStroke(in: await scratch.store.load())
+        try expectSavedStroke(in: await savedDrawing(scratch.store))
     }
 
     @Test("Backgrounding flushes pending ink")
@@ -182,7 +186,7 @@ struct EditorSessionTests {
         // The debounce is far in the future; only the flush can save this.
         await session.flushForBackground()
 
-        try expectSavedStroke(in: await scratch.store.load())
+        try expectSavedStroke(in: await savedDrawing(scratch.store))
     }
 
     @Test("Backgrounding performs one save pass, never a loop")
@@ -207,14 +211,14 @@ struct EditorSessionTests {
         // Exactly one save reached the store: the generation captured when the
         // flush began. The loop this used to be would have saved the second one
         // as well, on a lease that cannot be relied on to survive it.
-        let flushed = try #require(await scratch.store.load())
-        #expect(try PKDrawing(data: flushed.drawingData).strokes.count == 1)
+        let flushed = try #require(try await savedDrawing(scratch.store))
+        #expect(try PKDrawing(data: flushed).strokes.count == 1)
 
         // The newer ink is still dirty rather than dropped, which is what
         // `resumeForForeground` retries (`DataContract.md` §6).
         await session.saveIfNeeded()
-        let resumed = try #require(await scratch.store.load())
-        #expect(try PKDrawing(data: resumed.drawingData).strokes.count == 2)
+        let resumed = try #require(try await savedDrawing(scratch.store))
+        #expect(try PKDrawing(data: resumed).strokes.count == 2)
     }
 
     @Test("The debounce never drops below the contract's 500 ms floor")
@@ -223,19 +227,19 @@ struct EditorSessionTests {
         // The interval the app itself uses, not the tests' short one.
         let session = scratch.session(debounce: .milliseconds(500))
         await session.start()
-        let initial = try await scratch.store.load()
+        let initial = try await savedDrawing(scratch.store)
 
         session.canvas.canvasView.drawing = strokeAcrossPage()
 
         // A three-stroke document serializes in microseconds, so the adaptive
         // term is ~0 and the floor is the whole interval. Nothing may save yet.
         try await Task.sleep(for: .milliseconds(250))
-        #expect(try await scratch.store.load() == initial, "a save beat the 500 ms floor")
+        #expect(try await savedDrawing(scratch.store) == initial, "a save beat the 500 ms floor")
 
         try await waitUntil("the floor elapses and the save lands") {
-            (try await scratch.store.load()) != initial
+            (try await savedDrawing(scratch.store)) != initial
         }
-        try expectSavedStroke(in: await scratch.store.load())
+        try expectSavedStroke(in: await savedDrawing(scratch.store))
     }
 
     @Test("An expensive document widens the debounce above the floor")
@@ -317,9 +321,19 @@ struct EditorSessionTests {
     /// `PKDrawing.dataRepresentation()` is not byte-stable across separately
     /// constructed but equal drawings, so a byte comparison would test the
     /// encoder's determinism rather than the durability the contract promises.
-    private func expectSavedStroke(in file: CanvasFile?) throws {
-        let file = try #require(file)
-        let restored = try PKDrawing(data: file.drawingData)
+    /// The saved ink of the current page, or `nil` if nothing is saved yet.
+    ///
+    /// A free function over the store rather than a method on `Scratch`: the
+    /// store is an actor and therefore `Sendable`, while `Scratch` is not, and
+    /// awaiting a method on it from a `@MainActor` test would send it across an
+    /// isolation boundary.
+    private func savedDrawing(_ store: DocumentStore) async throws -> Data? {
+        guard let index = try await store.load() else { return nil }
+        return try await store.loadPage(index.pageIDs[index.currentPageIndex])
+    }
+
+    private func expectSavedStroke(in drawingData: Data?) throws {
+        let restored = try PKDrawing(data: try #require(drawingData))
         #expect(restored.strokes.count == 1)
         #expect(restored.bounds == strokeAcrossPage().bounds)
     }
@@ -382,17 +396,37 @@ struct EditorSessionTests {
         let directory: URL
         let store: DocumentStore
 
-        var fileURL: URL { directory.appendingPathComponent("JustACanvas.canvas") }
+        var documentURL: URL { directory.appendingPathComponent("JustACanvas.tubernotes") }
+        var indexURL: URL { documentURL.appendingPathComponent("document.plist") }
+        var pagesURL: URL { documentURL.appendingPathComponent("pages") }
 
-        /// When the saved file was last replaced, or `nil` if none exists yet.
+        /// When a page file was last written, or `nil` if none exists yet.
         ///
         /// Timing tests poll this rather than `store.load()`: decoding a megabyte
         /// of property list on every poll would cost more than the intervals
         /// being measured and would show up inside them.
         var savedAt: Date? {
-            let attributes = try? FileManager.default.attributesOfItem(atPath: fileURL.path)
-            return attributes?[.modificationDate] as? Date
+            let urls = (try? FileManager.default.contentsOfDirectory(
+                at: pagesURL,
+                includingPropertiesForKeys: [.contentModificationDateKey]
+            )) ?? []
+            return urls.compactMap {
+                try? $0.resourceValues(forKeys: [.contentModificationDateKey])
+                    .contentModificationDate
+            }.max()
         }
+
+        func writeGarbageIndex(_ data: Data) throws {
+            try FileManager.default.createDirectory(at: pagesURL, withIntermediateDirectories: true)
+            try data.write(to: indexURL)
+        }
+
+        /// The page file backing whatever page the session currently shows.
+        @MainActor
+        func currentPageURL(of session: EditorSession) -> URL {
+            pagesURL.appendingPathComponent("\(session.currentPageID.uuidString).plist")
+        }
+
 
         init() {
             directory = URL(fileURLWithPath: NSTemporaryDirectory())
@@ -401,7 +435,9 @@ struct EditorSessionTests {
                 at: directory,
                 withIntermediateDirectories: true
             )
-            store = DocumentStore(fileURL: directory.appendingPathComponent("JustACanvas.canvas"))
+            store = DocumentStore(
+                directoryURL: directory.appendingPathComponent("JustACanvas.tubernotes")
+            )
         }
 
         /// A short debounce by default: these tests assert the debounce fires,

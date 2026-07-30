@@ -13,7 +13,7 @@ one line at a time and append a dated session entry before stopping.
 | G3 — One-file persistence | Complete | Model, direct autosave, atomic replacement, recovery, and lifecycle behavior pass |
 | G4 — Performance baseline | Pending | Fixed device trace and measurements recorded; evidence-based budgets proposed |
 | G5 — Phillip canvas verdict | Pending | Phillip accepts or returns bounded findings from normal app |
-| P1 — Multi-page durable form | Pending | Format version 2 directory, version 1 migration, per-page save |
+| P1 — Multi-page durable form | Complete | Format version 2 directory, version 1 migration, per-page save |
 | P2 — Horizontal paged navigation | Pending | Swipe turns and snaps one page; live canvas count stays bounded |
 | P3 — Append past the last page | Pending | Swiping past the end yields a writable page, durable once inked |
 | P4 — Phillip pagination verdict | Pending | Phillip accepts or returns bounded findings on turn feel |
@@ -379,3 +379,28 @@ after the UI is built costs both.
 - Status board gains P1–P4. P1 is the durable form with no navigation at all,
   deliberately: a format defect found after the paging UI exists costs both.
 - No application code changed in this entry. Nothing is claimed as working.
+
+### 2026-07-30 — P1 multi-page durable form
+
+- Added `DocumentIndex` and `PageFile`, and rewrote `DocumentStore` around the
+  §4a directory: `document.plist` plus one file per page under `pages/`. The
+  store writes page files first and the index only when it changed, so an
+  ordinary ink save touches exactly one file.
+- Migration from format version 1 runs on load and leaves the version 1 file on
+  disk. Tests cover identity and byte fidelity, that the source survives, that
+  migration does not run twice, and that a version 1 file carrying a grown page
+  height fails to migrate rather than being adopted.
+- `EditorSession` now holds a `DocumentIndex` instead of loose IDs and saves
+  only the current page. Navigation is deliberately absent: this line is the
+  durable form alone, and the document still has exactly one page.
+- Found and fixed while testing, and it is the reason two lifecycle tests
+  failed: the store's cached "index as last written" was treated as authority on
+  what is on disk. With the index file gone but the cache intact, a save wrote
+  page files and skipped the index — producing exactly the unopenable document
+  §4a's write ordering exists to prevent. The cache is now a hint, confirmed by
+  one `stat` per save.
+- Evidence: `Tools/gate.sh` — all six gates PASS including device build,
+  install, and launch on `Phillip’s iPad`. 50 tests pass, up from 33.
+- Not done, and not claimed: no page turning exists yet, so nothing here has
+  been exercised by hand on the device beyond launch. The migration has not been
+  run against a real version 1 document on the iPad — see the next entry.

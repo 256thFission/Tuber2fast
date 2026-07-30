@@ -26,6 +26,13 @@ final class EditorSession {
     /// durable state and is not a product concept.
     private(set) var lastSaveError: String?
 
+    /// The page the canvas is currently showing. Page identity is the session's
+    /// (`DataContract.md` §2); the canvas never learns it.
+    var currentPageID: UUID { index.pageIDs[index.currentPageIndex] }
+
+    /// The number of saved pages. One until P2 introduces navigation.
+    var pageCount: Int { index.pageIDs.count }
+
     /// The one canvas runtime, created once and owned here so that SwiftUI
     /// rebuilding its body cannot replace it.
     ///
@@ -53,8 +60,15 @@ final class EditorSession {
     private let store: DocumentStore
     private let debounce: Duration
 
-    private var documentID = UUID()
-    private var pageID = UUID()
+    /// The document index as last loaded or saved. `EditorSession` owns page
+    /// identity and order (`DataContract.md` §2); the canvas never sees it.
+    ///
+    /// It is not `@Observable` state: SwiftUI has nothing to render from it yet,
+    /// and it changes at save frequency rather than user-action frequency.
+    @ObservationIgnored private var index = DocumentIndex.newDocument(
+        documentID: UUID(),
+        pageID: UUID()
+    )
 
     /// The live drawing differs from the last successful save.
     private var dirty = false
@@ -114,9 +128,11 @@ final class EditorSession {
 
     /// Loads once, before the canvas becomes editable (`DataContract.md` §6).
     ///
-    /// No file means first launch: generate the IDs, take the initial geometry,
-    /// and save an empty document. Invalid data fails loudly and leaves the
-    /// source file untouched — it is never replaced with a blank drawing.
+    /// No document means first launch: generate the IDs and save an empty
+    /// one-page document. A format version 1 file is migrated by the store, and
+    /// arrives here indistinguishable from a version 2 document. Invalid data
+    /// fails loudly and leaves what is on disk untouched — it is never replaced
+    /// with a blank drawing.
     func start() async {
         guard phase == .loading else { return }
         if startInFlight {
@@ -133,21 +149,17 @@ final class EditorSession {
         }
 
         do {
-            if let file = try await store.load() {
-                documentID = file.documentID
-                pageID = file.pageID
-                try canvas.installDrawing(from: file.drawingData)
+            if let loaded = try await store.load() {
+                index = loaded
+                let pageID = loaded.pageIDs[loaded.currentPageIndex]
+                try canvas.installDrawing(from: await store.loadPage(pageID))
             } else {
-                documentID = UUID()
-                pageID = UUID()
+                index = DocumentIndex.newDocument(documentID: UUID(), pageID: UUID())
                 let snapshot = canvas.drawingSnapshot()
                 let drawingData = await snapshot.serialized().data
                 try await store.save(
-                    currentFile(
-                        drawingData: drawingData,
-                        documentID: documentID,
-                        pageID: pageID
-                    )
+                    index: index,
+                    changedPages: [index.pageIDs[0]: drawingData]
                 )
             }
             phase = .ready
@@ -156,7 +168,8 @@ final class EditorSession {
             canvas.markEditable()
             CanvasLog.event(
                 CanvasLog.lifecycle, "lifecycle",
-                "session ready; pageHeight=\(PageGeometry.height)"
+                "session ready; pages=\(index.pageIDs.count) "
+                    + "current=\(index.currentPageIndex)"
             )
         } catch {
             phase = .failed(String(describing: error))
@@ -274,20 +287,20 @@ final class EditorSession {
         // suspend, so a save never pairs one generation's identity with another's
         // ink.
         let snapshot = canvas.drawingSnapshot()
-        let capturedDocumentID = documentID
-        let capturedPageID = pageID
+        let capturedIndex = index
+        let capturedPageID = capturedIndex.pageIDs[capturedIndex.currentPageIndex]
         let serialized = await snapshot.serialized()
         // Measured where the work happens rather than timed again here: the next
         // debounce is derived from this cost (`DataContract.md` §5).
         lastSerializeDuration = serialized.duration
-        let file = currentFile(
-            drawingData: serialized.data,
-            documentID: capturedDocumentID,
-            pageID: capturedPageID
-        )
 
         do {
-            try await store.save(file)
+            // Only the page that was edited. The store rewrites the index only
+            // if it changed, so an ordinary ink save touches exactly one file.
+            try await store.save(
+                index: capturedIndex,
+                changedPages: [capturedPageID: serialized.data]
+            )
             lastSaveError = nil
             consecutiveSaveFailures = 0
         } catch {
@@ -334,20 +347,5 @@ final class EditorSession {
     func resumeForForeground() {
         guard phase == .ready, dirty, !saveInFlight else { return }
         scheduleSave()
-    }
-
-    private func currentFile(
-        drawingData: Data,
-        documentID: UUID,
-        pageID: UUID
-    ) -> CanvasFile {
-        CanvasFile(
-            formatVersion: CanvasFile.currentFormatVersion,
-            documentID: documentID,
-            pageID: pageID,
-            pageWidth: PageGeometry.width,
-            pageHeight: PageGeometry.height,
-            drawingData: drawingData
-        )
     }
 }
