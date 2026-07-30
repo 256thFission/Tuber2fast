@@ -10,7 +10,7 @@ import UIKit
 struct PageCanvasControllerTests {
     @Test("The canvas owner configures page space, input policy, and fit zoom")
     func canvasInvariants() {
-        let controller = PageCanvasController()
+        let controller = PageCanvasController(toolPicker: PKToolPicker())
         let root = controller.view!
         root.frame = CGRect(x: 0, y: 0, width: 820, height: 1180)
         root.layoutIfNeeded()
@@ -61,7 +61,7 @@ struct PageCanvasControllerTests {
 
     @Test("A whole page fits on screen at minimum zoom")
     func wholePageFitsAtMinimumZoom() {
-        let controller = PageCanvasController()
+        let controller = PageCanvasController(toolPicker: PKToolPicker())
         let root = controller.view!
         root.frame = CGRect(x: 0, y: 0, width: 820, height: 1180)
         root.layoutIfNeeded()
@@ -80,7 +80,7 @@ struct PageCanvasControllerTests {
 
     @Test("Ink stays in page space through zoom and pan")
     func inkIsAuthoredInPageSpace() {
-        let controller = PageCanvasController()
+        let controller = PageCanvasController(toolPicker: PKToolPicker())
         let root = controller.view!
         root.frame = CGRect(x: 0, y: 0, width: 820, height: 1180)
         root.layoutIfNeeded()
@@ -113,7 +113,7 @@ struct PageCanvasControllerTests {
     /// prevents a load from marking the document dirty.
     @Test("PencilKit reports a programmatic drawing assignment synchronously")
     func drawingChangeDeliveryIsSynchronous() async throws {
-        let controller = PageCanvasController()
+        let controller = PageCanvasController(toolPicker: PKToolPicker())
         var deliveries = 0
         controller.onDrawingChanged = { deliveries += 1 }
 
@@ -134,7 +134,7 @@ struct PageCanvasControllerTests {
 
     @Test("A copied drawing snapshot serializes without consulting the live canvas")
     func drawingSnapshotIsIndependent() async throws {
-        let controller = PageCanvasController()
+        let controller = PageCanvasController(toolPicker: PKToolPicker())
         controller.canvasView.drawing = strokeAcrossPage()
         let snapshot = controller.drawingSnapshot()
 

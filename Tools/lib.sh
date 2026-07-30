@@ -32,6 +32,7 @@ DEVICE_NAME="${TN_DEVICE_NAME:-Phillip’s iPad}"
 UIKIT_ALLOWED_FILES=(
   "TuberNotesApp/EditorLifecycle.swift"
   "TuberNotesApp/PageCanvasController.swift"
+  "TuberNotesApp/PagedCanvasController.swift"
 )
 
 # Sources allowed to perform file I/O. Empty until G3 introduces DocumentStore.

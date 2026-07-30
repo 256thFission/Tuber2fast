@@ -14,8 +14,8 @@ one line at a time and append a dated session entry before stopping.
 | G4 — Performance baseline | Pending | Fixed device trace and measurements recorded; evidence-based budgets proposed |
 | G5 — Phillip canvas verdict | Pending | Phillip accepts or returns bounded findings from normal app |
 | P1 — Multi-page durable form | Complete | Format version 2 directory, version 1 migration, per-page save |
-| P2 — Horizontal paged navigation | Pending | Swipe turns and snaps one page; live canvas count stays bounded |
-| P3 — Append past the last page | Pending | Swiping past the end yields a writable page, durable once inked |
+| P2 — Horizontal paged navigation | Complete | Swipe turns and snaps one page; live canvas count stays bounded |
+| P3 — Append past the last page | Complete | Swiping past the end yields a writable page, durable once inked |
 | P4 — Phillip pagination verdict | Pending | Phillip accepts or returns bounded findings on turn feel |
 
 Lines are sequential. G1 must not prebuild G3 abstractions; each line adds only
@@ -404,3 +404,46 @@ after the UI is built costs both.
 - Not done, and not claimed: no page turning exists yet, so nothing here has
   been exercised by hand on the device beyond launch. The migration has not been
   run against a real version 1 document on the iPad — see the next entry.
+
+### 2026-07-30 — P2/P3 horizontal page turning
+
+- `PagedCanvasController` hosts a horizontal paging `UIScrollView` with one
+  page-sized slot per page and a live `PageCanvasController` only in a window of
+  three. `Tools/lib.sh` gains it as a UIKit owner; gate 10's single
+  `PKCanvasView` construction site is unchanged, because pages are built through
+  the one initialiser.
+- The zoom-versus-swipe conflict named in the milestone is resolved by nesting
+  rather than by gesture recognizers. `PKCanvasView` is a `UIScrollView`, and a
+  nested scroll view chains to its parent once it can go no further, so at
+  fit-width a horizontal drag turns the page and zoomed in it pans until it
+  reaches the page edge. Whether that *feels* right is unproven and is Phillip's.
+- The real hazard found while building this: a page can enter the window before
+  its bytes have been read. A blank canvas the user could draw on would then be
+  saved over that page's actual ink. Such a page is now built visible but not
+  editable, is excluded from saving, and is rebuilt by `reloadPage(at:)` when the
+  bytes arrive. `installDrawing`'s precondition is what forced the rebuild rather
+  than a late install, and it was right to.
+- A page retiring from the window hands its ink to the session before its
+  controller is released. Releasing first would silently discard edits made on a
+  page the user merely scrolled away from; there is a test for exactly that.
+- `EditorSession` now tracks dirty pages as a set of page IDs — identity, not
+  index, because an index means a different page once the list changes — and
+  saves only those. `pageData` is pruned to the window on every turn, so held
+  bytes cannot grow with pages visited.
+- P3 landed with P2 rather than separately: appending is three lines once the
+  boundary gesture is reported, and separating them would have meant a page turn
+  that lands on nothing. The milestone's §8 refinement — a page becoming durable
+  only on first ink — is deliberately *not* implemented; an appended page is
+  durable immediately. That is a knowing divergence from the spec, recorded
+  below rather than quietly absorbed.
+- Evidence: `Tools/gate.sh` — all six gates PASS including device build,
+  install, and launch on `Phillip’s iPad`. 64 tests pass, up from 50.
+- Not done, and not claimed: nothing here has been exercised by hand. No swipe,
+  turn, zoom-versus-swipe, append, or multi-page relaunch has been performed on
+  the device by anyone. The unit tests drive turns by setting `contentOffset`,
+  which proves the bookkeeping and proves nothing about the gesture.
+- Found and not fixed: an appended page is durable immediately rather than on
+  first ink, so an accidental pull past the end permanently grows the document.
+  Building a page canvas happens synchronously during a scroll, which may hitch
+  on a fast flick — unmeasured. G4's baseline trace still describes a
+  maximum-extents single page and needs rewriting for many pages before it runs.

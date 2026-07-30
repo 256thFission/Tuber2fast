@@ -45,16 +45,19 @@ struct DrawingSnapshot: Sendable {
     }
 }
 
-/// The sole owner of the live canvas runtime.
+/// The live runtime for exactly one page.
 ///
 /// Per `Docs/Architecture/DataContract.md` §2 this owner holds the live
-/// `PKDrawing`, pan, zoom, gestures, and page projection. It is the only file
-/// in the app that imports PencilKit or UIKit, it never reads or writes files,
-/// and it never chooses save policy.
+/// `PKDrawing`, pan, zoom, gestures, and page projection. It never reads or
+/// writes files and never chooses save policy.
 ///
-/// `PKCanvasView` is itself a `UIScrollView`, so pan and zoom are the framework's
-/// own — no second scroll view, no gesture recognizers of ours, and no
-/// frame-frequency work leaving this runtime.
+/// It does not know its own page index, its neighbours, or how many pages exist
+/// (§2 rule 7a). `PagedCanvasController` places it and `EditorSession` decides
+/// which page it shows; this type is told, and never asks.
+///
+/// `PKCanvasView` is itself a `UIScrollView`, so pan and zoom within a page are
+/// the framework's own — no gesture recognizers of ours, and no frame-frequency
+/// work leaving this runtime.
 @MainActor
 final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
     let canvasView = PKCanvasView()
@@ -63,7 +66,9 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
     /// no sample, and no generation number (`DataContract.md` §5).
     var onDrawingChanged: (() -> Void)?
 
-    private let toolPicker = PKToolPicker()
+    /// Shared across pages and owned by `PagedCanvasController`. One picker per
+    /// page would mean the selected tool resetting every time you turn one.
+    private let toolPicker: PKToolPicker
     private var hasEstablishedInitialZoom = false
 
     /// A hairline showing where the page ends.
@@ -88,7 +93,8 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
     private var hasLoggedFirstTouch = false
     private var hasLoggedFirstChange = false
 
-    init() {
+    init(toolPicker: PKToolPicker) {
+        self.toolPicker = toolPicker
         super.init(nibName: nil, bundle: nil)
 
         // Page space and change reporting are established before the view
@@ -142,7 +148,6 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
         updatePageBoundary()
 
         toolPicker.addObserver(canvasView)
-        toolPicker.setVisible(true, forFirstResponder: canvasView)
     }
 
     /// Traces the page rect in page space, scaled into content coordinates.
@@ -167,16 +172,25 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
         CATransaction.commit()
     }
 
-    override func viewDidAppear(_ animated: Bool) {
-        super.viewDidAppear(animated)
-        // The tool picker only shows for the first responder.
+    /// Takes keyboard focus so the shared tool picker shows for this page.
+    /// Called by `PagedCanvasController` when this page becomes the visible one;
+    /// a page that is merely prepared alongside it must not steal focus.
+    func becomeActivePage() {
         canvasView.becomeFirstResponder()
+        toolPicker.setVisible(true, forFirstResponder: canvasView)
         CanvasLog.event(
             CanvasLog.canvas, "canvas",
             "appeared; firstResponder=\(canvasView.isFirstResponder) "
                 + "policy=\(canvasView.drawingPolicy.rawValue) "
                 + "contentSize=\(canvasView.contentSize) zoom=\(canvasView.zoomScale)"
         )
+    }
+
+    /// Whether the page is at the scale it opens at, where a horizontal drag
+    /// cannot pan within the page and therefore belongs to the page turn
+    /// (`PagesAndTurning.md` §6).
+    var isAtFitWidthScale: Bool {
+        canvasView.contentSize.width <= canvasView.bounds.width + 0.5
     }
 
     /// The first touch to reach the canvas, and nothing after it.
@@ -294,23 +308,4 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
     func scrollViewDidZoom(_ scrollView: UIScrollView) {
         updatePageBoundary()
     }
-}
-
-/// Hosts the canvas runtime in SwiftUI.
-///
-/// The controller is owned by `EditorSession` and merely handed here, so
-/// re-evaluating the SwiftUI body cannot rebuild the canvas or its undo manager
-/// (`DataContract.md` §2 rule 6).
-///
-/// `updateUIViewController` is deliberately empty: intentions travel to the
-/// session, which drives the canvas directly. Nothing about the canvas is
-/// re-derived from SwiftUI state.
-struct PageCanvas: UIViewControllerRepresentable {
-    let controller: PageCanvasController
-
-    func makeUIViewController(context: Context) -> PageCanvasController {
-        return controller
-    }
-
-    func updateUIViewController(_ controller: PageCanvasController, context: Context) {}
 }

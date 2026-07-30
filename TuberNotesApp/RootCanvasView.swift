@@ -21,7 +21,7 @@ struct RootCanvasView: View {
                 failure(message)
 
             case .ready:
-                PageCanvas(controller: session.canvas)
+                PagedCanvas(controller: session.pages)
                     .ignoresSafeArea()
                     .accessibilityIdentifier("page.canvas")
                     // Top-leading, not bottom: the PencilKit tool picker floats
