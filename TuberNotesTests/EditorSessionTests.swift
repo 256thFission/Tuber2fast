@@ -222,6 +222,40 @@ struct EditorSessionTests {
         try expectSavedStroke(in: await scratch.store.load())
     }
 
+    @Test("A transient save failure retries itself with no user action")
+    func failedSaveRetriesItself() async throws {
+        let scratch = Scratch()
+        let session = scratch.session()
+        await session.start()
+
+        // Break the destination the way `failedSaveStaysDirty` does: the
+        // containing directory becomes a file, so every save throws.
+        try FileManager.default.removeItem(at: scratch.directory)
+        try Data().write(to: scratch.directory)
+
+        session.canvas.canvasView.drawing = strokeAcrossPage()
+        try await waitUntil("the first autosave fails") { session.lastSaveError != nil }
+
+        // Long enough for several backed-off retries at a 20 ms debounce
+        // (40 ms, 80 ms, 160 ms, ...), all of them still failing.
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(session.lastSaveError != nil)
+
+        // Nothing below touches the session: no Retry tap, no further drawing,
+        // no scene transition. Only the store starts working again.
+        try FileManager.default.removeItem(at: scratch.directory)
+        try FileManager.default.createDirectory(
+            at: scratch.directory,
+            withIntermediateDirectories: true
+        )
+
+        try await waitUntil("the retry succeeds by itself") {
+            guard session.lastSaveError == nil else { return false }
+            return try await scratch.store.load() != nil
+        }
+        try expectSavedStroke(in: await scratch.store.load())
+    }
+
     @Test("Backgrounding flushes pending ink")
     func backgroundFlushSaves() async throws {
         let scratch = Scratch()
@@ -235,7 +269,131 @@ struct EditorSessionTests {
         try expectSavedStroke(in: await scratch.store.load())
     }
 
+    @Test("Backgrounding performs one save pass, never a loop")
+    func backgroundFlushIsASinglePass() async throws {
+        let scratch = Scratch()
+        // A far-future debounce, so a timer cannot account for any save observed
+        // here and the flush is the only thing that can write.
+        let session = scratch.session(debounce: .seconds(30))
+        await session.start()
+
+        session.canvas.canvasView.drawing = strokeAcrossPage()
+
+        let flush = Task { await session.flushForBackground() }
+        // One yield hands the main actor to the flush, which runs as far as its
+        // first suspension — inside serialization, with one generation captured
+        // and the save in flight. It cannot proceed past that without the main
+        // actor, which this test holds again from here.
+        await Task.yield()
+        session.canvas.canvasView.drawing = twoStrokesAcrossPage()
+        await flush.value
+
+        // Exactly one save reached the store: the generation captured when the
+        // flush began. The loop this used to be would have saved the second one
+        // as well, on a lease that cannot be relied on to survive it.
+        let flushed = try #require(await scratch.store.load())
+        #expect(try PKDrawing(data: flushed.drawingData).strokes.count == 1)
+
+        // The newer ink is still dirty rather than dropped, which is what
+        // `resumeForForeground` retries (`DataContract.md` §6).
+        await session.saveIfNeeded()
+        let resumed = try #require(await scratch.store.load())
+        #expect(try PKDrawing(data: resumed.drawingData).strokes.count == 2)
+    }
+
+    @Test("The debounce never drops below the contract's 500 ms floor")
+    func debounceFloorHolds() async throws {
+        let scratch = Scratch()
+        // The interval the app itself uses, not the tests' short one.
+        let session = scratch.session(debounce: .milliseconds(500))
+        await session.start()
+        let initial = try await scratch.store.load()
+
+        session.canvas.canvasView.drawing = strokeAcrossPage()
+
+        // A three-stroke document serializes in microseconds, so the adaptive
+        // term is ~0 and the floor is the whole interval. Nothing may save yet.
+        try await Task.sleep(for: .milliseconds(250))
+        #expect(try await scratch.store.load() == initial, "a save beat the 500 ms floor")
+
+        try await waitUntil("the floor elapses and the save lands") {
+            (try await scratch.store.load()) != initial
+        }
+        try expectSavedStroke(in: await scratch.store.load())
+    }
+
+    @Test("An expensive document widens the debounce above the floor")
+    func debounceWidensWithSerializeCost() async throws {
+        let scratch = Scratch()
+        // A negligible floor, so what is measured here is the adaptive term and
+        // nothing else.
+        let session = scratch.session(debounce: .milliseconds(1))
+        await session.start()
+
+        let expensive = manyStrokes(count: 20_000)
+
+        // The yardstick, measured warm. A freshly built drawing pays one-time
+        // cost on its first traversal that it never pays again — 126 ms against
+        // 48 ms when this was written — and the session's own measurement is
+        // always a warm one. The cold number would overstate the expected
+        // interval by more than the interval itself.
+        let snapshot = DrawingSnapshot(drawing: expensive)
+        _ = await snapshot.serialized()
+        let serializeCost = await snapshot.serialized().duration
+        #expect(
+            serializeCost > .milliseconds(20),
+            "fixture serializes in \(serializeCost), too cheap to exercise back-off"
+        )
+
+        // One save of the expensive document, which is what teaches the session
+        // how much a serialization of it costs. Called directly so that this
+        // step's own timing is not part of the measurement below.
+        session.canvas.canvasView.drawing = expensive
+        await session.saveIfNeeded()
+        let taught = scratch.savedAt
+
+        // Now make a cheap change. Its own save costs almost nothing, so what is
+        // being timed is the scheduled interval and not the work: four times the
+        // serialization the session just measured, rather than the 1 ms floor.
+        //
+        // Timing the two *expensive* saves against each other instead does not
+        // work — the first assignment of a 20,000-stroke drawing carries one-time
+        // PencilKit cost larger than the interval under test, which made an
+        // earlier version of this test pass on a fixed debounce.
+        let clock = ContinuousClock()
+        let started = clock.now
+        session.canvas.canvasView.drawing = strokeAcrossPage()
+        try await waitUntil("the debounced save lands") { scratch.savedAt != taught }
+        let scheduled = started.duration(to: clock.now)
+
+        // Expected is four serializations; asserting two leaves room for machine
+        // variance while still being far above the floor a fixed debounce would
+        // have used (~1 ms, verified by breaking the adaptive term).
+        #expect(
+            scheduled > serializeCost * 2,
+            "interval \(scheduled) did not back off for a document that serializes in \(serializeCost)"
+        )
+    }
+
     // MARK: - Fixtures
+
+    /// Polls until `condition` holds. Autosave, its retries, and the debounce are
+    /// timers, so a test that asserts one fires has to wait for wall time; the
+    /// alternative is a fixed sleep long enough to be slow and short enough to be
+    /// flaky.
+    private func waitUntil(
+        _ what: String,
+        within timeout: Duration = .seconds(10),
+        _ condition: () async throws -> Bool
+    ) async throws {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        while clock.now < deadline {
+            if try await condition() { return }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        Issue.record(Comment(rawValue: "timed out waiting for: \(what)"))
+    }
 
     /// Asserts the saved bytes reconstruct the fixture stroke.
     ///
@@ -271,11 +429,54 @@ struct EditorSessionTests {
         return PKDrawing(strokes: [PKStroke(ink: PKInk(.pen, color: .black), path: path)])
     }
 
+    /// A second, distinguishable generation. Stroke count is what the single-pass
+    /// test reads back, so the two fixtures differ in exactly that.
+    private func twoStrokesAcrossPage() -> PKDrawing {
+        let stroke = strokeAcrossPage().strokes[0]
+        return PKDrawing(strokes: [stroke, stroke])
+    }
+
+    /// A document expensive enough to serialize that the debounce must adapt to
+    /// it. Real handwriting reaches these stroke counts on a grown page, which is
+    /// the situation a fixed 500 ms interval was measured against and lost.
+    private func manyStrokes(count: Int) -> PKDrawing {
+        let ink = PKInk(.pen, color: .black)
+        let strokes = (0..<count).map { index in
+            let y = Double(index % 700) + 40
+            let points = (0..<8).map { step in
+                PKStrokePoint(
+                    location: CGPoint(x: 40 + Double(step) * 8, y: y),
+                    timeOffset: Double(step) * 0.01,
+                    size: CGSize(width: 3, height: 3),
+                    opacity: 1,
+                    force: 1,
+                    azimuth: 0,
+                    altitude: .pi / 2
+                )
+            }
+            return PKStroke(
+                ink: ink,
+                path: PKStrokePath(controlPoints: points, creationDate: Date(timeIntervalSince1970: 0))
+            )
+        }
+        return PKDrawing(strokes: strokes)
+    }
+
     private final class Scratch {
         let directory: URL
         let store: DocumentStore
 
         var fileURL: URL { directory.appendingPathComponent("JustACanvas.canvas") }
+
+        /// When the saved file was last replaced, or `nil` if none exists yet.
+        ///
+        /// Timing tests poll this rather than `store.load()`: decoding a megabyte
+        /// of property list on every poll would cost more than the intervals
+        /// being measured and would show up inside them.
+        var savedAt: Date? {
+            let attributes = try? FileManager.default.attributesOfItem(atPath: fileURL.path)
+            return attributes?[.modificationDate] as? Date
+        }
 
         init() {
             directory = URL(fileURLWithPath: NSTemporaryDirectory())

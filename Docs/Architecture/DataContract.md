@@ -151,8 +151,31 @@ interaction-ended event, a generation number, or a drawing payload.
 When the editor receives `drawingChanged`:
 
 1. Set `dirty = true`.
-2. Reset a 500 ms debounce timer unless a save is already in flight.
+2. Reset the debounce timer unless a save is already in flight.
 3. When the timer fires, start `saveIfNeeded`.
+
+The debounce interval is `max(500 ms, 4 × the most recent serialize duration)`.
+500 ms is a hard floor and the interval never goes below it, so a small document
+behaves exactly as a flat 500 ms debounce did. A large one backs off in
+proportion to what writing it actually costs, instead of chaining whole-document
+serializations back to back for as long as the user keeps writing.
+
+This exists because serialize cost scales with total ink and not with changed
+ink — the format's defect, and the thing §9 measures. Adaptive debounce is the
+mitigation available without changing the format: it widens the window in which
+unwritten ink exists and buys a cheaper duty cycle with it. It is not a fix and
+it does not retire the §9 disqualification test.
+
+The interval is driven by measured duration and deliberately not by serialized
+size, which was proposed and rejected. Bytes are a property of what the document
+contains rather than of what the edit cost: once a milestone adds placed images
+or lasso operations, a document holding one large image would sit permanently at
+the ceiling and throttle ink saves it did not cause, and a single structural edit
+would overreact to a transient spike. Duration at least tracks work actually
+performed. Neither signal can separate "a little changed" from "the document is
+large", because in a whole-file format every save costs the whole document; that
+is the defect itself, and no control signal fixes it. Bounding the serialized
+unit does.
 
 `saveIfNeeded` is serialized:
 
@@ -160,16 +183,32 @@ When the editor receives `drawingChanged`:
 guard dirty && !saveInFlight
 dirty = false
 saveInFlight = true
-capture the current drawing value
+capture the current drawing value and page height as one generation
 create drawingData outside the PencilKit callback
+record the serialize duration; it sets the next debounce interval
 await DocumentStore.save(the complete CanvasFile)
 saveInFlight = false
-if dirty, saveIfNeeded again
+on success, clear the retry backoff
+on failure, dirty = true, report the error, reschedule after the backoff
+if dirty, arm a fresh debounce rather than serializing again immediately
 ```
 
-If capture, encoding, or save fails, set `dirty = true`, clear
-`saveInFlight`, report the error, and allow retry. There is never more than one
-capture/save operation in flight, so stale-save generations cannot exist.
+Work that arrives during a save receives a fresh debounce after that save
+returns. The editor does not re-enter serialization the instant a save
+completes; that is the back-to-back case the adaptive interval exists to avoid.
+
+If capture, encoding, or save fails, set `dirty = true`, clear `saveInFlight`,
+report the error, and reschedule the save automatically. The first retry waits
+the ordinary debounce interval, each further consecutive failure doubles the
+wait, and the wait is capped at five seconds; a successful save resets the
+backoff. The ceiling is deliberately short: the wait is time the document
+spends knowingly unsaved, so a long ceiling buys nothing and only delays
+recovery once the cause clears. Recovery does not depend on the user drawing
+again or
+finding a Retry control — a transient store failure that repairs itself must not
+leave a document indefinitely unsaved. The error stays visible while dirty,
+because an unsaved document is not a silent condition. There is never more than
+one capture/save operation in flight, so stale-save generations cannot exist.
 
 Reading `canvasView.drawing` occurs on the main actor after the debounce fires,
 not inside PencilKit's change callback. The implementation locates
@@ -226,9 +265,16 @@ the migration for files written before it.
 
 ## 6. Lifecycle and recovery
 
-On backgrounding, the editor cancels the debounce and makes a best-effort call
-to `saveIfNeeded` using the execution time iPadOS provides. There is no promised
-flush duration. Only a successfully returned `save` clears dirty state.
+On backgrounding, the editor cancels the debounce and makes one best-effort save
+pass using the execution time iPadOS provides. There is no promised flush
+duration. Only a successfully returned `save` clears dirty state.
+
+The background flush is deliberately a single pass and not a loop. It does not
+chase ink that changed during it, and it does not run the §5 retry backoff
+against a failing store. The iPadOS execution lease is finite and may be cut off
+at any point, so spending it on repeated attempts buys nothing that the
+foreground path does not already provide. Whatever remains dirty is saved after
+foregrounding, on the ordinary debounced path.
 
 If execution time expires before return, the save is unacknowledged. If the
 process survives, the editor remains dirty and retries after foregrounding. If
@@ -298,13 +344,47 @@ named physical iPad, normal build configuration, and one documented trace:
 
 1. five minutes alternating ordinary handwriting, erasing, undo, and redo;
 2. twenty full-range pinch-zoom and pan cycles;
-3. ten background/foreground cycles; and
-4. force-quit and relaunch after a confirmed successful save.
+3. ten background/foreground cycles;
+4. force-quit and relaunch after a confirmed successful save;
+5. build the worst case the format permits — the page grown to the maximum
+   extents of §5a and densely inked over its whole length — then save it and
+   relaunch onto it, so what follows measures a real large document and not a
+   transient canvas; and
+6. repeat step 1 on that document, continuously, without letting the editor go
+   idle between saves.
+
+Steps 1 through 4 measure the ordinary case. Steps 5 and 6 measure the case that
+decides whether the format survives, and they are not optional. Save cost scales
+with total ink rather than with the ink that changed, so a trace that never
+reaches a large near-maximum document produces a clean baseline, budgets adopted
+from a best case, and a cliff discovered later in front of the maintainer.
 
 Record build, device and OS, trace duration, main-thread hangs, animation
-hitches attributable to app work, memory at start/end/peak, save durations,
-restore duration, and crashes. G4 then proposes evidence-based numeric budgets
-in a `CONTRACT:` change before another feature is added.
+hitches attributable to app work, memory at start/end/peak, restore duration,
+and crashes.
+
+Save cost is recorded as a distribution, never as a single best-case sample:
+p50, p95, and maximum serialize duration, and the same three for total save
+duration, over every save in the trace. Record with them the bytes written per
+save, the cumulative bytes written across the whole trace, the stroke count and
+page extents in force at each measurement, and the device thermal state sampled
+throughout. Steps 1–4 and steps 5–6 are reported as separate distributions; one
+pooled distribution would hide the thing being looked for.
+
+The disqualification criteria are committed here, before any measurement exists,
+so that the evidence decides rather than being argued with afterward. If the
+measured p95 serialize duration or the cumulative trace write volume breaches
+its threshold, the one-file whole-drawing format is disqualified as the notebook
+substrate: the package writer of `DESPIKING_PROPOSAL.md` becomes the next line
+of `Docs/Plan/PLAN.md` rather than a deferred someday, and no further feature is
+built on `CanvasFile`.
+
+The thresholds are proposals awaiting Phillip's approval, not established
+facts and not results: p95 serialize duration ≤ 50 ms, and cumulative trace
+write volume ≤ 250 MB. Nothing has been measured yet. Both numbers are guesses
+offered as starting points for him to accept or revise before G4 runs, and
+neither carries authority until he does. G4 proposes evidence-based budgets in a
+`CONTRACT:` change before another feature is added; Phillip alone adopts them.
 
 Mechanical acceptance requires no synchronous file I/O on main, one canvas per
 editor session, no crash, no lost acknowledged save, and no monotonic retention

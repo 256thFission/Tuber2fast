@@ -8,9 +8,9 @@ one line at a time and append a dated session entry before stopping.
 | Line | Status | Exit |
 |---|---|---|
 | G0 — Foundational contracts | Complete | Data and Just a Canvas contracts committed on an orphan root |
-| G1 — Empty iPad application shell | Pending | New project installs and launches a blank non-editable root on named iPad |
-| G2 — Live canvas runtime | Pending | One stable PencilKit runtime draws, erases, pans, zooms, undoes, and redoes |
-| G3 — One-file persistence | Pending | Model, direct autosave, atomic replacement, recovery, and lifecycle behavior pass |
+| G1 — Empty iPad application shell | Complete | New project installs and launches a blank non-editable root on named iPad |
+| G2 — Live canvas runtime | Complete | One stable PencilKit runtime draws, erases, pans, zooms, undoes, and redoes |
+| G3 — One-file persistence | Complete | Model, direct autosave, atomic replacement, recovery, and lifecycle behavior pass |
 | G4 — Performance baseline | Pending | Fixed device trace and measurements recorded; evidence-based budgets proposed |
 | G5 — Phillip canvas verdict | Pending | Phillip accepts or returns bounded findings from normal app |
 
@@ -68,6 +68,43 @@ what its exit requires while conforming to the complete contract.
   Just a Canvas to four owners". It earns the exception in §3 by isolating the
   UIKit background-execution lease out of `EditorSession`, holds no durable
   state, and is enumerated in `Tools/lib.sh`.
+- 2026-07-29 — Extended G4's baseline trace to a worst case. The trace as
+  written drew for five minutes on one page height and could not reach the
+  failure it exists to find: every save serializes the whole `PKDrawing`, so
+  cost scales with total ink, which the "scale with visible or changed content"
+  rule forbids and which §5a's downward growth amplifies. The trace now builds a
+  maximum-extents, densely inked document and runs continuous writing on it, and
+  records serialize and save cost as p50/p95/max distributions plus bytes per
+  save, cumulative bytes, stroke count and extents per measurement, and thermal
+  state. `DataContract.md` §9 and the milestone's baseline trace both changed.
+- 2026-07-29 — Pre-committed G4's disqualification criteria before any
+  measurement exists, so the data decides instead of being argued with
+  afterward. A breach of p95 serialize duration or cumulative trace write volume
+  disqualifies the one-file whole-drawing format as the notebook substrate and
+  promotes the `DESPIKING_PROPOSAL.md` package writer to the next plan line.
+  Proposed thresholds awaiting Phillip's approval, measured by nobody: p95
+  serialize ≤ 50 ms, cumulative trace write volume ≤ 250 MB.
+- 2026-07-29 — Permitted adaptive debounce and automatic save retry. The
+  debounce becomes `max(500 ms, 4 × the most recent serialize duration)`, with
+  500 ms as a hard floor, so small documents are unchanged and large ones stop
+  chaining whole-document serializations during continuous writing; it is the
+  mitigation available without a format change and does not retire the §9 test.
+  A failed save reschedules itself with doubling backoff capped at five seconds,
+  resetting on success, rather than waiting for the user to draw again. Phillip
+  set the ceiling at five seconds, not the half minute first proposed: the wait
+  is time the document spends knowingly unsaved, so a long ceiling buys nothing
+  and only delays recovery once the cause clears. The
+  background flush stays a single best-effort pass and deliberately runs neither
+  the loop nor the backoff, because the iPadOS execution lease is finite.
+  `DataContract.md` §5 and §6 changed; the milestone follows them.
+- 2026-07-29 — Rejected a size-driven debounce in favour of the duration-driven
+  one. Phillip's objection: bytes describe what a document contains, not what an
+  edit cost, so once placed images or lasso operations exist a document holding
+  one large image would sit at the ceiling permanently and throttle ink saves it
+  did not cause. Recorded in §5 because the idea is likely to recur. The wider
+  point stands: no control signal distinguishes a small change from a large
+  document while every save rewrites the whole file, so the mitigation stays a
+  safety valve and the format remains what §9 is measuring.
 
 ## Session log
 
@@ -160,3 +197,99 @@ what its exit requires while conforming to the complete contract.
   ink rather than changed content, to be measured at G4.
 - Status board unchanged. G1–G3 code exists but no `Tools/gate.sh` run has been
   recorded on this branch, and status is not flipped without gate evidence.
+
+### 2026-07-29 — Save-cost contract amendments
+
+- Amended `DataContract.md` §9 and the milestone's baseline trace so G4 can find
+  the total-ink cliff: two added trace steps build a maximum-extents, densely
+  inked document and write on it continuously, and cost is recorded as a
+  distribution rather than a single sample. Existing steps 1–4 kept intact.
+- Recorded G4's disqualification criteria in §9 in advance of measurement, with
+  the two thresholds marked explicitly as proposals for Phillip and not as
+  findings. No measurement has been taken.
+- Amended §5 and §6 to permit the two save-policy changes being implemented
+  concurrently: adaptive debounce with a 500 ms floor, and automatic retry with
+  doubling backoff capped at five seconds. §5's pseudocode now describes the
+  actual algorithm, including the fresh debounce after a save rather than
+  immediate re-serialization, and §6 records that the background flush is one
+  best-effort pass with no loop and no backoff.
+- Scope was documentation only. No application code was changed in this session;
+  `TuberNotesApp/` was being edited concurrently by another agent and was read
+  only to confirm what the amendments describe.
+- Remaining divergence from the amended contract, unchanged here: §6 now
+  requires a single background pass, while `EditorSession.flushForBackground`
+  still calls the looping `saveIfNeeded`; §5 now requires automatic retry, which
+  `performAutosavePass` does not yet do. Both are the concurrent
+  implementation's work. `CanvasFile.validated()` still couples the durable
+  value to the app's global width constant rather than to per-document
+  immutability.
+- Status board unchanged, for the same reason as the preceding session: no
+  `Tools/gate.sh` run has been recorded on this branch.
+
+### 2026-07-29 — G3 save-path hardening
+
+- The imported implementation did not build. `Thread.isMainThread` in
+  `DrawingSnapshot.serialized()`, introduced by `306ab29`, is unavailable from an
+  async context and failed gate 30 under warnings-as-errors, so gates 40–60 had
+  never run on this branch and the adopted code arrived unverified. The
+  off-main evidence is now read from a synchronous closure and retained.
+- A failed autosave now reschedules itself with doubling backoff capped at five
+  seconds, resetting on success, per the amended §5. `saveIfNeeded` still
+  refuses to loop on failure but arms one retry timer before returning, because
+  it cancels the debounce on entry and a failed Retry tap would otherwise have
+  reintroduced the original defect.
+- `flushForBackground` awaits any in-flight save and then performs at most one
+  more, per the amended §6. Still-dirty stays dirty for `resumeForForeground`.
+- The debounce is now `max(500 ms, 4 × last serialize duration)`, measured where
+  the serialization happens and returned to the session rather than timed twice.
+- The load-suppression flag is deleted. A test established that PencilKit
+  delivers `canvasViewDrawingDidChange` synchronously, inside the `drawing`
+  assignment — one callback, before the statement returns — so the flag was
+  redundant rather than inert, and would have gone silently inert had delivery
+  ever moved off the assignment. The surviving mechanism is the session's phase
+  guard, which holds under either behavior and also covers `.failed`, where
+  autosaving would overwrite a document that could not be read. The install
+  ordering is now enforced by precondition instead of described by comment.
+- Evidence: `Tools/gate.sh` at 2026-07-29T23:54:46Z — 10-structure, 20-generate,
+  30-build, 40-test, 50-sim-launch PASS; 60-device SKIP; **verdict INCOMPLETE**.
+  40 tests pass. Gate 60 was blocked solely by a locked iPad (developer disk
+  image services unavailable); pairing, Developer Mode, signing, and SDK all
+  passed on iPad Air (5th generation), iPadOS 26.5.2.
+- Outstanding evidence, and the reason this line is not done: no device
+  evidence was collected. Pencil feel, palm rejection, Pencil/touch separation,
+  pan/zoom behavior, and the 500 ms floor under real handwriting are all
+  unproven, as is Phillip's verdict. Unlocking the iPad and rerunning gate 60 is
+  the remaining step.
+- Found and not fixed: serialize cost is roughly 2.6× higher cold than warm
+  (126 ms versus 48 ms at 20,000 strokes / 4.6 MB), and the session measures only
+  warm, so the adaptive debounce systematically under-estimates a cold first
+  save — relevant to the §9 distribution. `isEditable` on the canvas is a second
+  representation of readiness alongside the session's `phase`. §5's pseudocode
+  requires a fresh debounce rather than immediate re-serialization, while
+  `saveIfNeeded`'s loop still serializes back to back on the user-initiated
+  Retry path.
+- Status board unchanged: the verdict was INCOMPLETE, which is never reported as
+  success.
+
+### 2026-07-30 — G1–G3 device evidence
+
+- The iPad was unlocked and reconnected. `Tools/preflight-device.sh` returned
+  READY: the `developer disk image services unavailable` block that caused the
+  previous SKIP is cleared, and the development profile was already trusted, so
+  the second precondition never fired.
+- Evidence: `Tools/gate.sh` at 2026-07-30T07:00:04Z — 10-structure, 20-generate,
+  30-build, 40-test, 50-sim-launch, 60-device all PASS; **verdict PASS**
+  (`Artifacts/gate-report.md`). Signed device build, install, launch, and
+  process-running all confirmed on `Phillip’s iPad`, iPad Air (5th generation),
+  iPadOS 26.5.2, device id `2DD98ECC-A26A-5730-943B-01DD63DC4117`, bundle
+  `com.tubernotes.greenfield`. No new crash reports; the `.ips` files under
+  `Artifacts/device-diagnostics/` all predate the save-path fixes.
+- G1–G3 are marked complete on that PASS, `Tools/gate.sh` being the sole
+  arbiter of done.
+- Not performed, and not claimed: the milestone §6 hand-exercised checks. Launch
+  first-contact ink, scroll and zoom against the page, background-flush
+  survival, autosave spacing under continuous writing, and the five-second retry
+  were not exercised by hand on the device. Page extension was likewise never
+  exercised, and is now moot — see the next entry.
+- G5 remains pending. Pencil feel, stroke fidelity, palm rejection, and
+  Pencil/touch separation are Phillip's verdict alone and remain unrendered.

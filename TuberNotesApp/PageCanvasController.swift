@@ -17,18 +17,30 @@ struct DrawingSnapshot: Sendable {
         self.drawing = drawing
     }
 
-    func serialized() async -> Data {
+    /// Serializes off the main actor and reports how long it took.
+    ///
+    /// The duration is returned rather than only logged because `EditorSession`
+    /// derives the autosave debounce from it (`DataContract.md` §5): the cost of
+    /// a whole-drawing serialization is only knowable here, and measuring it a
+    /// second time on the session side would mean serializing twice.
+    func serialized() async -> (data: Data, duration: Duration) {
         await Task.detached(priority: .utility) { [self] in
             let clock = ContinuousClock()
             let started = clock.now
             let data = drawing.dataRepresentation()
+            let duration = started.duration(to: clock.now)
+            // `Thread.isMainThread` is unavailable from an async context, and
+            // the point of this field is to prove that this work is off main —
+            // so it is read from a synchronous closure, which is a legal
+            // context for it. Dropping the field would drop the evidence.
+            let onMainThread = { Thread.isMainThread }()
             CanvasLog.event(
                 CanvasLog.save, "save",
                 "serialized drawing snapshot; bytes=\(data.count) "
-                    + "duration=\(started.duration(to: clock.now)) "
-                    + "mainThread=\(Thread.isMainThread)"
+                    + "duration=\(duration) "
+                    + "mainThread=\(onMainThread)"
             )
-            return data
+            return (data, duration)
         }.value
     }
 }
@@ -72,10 +84,12 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
     /// Layers never participate in touch handling, so they cannot perturb it.
     private let pageBoundary = CALayer()
 
-    /// Installing a loaded drawing mutates `canvasView.drawing`, which PencilKit
-    /// reports as a change. That is not user editing and must not mark the
-    /// document dirty or trigger a save of what was just loaded.
-    private var isInstallingLoadedDrawing = false
+    /// Whether the session has opened this canvas for user editing.
+    ///
+    /// `EditorSession` writes it, once, at the transition to its ready phase; the
+    /// canvas only remembers it. It exists to enforce that a loaded drawing is
+    /// installed strictly before editing begins — see `installDrawing`.
+    private var isEditable = false
     private var hasLoggedFirstTouch = false
     private var hasLoggedFirstChange = false
 
@@ -86,6 +100,12 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
         // loads. Wiring them in `viewDidLoad` would mean a canvas that has not
         // yet been displayed silently reports no changes — the document would
         // take edits it never saved.
+        //
+        // Assigned unzoomed, and that is correct rather than inconsistent with
+        // `setPageHeight`: `zoomScale` is still 1 here, and `UIScrollView` scales
+        // `contentSize` itself whenever the scale changes. Callers after the
+        // opening zoom is established must therefore write the already-scaled
+        // size, which is what `setPageHeight` does.
         canvasView.contentSize = CGSize(width: PageGeometry.width, height: pageHeight)
         canvasView.delegate = self
     }
@@ -132,6 +152,10 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
     }
 
     /// Traces the page rect in page space, scaled into content coordinates.
+    ///
+    /// This does not touch `contentSize`. `UIScrollView` rescales `contentSize`
+    /// itself when `zoomScale` changes, so writing it from here — during a pinch,
+    /// every frame — would fight the gesture rather than correct anything.
     ///
     /// Implicit layer animations are disabled: during a pinch this runs every
     /// frame, and an animated frame change would lag the ink it borders.
@@ -226,6 +250,8 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
             "PageCanvasController received unreachable page geometry"
         )
         pageHeight = height
+        // Already-scaled, because `zoomScale` is no longer 1 by the time a page
+        // can be extended. See the note in `init`.
         canvasView.contentSize = CGSize(
             width: PageGeometry.width * canvasView.zoomScale,
             height: height * canvasView.zoomScale
@@ -252,20 +278,41 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
         return snapshot
     }
 
-    /// Installs a loaded drawing before the canvas becomes editable.
+    /// Opens the canvas for user editing. Called once by `EditorSession` when the
+    /// document is loaded and the ready phase begins (`DataContract.md` §6).
+    func markEditable() {
+        isEditable = true
+    }
+
+    /// Installs a loaded drawing, strictly before the canvas becomes editable.
     ///
-    /// PencilKit reports this as a drawing change, so the resulting callback is
-    /// suppressed — loading must not mark the document dirty.
+    /// PencilKit reports this assignment as a drawing change — measured, and
+    /// synchronously, see `PageCanvasControllerTests`. That callback must not
+    /// mark the document dirty, and exactly one mechanism prevents it: the
+    /// session ignores drawing changes until its ready phase. There used to be a
+    /// second, a flag raised and lowered around this assignment; it is gone
+    /// because two mechanisms for one rule means neither is understood, and it
+    /// would have been silently inert had delivery ever become asynchronous.
+    ///
+    /// That leaves the ordering itself as the load-bearing invariant, so it is
+    /// enforced rather than described: installing over a canvas the user can
+    /// already draw on would overwrite live ink with an older load result, which
+    /// `DataContract.md` §6 forbids outright.
     func installDrawing(from data: Data) throws {
-        isInstallingLoadedDrawing = true
-        defer { isInstallingLoadedDrawing = false }
+        precondition(
+            !isEditable,
+            "installDrawing must not run once the canvas is editable; "
+                + "it would overwrite live ink with a loaded drawing"
+        )
         canvasView.drawing = try PKDrawing(data: data)
     }
 
     // MARK: - PKCanvasViewDelegate
 
+    /// Reported for every drawing mutation, including the load-time install. The
+    /// canvas does not classify them: `EditorSession` owns save policy and is the
+    /// one place that decides a change is not user editing.
     func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
-        guard !isInstallingLoadedDrawing else { return }
         if !hasLoggedFirstChange {
             hasLoggedFirstChange = true
             CanvasLog.event(

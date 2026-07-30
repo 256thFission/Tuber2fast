@@ -83,13 +83,16 @@ untouched; it is never replaced with a blank drawing.
 ### Drawing and autosave
 
 PencilKit owns live drawing. Its drawing-change notification calls the editor
-without carrying the drawing. The editor marks `dirty`, debounces for 500 ms,
-captures afterward, and starts at most one save.
+without carrying the drawing. The editor marks `dirty`, debounces, captures
+afterward, and starts at most one save. The debounce is `max(500 ms, 4 × the
+most recent serialize duration)`: 500 ms is a floor, and a large document backs
+off instead of chaining whole-document serializations during continuous writing.
 
-If drawing changes during a save, `dirty` becomes true. After the save returns,
-the editor immediately saves once more if dirty. Failure leaves dirty state and
-allows retry. The exact algorithm and ownership are normative in
-`Docs/Architecture/DataContract.md`.
+If drawing changes during a save, `dirty` becomes true and takes a fresh
+debounce after that save returns. Failure leaves dirty state, stays visible, and
+reschedules itself with doubling backoff capped at five seconds until a save
+succeeds. The exact algorithm and ownership are normative in
+`Docs/Architecture/DataContract.md` §5.
 
 ### Persistence
 
@@ -127,9 +130,10 @@ autosave callback as every other drawing change. Autosave does not clear undo.
 
 ### Lifecycle
 
-Backgrounding cancels the debounce and requests a best-effort save within the
-time iPadOS provides. Only a returned save is acknowledged. An unfinished save
-does not change what the app promises to restore.
+Backgrounding cancels the debounce and requests one best-effort save pass within
+the time iPadOS provides — a single pass, not a loop, and not the retry backoff.
+Only a returned save is acknowledged. An unfinished save does not change what
+the app promises to restore.
 
 Foregrounding reuses retained live state. It must not overlay an older loaded
 drawing onto newer live ink.
@@ -185,13 +189,25 @@ On the named iPad, record:
 
 1. five minutes alternating handwriting, erasing, undo, and redo;
 2. twenty full-range zoom/pan cycles;
-3. ten background/foreground cycles; and
-4. force-quit/relaunch after confirmed save success.
+3. ten background/foreground cycles;
+4. force-quit/relaunch after confirmed save success;
+5. build the worst case the format permits — the page at maximum extents,
+   densely inked throughout, saved and relaunched onto; and
+6. repeat step 1 on that document, continuously.
+
+Steps 5 and 6 are required, not a stretch. Save cost scales with total ink, so a
+trace confined to one page height cannot find the cliff it exists to look for.
 
 Retain device/build identity, Instruments trace, main-thread hangs, attributable
-hitches, memory start/end/peak, save durations, restore duration, console, and
-crash status. This milestone records the baseline. A later `CONTRACT:` change
-sets numeric budgets from evidence before feature work continues.
+hitches, memory start/end/peak, restore duration, console, and crash status.
+Serialize and save cost are retained as distributions — p50, p95, and maximum —
+reported separately for steps 1–4 and steps 5–6, alongside bytes written per
+save, cumulative bytes written across the trace, stroke count and page extents
+per measurement, and thermal state. This milestone records the baseline; the
+trace, the recorded quantities, and the disqualification criteria that decide
+whether the one-file format survives are normative in
+`Docs/Architecture/DataContract.md` §9. A later `CONTRACT:` change sets numeric
+budgets from evidence, on Phillip's approval, before feature work continues.
 
 ### Human verdict
 

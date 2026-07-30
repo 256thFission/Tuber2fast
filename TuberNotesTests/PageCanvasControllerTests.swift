@@ -104,6 +104,36 @@ struct PageCanvasControllerTests {
         #expect(canvas.drawing.strokes.count == 1)
     }
 
+    /// When PencilKit reports a programmatic assignment to `drawing`.
+    ///
+    /// This asserts a property of the framework, not of this app, and it is
+    /// load-bearing: a suppression flag set and cleared inside one synchronous
+    /// scope can only suppress a *synchronous* callback. If PencilKit posted the
+    /// change later, such a flag would always read false by the time the
+    /// callback arrived and would suppress nothing, leaving the real protection
+    /// somewhere else entirely. The answer decides which single mechanism
+    /// prevents a load from marking the document dirty.
+    @Test("PencilKit reports a programmatic drawing assignment synchronously")
+    func drawingChangeDeliveryIsSynchronous() async throws {
+        let controller = PageCanvasController()
+        var deliveries = 0
+        controller.onDrawingChanged = { deliveries += 1 }
+
+        controller.canvasView.drawing = strokeAcrossPage()
+        let duringAssignment = deliveries
+
+        // Give an asynchronous delivery every chance to arrive: main-actor
+        // reentrancy, then a run-loop turn's worth of real time.
+        for _ in 0..<10 { await Task.yield() }
+        try await Task.sleep(for: .milliseconds(100))
+
+        #expect(deliveries >= 1, "PencilKit never reported the assignment at all")
+        #expect(
+            duringAssignment == deliveries,
+            "delivery is asynchronous: \(duringAssignment) callback(s) during the assignment, \(deliveries) once the main actor drained"
+        )
+    }
+
     @Test("A copied drawing snapshot serializes without consulting the live canvas")
     func drawingSnapshotIsIndependent() async throws {
         let controller = PageCanvasController()
@@ -112,7 +142,7 @@ struct PageCanvasControllerTests {
 
         controller.canvasView.drawing = PKDrawing()
 
-        let restored = try PKDrawing(data: await snapshot.serialized())
+        let restored = try PKDrawing(data: await snapshot.serialized().data)
         #expect(restored.strokes.count == 1)
         #expect(restored.bounds == strokeAcrossPage().bounds)
         #expect(controller.canvasView.drawing.strokes.isEmpty)

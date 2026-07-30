@@ -65,6 +65,36 @@ final class EditorSession {
     private var debounceTask: Task<Void, Never>?
     private var saveWaiters: [CheckedContinuation<Void, Never>] = []
 
+    /// Saves that have failed in a row, reset by the first success.
+    ///
+    /// This is what makes a transient failure recover by itself: without it a
+    /// failed save left the editor dirty with nothing scheduled, and durability
+    /// resumed only if the user happened to draw again, tap Retry, or background
+    /// the app (`DataContract.md` §5, retry policy).
+    private var consecutiveSaveFailures = 0
+
+    /// How long the last whole-drawing serialization took. The debounce is
+    /// derived from it so that a document large enough to be expensive to
+    /// serialize does not chain back-to-back serializations (`DataContract.md`
+    /// §5). Zero until the first save, which is the same as no back-off.
+    private var lastSerializeDuration: Duration = .zero
+
+    /// Serializing is allowed to widen the debounce by this factor: a save that
+    /// costs 200 ms of encoding earns 800 ms of quiet before the next one.
+    private static let serializeBackoffFactor = 4
+
+    /// The ceiling on retry back-off. Five seconds, because the wait is time the
+    /// document spends knowingly unsaved: a longer ceiling only delays recovery
+    /// once the cause clears, and the cause of a transient save failure is not
+    /// worth a minute of exposure. A persistently failing store is bounded by
+    /// this ceiling, not rescued by it.
+    private static let maximumRetryDelay: Duration = .seconds(5)
+
+    /// Failure doublings past this point are pointless — at the contract's
+    /// 500 ms interval the fourth doubling already exceeds `maximumRetryDelay` —
+    /// and an unbounded shift would overflow.
+    private static let maximumFailureDoublings = 10
+
     /// `RootCanvasView.task` may be restarted as views move through the scene
     /// lifecycle. Exactly one load is allowed to cross the store boundary; later
     /// callers wait for that attempt instead of racing a second load over live ink.
@@ -72,7 +102,10 @@ final class EditorSession {
     private var startWaiters: [CheckedContinuation<Void, Never>] = []
 
     /// `debounce` is injectable only so tests need not wait 500 ms of real time.
-    /// The contract's interval is the default and the only one the app uses.
+    /// The contract's interval is the default and the only one the app uses. It
+    /// is a hard floor and never a ceiling: the adaptive debounce may widen it
+    /// for a document that is expensive to serialize, and can never shorten it
+    /// (`DataContract.md` §5).
     /// Builds no UIKit object. See `canvas` for why that matters.
     init(store: DocumentStore, debounce: Duration = .milliseconds(500)) {
         self.store = store
@@ -114,7 +147,7 @@ final class EditorSession {
                 pageHeight = PageGeometry.initialHeight
                 canvas.setPageHeight(pageHeight)
                 let snapshot = canvas.drawingSnapshot()
-                let drawingData = await snapshot.serialized()
+                let drawingData = await snapshot.serialized().data
                 try await store.save(
                     currentFile(
                         drawingData: drawingData,
@@ -125,6 +158,9 @@ final class EditorSession {
                 )
             }
             phase = .ready
+            // Editing opens only now, after the loaded drawing is installed. The
+            // canvas enforces the ordering; the session decides when it holds.
+            canvas.markEditable()
             CanvasLog.event(
                 CanvasLog.lifecycle, "lifecycle",
                 "session ready; pageHeight=\(pageHeight)"
@@ -155,6 +191,13 @@ final class EditorSession {
 
     // MARK: - Autosave
 
+    /// The one place a drawing change is judged to be user editing.
+    ///
+    /// The phase guard is the sole mechanism that keeps a load from dirtying the
+    /// document: installing a loaded drawing fires this callback (synchronously,
+    /// per `PageCanvasControllerTests`) while the phase is still `.loading`. It
+    /// also covers `.failed`, where autosaving would overwrite a document that
+    /// could not be read — which `DataContract.md` §6 forbids.
     private func drawingChanged() {
         guard phase == .ready else { return }
         markDirty()
@@ -168,13 +211,39 @@ final class EditorSession {
         scheduleSave()
     }
 
-    private func scheduleSave() {
+    private func scheduleSave(after delay: Duration? = nil) {
+        let interval = delay ?? adaptiveDebounce
         debounceTask?.cancel()
-        debounceTask = Task { [weak self, debounce] in
-            try? await Task.sleep(for: debounce)
+        debounceTask = Task { [weak self] in
+            try? await Task.sleep(for: interval)
             guard !Task.isCancelled else { return }
             await self?.performAutosavePass()
         }
+    }
+
+    /// The debounce actually used: the contract interval, widened when the last
+    /// serialization was expensive (`DataContract.md` §5).
+    ///
+    /// A fixed interval was correct while the page was one screen tall. It is
+    /// not once the page can grow to many times that height, because every save
+    /// serializes the whole drawing: at 200 ms per serialization a 500 ms
+    /// debounce spends most of its time encoding. Small documents measure near
+    /// zero and stay at exactly the floor, so their behavior is unchanged.
+    private var adaptiveDebounce: Duration {
+        max(debounce, lastSerializeDuration * Self.serializeBackoffFactor)
+    }
+
+    /// Exponential back-off for a retry after a failed save: the first retry
+    /// waits the ordinary debounce interval and each further consecutive failure
+    /// doubles it, capped (`DataContract.md` §5).
+    ///
+    /// The cap matters more than the curve. A disk that is full or a container
+    /// that is unavailable will not clear in the next 20 ms, and retrying at
+    /// interaction frequency against a failing store is the spin the
+    /// background-flush path is explicitly written to avoid.
+    private var retryDelay: Duration {
+        let doublings = min(max(consecutiveSaveFailures - 1, 0), Self.maximumFailureDoublings)
+        return min(adaptiveDebounce * (1 << doublings), Self.maximumRetryDelay)
     }
 
     /// Flushes all currently dirty work. If another caller already owns a save,
@@ -191,7 +260,16 @@ final class EditorSession {
             }
             guard dirty else { return }
             await performOneSave()
-            guard lastSaveError == nil else { return }
+            guard lastSaveError == nil else {
+                // Deliberately not a loop: looping here would spin against a
+                // failing disk, and the background-flush path used to come
+                // through here. But returning with nothing armed would undo the
+                // automatic retry — this method cancelled the debounce on the way
+                // in, so a failed Retry tap would otherwise leave durability
+                // waiting on the user again. Arming one timer is not spinning.
+                scheduleSave(after: retryDelay)
+                return
+            }
         }
     }
 
@@ -201,9 +279,14 @@ final class EditorSession {
     private func performAutosavePass() async {
         guard phase == .ready, dirty, !saveInFlight else { return }
         await performOneSave()
-        if dirty, lastSaveError == nil {
-            scheduleSave()
-        }
+        guard dirty else { return }
+
+        // A failed save must re-arm itself. Previously this re-armed only on
+        // success, so a transient failure parked the editor dirty with no timer
+        // running and recovery waited on the user drawing again, tapping Retry,
+        // or a scene transition. The retry backs off so that a persistently
+        // failing store is not hammered (`DataContract.md` §5).
+        scheduleSave(after: lastSaveError == nil ? nil : retryDelay)
     }
 
     private func performOneSave() async {
@@ -219,9 +302,12 @@ final class EditorSession {
         let capturedDocumentID = documentID
         let capturedPageID = pageID
         let capturedPageHeight = pageHeight
-        let drawingData = await snapshot.serialized()
+        let serialized = await snapshot.serialized()
+        // Measured where the work happens rather than timed again here: the next
+        // debounce is derived from this cost (`DataContract.md` §5).
+        lastSerializeDuration = serialized.duration
         let file = currentFile(
-            drawingData: drawingData,
+            drawingData: serialized.data,
             documentID: capturedDocumentID,
             pageID: capturedPageID,
             pageHeight: capturedPageHeight
@@ -230,9 +316,11 @@ final class EditorSession {
         do {
             try await store.save(file)
             lastSaveError = nil
+            consecutiveSaveFailures = 0
         } catch {
             dirty = true
             lastSaveError = String(describing: error)
+            consecutiveSaveFailures += 1
         }
 
         saveInFlight = false
@@ -251,10 +339,21 @@ final class EditorSession {
     /// Cancels the debounce and makes a best-effort save with whatever execution
     /// time iPadOS provides. Only a returned save is acknowledged; if time
     /// expires the editor stays dirty and retries after foregrounding.
+    ///
+    /// One pass, deliberately, not `saveIfNeeded`'s loop. The lease is bounded,
+    /// so unbounded work cannot finish on it anyway, and every extra iteration is
+    /// another chance to be killed mid-write for ink that was already captured by
+    /// the pass before it. If the session is still dirty when this returns it
+    /// stays dirty — `resumeForForeground` retries, which is exactly what
+    /// `DataContract.md` §6 promises ("no promised flush duration").
     func flushForBackground() async {
         debounceTask?.cancel()
         debounceTask = nil
-        await saveIfNeeded()
+
+        // An in-flight save already owns a captured generation; waiting for it
+        // is what makes the following pass the *second* and last one.
+        await waitForSavePass()
+        await performOneSave()
     }
 
     /// Retries a save left unacknowledged by backgrounding. It never overlays a
