@@ -25,15 +25,15 @@ struct DocumentStoreTests {
         #expect(loaded == file)
     }
 
-    @Test("A grown page height survives the round trip")
-    func grownHeightSurvives() async throws {
+    @Test("A grown page height is refused rather than written")
+    func grownHeightIsRefused() async throws {
         let scratch = try Scratch()
         let store = DocumentStore(fileURL: scratch.fileURL)
-        let grown = scratch.file(height: PageGeometry.initialHeight * 3)
 
-        try await store.save(grown)
-
-        #expect(try await store.load()?.pageHeight == PageGeometry.initialHeight * 3)
+        await #expect(throws: (any Error).self) {
+            try await store.save(scratch.file(height: PageGeometry.height * 3))
+        }
+        #expect(try await store.load() == nil)
     }
 
     @Test("Each save replaces the prior file completely")
@@ -42,10 +42,7 @@ struct DocumentStoreTests {
         let store = DocumentStore(fileURL: scratch.fileURL)
 
         try await store.save(scratch.file(drawingData: Data(repeating: 0xAA, count: 8192)))
-        let second = scratch.file(
-            height: PageGeometry.initialHeight * 2,
-            drawingData: Data(repeating: 0xBB, count: 16)
-        )
+        let second = scratch.file(drawingData: Data(repeating: 0xBB, count: 16))
         try await store.save(second)
 
         // A leftover tail from the larger first write would mean the replacement
@@ -88,7 +85,7 @@ struct DocumentStoreTests {
         let encoder = PropertyListEncoder()
         encoder.outputFormat = .binary
         // Encoded directly: `save` would have refused to write this.
-        let tooTall = try encoder.encode(scratch.file(height: PageGeometry.maximumHeight * 2))
+        let tooTall = try encoder.encode(scratch.file(height: PageGeometry.height * 2))
         try tooTall.write(to: scratch.fileURL)
 
         await #expect(throws: (any Error).self) { try await store.load() }
@@ -102,7 +99,7 @@ struct DocumentStoreTests {
         try await store.save(good)
 
         await #expect(throws: (any Error).self) {
-            try await store.save(scratch.file(height: PageGeometry.maximumHeight * 2))
+            try await store.save(scratch.file(height: PageGeometry.height * 2))
         }
         #expect(try await store.load() == good)
     }
@@ -127,7 +124,7 @@ struct DocumentStoreTests {
 
         func file(
             formatVersion: UInt32 = CanvasFile.currentFormatVersion,
-            height: Double = PageGeometry.initialHeight,
+            height: Double = PageGeometry.height,
             drawingData: Data = Data([0x00])
         ) -> CanvasFile {
             CanvasFile(

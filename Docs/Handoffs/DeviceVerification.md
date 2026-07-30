@@ -84,17 +84,14 @@ UIKit down inside `-[UIGestureRecognizer _delayTouchesForEvent:]`, and the page
 boundary is a `CALayer` rather than a subview for the same reason. If you see a
 first-touch crash, that is where to look; it is not a flake.
 
-**Page extension (new, and the most likely place for a defect).** Extend the
-page, write below the old boundary, confirm the boundary hairline moved and no
-existing ink shifted, then force-quit and relaunch: the grown height and the new
-ink must both return. Extend repeatedly to the maximum and confirm the control
-refuses without changing anything.
+**Page extension — removed 2026-07-30, do not exercise.** Downward growth is
+gone; the page is one fixed size. Any build still offering an extend control is
+stale.
 
-**Scroll and zoom against a grown page.** Pinch to both extremes and pan to
-every edge, at initial height and after several extensions. Confirm you can
-reach the page's own bottom edge at each zoom level, and that ink stays attached
-to the page. `UIScrollView` owns `contentSize` rescaling during zoom; this is
-checking that the page projection agrees with it in practice.
+**Scroll and zoom.** Pinch to both extremes and pan to every edge. Confirm you
+can reach the page's own bottom edge at each zoom level, and that ink stays
+attached to the page. `UIScrollView` owns `contentSize` rescaling during zoom;
+this is checking that the page projection agrees with it in practice.
 
 **Background flush (changed today).** Background the app immediately after a
 stroke and return: ink must survive. The flush is now a single best-effort pass
@@ -119,11 +116,10 @@ or tapping Retry.
   string anymore** — the assertion that produced it was deliberately removed when
   the one-live-canvas rule was loosened. Its absence proves nothing.
 - That same grep also catches `Fatal error` and `Precondition failed`, and there
-  are now two live preconditions: `setPageHeight` rejects an unreachable page
-  height, and `installDrawing` refuses to run once the canvas is editable. If
-  either fires it is a **real defect** — the second one means a loaded drawing
-  was about to overwrite live ink — so capture the stack and report it rather
-  than working around it.
+  is one live precondition: `installDrawing` refuses to run once the canvas is
+  editable. If it fires it is a **real defect** — it means a loaded drawing was
+  about to overwrite live ink — so capture the stack and report it rather than
+  working around it.
 
 ## 8. What you must not do
 

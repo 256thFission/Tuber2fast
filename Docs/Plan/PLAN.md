@@ -105,6 +105,19 @@ what its exit requires while conforming to the complete contract.
   point stands: no control signal distinguishes a small change from a large
   document while every save rewrites the whole file, so the mitigation stays a
   safety valve and the format remains what §9 is measuring.
+- 2026-07-30 — Phillip reversed downward page growth. The bounded growing page
+  is removed and geometry is immutable again, superseding the 2026-07-29
+  overrule of immutable geometry. A lengthening page is not the reading model
+  the product wants; more writing surface comes from turning to the next page.
+  `DataContract.md` §5a is rewritten from "page extension" to "fixed page
+  geometry", and grown heights are now rejected on load rather than adopted.
+- 2026-07-30 — Phillip chose GoodNotes-style horizontal paged page turning,
+  with a new page created automatically on swiping past the last one. This is
+  multi-page, which Just a Canvas §4 excludes, so it is a new milestone rather
+  than a line of this one. It requires a page-list file format with a real v1
+  migration, canvas recycling across pages (breaking the single-construction-site
+  invariant gate 10 enforces), and per-page saving, because rewriting every page
+  on every save violates the scale-with-changed-content rule outright.
 
 ## Session log
 
@@ -293,3 +306,29 @@ what its exit requires while conforming to the complete contract.
   exercised, and is now moot — see the next entry.
 - G5 remains pending. Pencil feel, stroke fidelity, palm rejection, and
   Pencil/touch separation are Phillip's verdict alone and remain unrendered.
+
+### 2026-07-30 — Remove downward page growth
+
+- Reversed the 2026-07-29 growth decision at Phillip's direction. `PageGeometry`
+  loses `extended(from:)`, `maximumExtents`, and `maximumHeight`; `initialHeight`
+  becomes `height`, and `isValidHeight` is now an equality check. `EditorSession`
+  loses `pageHeight`, `canExtend`, and `extendPage`; `PageCanvasController` loses
+  `setPageHeight` and its `pageHeight` property, and now writes `contentSize`
+  exactly once at construction. The extend control is gone from `RootCanvasView`.
+- A grown height on disk is rejected, not adopted. Accepting one would strand ink
+  below a page edge that no longer exists with no way to scroll to it, so
+  `CanvasFile.validated()` refuses it and there is a regression test for exactly
+  that file shape. No document written by the extension-era build was ever
+  shipped, so no migration is owed.
+- `DataContract.md` §4, §5a, §2 rule 7, and §11 amended; the milestone's page
+  extension section, journey step, and two acceptance gates removed;
+  `Docs/Handoffs/DeviceVerification.md` §6 and §7 corrected, since they told the
+  next agent to exercise a control that no longer exists and to watch for a
+  precondition that no longer exists.
+- Evidence: `Tools/gate.sh` at 2026-07-30T07:2Z — 10-structure, 20-generate,
+  30-build, 40-test, 50-sim-launch, 60-device all PASS; **verdict PASS**, built,
+  installed, and launched on `Phillip’s iPad`. 33 tests pass, down from 40:
+  seven page-extension tests were deleted rather than weakened.
+- Not done: the pagination milestone itself is unwritten. G4's baseline trace
+  still describes a maximum-extents document that can no longer exist and needs
+  rewriting before G4 runs.

@@ -24,28 +24,13 @@ struct RootCanvasView: View {
                 PageCanvas(controller: session.canvas)
                     .ignoresSafeArea()
                     .accessibilityIdentifier("page.canvas")
-                    // Top-trailing, not bottom: the PencilKit tool picker
-                    // floats along the bottom edge and a bottom-anchored
-                    // control collides with it.
-                    .overlay(alignment: .topTrailing) { extendControl }
+                    // Top-leading, not bottom: the PencilKit tool picker floats
+                    // along the bottom edge and a bottom-anchored control
+                    // collides with it.
                     .overlay(alignment: .topLeading) { saveFailure }
             }
         }
         .task { await session.start() }
-    }
-
-    private var extendControl: some View {
-        Button {
-            session.extendPage()
-        } label: {
-            Label("Extend page", systemImage: "arrow.down.to.line")
-                .labelStyle(.iconOnly)
-                .frame(width: 44, height: 44)
-        }
-        .buttonStyle(.borderedProminent)
-        .disabled(!session.canExtend)
-        .padding(24)
-        .accessibilityIdentifier("page.extend")
     }
 
     @ViewBuilder

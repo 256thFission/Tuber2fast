@@ -63,10 +63,6 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
     /// no sample, and no generation number (`DataContract.md` §5).
     var onDrawingChanged: (() -> Void)?
 
-    /// The current page height. `EditorSession` owns this value; the canvas
-    /// renders what it is told and never chooses it (`DataContract.md` §2 rule 7).
-    private(set) var pageHeight: Double = PageGeometry.initialHeight
-
     private let toolPicker = PKToolPicker()
     private var hasEstablishedInitialZoom = false
 
@@ -74,8 +70,7 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
     ///
     /// Presentation only: it is not ink, is never part of the drawing, and is
     /// not persisted. The page and the canvas background are both white, so
-    /// without it the page boundary is invisible — which matters more once the
-    /// page can grow.
+    /// without it the page boundary is invisible.
     ///
     /// A layer, not a view, and that is load-bearing. `PKCanvasView` is a
     /// `UIScrollView`, and a scroll view delays and re-delivers touches to its
@@ -101,12 +96,11 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
         // yet been displayed silently reports no changes — the document would
         // take edits it never saved.
         //
-        // Assigned unzoomed, and that is correct rather than inconsistent with
-        // `setPageHeight`: `zoomScale` is still 1 here, and `UIScrollView` scales
-        // `contentSize` itself whenever the scale changes. Callers after the
-        // opening zoom is established must therefore write the already-scaled
-        // size, which is what `setPageHeight` does.
-        canvasView.contentSize = CGSize(width: PageGeometry.width, height: pageHeight)
+        // Assigned unzoomed, which is correct because `zoomScale` is still 1
+        // here and `UIScrollView` scales `contentSize` itself whenever the scale
+        // changes. Nothing writes `contentSize` again: the page geometry is
+        // fixed, so this is the only assignment it ever needs.
+        canvasView.contentSize = CGSize(width: PageGeometry.width, height: PageGeometry.height)
         canvasView.delegate = self
     }
 
@@ -168,7 +162,7 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
             x: 0,
             y: 0,
             width: PageGeometry.width * scale,
-            height: pageHeight * scale
+            height: PageGeometry.height * scale
         )
         CATransaction.commit()
     }
@@ -209,53 +203,25 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
     /// Establishes the viewport once. Later layout passes must not reset it
     /// (`Docs/Milestones/JustACanvas.md`, spatial behavior gates).
     ///
-    /// Three separate scales, and the distinction is the whole point
-    /// (`DataContract.md` §7):
-    ///
-    /// - the opening scale fits the page *width*, which is the comfortable
-    ///   scale to write at;
-    /// - the floor is derived from the *initial* page height, so the whole page
-    ///   still fits on screen with room to spare; and
-    /// - neither is derived from the *current* height, which is what keeps the
-    ///   viewport stable as the page grows. A floor tied to the current height
-    ///   would zoom the canvas further out with every extension.
+    /// Two separate scales, and the distinction is the point
+    /// (`DataContract.md` §7): the opening scale fits the page *width*, which is
+    /// the comfortable scale to write at, while the floor fits the whole page
+    /// with room to spare.
     private func establishInitialZoomIfNeeded() {
         guard !hasEstablishedInitialZoom else { return }
         let bounds = canvasView.bounds.size
         guard bounds.width > 0, bounds.height > 0 else { return }
 
         let fitWidth = bounds.width / PageGeometry.width
-        let fitInitialPage = min(fitWidth, bounds.height / PageGeometry.initialHeight)
-        guard fitWidth > 0, fitWidth.isFinite, fitInitialPage > 0, fitInitialPage.isFinite else {
+        let fitPage = min(fitWidth, bounds.height / PageGeometry.height)
+        guard fitWidth > 0, fitWidth.isFinite, fitPage > 0, fitPage.isFinite else {
             return
         }
 
-        canvasView.minimumZoomScale = fitInitialPage * Self.overviewFactor
+        canvasView.minimumZoomScale = fitPage * Self.overviewFactor
         canvasView.maximumZoomScale = fitWidth * 8
         canvasView.zoomScale = fitWidth
         hasEstablishedInitialZoom = true
-        updatePageBoundary()
-    }
-
-    // MARK: - Page height
-
-    /// Renders a new page height. The page gains addressable area at the bottom
-    /// and nothing else changes: ink keeps its page coordinates, and zoom and
-    /// content offset are untouched (`DataContract.md` §5a).
-    ///
-    /// The zoom floor is not recomputed, because it depends on width alone.
-    func setPageHeight(_ height: Double) {
-        precondition(
-            PageGeometry.isValidHeight(height),
-            "PageCanvasController received unreachable page geometry"
-        )
-        pageHeight = height
-        // Already-scaled, because `zoomScale` is no longer 1 by the time a page
-        // can be extended. See the note in `init`.
-        canvasView.contentSize = CGSize(
-            width: PageGeometry.width * canvasView.zoomScale,
-            height: height * canvasView.zoomScale
-        )
         updatePageBoundary()
     }
 

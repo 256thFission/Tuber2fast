@@ -54,8 +54,8 @@ Rules:
 5. `EditorSession` coordinates owners but does not keep a second mutable
    drawing.
 6. Recreating a SwiftUI view must not recreate the live canvas controller.
-7. `PageCanvasController` renders the page height it is given. It never chooses
-   page geometry and never derives an extension from where ink landed.
+7. `PageCanvasController` renders the fixed page geometry defined by
+   `PageGeometry`. It never chooses or mutates page geometry.
 8. `EditorLifecycle` owns the UIKit background-execution lease and nothing else.
    It holds no durable state, chooses no save policy, and may only ask
    `EditorSession` to flush or resume. Expiring the lease ends the lease, not
@@ -108,11 +108,10 @@ The field contract is exact:
 - IDs are UUIDs generated once at first creation, encoded by Foundation's
   property-list encoder, and preserved by every save.
 - Width and height are finite logical page points greater than zero.
-- `pageWidth` is immutable for the life of a document, and `pageWidth <
-  pageHeight` always holds.
-- `pageHeight` is mutable and grows only, under the rules in §5a. A file at the
-  initial height and a file at a grown height are both valid format version 1;
-  a grown height is not a new format and there is nothing to migrate.
+- `pageWidth` and `pageHeight` are both immutable for the life of a document,
+  and `pageWidth < pageHeight` always holds. Both equal the application's
+  canonical page geometry; any other value is a corrupt or foreign file and is
+  rejected by `load` and by `save` rather than adapted.
 - `drawingData` is the opaque result used to reconstruct `PKDrawing`.
 - The blank white background is inherent to format version 1 and is not stored.
 
@@ -218,50 +217,31 @@ always off-main. If drawing-data creation must run on main and causes an
 observable hitch, stop and resolve that measured bottleneck; do not invent an
 unsupported cross-actor transfer.
 
-## 5a. Page extension
+## 5a. Fixed page geometry
 
-The page grows downward. Immutable geometry is overruled: a writing surface that
-cannot be lengthened is not the product, and deferring growth would mean
-building the geometry, zoom, and validation paths twice.
+The page does not grow. Downward growth was specified, built, and removed: a
+lengthening page is not the reading model the product wants, and room to keep
+writing comes from turning to the next page rather than from extending this one.
+This supersedes the 2026-07-29 amendment that overruled immutable geometry.
 
-Only height changes, and only upward:
+- `pageWidth` and `pageHeight` are both fixed at creation and never change.
+- There is exactly one valid height, so height validation is an equality check.
+  Heights that the extension-era build could produce — whole multiples of the
+  page height — are now as invalid as any other value, and a file carrying one
+  is rejected rather than adopted. Accepting it would place ink below a page
+  edge that no longer exists, with no way to reach it.
+- No owner mutates geometry. `EditorSession` holds no height state and
+  `PageCanvasController` writes `contentSize` exactly once, at construction.
+- The zoom floor derives from the fixed page, and the viewport cannot drift.
 
-- `pageWidth` is fixed at creation and never changes.
-- `pageHeight` starts at the initial height and increases by exactly one whole
-  initial-height increment per extension.
-- Valid heights are therefore whole multiples of the initial height, within a
-  bounded number of extents. Any other height is invalid geometry and is
-  rejected by `load` and by `save`.
-- The bound exists because every save rewrites the whole file: unbounded height
-  reintroduces the cost that infinite canvas was rejected for. The current bound
-  is a bound, not a measurement — G4 revises it from save-cost-versus-height
-  evidence.
-- An extension at the maximum is refused and changes nothing.
-
-Ownership is exact:
-
-- `EditorSession` owns the current height, decides whether an extension is
-  permitted, and enters the ordinary autosave path afterward. Height travels
-  with the drawing in one captured generation, so a save never pairs one
-  extension's height with ink captured under a different one.
-- `PageCanvasController` renders the height it is told: the page gains
-  addressable area at the bottom and nothing else changes. Ink keeps its page
-  coordinates, and zoom scale and content offset are untouched. The zoom floor
-  derives from width and the *initial* height, never the current height, so the
-  viewport does not drift outward as the page grows.
-- Extension is a user intention only. Testing ink position against page bounds
-  on the Pencil path is forbidden.
-
-Extension is not undoable, and PencilKit's undo manager never learns about it.
-Because the page only grows, an extension loses no ink, so the absence of undo
-cannot lose work.
-
-Growing the page changes what the durable file may contain, not what it means.
-Width remains the one geometry value a document can never renegotiate: a file
-whose width differs from the application's canonical width is rejected, not
-adapted. Supporting a second page width — landscape, A4, or imported source
-geometry — requires a `CONTRACT:` amendment defining per-document width and
+Geometry is the one thing a document can never renegotiate: a file whose width
+or height differs from the application's canonical geometry is rejected, not
+adapted. Supporting a second page geometry — landscape, A4, or imported source
+geometry — requires a `CONTRACT:` amendment defining per-document geometry and
 the migration for files written before it.
+
+Reaching more writing surface is a navigation concern, not a geometry one, and
+is specified by the pagination milestone rather than here.
 
 ## 6. Lifecycle and recovery
 
@@ -408,9 +388,9 @@ of canvas controllers or completed save tasks. Phillip alone judges Pencil feel.
 
 The milestone requires tests for file encode/decode, invalid field rejection,
 successful-save restoration, interrupted atomic replacement, page-space round
-trip, and page extension — that a valid extension persists exactly one
-increment, that an unreachable height is rejected, that the maximum refuses and
-changes nothing, and that ink keeps its page coordinates across an extension.
+trip, and geometry validation — that the canonical geometry validates, and that
+any other height is rejected, including the grown heights the extension-era
+build could write.
 Instruments and physical-iPad evidence enforce the performance section.
 Compilation alone is not behavioral proof.
 

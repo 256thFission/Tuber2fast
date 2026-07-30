@@ -17,17 +17,19 @@ struct CanvasFileTests {
         #expect(decoded == original)
     }
 
-    @Test("A grown height round trips and is valid")
-    func grownHeightRoundTrips() throws {
-        let grown = sampleFile(height: PageGeometry.initialHeight * 4)
+    @Test("A file written by the extension-era build is rejected, not adopted")
+    func rejectsGrownHeight() throws {
+        let grown = sampleFile(height: PageGeometry.height * 4)
 
         let encoder = PropertyListEncoder()
         encoder.outputFormat = .binary
         let decoded = try PropertyListDecoder()
             .decode(CanvasFile.self, from: encoder.encode(grown))
 
-        #expect(try decoded.validated() == grown)
-        #expect(decoded.formatVersion == 1)
+        // It decodes — the field is still a Double — but it must not validate.
+        // Silently accepting it would put ink below a page edge that no longer
+        // exists, with no way to reach it.
+        #expect(throws: CanvasFileError.self) { try decoded.validated() }
     }
 
     @Test("Only format version 1 is supported")
@@ -41,9 +43,10 @@ struct CanvasFileTests {
     @Test(
         "Invalid geometry is rejected",
         arguments: [
-            PageGeometry.initialHeight - 1,          // below the initial height
-            PageGeometry.maximumHeight + 1,          // above the maximum
-            PageGeometry.initialHeight * 1.5,        // not a whole extent
+            PageGeometry.height - 1,
+            PageGeometry.height + 1,
+            PageGeometry.height * 2,                 // a formerly reachable height
+            PageGeometry.height * 1.5,
             0,
             -792,
             .infinity,
@@ -65,18 +68,16 @@ struct CanvasFileTests {
         #expect(throws: (any Error).self) { try sampleFile(width: 700).validated() }
     }
 
-    @Test("The initial and maximum heights are themselves valid")
-    func boundsAreInclusive() throws {
-        #expect(try sampleFile(height: PageGeometry.initialHeight).validated().pageHeight
-            == PageGeometry.initialHeight)
-        #expect(try sampleFile(height: PageGeometry.maximumHeight).validated().pageHeight
-            == PageGeometry.maximumHeight)
+    @Test("The one canonical height validates")
+    func canonicalHeightValidates() throws {
+        #expect(try sampleFile(height: PageGeometry.height).validated().pageHeight
+            == PageGeometry.height)
     }
 
     private func sampleFile(
         formatVersion: UInt32 = CanvasFile.currentFormatVersion,
         width: Double = PageGeometry.width,
-        height: Double = PageGeometry.initialHeight
+        height: Double = PageGeometry.height
     ) -> CanvasFile {
         CanvasFile(
             formatVersion: formatVersion,

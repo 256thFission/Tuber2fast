@@ -3,13 +3,14 @@ import Observation
 
 /// Coordinates the canvas runtime and the document store (`DataContract.md` §2).
 ///
-/// It owns the active save policy — `dirty`, `saveInFlight`, the debounce — and
-/// the current page height. It does not keep a second mutable drawing: the live
-/// drawing lives in PencilKit and is captured only at save time.
+/// It owns the active save policy — `dirty`, `saveInFlight`, the debounce. It
+/// does not keep a second mutable drawing: the live drawing lives in PencilKit
+/// and is captured only at save time. Page geometry is fixed and belongs to
+/// `PageGeometry`, so there is no durable geometry state to own here.
 ///
-/// `@Observable` is deliberate and narrow. SwiftUI observes `phase`, `pageHeight`,
-/// and `canExtend` — user-action-frequency values. It never observes the drawing,
-/// pan, zoom, or Pencil samples, which is what §9 and §10 forbid.
+/// `@Observable` is deliberate and narrow. SwiftUI observes `phase` and
+/// `lastSaveError` — user-action-frequency values. It never observes the
+/// drawing, pan, zoom, or Pencil samples, which is what §9 and §10 forbid.
 @MainActor
 @Observable
 final class EditorSession {
@@ -20,13 +21,10 @@ final class EditorSession {
     }
 
     private(set) var phase: Phase = .loading
-    private(set) var pageHeight: Double = PageGeometry.initialHeight
 
     /// Surfaced so a failed autosave is visible rather than silent. It is not
     /// durable state and is not a product concept.
     private(set) var lastSaveError: String?
-
-    var canExtend: Bool { PageGeometry.extended(from: pageHeight) != nil }
 
     /// The one canvas runtime, created once and owned here so that SwiftUI
     /// rebuilding its body cannot replace it.
@@ -138,22 +136,17 @@ final class EditorSession {
             if let file = try await store.load() {
                 documentID = file.documentID
                 pageID = file.pageID
-                pageHeight = file.pageHeight
-                canvas.setPageHeight(file.pageHeight)
                 try canvas.installDrawing(from: file.drawingData)
             } else {
                 documentID = UUID()
                 pageID = UUID()
-                pageHeight = PageGeometry.initialHeight
-                canvas.setPageHeight(pageHeight)
                 let snapshot = canvas.drawingSnapshot()
                 let drawingData = await snapshot.serialized().data
                 try await store.save(
                     currentFile(
                         drawingData: drawingData,
                         documentID: documentID,
-                        pageID: pageID,
-                        pageHeight: pageHeight
+                        pageID: pageID
                     )
                 )
             }
@@ -163,30 +156,12 @@ final class EditorSession {
             canvas.markEditable()
             CanvasLog.event(
                 CanvasLog.lifecycle, "lifecycle",
-                "session ready; pageHeight=\(pageHeight)"
+                "session ready; pageHeight=\(PageGeometry.height)"
             )
         } catch {
             phase = .failed(String(describing: error))
             CanvasLog.event(CanvasLog.lifecycle, "lifecycle", "session failed to start: \(error)")
         }
-    }
-
-    // MARK: - Page extension
-
-    /// Raises the page by one increment and enters the ordinary autosave path.
-    ///
-    /// An extension at the maximum height is refused and changes nothing. This
-    /// is a user intention, never a consequence of where ink landed — a bounds
-    /// test on the Pencil path is forbidden (`DataContract.md` §5a).
-    ///
-    /// It is not undoable, and PencilKit's undo manager never learns about it.
-    /// Because the page only grows, an extension loses no ink, so the absence of
-    /// undo cannot lose work.
-    func extendPage() {
-        guard phase == .ready, let next = PageGeometry.extended(from: pageHeight) else { return }
-        pageHeight = next
-        canvas.setPageHeight(next)
-        markDirty()
     }
 
     // MARK: - Autosave
@@ -296,12 +271,11 @@ final class EditorSession {
         saveInFlight = true
 
         // Capture drawing and metadata as one generation before either actor can
-        // suspend. A page extension during serialization marks the next
-        // generation dirty instead of pairing new geometry with old ink.
+        // suspend, so a save never pairs one generation's identity with another's
+        // ink.
         let snapshot = canvas.drawingSnapshot()
         let capturedDocumentID = documentID
         let capturedPageID = pageID
-        let capturedPageHeight = pageHeight
         let serialized = await snapshot.serialized()
         // Measured where the work happens rather than timed again here: the next
         // debounce is derived from this cost (`DataContract.md` §5).
@@ -309,8 +283,7 @@ final class EditorSession {
         let file = currentFile(
             drawingData: serialized.data,
             documentID: capturedDocumentID,
-            pageID: capturedPageID,
-            pageHeight: capturedPageHeight
+            pageID: capturedPageID
         )
 
         do {
@@ -366,15 +339,14 @@ final class EditorSession {
     private func currentFile(
         drawingData: Data,
         documentID: UUID,
-        pageID: UUID,
-        pageHeight: Double
+        pageID: UUID
     ) -> CanvasFile {
         CanvasFile(
             formatVersion: CanvasFile.currentFormatVersion,
             documentID: documentID,
             pageID: pageID,
             pageWidth: PageGeometry.width,
-            pageHeight: pageHeight,
+            pageHeight: PageGeometry.height,
             drawingData: drawingData
         )
     }

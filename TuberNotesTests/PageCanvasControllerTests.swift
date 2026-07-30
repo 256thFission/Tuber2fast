@@ -31,16 +31,16 @@ struct PageCanvasControllerTests {
             height: canvas.contentSize.height / canvas.zoomScale
         )
         #expect(abs(unscaled.width - PageGeometry.width) < 0.5)
-        #expect(abs(unscaled.height - PageGeometry.initialHeight) < 0.5)
+        #expect(abs(unscaled.height - PageGeometry.height) < 0.5)
 
         // The opening scale fits the page width — the scale to write at.
         let fitWidth = root.frame.width / PageGeometry.width
         #expect(abs(canvas.zoomScale - fitWidth) < 0.001)
 
         // You can zoom out past a whole page, so the floor is strictly below
-        // the scale at which one full initial page fits (`DataContract.md` §7).
-        let fitInitialPage = min(fitWidth, root.frame.height / PageGeometry.initialHeight)
-        #expect(canvas.minimumZoomScale < fitInitialPage)
+        // the scale at which one full page fits (`DataContract.md` §7).
+        let fitPage = min(fitWidth, root.frame.height / PageGeometry.height)
+        #expect(canvas.minimumZoomScale < fitPage)
         #expect(canvas.minimumZoomScale > 0)
         #expect(canvas.maximumZoomScale > canvas.zoomScale)
 
@@ -59,7 +59,7 @@ struct PageCanvasControllerTests {
         #expect(canvas.drawing.strokes.isEmpty)
     }
 
-    @Test("A whole page fits on screen at minimum zoom, however tall the page grows")
+    @Test("A whole page fits on screen at minimum zoom")
     func wholePageFitsAtMinimumZoom() {
         let controller = PageCanvasController()
         let root = controller.view!
@@ -71,11 +71,9 @@ struct PageCanvasControllerTests {
 
         // The reported complaint: at the floor you could not see a whole page.
         #expect(PageGeometry.width * floor <= root.frame.width)
-        #expect(PageGeometry.initialHeight * floor <= root.frame.height)
+        #expect(PageGeometry.height * floor <= root.frame.height)
 
-        // And extending must not move the floor, or every extension would
-        // shrink the canvas a little further.
-        controller.setPageHeight(PageGeometry.initialHeight * 6)
+        // A repeated layout pass must not move the floor.
         root.layoutIfNeeded()
         #expect(canvas.minimumZoomScale == floor)
     }

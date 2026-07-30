@@ -26,9 +26,8 @@ enum CanvasFileError: Error, Equatable {
 extension CanvasFile {
     /// Every field the contract constrains, checked in one place.
     ///
-    /// A grown height is not a new format: a file at the initial height and a
-    /// file at a grown height are both valid version 1, so there is nothing to
-    /// migrate.
+    /// Geometry is fixed, so any other width or height is a corrupt or foreign
+    /// file rather than a variant to accept.
     func validated() throws -> CanvasFile {
         guard formatVersion == Self.currentFormatVersion else {
             throw CanvasFileError.unsupportedFormatVersion(formatVersion)

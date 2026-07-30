@@ -22,21 +22,19 @@ struct EditorSessionTests {
         await session.start()
 
         #expect(session.phase == .ready)
-        #expect(session.pageHeight == PageGeometry.initialHeight)
 
         let saved = try await scratch.store.load()
         #expect(saved != nil)
         #expect(saved?.pageWidth == PageGeometry.width)
-        #expect(saved?.pageHeight == PageGeometry.initialHeight)
+        #expect(saved?.pageHeight == PageGeometry.height)
     }
 
-    @Test("A later launch restores the saved drawing and page height")
+    @Test("A later launch restores the saved drawing")
     func relaunchRestoresDocument() async throws {
         let scratch = Scratch()
 
         let first = scratch.session()
         await first.start()
-        first.extendPage()
         first.canvas.canvasView.drawing = strokeAcrossPage()
         await first.saveIfNeeded()
 
@@ -44,7 +42,6 @@ struct EditorSessionTests {
         await second.start()
 
         #expect(second.phase == .ready)
-        #expect(second.pageHeight == PageGeometry.initialHeight * 2)
         #expect(second.canvas.canvasView.drawing.strokes.count == 1)
         #expect(second.canvas.canvasView.drawing.bounds == strokeAcrossPage().bounds)
     }
@@ -94,87 +91,6 @@ struct EditorSessionTests {
 
         #expect(session.phase == .ready)
         #expect(session.canvas.canvasView.drawing.strokes.count == 1)
-    }
-
-    // MARK: - Page extension
-
-    @Test("Extending raises the height by exactly one increment and persists it")
-    func extensionRaisesHeight() async throws {
-        let scratch = Scratch()
-        let session = scratch.session()
-        await session.start()
-
-        session.extendPage()
-        #expect(session.pageHeight == PageGeometry.initialHeight * 2)
-        #expect(session.canvas.pageHeight == PageGeometry.initialHeight * 2)
-
-        await session.saveIfNeeded()
-        #expect(try await scratch.store.load()?.pageHeight == PageGeometry.initialHeight * 2)
-    }
-
-    @Test("Extension is refused at the maximum height and changes nothing")
-    func extensionRefusedAtMaximum() async throws {
-        let scratch = Scratch()
-        let session = scratch.session()
-        await session.start()
-
-        for _ in 0..<(PageGeometry.maximumExtents - 1) {
-            session.extendPage()
-        }
-        #expect(session.pageHeight == PageGeometry.maximumHeight)
-        #expect(session.canExtend == false)
-
-        await session.saveIfNeeded()
-        let atMaximum = try await scratch.store.load()
-
-        session.extendPage()
-
-        #expect(session.pageHeight == PageGeometry.maximumHeight)
-        #expect(session.canvas.pageHeight == PageGeometry.maximumHeight)
-        await session.saveIfNeeded()
-        #expect(try await scratch.store.load() == atMaximum)
-    }
-
-    @Test("Extending leaves existing ink at the same page coordinates")
-    func extensionDoesNotMoveInk() async throws {
-        let scratch = Scratch()
-        let session = scratch.session()
-        await session.start()
-
-        let root = session.canvas.view!
-        root.frame = CGRect(x: 0, y: 0, width: 820, height: 1180)
-        root.layoutIfNeeded()
-
-        session.canvas.canvasView.drawing = strokeAcrossPage()
-        let authored = session.canvas.canvasView.drawing.bounds
-        let zoom = session.canvas.canvasView.zoomScale
-        let offset = session.canvas.canvasView.contentOffset
-
-        session.extendPage()
-        root.layoutIfNeeded()
-
-        #expect(session.canvas.canvasView.drawing.bounds == authored)
-        #expect(session.canvas.canvasView.zoomScale == zoom)
-        #expect(session.canvas.canvasView.contentOffset == offset)
-    }
-
-    @Test("The zoom floor does not move as the page grows")
-    func extensionDoesNotChangeZoomFloor() async {
-        let scratch = Scratch()
-        let session = scratch.session()
-        await session.start()
-
-        let root = session.canvas.view!
-        root.frame = CGRect(x: 0, y: 0, width: 820, height: 1180)
-        root.layoutIfNeeded()
-
-        let floor = session.canvas.canvasView.minimumZoomScale
-        session.extendPage()
-        session.extendPage()
-        root.layoutIfNeeded()
-
-        // A whole-page floor would shrink here; a width floor cannot.
-        #expect(session.canvas.canvasView.minimumZoomScale == floor)
     }
 
     // MARK: - Autosave
