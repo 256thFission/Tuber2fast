@@ -13,9 +13,18 @@ one line at a time and append a dated session entry before stopping.
 | G3 — One-file persistence | Complete | Model, direct autosave, atomic replacement, recovery, and lifecycle behavior pass |
 | G4 — Performance baseline | Pending | Fixed device trace and measurements recorded; evidence-based budgets proposed |
 | G5 — Phillip canvas verdict | Pending | Phillip accepts or returns bounded findings from normal app |
+| P1 — Multi-page durable form | Pending | Format version 2 directory, version 1 migration, per-page save |
+| P2 — Horizontal paged navigation | Pending | Swipe turns and snaps one page; live canvas count stays bounded |
+| P3 — Append past the last page | Pending | Swiping past the end yields a writable page, durable once inked |
+| P4 — Phillip pagination verdict | Pending | Phillip accepts or returns bounded findings on turn feel |
 
 Lines are sequential. G1 must not prebuild G3 abstractions; each line adds only
 what its exit requires while conforming to the complete contract.
+
+P1–P4 belong to `Docs/Milestones/PagesAndTurning.md` and begin after G5. P1 is
+the durable form alone, with no navigation: it must be provable by tests and a
+migration before any paging view exists, because a format defect discovered
+after the UI is built costs both.
 
 ## Decision log
 
@@ -332,3 +341,41 @@ what its exit requires while conforming to the complete contract.
 - Not done: the pagination milestone itself is unwritten. G4's baseline trace
   still describes a maximum-extents document that can no longer exist and needs
   rewriting before G4 runs.
+
+### 2026-07-30 — Pages and Turning specified
+
+- Wrote `Docs/Milestones/PagesAndTurning.md` and the `CONTRACT:` amendments it
+  needs, before any implementation, because three of them change rules that
+  `Tools/gate.sh` enforces and one changes the durable format.
+- New `DataContract.md` §4a: a document becomes a directory — one index plus one
+  file per page — superseding §4's single-file and no-package rules. §4 stays
+  normative as the version 1 format that §4a migrates from. The design point is
+  that a save writes only changed page files; rewriting an unchanged page is
+  specified as a defect, not an inefficiency, because rewriting every page on
+  every save is exactly the failure the scale-with-changed-content rule exists
+  to prevent.
+- Write ordering is normative: page files first, then the index. A crash between
+  them strands an inert orphan page file; the reverse order would strand an
+  index naming a file that does not exist, which is an unopenable document. So a
+  dangling reference is fatal on load and an orphan is ignored.
+- Version 1 migration is real and owed, unlike the page-geometry reversal:
+  version 1 files exist on Phillip's iPad. The version 1 file is kept untouched
+  until the version 2 document is written, so an interrupted migration is not
+  data loss.
+- §2 gains rules 7a and 7b: a canvas owns one page and never learns its index,
+  and page turning is navigation rather than editing, so it is not undoable.
+- §9's one-canvas-per-session invariant is replaced by a *bounded* live canvas
+  count that must not grow with page count, with retirement releasing the canvas.
+  Retention that grows with pages visited is the multi-page form of the
+  monotonic-retention failure §9 already forbade. `Tools/gate.sh` gate 10 checks
+  the single construction site, which still holds and is unchanged.
+- Named in the milestone rather than discovered later: `PKCanvasView` is itself a
+  `UIScrollView`, so a paging scroll view and the canvas's own pinch-zoom fight
+  over a horizontal drag. The committed rule is that a turn is available at
+  fit-width scale or at a page's horizontal edge, and pans otherwise.
+- Also specified: a page appended by overswiping is durable only once it takes
+  ink, so an accidental swipe past the end does not permanently grow the
+  document. This is the one deliberate divergence between screen and file.
+- Status board gains P1–P4. P1 is the durable form with no navigation at all,
+  deliberately: a format defect found after the paging UI exists costs both.
+- No application code changed in this entry. Nothing is claimed as working.

@@ -1,6 +1,6 @@
 # TuberNotes data and ownership contract
 
-Status: normative for Just a Canvas
+Status: normative for Just a Canvas and Pages and Turning
 Applies from: first line of application code
 Change policy: a change to an owner, durable field, coordinate rule, or save
 meaning requires a `CONTRACT:` commit and a `Docs/Plan/PLAN.md` entry.
@@ -39,7 +39,8 @@ reducers, event buses, repositories, or dependency injection.
 |---|---|---|---|
 | Live `PKDrawing` | `PKCanvasView` inside `PageCanvasController` | Pencil/input | canvas session |
 | Pan, zoom, gestures, page projection | `PageCanvasController` | frame/input | canvas session |
-| Active tool, `dirty`, `saveInFlight`, debounce, current page height | `EditorSession` | interaction | app session |
+| Page order, page identity, current page index | `EditorSession` | user action | app session |
+| Active tool, `dirty` pages, `saveInFlight`, debounce | `EditorSession` | interaction | app session |
 | Saved canvas file | `DocumentStore` | autosave | across launches |
 | SwiftUI navigation and visible controls | SwiftUI root | user action | view session |
 | Background-execution lease | `EditorLifecycle` | scene transition | scene session |
@@ -56,6 +57,14 @@ Rules:
 6. Recreating a SwiftUI view must not recreate the live canvas controller.
 7. `PageCanvasController` renders the fixed page geometry defined by
    `PageGeometry`. It never chooses or mutates page geometry.
+7a. `PageCanvasController` owns exactly one page's live drawing and does not
+   know its own index, its neighbours, or how many pages exist. Turning a page
+   is `EditorSession` deciding which page a recycled canvas now shows; the
+   canvas is told, and never asks.
+7b. Page turning is navigation, not editing. It is not undoable, and PencilKit's
+   undo manager never learns about it. Appending a page is likewise not
+   undoable — an unwritten appended page is not durable (see §4a), so no ink can
+   be lost by the absence of undo.
 8. `EditorLifecycle` owns the UIKit background-execution lease and nothing else.
    It holds no durable state, chooses no save policy, and may only ask
    `EditorSession` to flush or resume. Expiring the lease ends the lease, not
@@ -88,6 +97,11 @@ The set of files permitted to import UIKit or PencilKit is enumerated in
 Just a Canvas persists one binary property-list file. It has no package,
 manifest, background asset, drawing reference, checksum table, thumbnail, or
 cache.
+
+This section describes **format version 1**. From Pages and Turning a document
+is a directory of many pages; §4a is normative for that form and supersedes the
+single-file and no-package rules here. Version 1 remains normative as the format
+that §4a migrates from, and files in it still exist.
 
 Its complete logical contents are:
 
@@ -140,6 +154,70 @@ The durability meaning is strict:
 
 There is no durable revision counter, document command, document event, writer
 role, in-memory reducer, or second authoritative document copy.
+
+## 4a. Durable form for many pages
+
+Normative from Pages and Turning; supersedes §4's single-file and
+"no package, no manifest" rules. §4 remains the description of the format
+version 1 file that this one migrates from.
+
+A document is a **directory**, not a file:
+
+```text
+JustACanvas.tubernotes/
+  document.plist          the index
+  pages/<pageID>.plist    one file per page
+```
+
+`document.plist` holds `formatVersion` (2), `documentID`, the page geometry, the
+ordered list of page IDs, and the current page index. It holds no ink. A page
+file holds its own `pageID` and its opaque drawing bytes, and nothing the index
+also holds — a value stored twice is a value that can disagree with itself.
+
+The rules that make this worth the added complexity:
+
+- **A save writes only what changed.** Saving a document where one page changed
+  writes that one page file, and rewrites the index only if the page order or
+  current index changed. Rewriting an unchanged page file is a defect, not an
+  inefficiency: it is the exact failure the *scale with visible or changed
+  content* rule exists to prevent.
+- **Every individual write is still atomic**, by the same temporary-file-and-
+  rename mechanism §4 uses. There is no atomicity *across* files, and the format
+  is designed so that none is needed — see the ordering rule.
+- **Order of writes is load-bearing.** Page files are written first, then the
+  index. A crash between them leaves an unreferenced page file, which is inert
+  and ignored on load. The reverse order would leave the index naming a page
+  file that does not exist, which is an unopenable document.
+- **A dangling reference is fatal, an orphan is not.** If the index names a page
+  file that is missing or unreadable, `load` throws and modifies nothing. A page
+  file that no page ID references is ignored, and may be deleted by a later save.
+- **The page list is never empty.** A document always has at least one page.
+- **Page IDs are unique within a document** and stable for the life of a page.
+- **The current page index must address an existing page.** An out-of-range
+  index is invalid and is rejected rather than clamped, for the same reason an
+  unreachable page height was: silently correcting a value hides whatever wrote
+  it.
+
+### Migration from format version 1
+
+A version 1 file is a single page. It migrates to a one-page version 2 document
+preserving `documentID`, `pageID`, and the drawing bytes exactly, at index 0.
+
+This migration is real and owed — unlike the page-geometry change, version 1
+files exist on Phillip's iPad. It runs once, on load, and the version 1 file is
+left on disk untouched until the version 2 document has been written
+successfully. Deleting it before that would turn an interrupted migration into
+data loss.
+
+Format version 2 does not accept a grown page height. §5a's rejection stands: a
+version 1 file carrying one fails to load, and therefore fails to migrate.
+
+### Empty trailing pages
+
+A page appended by swiping past the end is durable only once it takes ink. At
+most one never-written trailing page may exist in memory, and it is dropped at
+save time. This is the only permitted divergence between the pages on screen and
+the pages in the document.
 
 ## 5. Drawing-to-save flow
 
@@ -306,12 +384,16 @@ notification follows the ordinary autosave path. Saving never clears undo.
 
 Hard implementation invariants:
 
-- an editor session constructs and retains exactly one `PKCanvasView`, and the
-  application constructs canvases at exactly one code site. The process is *not*
-  required to hold only one live canvas: scene-scoped and virtualized page
-  editors must be able to own independent active canvases, so a process-global
-  singleton is the wrong invariant. What is forbidden is a session holding two,
-  or a canvas being replaced by anything other than the session that owns it;
+- the application constructs `PKCanvasView` at exactly one code site. The
+  process is *not* required to hold only one live canvas, and from Pages and
+  Turning an editor session deliberately holds several: the visible page and its
+  immediate neighbours. What is forbidden is an unbounded number — the live
+  canvas count must be bounded by a small constant and must not grow with the
+  page count, however far the user pages — and a canvas being replaced or
+  retired by anything other than the session that owns it;
+- a canvas retired from the visible window is released, not retained against a
+  future return. Retention that grows with pages visited is the multi-page form
+  of the monotonic-retention failure §9 already forbids;
 - Pencil samples, pan ticks, and zoom ticks remain inside the canvas runtime;
 - no SwiftUI observation publication, task creation, actor hop, file access, or
   property-list encoding occurs per input sample;
@@ -366,9 +448,9 @@ offered as starting points for him to accept or revise before G4 runs, and
 neither carries authority until he does. G4 proposes evidence-based budgets in a
 `CONTRACT:` change before another feature is added; Phillip alone adopts them.
 
-Mechanical acceptance requires no synchronous file I/O on main, one canvas per
-editor session, no crash, no lost acknowledged save, and no monotonic retention
-of canvas controllers or completed save tasks. Phillip alone judges Pencil feel.
+Mechanical acceptance requires no synchronous file I/O on main, a bounded live
+canvas count independent of page count, no crash, no lost acknowledged save, and
+no monotonic retention of canvas controllers or completed save tasks. Phillip alone judges Pencil feel.
 
 ## 10. Forbidden patterns
 
@@ -391,6 +473,11 @@ successful-save restoration, interrupted atomic replacement, page-space round
 trip, and geometry validation — that the canonical geometry validates, and that
 any other height is rejected, including the grown heights the extension-era
 build could write.
+
+Pages and Turning adds tests for page-order round trip, version 1 migration
+fidelity, that a save touches only changed page files, that a dangling page
+reference fails the load without mutating disk, and that the live canvas count
+stays bounded across a long page sweep.
 Instruments and physical-iPad evidence enforce the performance section.
 Compilation alone is not behavioral proof.
 
