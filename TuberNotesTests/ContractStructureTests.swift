@@ -110,6 +110,7 @@ final class ContractStructureTests: XCTestCase {
     /// hurried change breaks first.
     func testOnlyTheCanvasRuntimeImportsUIFrameworks() throws {
         let allowed: Set<String> = [
+            "TuberNotesApp/DrawingSnapshot.swift", // the immutable value that carries a drawing out of the runtime
             "TuberNotesApp/PageCanvasController.swift",   // the live PencilKit canvas
             "TuberNotesApp/PagedCanvasController.swift",  // paging and gesture arbitration
             "TuberNotesApp/EditorLifecycle.swift",        // the background-execution lease
