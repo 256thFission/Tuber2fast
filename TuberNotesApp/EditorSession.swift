@@ -209,8 +209,10 @@ final class EditorSession {
     /// The number of saved pages.
     var pageCount: Int { index.pageIDs.count }
 
-    /// The live canvas for the visible page, or `nil` before the runtime has
-    /// laid out. The save path and the tests read it; nothing writes through it.
+    /// Read only by tests: `EditorSessionTests` draws through it to make
+    /// `Contract.md` — Saving observable. The live canvas for the visible page,
+    /// or `nil` before the runtime has laid out. The save path never reads it —
+    /// `performOneSave` captures via `liveRuntime?.snapshot(at:)`.
     var currentCanvas: PageCanvasController? {
         liveRuntime?.livePage(at: index.currentPageIndex)
     }

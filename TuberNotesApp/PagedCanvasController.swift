@@ -204,14 +204,17 @@ final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
     }
 
     /// The live page controller for an index, if that slot is a canvas.
-    /// Present for the session's save path and for tests to assert against.
+    /// Read by `snapshot(at:)` — which is how the save path reaches a live
+    /// drawing — and by tests via `EditorSession.currentCanvas`.
     func livePage(at index: Int) -> PageCanvasController? {
         guard case .canvas(let page)? = slots[index] else { return nil }
         return page
     }
 
-    /// How many page canvases are alive. The bound `Contract.md` — Performance
-    /// requires is on this number: it must not grow with `pageCount`.
+    /// Read only by tests: it exists so that `Contract.md` — Performance's
+    /// bound on the live canvas count is observable, and
+    /// `PagedCanvasControllerTests` is what observes it — it must not grow
+    /// with `pageCount`.
     var liveCanvasCount: Int {
         slots.values.reduce(into: 0) { count, slot in
             if case .canvas = slot { count += 1 }
