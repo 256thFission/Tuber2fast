@@ -154,6 +154,16 @@ final class EditorSession {
     /// and an unbounded shift would overflow.
     private static let maximumFailureDoublings = 10
 
+    /// Test-only: holds the save open between serialization and the store write.
+    ///
+    /// The retirement handover and the save acknowledgement are only observable
+    /// against a save that is genuinely in flight. A real device earns that
+    /// window from a large drawing's encode; tests earn it here rather than by
+    /// sleeping and hoping (`inkSurvivesItsPageLeavingTheWindow` used to sleep
+    /// 50 ms past the race it was written to catch). `nil` — the only value the
+    /// app ever holds — costs nothing on the save path.
+    @ObservationIgnored var serializationDelayForTesting: Duration?
+
     /// `RootCanvasView.task` may be restarted as views move through the scene
     /// lifecycle. Exactly one load is allowed to cross the store boundary; later
     /// callers wait for that attempt instead of racing a second load over live ink.
@@ -532,6 +542,10 @@ final class EditorSession {
         // Measured where the work happens rather than timed again here: the next
         // debounce is derived from this cost (`Contract.md` — Saving).
         lastSerializeDuration = totalDuration
+
+        if let delay = serializationDelayForTesting {
+            try? await Task.sleep(for: delay)
+        }
 
         do {
             // Only the pages that were edited. The store rewrites the index only

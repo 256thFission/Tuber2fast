@@ -219,6 +219,43 @@ struct EditorSessionTests {
         #expect(scratch.modificationDate(ofPage: firstPageID) == firstPageWrittenAt)
     }
 
+    @Test("Turning away from a page and back does not rewrite its file")
+    func turningAwayAndBackDoesNotRewriteThePage() async throws {
+        let scratch = Scratch()
+        let session = scratch.session()
+        await session.start()
+        canvas(of: session).drawing = strokeAcrossPage()
+        let firstPageID = session.currentPageID
+
+        // Enough pages that page 0 is evicted from the live window *and* its
+        // held bytes are pruned, so turning back rebuilds it from disk. This is
+        // `savingOnePageDoesNotRewriteTheOther` with enough pages to evict:
+        // with only two pages the first never leaves the window and the rebuild
+        // path is never exercised.
+        for _ in 0..<4 { pullPastTheEnd(session) }
+        await session.saveIfNeeded()
+        let firstPageWrittenAt = try #require(scratch.modificationDate(ofPage: firstPageID))
+
+        // Far enough apart that an unwanted rewrite cannot hide inside the
+        // filesystem's timestamp resolution.
+        try await Task.sleep(for: .milliseconds(1100))
+
+        // Back to page 0 — its ink is re-installed into a fresh canvas — and
+        // away again, so the rebuilt page also retires once more. The bytes
+        // were pruned when the window moved on, so the rebuild waits on the
+        // refetch landing.
+        turn(session, to: 0)
+        try await waitUntil("page 0's ink is reloaded into its rebuilt canvas") {
+            session.currentCanvas?.canvasView.drawing.strokes.count == 1
+        }
+        turn(session, to: 4)
+        await session.saveIfNeeded()
+
+        // Installing ink is never reported as an edit (`Contract.md` —
+        // Lifecycle): a turn that changed nothing writes nothing.
+        #expect(scratch.modificationDate(ofPage: firstPageID) == firstPageWrittenAt)
+    }
+
     @Test("Ink drawn on a page that then scrolls out of the window is still saved")
     func inkSurvivesItsPageLeavingTheWindow() async throws {
         let scratch = Scratch()
@@ -229,12 +266,13 @@ struct EditorSessionTests {
         let inkedPageID = session.currentPageID
 
         // Four appends put the inked page well outside the live window, so its
-        // canvas is released before any save has run.
+        // canvas is released before any save has run. Retirement hands the
+        // drawing over synchronously, so there is nothing to wait for here — a
+        // sleep at this point would be stepping over the exact race this test
+        // exists to catch.
         for _ in 0..<4 { pullPastTheEnd(session) }
         #expect(session.pages.livePage(at: 0) == nil)
 
-        // The retiring page's ink is serialized asynchronously; let that land.
-        try await Task.sleep(for: .milliseconds(50))
         await session.saveIfNeeded()
 
         #expect(try PKDrawing(data: await scratch.store.loadPage(inkedPageID)).strokes.count == 1)
