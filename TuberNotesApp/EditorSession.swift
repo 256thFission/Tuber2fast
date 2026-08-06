@@ -3,9 +3,8 @@ import Observation
 
 /// Coordinates the canvas runtime and the document store (`Contract.md` — Owners).
 ///
-/// It owns page order and identity, and the active save policy.
-//  Live drawings live in PencilKit and
-/// are captured only at save time.
+/// It owns page order and identity, per-page ink state, and the active save
+/// policy. Live drawings live in PencilKit and are captured only at save time.
 /// `@Observable` is deliberate and narrow. SwiftUI observes `phase` and
 /// `lastSaveError` — user-action-frequency values. It is forbidden to observe the
 /// drawing, pan, zoom, or Pencil samples.
@@ -18,9 +17,190 @@ final class EditorSession {
         case failed(String)
     }
 
+    /// Everything the session knows about one page. There is no second place.
+    ///
+    /// The invariant this type states and the rest of the session cannot
+    /// violate: **a page's authoritative unsaved ink is in exactly one place,
+    /// and `ink` names it.** `durable` is a cache of what the last successful
+    /// save wrote, and it is the only thing prune may drop — pruning it can
+    /// cost a reload, never ink. Whether the page is dirty is derived from
+    /// `ink`, never stored beside it.
+    ///
+    /// Every mutation is a named transition with a precondition, so an illegal
+    /// transition fails at the transition rather than as a wrong answer three
+    /// frames later (`Contract.md` — Invalid states fail loud).
+    struct Page {
+        let id: UUID
+
+        /// Exactly what the last successful save wrote, while it is still
+        /// held. A cache, never an authority.
+        private(set) var durable: Data?
+
+        private(set) var ink: Ink
+
+        enum Ink {
+            /// Bytes requested; the page is not writable yet.
+            case loading
+            /// The page's bytes could not be read. Refused and surfaced,
+            /// never shown as an editable blank: ink written on a blank that
+            /// stands in for an unreadable page would replace a page that
+            /// merely could not be read with one that is genuinely empty.
+            case unreadable(String)
+            /// The page holds no unsaved ink; `durable` is the truth.
+            case clean
+            /// The authority is the page's live canvas, which holds unsaved ink.
+            case live
+            /// The session holds the page's unsaved ink — taken into custody
+            /// when the page's canvas retired, or kept from a save that failed.
+            case held(UnsavedInk)
+            /// A save captured this page's ink and has not returned or thrown.
+            case saving(UnsavedInk)
+        }
+
+        /// Unsaved ink in the session's custody: still a drawing value, or
+        /// already serialized by a save pass. Custody, not a second copy
+        /// (`Contract.md` — Owners, golden rule 5).
+        enum UnsavedInk {
+            case drawing(DrawingSnapshot)
+            case serialized(Data)
+        }
+
+        /// Derived, never stored (`Contract.md` — Saving): the page carries
+        /// unsaved ink that no save has yet captured.
+        var isDirty: Bool {
+            switch ink {
+            case .live, .held: true
+            case .loading, .unreadable, .clean, .saving: false
+            }
+        }
+
+        init(loading id: UUID) {
+            self.id = id
+            self.durable = nil
+            self.ink = .loading
+        }
+
+        init(clean id: UUID, durable: Data) {
+            self.id = id
+            self.durable = durable
+            self.ink = .clean
+        }
+
+        /// An appended page. Its unsaved ink is empty bytes, held by the
+        /// session until the first save writes them.
+        init(appended id: UUID) {
+            self.id = id
+            self.durable = nil
+            self.ink = .held(.serialized(Data()))
+        }
+
+        // MARK: Transitions
+
+        /// The page's saved bytes arrived from the store.
+        mutating func bytesLoaded(_ data: Data) {
+            guard case .loading = ink else {
+                preconditionFailure(
+                    "page \(id) received loaded bytes while \(ink); "
+                        + "a load result must never replace newer ink"
+                )
+            }
+            durable = data
+            ink = .clean
+        }
+
+        /// The page's saved bytes could not be read.
+        mutating func loadFailed(_ message: String) {
+            guard case .loading = ink else {
+                preconditionFailure("page \(id) reported a load failure while \(ink)")
+            }
+            ink = .unreadable(message)
+        }
+
+        /// The user edited the page's live canvas. Whatever the session was
+        /// holding for this page is superseded: the canvas is the authority now.
+        mutating func edited() {
+            switch ink {
+            case .clean, .live, .held, .saving:
+                ink = .live
+            case .loading, .unreadable:
+                preconditionFailure(
+                    "page \(id) reported an edit while \(ink); "
+                        + "a page without its bytes must not accept ink"
+                )
+            }
+        }
+
+        /// The page's canvas is being released; the session takes custody of
+        /// its drawing. Synchronous, before the release — `Contract.md` —
+        /// Navigation.
+        mutating func retired(handingOver snapshot: DrawingSnapshot) {
+            switch ink {
+            case .live:
+                ink = .held(.drawing(snapshot))
+            case .clean, .held, .saving:
+                // The canvas's content is already accounted for: it equals
+                // the durable bytes, the held value it was rebuilt from, or
+                // the batch an in-flight save captured. Nothing newer exists
+                // to take custody of.
+                break
+            case .loading, .unreadable:
+                preconditionFailure(
+                    "page \(id) retired a canvas while \(ink); "
+                        + "such a page has no ink-bearing canvas to retire"
+                )
+            }
+        }
+
+        /// A save pass captured this page's unsaved ink into its batch.
+        mutating func beginSaving(_ captured: UnsavedInk) {
+            switch ink {
+            case .live, .held:
+                ink = .saving(captured)
+            case .clean, .loading, .unreadable:
+                preconditionFailure("page \(id) captured for saving while \(ink)")
+            case .saving:
+                preconditionFailure(
+                    "page \(id) captured twice; there is never more than one "
+                        + "capture/save operation in flight"
+                )
+            }
+        }
+
+        /// The in-flight save serialized this page's drawing. Recorded so a
+        /// failed write keeps the bytes rather than paying the encode twice,
+        /// and so a rebuild during the save reads the freshest value. A page
+        /// edited since capture is `.live` again and keeps its newer authority.
+        mutating func serializedWhileSaving(_ data: Data) {
+            if case .saving = ink { ink = .saving(.serialized(data)) }
+        }
+
+        /// The store returned: these bytes are durable. Acknowledgement
+        /// follows evidence — the page becomes clean only if nothing edited it
+        /// since its capture; one edited during the save is `.live` again and
+        /// stays dirty with no special case (`Contract.md` — Saving).
+        mutating func saveSucceeded(written data: Data) {
+            durable = data
+            if case .saving = ink { ink = .clean }
+        }
+
+        /// The store threw. The page stays dirty and keeps the bytes the save
+        /// already paid to encode, so the retry serializes nothing twice.
+        mutating func saveFailed(restoring data: Data) {
+            if case .saving = ink { ink = .held(.serialized(data)) }
+        }
+
+        /// Drops the prunable cache once the page is far from the visible one.
+        /// Only `durable` is droppable; unsaved ink is never touched
+        /// (`Contract.md` — Performance, held-bytes bound).
+        mutating func evicted() {
+            durable = nil
+            if case .clean = ink { ink = .loading }
+        }
+    }
+
     private(set) var phase: Phase = .loading
 
-    /// Surfaced so a failed autosave is visible 
+    /// Surfaced so a failed autosave is visible
     private(set) var lastSaveError: String?
 
     /// The page the user is looking at. Page belongs to the session's
@@ -84,37 +264,17 @@ final class EditorSession {
         pageID: UUID()
     )
 
-    /// Pages whose ink differs from the last successful save.
-    ///
-    /// A set of page IDs rather than one boolean, because a save must write the
-    /// pages that changed and only those. Identity rather than index, because an
-    /// index means a different page once the list changes.
-    private var dirtyPageIDs: Set<UUID> = []
+    /// One `Page` per document page, in document order — the same order as
+    /// `index.pageIDs`, which `alignedWithIndex()` enforces after every index
+    /// mutation. Everything the session knows about a page's ink lives in its
+    /// entry here; there is no second dictionary to disagree with it.
+    @ObservationIgnored private var pageStates: [Page] = []
 
     /// Whether the index itself — page order or the current page — differs from
     /// what was last saved.
     private var indexDirty = false
 
-    private var dirty: Bool { !dirtyPageIDs.isEmpty || indexDirty }
-
-    /// Saved bytes for the pages currently in the runtime's window, plus any
-    /// captured from a page that scrolled out before its save landed.
-    ///
-    /// This is not a second mutable drawing (`Contract.md` — Owners): a live
-    /// page's authority is its `PKCanvasView`, and an entry here is either a
-    /// copy of what is on disk or the final bytes of a page that no longer has
-    /// a canvas. It is
-    /// pruned to the window on every turn, so it cannot grow with pages visited.
-    @ObservationIgnored private var pageData: [UUID: Data] = [:]
-
-    /// Ink handed over by a page that left the live window before it was saved.
-    ///
-    /// Custody rather than a second copy (`Contract.md` — Owners, golden rule
-    /// 5): every page in here has no live canvas, so this value is the only
-    /// authority for it. Bounded by the dirty set — an entry is added only for
-    /// a dirty page and dropped once that page is saved — which is the "any
-    /// page whose ink is not yet saved" clause of the held-bytes bound.
-    @ObservationIgnored private var retiredInk: [UUID: DrawingSnapshot] = [:]
+    private var dirty: Bool { indexDirty || pageStates.contains(where: \.isDirty) }
 
     /// Pages whose bytes are being fetched. Prevents a scroll back and forth
     /// from starting the same load repeatedly.
@@ -206,19 +366,21 @@ final class EditorSession {
         do {
             if let loaded = try await store.load() {
                 index = loaded
+                pageStates = loaded.pageIDs.map { Page(loading: $0) }
                 // The opening window, fetched before any canvas exists, so the
                 // first pages are built with their ink rather than as blanks
                 // that have to be reloaded.
-                try await fetchPageData(forPagesAround: loaded.currentPageIndex)
+                await fetchPageData(forPagesAround: loaded.currentPageIndex)
             } else {
                 index = DocumentIndex.newDocument(documentID: UUID(), pageID: UUID())
                 // Empty bytes are the blank page. Serializing an empty
                 // `PKDrawing` to get the same meaning would drag PencilKit into
                 // this file, which `Contract.md` — Owners confines to the
                 // canvas runtime.
-                pageData[index.pageIDs[0]] = Data()
                 try await store.save(index: index, changedPages: [index.pageIDs[0]: Data()])
+                pageStates = [Page(clean: index.pageIDs[0], durable: Data())]
             }
+            alignedWithIndex()
             phase = .ready
             pages.setPages(count: index.pageIDs.count, currentPageIndex: index.currentPageIndex)
             // Editing opens only now, after the loaded drawings are installed.
@@ -236,26 +398,66 @@ final class EditorSession {
         }
     }
 
+    // MARK: - Page state
+
+    /// The one lookup from identity to state. Pages are never removed, so a
+    /// missing entry is a broken invariant, not an answerable question.
+    private func stateIndex(of pageID: UUID) -> Int {
+        guard let found = pageStates.firstIndex(where: { $0.id == pageID }) else {
+            preconditionFailure("no state for page \(pageID); pages are never removed")
+        }
+        return found
+    }
+
+    /// `pageStates` and `index.pageIDs` are the same list in the same order.
+    /// Checked after every mutation of either, so a drift fails at the mutation
+    /// that caused it.
+    private func alignedWithIndex() {
+        precondition(
+            pageStates.map(\.id) == index.pageIDs,
+            "page states have drifted from the document index"
+        )
+    }
+
     // MARK: - Page content
 
-    /// What the runtime should build a page with. `.unavailable` produces a page
-    /// that is visible but not editable until `fetchPageData` supplies its bytes.
+    /// What the runtime should build a page with, answered from the page's one
+    /// ink state. Unsaved ink outranks anything on disk: it is newer by
+    /// construction, which is what stops a fast turn away and back from
+    /// restoring pre-edit ink.
     private func content(forPageAt pageIndex: Int) -> PagedCanvasController.PageContent {
-        guard index.pageIDs.indices.contains(pageIndex) else { return .blank }
-        let pageID = index.pageIDs[pageIndex]
-        // Ink this page handed over when it last retired outranks anything on
-        // disk: it is newer by construction. Rebuilding from `pageData` instead
-        // is what silently restored pre-edit ink when a page was turned away
-        // from and back to before its save landed.
-        if let snapshot = retiredInk[pageID] { return .retained(snapshot) }
-        guard let data = pageData[pageID] else {
+        // Out of range only when the runtime lays out before `start()` has
+        // populated the session — reachable in tests alone, where hosting
+        // order is the setup's choice.
+        guard pageStates.indices.contains(pageIndex) else { return .blank }
+        switch pageStates[pageIndex].ink {
+        case .loading:
             let around = index.currentPageIndex
             Task { [weak self] in
-                try? await self?.fetchPageData(forPagesAround: around)
+                await self?.fetchPageData(forPagesAround: around)
             }
             return .unavailable
+        case .unreadable:
+            return .unavailable
+        case .clean:
+            guard let data = pageStates[pageIndex].durable else {
+                preconditionFailure(
+                    "page \(pageIndex) is clean but its durable bytes are missing"
+                )
+            }
+            return data.isEmpty ? .blank : .ink(data)
+        case .live:
+            preconditionFailure(
+                "asked to rebuild page \(pageIndex) while its live canvas is the authority"
+            )
+        case .held(let unsaved), .saving(let unsaved):
+            switch unsaved {
+            case .drawing(let snapshot):
+                return .retained(snapshot)
+            case .serialized(let data):
+                return data.isEmpty ? .blank : .ink(data)
+            }
         }
-        return data.isEmpty ? .blank : .ink(data)
     }
 
     /// Loads the saved bytes for the pages around `pageIndex` that are not
@@ -263,41 +465,58 @@ final class EditorSession {
     ///
     /// The radius is one wider than the runtime's live window, so an ordinary
     /// turn finds the next page's bytes already here.
-    private func fetchPageData(forPagesAround pageIndex: Int) async throws {
+    ///
+    /// One page failing to read refuses itself and does not stall the rest of
+    /// the window: the failure is surfaced here at the session boundary and the
+    /// page is marked unreadable, never rendered as an editable blank
+    /// (`Contract.md` — Invalid states fail loud, on the read path).
+    private func fetchPageData(forPagesAround pageIndex: Int) async {
         let lower = max(0, pageIndex - Self.prefetchRadius)
         let upper = min(index.pageIDs.count - 1, pageIndex + Self.prefetchRadius)
         guard lower <= upper else { return }
 
         for candidate in lower...upper {
             let pageID = index.pageIDs[candidate]
-            guard pageData[pageID] == nil, !pageLoadsInFlight.contains(pageID) else { continue }
+            guard case .loading = pageStates[stateIndex(of: pageID)].ink,
+                  !pageLoadsInFlight.contains(pageID) else { continue }
 
             pageLoadsInFlight.insert(pageID)
             defer { pageLoadsInFlight.remove(pageID) }
 
-            let data = try await store.loadPage(pageID)
-            // The page list can change while this is in flight; write the bytes
-            // under the identity they were loaded for, never under an index.
-            pageData[pageID] = data
+            do {
+                let data = try await store.loadPage(pageID)
+                // The page list can change while this is in flight; write the
+                // bytes under the identity they were loaded for, never under
+                // an index.
+                pageStates[stateIndex(of: pageID)].bytesLoaded(data)
+            } catch {
+                CanvasLog.event(
+                    CanvasLog.lifecycle, "lifecycle",
+                    "page \(pageID) failed to load: \(error)"
+                )
+                pageStates[stateIndex(of: pageID)].loadFailed(String(describing: error))
+            }
             if let current = index.pageIDs.firstIndex(of: pageID) {
                 liveRuntime?.reloadPage(at: current)
             }
         }
     }
 
-    /// Drops held bytes for pages far from the visible one.
+    /// Drops held durable bytes for pages far from the visible one.
     ///
-    /// Without this, `pageData` would grow with every page visited — the
+    /// Without this, the cache would grow with every page visited — the
     /// monotonic retention `Contract.md` — Performance forbids, wearing a
-    /// different hat.
-    /// A page with unsaved ink is never dropped.
-    private func prunePageData() {
+    /// different hat. Only the durable cache is droppable; a page's unsaved
+    /// ink is never touched, which is the "any page whose ink is not yet
+    /// saved" clause of the held-bytes bound.
+    private func pruneDurableBytes() {
         let lower = max(0, index.currentPageIndex - Self.prefetchRadius)
         let upper = min(index.pageIDs.count - 1, index.currentPageIndex + Self.prefetchRadius)
         guard lower <= upper else { return }
 
-        let keep = Set(index.pageIDs[lower...upper]).union(dirtyPageIDs)
-        pageData = pageData.filter { keep.contains($0.key) }
+        for stateIndex in pageStates.indices where !(lower...upper).contains(stateIndex) {
+            pageStates[stateIndex].evicted()
+        }
     }
 
     /// One page either side of the runtime's live window.
@@ -309,8 +528,8 @@ final class EditorSession {
     ///
     /// KNOWN DEFECT: the page is durable immediately here, rather than on first
     /// ink. Nothing drops a
-    /// never-written trailing page at save time: this seeds empty `Data`,
-    /// inserts it into the dirty set, and `DocumentStore.save` writes every
+    /// never-written trailing page at save time: this holds empty bytes as the
+    /// page's unsaved ink, and `DocumentStore.save` writes every
     /// entry in `changedPages` with no emptiness check. An accidental swipe
     /// past the end therefore grows the document permanently.
     ///
@@ -320,10 +539,10 @@ final class EditorSession {
         guard phase == .ready, !saveInFlight else { return }
 
         let appended = UUID()
-        pageData[appended] = Data()
+        pageStates.append(Page(appended: appended))
         index = index.withPages(index.pageIDs + [appended], currentPageIndex: index.pageIDs.count)
-        dirtyPageIDs.insert(appended)
         indexDirty = true
+        alignedWithIndex()
 
         pages.setPages(count: index.pageIDs.count, currentPageIndex: index.currentPageIndex)
         CanvasLog.event(
@@ -338,7 +557,7 @@ final class EditorSession {
     /// The one place a drawing change is judged to be user editing.
     ///
     /// What keeps a load from dirtying the document is the wiring order in
-    /// `PagedCanvasController.makePage`, not this guard: PencilKit reports a
+    /// `PagedCanvasController.makePage`, not a guard here: PencilKit reports a
     /// programmatic assignment synchronously, so the callback is attached only
     /// after the install and never sees it.
     ///
@@ -346,28 +565,42 @@ final class EditorSession {
     /// document that could not be read, and for `.loading`, where no page should
     /// be reporting anything yet.
     private func drawingChanged(atPageIndex pageIndex: Int) {
-        guard phase == .ready, index.pageIDs.indices.contains(pageIndex) else { return }
-        dirtyPageIDs.insert(index.pageIDs[pageIndex])
-        markDirty()
+        guard phase == .ready, pageStates.indices.contains(pageIndex) else { return }
+        switch pageStates[pageIndex].ink {
+        case .loading, .unreadable:
+            // KNOWN DEFECT: reachable today by drawing on a page that entered
+            // the live window before its bytes arrived —
+            // `PageCanvasController.isEditable` gates nothing at runtime, so
+            // such a canvas accepts Pencil input and this is where the stroke
+            // is refused rather than accounted for. The queue item
+            // `unloaded-page-is-not-a-canvas` removes the canvas itself, at
+            // which point this case becomes the trap `Page.edited()` already
+            // holds ready.
+            CanvasLog.event(
+                CanvasLog.canvas, "canvas",
+                "refused a drawing change on page \(pageIndex) whose bytes are not held"
+            )
+        case .clean, .live, .held, .saving:
+            pageStates[pageIndex].edited()
+            markDirty()
+        }
     }
 
     /// Takes custody of a page's ink as its canvas is released.
     ///
-    /// Synchronous, and that is the whole point (`Contract.md` — Saving: "a page
-    /// leaving the live window hands over a value rather than starting a second
-    /// capture"). Taking the value here leaves the save path as the only code
-    /// that serializes, which is what makes the contract's claim that stale
-    /// generations cannot exist true rather than aspirational.
+    /// Synchronous, and that is the whole point (`Contract.md` — Navigation,
+    /// Saving: "a page leaving the live window hands over a value rather than
+    /// starting a second capture"). Taking the value here leaves the save path
+    /// as the only code that serializes, which is what makes the contract's
+    /// claim that stale generations cannot exist true rather than aspirational.
     ///
     /// Handing over a promise instead — a `Task` that serialized and wrote the
     /// bytes back later — left a window in which the page had no canvas and no
     /// held ink. A save landing in that window found only the last bytes that
     /// reached disk, wrote those over the newer ink, and marked the page clean.
     private func pageIsRetiring(atPageIndex pageIndex: Int, snapshot: DrawingSnapshot) {
-        guard phase == .ready, index.pageIDs.indices.contains(pageIndex) else { return }
-        let pageID = index.pageIDs[pageIndex]
-        guard dirtyPageIDs.contains(pageID) else { return }
-        retiredInk[pageID] = snapshot
+        guard phase == .ready, pageStates.indices.contains(pageIndex) else { return }
+        pageStates[pageIndex].retired(handingOver: snapshot)
     }
 
     /// The visible page settled on a new index.
@@ -377,9 +610,10 @@ final class EditorSession {
 
         index = index.withPages(index.pageIDs, currentPageIndex: pageIndex)
         indexDirty = true
-        prunePageData()
+        alignedWithIndex()
+        pruneDurableBytes()
         Task { [weak self] in
-            try? await self?.fetchPageData(forPagesAround: pageIndex)
+            await self?.fetchPageData(forPagesAround: pageIndex)
         }
         markDirty()
     }
@@ -491,53 +725,64 @@ final class EditorSession {
         guard dirty, !saveInFlight else { return }
 
         let capturedIndex = index
-        let capturedPages = dirtyPageIDs
-        dirtyPageIDs.removeAll()
+        let capturedIndexWasDirty = indexDirty
         indexDirty = false
         saveInFlight = true
 
-        // Capture every dirty page as one generation before either actor can
-        // suspend, so a save never pairs one generation's identity with another's
-        // ink. A page that is live and loaded is captured from its canvas; one
-        // that has scrolled out yields the value it handed over as it retired.
+        // Capture every dirty page as one generation before anything can
+        // suspend, so a save never pairs one generation's identity with
+        // another's ink. A live page yields its canvas's drawing; one that has
+        // left the live window yields the value the session took custody of as
+        // it retired.
         //
-        // Capture is total (`Contract.md` — Saving). The dirty set was cleared
-        // above, so a page this loop cannot account for would be reported clean
-        // while its ink existed nowhere — the one failure that turns a save into
-        // silent data loss. It traps instead.
-        var snapshots: [UUID: DrawingSnapshot] = [:]
-        var alreadySerialized: [UUID: Data] = [:]
-        for pageID in capturedPages {
-            if let pageIndex = capturedIndex.pageIDs.firstIndex(of: pageID),
-               let snapshot = liveRuntime?.snapshot(at: pageIndex) {
-                snapshots[pageID] = snapshot
-            } else if let snapshot = retiredInk[pageID] {
-                snapshots[pageID] = snapshot
-            } else if let data = pageData[pageID] {
-                alreadySerialized[pageID] = data
-            } else {
-                // KNOWN DEFECT: reachable today by drawing on a page that
-                // entered the live window before its bytes arrived. Such a page
-                // accepts Pencil input, is excluded from retirement, and holds
-                // no bytes, so it arrives here dirty and empty-handed. The queue
-                // item `unloaded-page-is-not-a-canvas` closes it by refusing the
-                // input rather than accepting and then failing to account for
-                // it. Trapping is the contract-correct behaviour meanwhile:
-                // the alternative is dropping the page silently, which is what
-                // this code did before.
+        // Capture is total (`Contract.md` — Saving): the switch is exhaustive
+        // with no `else`, so there is no fourth place a dirty page's ink could
+        // be and no silent omission. A page that cannot be captured is a
+        // violation and traps at its transition, never a page quietly reported
+        // clean while its ink existed nowhere.
+        var captures: [(pageID: UUID, unsaved: Page.UnsavedInk)] = []
+        for pageIndex in pageStates.indices {
+            switch pageStates[pageIndex].ink {
+            case .clean, .loading, .unreadable:
+                continue
+            case .live:
+                guard let snapshot = liveRuntime?.snapshot(at: pageIndex) else {
+                    preconditionFailure(
+                        "page \(pageStates[pageIndex].id) is live but its canvas "
+                            + "yielded no snapshot"
+                    )
+                }
+                pageStates[pageIndex].beginSaving(.drawing(snapshot))
+                captures.append((pageStates[pageIndex].id, .drawing(snapshot)))
+            case .held(let unsaved):
+                pageStates[pageIndex].beginSaving(unsaved)
+                captures.append((pageStates[pageIndex].id, unsaved))
+            case .saving:
                 preconditionFailure(
-                    "dirty page \(pageID) yielded no ink to capture: "
-                        + "no live canvas, no retired ink, no held bytes"
+                    "page \(pageStates[pageIndex].id) was already saving when a new "
+                        + "capture began; there is never more than one in flight"
                 )
             }
         }
 
-        var changedPages = alreadySerialized
+        // Serialize off the main actor, on the save path, never at the
+        // handover (`Contract.md` — Performance). Ink a previous pass already
+        // serialized — a failed save's restored bytes, an appended blank —
+        // costs nothing again.
+        var changedPages: [UUID: Data] = [:]
         var totalDuration: Duration = .zero
-        for (pageID, snapshot) in snapshots {
-            let serialized = await snapshot.serialized()
-            changedPages[pageID] = serialized.data
-            totalDuration += serialized.duration
+        for (pageID, unsaved) in captures {
+            let data: Data
+            switch unsaved {
+            case .serialized(let alreadySerialized):
+                data = alreadySerialized
+            case .drawing(let snapshot):
+                let serialized = await snapshot.serialized()
+                data = serialized.data
+                totalDuration += serialized.duration
+            }
+            changedPages[pageID] = data
+            pageStates[stateIndex(of: pageID)].serializedWhileSaving(data)
         }
         // Measured where the work happens rather than timed again here: the next
         // debounce is derived from this cost (`Contract.md` — Saving).
@@ -551,19 +796,22 @@ final class EditorSession {
             // Only the pages that were edited. The store rewrites the index only
             // if it changed, so an ordinary ink save touches exactly one file.
             try await store.save(index: capturedIndex, changedPages: changedPages)
+            // Acknowledgement follows evidence: only now, with the write
+            // returned, does any page become clean — and only one nothing
+            // edited since its capture.
             for (pageID, data) in changedPages {
-                pageData[pageID] = data
-                // Custody ends when the ink is durable — but only if the page
-                // has not been dirtied again since this save captured it. A
-                // page redrawn and retired during an in-flight save holds its
-                // newer ink here and nowhere else.
-                if !dirtyPageIDs.contains(pageID) { retiredInk[pageID] = nil }
+                pageStates[stateIndex(of: pageID)].saveSucceeded(written: data)
             }
             lastSaveError = nil
             consecutiveSaveFailures = 0
         } catch {
-            dirtyPageIDs.formUnion(capturedPages)
-            indexDirty = true
+            // The pages stay dirty and keep the bytes this pass already paid
+            // to encode. The index returns to dirty only if it was dirty at
+            // capture or became so during the save.
+            for (pageID, data) in changedPages {
+                pageStates[stateIndex(of: pageID)].saveFailed(restoring: data)
+            }
+            indexDirty = indexDirty || capturedIndexWasDirty
             lastSaveError = String(describing: error)
             consecutiveSaveFailures += 1
         }

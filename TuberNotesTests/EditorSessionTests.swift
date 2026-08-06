@@ -278,6 +278,93 @@ struct EditorSessionTests {
         #expect(try PKDrawing(data: await scratch.store.loadPage(inkedPageID)).strokes.count == 1)
     }
 
+    @Test("A page that retires during a save that then fails keeps its ink")
+    func retirementDuringAFailedSaveKeepsInk() async throws {
+        let scratch = Scratch()
+        let session = scratch.session(debounce: .seconds(30))
+        await session.start()
+        _ = canvas(of: session)
+
+        // Three pages, all saved, then back to page 0 for the edit under test.
+        pullPastTheEnd(session)
+        pullPastTheEnd(session)
+        await session.saveIfNeeded()
+        turn(session, to: 0)
+        canvas(of: session).drawing = strokeAcrossPage()
+        let inkedPageID = session.currentPageID
+
+        // Hold the save open, and make it fail: the directory becomes a file.
+        session.serializationDelayForTesting = .milliseconds(200)
+        try FileManager.default.removeItem(at: scratch.directory)
+        try Data().write(to: scratch.directory)
+
+        let save = Task { await session.saveIfNeeded() }
+        // One yield lets the save capture its generation and suspend. The
+        // inked page is now in the save's batch, unacknowledged.
+        await Task.yield()
+
+        // While the save is in flight, the page leaves the live window and its
+        // canvas is released. The old code dropped the handover here — the
+        // page was not in the dirty set, so retirement surrendered nothing —
+        // and the failed save's retry then wrote the pre-edit bytes and
+        // acknowledged the page clean.
+        turn(session, to: 2)
+        #expect(session.pages.livePage(at: 0) == nil)
+
+        await save.value
+        #expect(session.lastSaveError != nil)
+
+        // The store starts working again; the retry must write the real ink.
+        session.serializationDelayForTesting = nil
+        try FileManager.default.removeItem(at: scratch.directory)
+        try FileManager.default.createDirectory(
+            at: scratch.directory,
+            withIntermediateDirectories: true
+        )
+        await session.saveIfNeeded()
+
+        #expect(session.lastSaveError == nil)
+        #expect(try PKDrawing(data: await scratch.store.loadPage(inkedPageID)).strokes.count == 1)
+    }
+
+    @Test("One unreadable page neither fails the launch nor stalls its neighbours")
+    func oneUnreadablePageDoesNotStallTheWindow() async throws {
+        let scratch = Scratch()
+        let first = scratch.session()
+        await first.start()
+        _ = canvas(of: first)
+        pullPastTheEnd(first)
+        pullPastTheEnd(first)
+        canvas(of: first).drawing = strokeAcrossPage()
+        await first.saveIfNeeded()
+
+        // Corrupt the middle page's file on disk. The file exists — a missing
+        // file is a dangling reference and fatal by contract — but its bytes
+        // cannot be read.
+        let corruptedID = try #require(await scratch.store.load()).pageIDs[1]
+        try scratch.corruptPageFile(pageID: corruptedID)
+
+        // Relaunch onto page 2. The opening window covers the corrupt page:
+        // it must refuse itself without taking the launch down with it, and
+        // the pages after it in the fetch loop must still load.
+        let second = scratch.session()
+        await second.start()
+        #expect(second.phase == .ready)
+        #expect(canvas(of: second).drawing.strokes.count == 1)
+
+        // The document stays editable and savable around the refused page,
+        // and saving does not touch it.
+        canvas(of: second).drawing = twoStrokesAcrossPage()
+        await second.saveIfNeeded()
+        #expect(second.lastSaveError == nil)
+        do {
+            _ = try await scratch.store.loadPage(corruptedID)
+            Issue.record("the corrupt page file was unexpectedly readable")
+        } catch {
+            // Still refusing, which is the point: nothing wrote over it.
+        }
+    }
+
     // MARK: - Autosave
 
     @Test("A drawing change is debounced and then saved")
@@ -641,6 +728,15 @@ struct EditorSessionTests {
                 try? $0.resourceValues(forKeys: [.contentModificationDateKey])
                     .contentModificationDate
             }.max()
+        }
+
+        /// Overwrites one page's file with bytes that cannot decode. The file
+        /// still exists — a missing file is a dangling reference and fatal —
+        /// but reading it fails.
+        func corruptPageFile(pageID: UUID) throws {
+            try Data("not a page".utf8).write(
+                to: pagesURL.appendingPathComponent("\(pageID.uuidString).plist")
+            )
         }
 
         func writeGarbageIndex(_ data: Data) throws {
