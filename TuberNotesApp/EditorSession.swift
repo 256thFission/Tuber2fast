@@ -279,10 +279,16 @@ final class EditorSession {
     /// Pages whose bytes are being fetched. Prevents a scroll back and forth
     /// from starting the same load repeatedly.
     @ObservationIgnored private var pageLoadsInFlight: Set<UUID> = []
-    /// One call to `DocumentStore.save` has started and has not returned or thrown.
-    private var saveInFlight = false
+
+    /// The save in progress, or `nil`. A save is in flight iff this is
+    /// non-nil, and waiting for it is `await currentSave?.value` — a caller
+    /// awaits the *specific* pass it observed, so no caller can return
+    /// believing it flushed while another caller took the pass. The
+    /// hand-rolled waiter array this replaces was never observed to leak, but
+    /// it had to be re-audited every time it was touched; a task handle does
+    /// not.
+    private var currentSave: Task<Void, Never>?
     private var debounceTask: Task<Void, Never>?
-    private var saveWaiters: [CheckedContinuation<Void, Never>] = []
 
     /// Saves that have failed in a row, reset by the first success.
     ///
@@ -326,9 +332,8 @@ final class EditorSession {
 
     /// `RootCanvasView.task` may be restarted as views move through the scene
     /// lifecycle. Exactly one load is allowed to cross the store boundary; later
-    /// callers wait for that attempt instead of racing a second load over live ink.
-    private var startInFlight = false
-    private var startWaiters: [CheckedContinuation<Void, Never>] = []
+    /// callers await that attempt instead of racing a second load over live ink.
+    private var startTask: Task<Void, Never>?
 
     /// `debounce` is injectable only so tests need not wait 500 ms of real time.
     /// The default is the only interval the app uses. It is a hard floor and
@@ -349,20 +354,21 @@ final class EditorSession {
     /// one-page document. Invalid data fails loudly and leaves what is on disk
     /// untouched — it is never replaced with a blank drawing.
     func start() async {
-        guard phase == .loading else { return }
-        if startInFlight {
-            await withCheckedContinuation { startWaiters.append($0) }
+        if let startTask {
+            await startTask.value
             return
         }
+        guard phase == .loading else { return }
 
-        startInFlight = true
-        defer {
-            startInFlight = false
-            let waiters = startWaiters
-            startWaiters.removeAll()
-            waiters.forEach { $0.resume() }
+        let started = Task { [weak self] in
+            guard let self else { return }
+            await self.performStart()
         }
+        startTask = started
+        await started.value
+    }
 
+    private func performStart() async {
         do {
             if let loaded = try await store.load() {
                 index = loaded
@@ -536,7 +542,12 @@ final class EditorSession {
     /// This is a knowing divergence, and the contract is the side that is
     /// right. Appending eagerly was the smaller change and loses no ink.
     private func appendPage() {
-        guard phase == .ready, !saveInFlight else { return }
+        // Appending during an in-flight save is safe, and refusing it violated
+        // Navigation's "immediately": the save holds its captured index by
+        // value, `DocumentStore.save` validates its batch against that capture,
+        // and the appended page's dirty state survives the pass untouched —
+        // `performOneSave`'s exit re-arms, so the next pass writes both.
+        guard phase == .ready else { return }
 
         let appended = UUID()
         pageStates.append(Page(appended: appended))
@@ -607,9 +618,12 @@ final class EditorSession {
     }
 
     private func markDirty() {
-        // The debounce is not reset while a save is in flight; the post-save
-        // re-check picks up anything that changed during it.
-        guard !saveInFlight else { return }
+        // The debounce is not reset while a save is in flight;
+        // `performOneSave`'s exit re-arms for anything that changed during it
+        // (`Contract.md` — Saving: "Work arriving during a save receives a
+        // fresh debounce after that save returns"). That exit is the *single*
+        // owner of the duty — an early return here used to drop it.
+        guard currentSave == nil else { return }
         scheduleSave()
     }
 
@@ -660,74 +674,56 @@ final class EditorSession {
         return min(adaptiveDebounce * (1 << doublings), Self.maximumRetryDelay)
     }
 
-    /// Flushes all currently dirty work. If another caller already owns a save,
-    /// this caller waits for it rather than returning while durability is still
-    /// unresolved.
-    ///
-    /// KNOWN DEFECT: on success this loops straight back into `performOneSave`
-    /// with nothing in between, so a user-initiated Retry can serialize back to
-    /// back. `Contract.md` — Saving requires a fresh debounce instead. Only the
-    /// failure path arms a timer. `performAutosavePass` does the right thing —
-    /// one pass, then re-arm — so the two paths in this file disagree.
+    /// Flushes the currently dirty work: waits out any save already in flight,
+    /// then runs one pass of its own. One pass, not a loop — work that arrives
+    /// while the pass runs receives a fresh debounce from `performOneSave`'s
+    /// exit, which is the single owner of that duty.
     func saveIfNeeded() async {
+        await currentSave?.value
+
+        guard dirty else { return }
         debounceTask?.cancel()
         debounceTask = nil
-
-        while true {
-            if saveInFlight {
-                await waitForSavePass()
-                continue
-            }
-            guard dirty else { return }
-            await performOneSave()
-            guard lastSaveError == nil else {
-                // Deliberately not a loop: looping here would spin against a
-                // failing disk, and the background-flush path used to come
-                // through here. But returning with nothing armed would undo the
-                // automatic retry — this method cancelled the debounce on the way
-                // in, so a failed Retry tap would otherwise leave durability
-                // waiting on the user again. Arming one timer is not spinning.
-                scheduleSave(after: retryDelay)
-                return
-            }
-        }
+        if let save = beginSave() { await save.value }
+        // Still dirty, or failed? performOneSave's exit armed the fresh
+        // debounce or the backed-off retry; returning here is not abandoning it.
     }
 
     /// One debounced pass only. Edits made while that pass is running receive a
     /// fresh debounce instead of causing back-to-back whole-drawing
     /// serializations during continuous Pencil input.
     private func performAutosavePass() async {
-        guard phase == .ready, dirty, !saveInFlight else { return }
-        await performOneSave()
-        guard dirty else { return }
-
-        // A failed save must re-arm itself. Previously this re-armed only on
-        // success, so a transient failure parked the editor dirty with no timer
-        // running and recovery waited on the user drawing again, tapping Retry,
-        // or a scene transition. The retry backs off so that a persistently
-        // failing store is not hammered (`Contract.md` — Saving).
-        scheduleSave(after: lastSaveError == nil ? nil : retryDelay)
+        guard phase == .ready, dirty, currentSave == nil else { return }
+        if let save = beginSave() { await save.value }
     }
 
-    private func performOneSave() async {
-        guard dirty, !saveInFlight else { return }
+    /// Starts a save if none is running, and returns the task that owns the
+    /// pass — the already-running one otherwise, so every caller awaits the
+    /// specific pass it observed rather than a broadcast.
+    ///
+    /// The capture happens *here*, synchronously, before the task is spawned:
+    /// the moment `beginSave` returns a new task, that task owns a complete
+    /// generation. Deferring the capture into the task would open a gap
+    /// between "a save is in flight" and "the generation is captured" in
+    /// which an edit could slip into a pass that reports itself as having
+    /// begun before it.
+    ///
+    /// Capture is total (`Contract.md` — Saving): the switch is exhaustive
+    /// with no `else`, so there is no fourth place a dirty page's ink could
+    /// be and no silent omission. A live page yields its canvas's drawing; one
+    /// that has left the live window yields the value the session took custody
+    /// of as it retired. A page that cannot be captured is a violation and
+    /// traps at its transition, never a page quietly reported clean while its
+    /// ink existed nowhere.
+    @discardableResult
+    private func beginSave() -> Task<Void, Never>? {
+        if let currentSave { return currentSave }
+        guard phase == .ready, dirty else { return nil }
 
         let capturedIndex = index
         let capturedIndexWasDirty = indexDirty
         indexDirty = false
-        saveInFlight = true
 
-        // Capture every dirty page as one generation before anything can
-        // suspend, so a save never pairs one generation's identity with
-        // another's ink. A live page yields its canvas's drawing; one that has
-        // left the live window yields the value the session took custody of as
-        // it retired.
-        //
-        // Capture is total (`Contract.md` — Saving): the switch is exhaustive
-        // with no `else`, so there is no fourth place a dirty page's ink could
-        // be and no silent omission. A page that cannot be captured is a
-        // violation and traps at its transition, never a page quietly reported
-        // clean while its ink existed nowhere.
         var captures: [(pageID: UUID, unsaved: Page.UnsavedInk)] = []
         for pageIndex in pageStates.indices {
             switch pageStates[pageIndex].ink {
@@ -753,6 +749,26 @@ final class EditorSession {
             }
         }
 
+        let save = Task { [weak self] in
+            guard let self else { return }
+            await self.performOneSave(
+                capturedIndex: capturedIndex,
+                capturedIndexWasDirty: capturedIndexWasDirty,
+                captures: captures
+            )
+        }
+        currentSave = save
+        return save
+    }
+
+    /// The body of one save pass: serialize, write, acknowledge. Runs only
+    /// inside the task `beginSave` registered as `currentSave`, over the
+    /// generation `beginSave` captured, and clears the handle on the way out.
+    private func performOneSave(
+        capturedIndex: DocumentIndex,
+        capturedIndexWasDirty: Bool,
+        captures: [(pageID: UUID, unsaved: Page.UnsavedInk)]
+    ) async {
         // Serialize off the main actor, on the save path, never at the
         // handover (`Contract.md` — Performance). Ink a previous pass already
         // serialized — a failed save's restored bytes, an appended blank —
@@ -804,15 +820,20 @@ final class EditorSession {
             consecutiveSaveFailures += 1
         }
 
-        saveInFlight = false
-        let waiters = saveWaiters
-        saveWaiters.removeAll()
-        waiters.forEach { $0.resume() }
-    }
+        currentSave = nil
 
-    private func waitForSavePass() async {
-        guard saveInFlight else { return }
-        await withCheckedContinuation { saveWaiters.append($0) }
+        // The one exit that owns re-arming (`Contract.md` — Saving: "Work
+        // arriving during a save receives a fresh debounce after that save
+        // returns"). Every early return that used to drop this duty —
+        // markDirty, performAutosavePass, resumeForForeground under an
+        // in-flight save — now relies on it instead of half-owning it. A
+        // failed pass arms the backed-off retry; without it a transient
+        // failure parked the editor dirty with no timer running and recovery
+        // waited on the user drawing again, tapping Retry, or a scene
+        // transition.
+        if dirty {
+            scheduleSave(after: lastSaveError == nil ? nil : retryDelay)
+        }
     }
 
     // MARK: - Lifecycle
@@ -831,16 +852,21 @@ final class EditorSession {
         debounceTask?.cancel()
         debounceTask = nil
 
-        // An in-flight save already owns a captured generation; waiting for it
-        // is what makes the following pass the *second* and last one.
-        await waitForSavePass()
-        await performOneSave()
+        // An in-flight save already owns a captured generation; awaiting that
+        // *specific* task is what makes the following pass the second and last
+        // one — and what makes it impossible to return believing this flushed
+        // while another caller took the pass, which is how the lease used to
+        // be handed back with a save still writing.
+        await currentSave?.value
+        if let save = beginSave() { await save.value }
     }
 
     /// Retries a save left unacknowledged by backgrounding. It never overlays a
-    /// loaded drawing onto newer live ink — nothing is loaded here.
+    /// loaded drawing onto newer live ink — nothing is loaded here. A save
+    /// still in flight re-arms at its own exit, so nothing is dropped by
+    /// returning early here.
     func resumeForForeground() {
-        guard phase == .ready, dirty, !saveInFlight else { return }
+        guard phase == .ready, dirty, currentSave == nil else { return }
         scheduleSave()
     }
 }

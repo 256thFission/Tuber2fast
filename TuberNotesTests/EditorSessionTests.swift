@@ -278,6 +278,62 @@ struct EditorSessionTests {
         #expect(try PKDrawing(data: await scratch.store.loadPage(inkedPageID)).strokes.count == 1)
     }
 
+    @Test("Pulling past the last page during an in-flight save appends immediately")
+    func appendDuringAnInFlightSaveGrowsTheDocument() async throws {
+        let scratch = Scratch()
+        let session = scratch.session(debounce: .seconds(30))
+        await session.start()
+        canvas(of: session).drawing = strokeAcrossPage()
+
+        // Hold a save genuinely in flight.
+        session.serializationDelayForTesting = .milliseconds(200)
+        let save = Task { await session.saveIfNeeded() }
+        await Task.yield()
+
+        // Navigation says "immediately" — not "unless a save happens to be
+        // running". The append is safe during the save: the pass holds its
+        // captured index by value and the store validates against that capture.
+        pullPastTheEnd(session)
+        #expect(session.pageCount == 2)
+        #expect(session.pages.currentPageIndex == 1)
+
+        session.serializationDelayForTesting = nil
+        await save.value
+        await session.saveIfNeeded()
+        let saved = try #require(await scratch.store.load())
+        #expect(saved.pageIDs.count == 2)
+        #expect(saved.currentPageIndex == 1)
+    }
+
+    @Test("Work arriving during a background flush is saved with no user action")
+    func workDuringAFlushIsRearmed() async throws {
+        let scratch = Scratch()
+        let session = scratch.session()
+        await session.start()
+        canvas(of: session).drawing = strokeAcrossPage()
+
+        session.serializationDelayForTesting = .milliseconds(100)
+        let flush = Task { await session.flushForBackground() }
+        await Task.yield()
+
+        // The user returns and draws while the flush's save is still writing.
+        // Under the old saveInFlight early-returns this stroke ended up dirty
+        // with no timer, no flush, and no error — parked until the user
+        // happened to draw again.
+        session.resumeForForeground()
+        canvas(of: session).drawing = twoStrokesAcrossPage()
+        session.serializationDelayForTesting = nil
+        await flush.value
+
+        // No Retry tap, no further drawing, no scene transition: the newer
+        // ink must reach disk by itself, on the fresh debounce the save's
+        // exit armed.
+        try await waitUntil("the re-armed debounce saves the newer ink") {
+            guard let data = try await savedDrawing(scratch.store) else { return false }
+            return (try? PKDrawing(data: data))?.strokes.count == 2
+        }
+    }
+
     @Test("A page that retires during a save that then fails keeps its ink")
     func retirementDuringAFailedSaveKeepsInk() async throws {
         let scratch = Scratch()
