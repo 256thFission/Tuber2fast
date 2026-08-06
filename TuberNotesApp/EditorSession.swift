@@ -842,11 +842,12 @@ final class EditorSession {
     /// time iPadOS provides. Only a returned save is acknowledged; if time
     /// expires the editor stays dirty and retries after foregrounding.
     ///
-    /// One pass, deliberately, not `saveIfNeeded`'s loop. The lease is bounded,
+    /// One pass, deliberately. The lease is bounded,
     /// so unbounded work cannot finish on it anyway, and every extra iteration is
     /// another chance to be killed mid-write for ink that was already captured by
     /// the pass before it. If the session is still dirty when this returns it
-    /// stays dirty — `resumeForForeground` retries, which is exactly what
+    /// stays dirty — the pass's own exit arms a timer and `resumeForForeground`
+    /// retries, which is exactly what
     /// `Contract.md` — Lifecycle promises ("no promised flush duration").
     func flushForBackground() async {
         debounceTask?.cancel()
