@@ -6,10 +6,15 @@ import UIKit
 /// (`Docs/Contract.md` — Navigation).
 ///
 /// A horizontal paging `UIScrollView` holds one page-sized slot per page, but
-/// only a small window of slots has a live `PageCanvasController` in it. The
-/// live count is bounded by a constant and does not grow with the page count,
-/// which is what `Contract.md` — Performance requires; a retired page's
-/// controller is released, not parked for a possible return.
+/// only a small window of slots has a live view in it. The live count is
+/// bounded by a constant and does not grow with the page count, which is what
+/// `Contract.md` — Performance requires; a retired page's controller is
+/// released, not parked for a possible return.
+///
+/// A slot inside the window is a canvas only when the session supplied the
+/// page's ink. A page whose bytes are not held is a placeholder view — it
+/// takes no input, so there is no stroke to drop when the bytes arrive and
+/// none to misaccount at save time. An unloaded page is not a canvas.
 ///
 /// Nesting is doing the hard work here, and it is deliberate. `PKCanvasView` is
 /// itself a `UIScrollView` that owns pinch-zoom and in-page panning. A nested
@@ -33,21 +38,26 @@ final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
     private(set) var currentPageIndex = 0
     private(set) var pageCount = 1
 
-    /// Supplies the saved ink for a page about to become live.
+    /// Supplies the content for a page about to enter the window.
     ///
-    /// `.unavailable` is the case that matters: a page can enter the window
-    /// before the session has its bytes, and a canvas built then must not be
-    /// editable, because ink drawn on it would be saved over the real page. Such
-    /// a page is rebuilt by `reloadPage(at:)` once the bytes arrive.
+    /// `.loading` and `.unreadable` are the cases that matter: a page can enter
+    /// the window before the session has its bytes, or with bytes that refuse
+    /// to read. Such a page is a placeholder, never an editable blank — ink
+    /// drawn on a blank standing in for a real page would be saved over it.
     var contentForPage: ((Int) -> PageContent)?
 
     enum PageContent {
         case blank
         case ink(Data)
-        /// Ink this page handed over when it last retired, before it was saved.
-        /// It outranks anything on disk because it is newer by construction.
+        /// Unsaved ink the session holds for this page. It outranks anything
+        /// on disk because it is newer by construction.
         case retained(DrawingSnapshot)
-        case unavailable
+        /// Bytes requested and not yet arrived. Rendered as a placeholder;
+        /// rebuilt by `reloadPage(at:)` once the bytes land.
+        case loading
+        /// Bytes that could not be read. Rendered as a refusal that says so
+        /// (`Contract.md` — Invalid states fail loud).
+        case unreadable(String)
     }
 
     /// Reports that a live page's drawing changed. The index is the page's, and
@@ -70,8 +80,23 @@ final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
     /// selected pen survives a page turn.
     private let toolPicker = PKToolPicker()
 
-    /// Live page controllers by page index. Bounded by `windowRadius`.
-    private var livePages: [Int: PageCanvasController] = [:]
+    /// What occupies one windowed slot: a live page canvas, or a placeholder
+    /// for a page whose ink the session does not hold.
+    private enum Slot {
+        case canvas(PageCanvasController)
+        case placeholder(UIView)
+
+        @MainActor
+        var view: UIView {
+            switch self {
+            case .canvas(let page): page.view
+            case .placeholder(let view): view
+            }
+        }
+    }
+
+    /// Live slots by page index. Bounded by `windowRadius`.
+    private var slots: [Int: Slot] = [:]
 
     private var isEditable = false
     private var hasSettledInitialPage = false
@@ -115,13 +140,13 @@ final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
         guard scrollView.bounds.width > 0 else { return }
 
         updateContentSize()
-        layoutLivePages()
+        layoutSlots()
 
         if !hasSettledInitialPage {
             hasSettledInitialPage = true
             scrollTo(page: currentPageIndex, animated: false)
             refreshWindow()
-            livePages[currentPageIndex]?.becomeActivePage()
+            livePage(at: currentPageIndex)?.becomeActivePage()
         }
     }
 
@@ -144,60 +169,55 @@ final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
         if countChanged { updateContentSize() }
         scrollTo(page: index, animated: false)
         refreshWindow()
-        livePages[index]?.becomeActivePage()
+        livePage(at: index)?.becomeActivePage()
     }
 
-    /// Opens every live page for editing, and every later one as it is built.
+    /// Opens every live canvas for editing, and every later one as it is built.
+    /// A placeholder has nothing to open: a page's canvas only exists at all
+    /// once its ink was supplied.
     func markEditable() {
         isEditable = true
-        for (index, page) in livePages where !unloadedPages.contains(index) {
+        for case .canvas(let page) in slots.values {
             page.markEditable()
         }
     }
 
-    /// Page indices whose bytes were not ready when the page was built. They are
-    /// on screen, are not editable, and are not saved.
-    private(set) var unloadedPages: Set<Int> = []
-
-    /// Rebuilds a page whose bytes have since arrived.
+    /// Rebuilds a placeholder slot whose page changed underneath it — its
+    /// bytes arrived, or its load failed with a reason to show.
     ///
-    /// A rebuild rather than an install, because
-    /// `PageCanvasController.installDrawing` refuses to run on a canvas that is
-    /// already editable — and this page never became editable, so nothing is
-    /// lost by replacing it.
+    /// Legal only for a placeholder, by guard rather than by caller
+    /// discipline: a canvas slot holds ink, and replacing it from loaded
+    /// bytes would destroy anything drawn since — exactly the overwrite
+    /// `Contract.md` — Lifecycle forbids. A canvas is replaced only by
+    /// retirement.
     func reloadPage(at index: Int) {
-        guard let stale = livePages[index], unloadedPages.contains(index) else { return }
-        stale.willMove(toParent: nil)
-        stale.view.removeFromSuperview()
-        stale.removeFromParent()
-        livePages[index] = makePage(at: index)
-        if index == currentPageIndex { livePages[index]?.becomeActivePage() }
+        guard case .placeholder(let stale)? = slots[index] else { return }
+        stale.removeFromSuperview()
+        slots[index] = makeSlot(at: index)
+        layoutSlots()
+        if index == currentPageIndex { livePage(at: index)?.becomeActivePage() }
     }
 
-    /// The live page controller for an index, if it is inside the window.
+    /// The live page controller for an index, if that slot is a canvas.
     /// Present for the session's save path and for tests to assert against.
     func livePage(at index: Int) -> PageCanvasController? {
-        livePages[index]
+        guard case .canvas(let page)? = slots[index] else { return nil }
+        return page
     }
 
     /// How many page canvases are alive. The bound `Contract.md` — Performance
-    /// requires is on this number, and gate 40 asserts it does not grow with
-    /// `pageCount`.
-    var liveCanvasCount: Int { livePages.count }
+    /// requires is on this number: it must not grow with `pageCount`.
+    var liveCanvasCount: Int {
+        slots.values.reduce(into: 0) { count, slot in
+            if case .canvas = slot { count += 1 }
+        }
+    }
 
-    /// A snapshot of one live, loaded page. `nil` when the page is outside the
-    /// window or was never loaded, both of which mean the session must not
-    /// write it.
-    ///
-    /// KNOWN DEFECT: returning `nil` here is what protects an unread page's
-    /// bytes, but it protects them by *discarding* ink rather than refusing it.
-    /// `PageCanvasController.isEditable` gates nothing at runtime, so a Pencil
-    /// stroke on a not-yet-loaded page is drawn on screen and then dropped
-    /// here, with no indication to the user. The contract's rule is satisfied
-    /// in effect and violated in spirit.
+    /// A snapshot of one live page, or `nil` when the page has no canvas —
+    /// outside the window, or a placeholder. A placeholder accepts no input,
+    /// so `nil` here never discards ink; it only ever means there is none.
     func snapshot(at index: Int) -> DrawingSnapshot? {
-        guard !unloadedPages.contains(index) else { return nil }
-        return livePages[index]?.drawingSnapshot()
+        livePage(at: index)?.drawingSnapshot()
     }
 
     // MARK: - Windowing
@@ -231,33 +251,36 @@ final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
         return Set(lower...upper)
     }
 
-    /// Builds pages that entered the window and retires those that left.
+    /// Builds slots that entered the window and retires those that left.
     ///
     /// Retirement hands the ink to the session first and releases second. The
     /// order is the whole point: releasing first would discard edits made on a
-    /// page the user simply scrolled away from.
+    /// page the user simply scrolled away from. Every canvas hands over —
+    /// a canvas only exists once its ink was supplied, so there is no
+    /// unloaded-blank exception to carve out.
     private func refreshWindow() {
         let wanted = windowedIndices
 
-        for (index, page) in livePages where !wanted.contains(index) {
-            // An unloaded page holds no user ink by construction, and handing its
-            // blank drawing to the session would save that blank over the real
-            // page.
-            if !unloadedPages.contains(index) {
+        for (index, slot) in slots where !wanted.contains(index) {
+            switch slot {
+            case .canvas(let page):
                 onPageRetiring?(index, page.drawingSnapshot())
+                page.willMove(toParent: nil)
+                page.view.removeFromSuperview()
+                page.removeFromParent()
+            case .placeholder(let view):
+                // Nothing to hand over: a placeholder holds no ink by
+                // construction.
+                view.removeFromSuperview()
             }
-            unloadedPages.remove(index)
-            page.willMove(toParent: nil)
-            page.view.removeFromSuperview()
-            page.removeFromParent()
-            livePages[index] = nil
+            slots[index] = nil
         }
 
-        for index in wanted.sorted() where livePages[index] == nil {
-            livePages[index] = makePage(at: index)
+        for index in wanted.sorted() where slots[index] == nil {
+            slots[index] = makeSlot(at: index)
         }
 
-        layoutLivePages()
+        layoutSlots()
     }
 
     /// KNOWN DEFECT: this runs synchronously on main, reached from
@@ -266,7 +289,41 @@ final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
     /// ink via `PKDrawing(data:)`. The one-page prefetch window hides the cost
     /// for an ordinary turn but does not make it asynchronous. Unmeasured — a
     /// fast flick across several pages is the case to watch.
-    private func makePage(at index: Int) -> PageCanvasController {
+    private func makeSlot(at index: Int) -> Slot {
+        switch contentForPage?(index) ?? .blank {
+        case .blank:
+            return .canvas(makeCanvas(at: index, installing: nil))
+
+        case .ink(let data):
+            let drawing: PKDrawing
+            do {
+                drawing = try PKDrawing(data: data)
+            } catch {
+                // Bytes the session holds that nonetheless refuse to decode.
+                // The same refusal as `.unreadable`, discovered one step
+                // later: never an editable blank.
+                CanvasLog.event(
+                    CanvasLog.canvas, "canvas",
+                    "page \(index) drawing failed to decode: \(error)"
+                )
+                return .placeholder(makePlaceholder(saying: "This page could not be read."))
+            }
+            return .canvas(makeCanvas(at: index, installing: DrawingSnapshot(drawing: drawing)))
+
+        case .retained(let snapshot):
+            return .canvas(makeCanvas(at: index, installing: snapshot))
+
+        case .loading:
+            return .placeholder(makePlaceholder(saying: "This page is loading…"))
+
+        case .unreadable(let message):
+            return .placeholder(
+                makePlaceholder(saying: "This page could not be read.\n\(message)")
+            )
+        }
+    }
+
+    private func makeCanvas(at index: Int, installing snapshot: DrawingSnapshot?) -> PageCanvasController {
         let page = PageCanvasController(toolPicker: toolPicker)
 
         addChild(page)
@@ -276,24 +333,8 @@ final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
 
         // Strictly before the page becomes editable, which is the ordering
         // `PageCanvasController.installDrawing` enforces by precondition.
-        var isLoaded = true
-        switch contentForPage?(index) ?? .blank {
-        case .blank:
-            break
-        case .ink(let data):
-            do {
-                try page.installDrawing(from: data)
-            } catch {
-                CanvasLog.event(
-                    CanvasLog.canvas, "canvas",
-                    "page \(index) drawing failed to install: \(error)"
-                )
-                isLoaded = false
-            }
-        case .retained(let snapshot):
+        if let snapshot {
             page.installDrawing(from: snapshot)
-        case .unavailable:
-            isLoaded = false
         }
 
         // Wired only now, after the install, and that ordering is the rule
@@ -307,20 +348,40 @@ final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
             self?.onDrawingChanged?(index)
         }
 
-        if isLoaded {
-            unloadedPages.remove(index)
-            if isEditable { page.markEditable() }
-        } else {
-            // Left non-editable deliberately. It shows an empty page, and ink
-            // drawn on it would be saved over whatever the page really holds.
-            unloadedPages.insert(index)
-        }
+        if isEditable { page.markEditable() }
         return page
     }
 
-    private func layoutLivePages() {
-        for (index, page) in livePages {
-            page.view.frame = slotFrame(for: index)
+    /// A slot for a page that is not a canvas. Plain, inert, and honest about
+    /// why: `Contract.md` — Invalid states fail loud. It participates in no
+    /// touch handling, so nothing drawn here can exist to be lost.
+    private func makePlaceholder(saying message: String) -> UIView {
+        let placeholder = UIView()
+        placeholder.backgroundColor = .systemGray6
+
+        let label = UILabel()
+        label.text = message
+        label.font = .preferredFont(forTextStyle: .callout)
+        label.textColor = .secondaryLabel
+        label.textAlignment = .center
+        label.numberOfLines = 0
+        label.translatesAutoresizingMaskIntoConstraints = false
+        placeholder.addSubview(label)
+        NSLayoutConstraint.activate([
+            label.centerXAnchor.constraint(equalTo: placeholder.centerXAnchor),
+            label.centerYAnchor.constraint(equalTo: placeholder.centerYAnchor),
+            label.leadingAnchor.constraint(
+                greaterThanOrEqualTo: placeholder.leadingAnchor, constant: 24
+            ),
+        ])
+
+        scrollView.addSubview(placeholder)
+        return placeholder
+    }
+
+    private func layoutSlots() {
+        for (index, slot) in slots {
+            slot.view.frame = slotFrame(for: index)
         }
     }
 
@@ -337,7 +398,7 @@ final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
 
         currentPageIndex = settled
         refreshWindow()
-        livePages[settled]?.becomeActivePage()
+        livePage(at: settled)?.becomeActivePage()
         onPageChanged?(settled)
     }
 

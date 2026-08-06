@@ -436,9 +436,9 @@ final class EditorSession {
             Task { [weak self] in
                 await self?.fetchPageData(forPagesAround: around)
             }
-            return .unavailable
-        case .unreadable:
-            return .unavailable
+            return .loading
+        case .unreadable(let message):
+            return .unreadable(message)
         case .clean:
             guard let data = pageStates[pageIndex].durable else {
                 preconditionFailure(
@@ -566,24 +566,12 @@ final class EditorSession {
     /// be reporting anything yet.
     private func drawingChanged(atPageIndex pageIndex: Int) {
         guard phase == .ready, pageStates.indices.contains(pageIndex) else { return }
-        switch pageStates[pageIndex].ink {
-        case .loading, .unreadable:
-            // KNOWN DEFECT: reachable today by drawing on a page that entered
-            // the live window before its bytes arrived —
-            // `PageCanvasController.isEditable` gates nothing at runtime, so
-            // such a canvas accepts Pencil input and this is where the stroke
-            // is refused rather than accounted for. The queue item
-            // `unloaded-page-is-not-a-canvas` removes the canvas itself, at
-            // which point this case becomes the trap `Page.edited()` already
-            // holds ready.
-            CanvasLog.event(
-                CanvasLog.canvas, "canvas",
-                "refused a drawing change on page \(pageIndex) whose bytes are not held"
-            )
-        case .clean, .live, .held, .saving:
-            pageStates[pageIndex].edited()
-            markDirty()
-        }
+        // A page whose bytes are not held has no canvas — it is a placeholder
+        // in the runtime — so `edited()`'s trap for `.loading` and
+        // `.unreadable` is unreachable from here rather than a case to route
+        // around. Ink cannot be misaccounted if it was never accepted.
+        pageStates[pageIndex].edited()
+        markDirty()
     }
 
     /// Takes custody of a page's ink as its canvas is released.

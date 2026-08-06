@@ -106,14 +106,11 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
     ///
     /// `EditorSession` writes it, once, at the transition to its ready phase; the
     /// canvas only remembers it. It exists to enforce that a loaded drawing is
-    /// installed strictly before editing begins — see `installDrawing`.
-    ///
-    /// KNOWN DEFECT: this gates nothing at runtime. It is read only by an
-    /// `installDrawing` precondition, and `drawingPolicy` is `.pencilOnly`
-    /// unconditionally, so a page that entered the live window before its bytes
-    /// arrived still accepts Pencil input. The stroke is drawn and then
-    /// discarded by `PagedCanvasController.snapshot(at:)`. Refusing the input
-    /// is the fix; discarding it is what happens today.
+    /// installed strictly before editing begins — see `installDrawing`. It gates
+    /// input in no other way, and no longer needs to: a canvas is only
+    /// constructed at all once the session supplied its ink, so there is no
+    /// canvas whose input would have to be refused. A page without its bytes is
+    /// a placeholder in `PagedCanvasController`, not a canvas.
     private var isEditable = false
     private var hasLoggedFirstTouch = false
     private var hasLoggedFirstChange = false
@@ -332,12 +329,13 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
         isEditable = true
     }
 
-    /// Installs a loaded drawing, strictly before the canvas becomes editable.
+    /// Installs a page's drawing, strictly before the canvas becomes editable.
     ///
     /// PencilKit reports this assignment as a drawing change — measured, and
     /// synchronously, see `PageCanvasControllerTests`. That callback must not
     /// mark the document dirty, and exactly one mechanism prevents it: the
-    /// session ignores drawing changes until its ready phase. There used to be a
+    /// wiring order in `PagedCanvasController.makeCanvas`, which attaches the
+    /// change callback only after this runs. There used to be a
     /// second, a flag raised and lowered around this assignment; it is gone
     /// because two mechanisms for one rule means neither is understood, and it
     /// would have been silently inert had delivery ever become asynchronous.
@@ -345,26 +343,14 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
     /// That leaves the ordering itself as the load-bearing invariant, so it is
     /// enforced rather than described: installing over a canvas the user can
     /// already draw on would overwrite live ink with an older load result, which
-    /// `Contract.md` — Lifecycle forbids outright.
-    func installDrawing(from data: Data) throws {
-        precondition(
-            !isEditable,
-            "installDrawing must not run once the canvas is editable; "
-                + "it would overwrite live ink with a loaded drawing"
-        )
-        canvasView.drawing = try PKDrawing(data: data)
-    }
-
-    /// Installs ink a page handed over when it retired before being saved.
-    ///
-    /// Same ordering rule as `installDrawing(from:)` and the same reason. There
-    /// is no decode and nothing can throw, because this value never became
-    /// bytes.
+    /// `Contract.md` — Lifecycle forbids outright. Nothing here decodes and
+    /// nothing can throw — decoding saved bytes is the paging runtime's step,
+    /// and bytes that refuse to decode never reach a canvas at all.
     func installDrawing(from snapshot: DrawingSnapshot) {
         precondition(
             !isEditable,
             "installDrawing must not run once the canvas is editable; "
-                + "it would overwrite live ink with a retired drawing"
+                + "it would overwrite live ink with an older drawing"
         )
         canvasView.drawing = snapshot.drawingValue
     }

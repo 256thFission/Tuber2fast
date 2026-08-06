@@ -363,6 +363,11 @@ struct EditorSessionTests {
         } catch {
             // Still refusing, which is the point: nothing wrote over it.
         }
+
+        // The refused page is a placeholder, not a canvas: there is nothing to
+        // draw on, so no ink can exist for a save to misaccount.
+        turn(second, to: 1)
+        #expect(second.pages.livePage(at: 1) == nil)
     }
 
     // MARK: - Autosave

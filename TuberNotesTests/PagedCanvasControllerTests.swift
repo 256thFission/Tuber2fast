@@ -64,17 +64,28 @@ struct PagedCanvasControllerTests {
         #expect(retired.contains(0))
     }
 
-    @Test("A page built before its ink arrives is not editable")
-    func unloadedPageIsNotEditable() {
-        let controller = hosted { $0.contentForPage = { _ in .unavailable } }
+    @Test("A page whose ink has not arrived is a placeholder, not a canvas")
+    func pageWithoutBytesIsNotACanvas() {
+        let controller = hosted { $0.contentForPage = { _ in .loading } }
         controller.setPages(count: 3, currentPageIndex: 0)
         controller.markEditable()
 
-        // The hazard: an empty canvas the user can draw on, whose blank drawing
-        // would then be saved over the page's real ink.
-        #expect(controller.unloadedPages.contains(0))
-        // It is on screen — it is simply not editable and not saveable.
-        #expect(controller.livePage(at: 0) != nil)
+        // The hazard this refuses: an empty canvas the user could draw on,
+        // whose blank drawing would then be saved over the page's real ink —
+        // or whose accepted strokes would be silently dropped. There is no
+        // canvas, so neither can exist.
+        #expect(controller.livePage(at: 0) == nil)
+        #expect(controller.liveCanvasCount == 0)
+        #expect(controller.snapshot(at: 0) == nil)
+    }
+
+    @Test("An unreadable page is refused, never rendered as an editable blank")
+    func unreadablePageIsRefused() {
+        let controller = hosted { $0.contentForPage = { _ in .unreadable("decode failed") } }
+        controller.setPages(count: 2, currentPageIndex: 0)
+        controller.markEditable()
+
+        #expect(controller.livePage(at: 0) == nil)
         #expect(controller.snapshot(at: 0) == nil)
     }
 
@@ -83,20 +94,37 @@ struct PagedCanvasControllerTests {
         var available: Data?
         let controller = hosted {
             $0.contentForPage = { _ in
-                guard let available else { return .unavailable }
+                guard let available else { return .loading }
                 return .ink(available)
             }
         }
         controller.setPages(count: 2, currentPageIndex: 0)
         controller.markEditable()
-        #expect(controller.unloadedPages.contains(0))
+        #expect(controller.livePage(at: 0) == nil)
 
         available = strokeAcrossPage().dataRepresentation()
         controller.reloadPage(at: 0)
 
-        #expect(!controller.unloadedPages.contains(0))
         let page = try #require(controller.livePage(at: 0))
         #expect(page.canvasView.drawing.strokes.count == 1)
+    }
+
+    @Test("Reloading a slot that is a live canvas does nothing")
+    func reloadNeverReplacesACanvas() throws {
+        let controller = hosted { $0.contentForPage = { _ in .blank } }
+        controller.setPages(count: 2, currentPageIndex: 0)
+        controller.markEditable()
+
+        let page = try #require(controller.livePage(at: 0))
+        page.canvasView.drawing = strokeAcrossPage()
+
+        // A canvas holds ink; only retirement may replace it. A reload here
+        // would destroy the stroke with an older load result.
+        controller.reloadPage(at: 0)
+
+        let after = try #require(controller.livePage(at: 0))
+        #expect(after === page)
+        #expect(after.canvasView.drawing.strokes.count == 1)
     }
 
     @Test("A settled scroll reports the new page exactly once")
