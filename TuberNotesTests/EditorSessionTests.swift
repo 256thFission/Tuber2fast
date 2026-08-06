@@ -662,12 +662,13 @@ struct EditorSessionTests {
         session.pages.view.layoutIfNeeded()
     }
 
-    /// Turns to a page the way a settled scroll does, without a gesture.
+    /// Turns to a page the way a settled scroll does, without a gesture: the
+    /// offset comes to rest on the page and the settle callback fires.
     @MainActor
     private func turn(_ session: EditorSession, to page: Int) {
         let scroll = session.pages.scrollView
         scroll.contentOffset = CGPoint(x: scroll.bounds.width * CGFloat(page), y: 0)
-        session.pages.scrollViewDidScroll(scroll)
+        session.pages.scrollViewDidEndDecelerating(scroll)
         session.pages.view.layoutIfNeeded()
     }
 

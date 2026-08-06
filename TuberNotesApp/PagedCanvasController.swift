@@ -154,6 +154,11 @@ final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
 
     /// Sets the run of pages and which one is visible. Called by
     /// `EditorSession`, which owns page order and identity.
+    ///
+    /// This scrolls with `animated: false`, and UIKit fires no delegate
+    /// callback for that — so this path performs the settle work itself,
+    /// directly. Waiting on a settle callback here would mean the page never
+    /// becomes editable after launch or append.
     func setPages(count: Int, currentPageIndex index: Int) {
         precondition(count > 0, "a document always has at least one page")
         precondition(
@@ -283,12 +288,13 @@ final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
         layoutSlots()
     }
 
-    /// KNOWN DEFECT: this runs synchronously on main, reached from
-    /// `scrollViewDidScroll` via `refreshWindow`. It constructs the controller,
+    /// KNOWN DEFECT: this runs synchronously on main, reached from the settle
+    /// callbacks via `refreshWindow`. It constructs the controller,
     /// forces `view` (and so `PKCanvasView` setup), and synchronously decodes
-    /// ink via `PKDrawing(data:)`. The one-page prefetch window hides the cost
-    /// for an ordinary turn but does not make it asynchronous. Unmeasured — a
-    /// fast flick across several pages is the case to watch.
+    /// ink via `PKDrawing(data:)`. Settling moved this off the drag itself —
+    /// it no longer runs mid-gesture — but at rest it is still synchronous
+    /// main-thread work. Unmeasured; a fast flick across several pages is the
+    /// case to watch.
     private func makeSlot(at index: Int) -> Slot {
         switch contentForPage?(index) ?? .blank {
         case .blank:
@@ -387,10 +393,17 @@ final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
 
     // MARK: - UIScrollViewDelegate
 
-    /// Frame-frequency, and it stays inside this runtime: one comparison and, at
-    /// a page boundary, the window update. No publication and no allocation per
-    /// frame.
-    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+    /// Commits the turn the scroll view has come to rest on.
+    ///
+    /// Called only from the three settle callbacks and from the programmatic
+    /// routes that scroll with `animated: false` — `setPages` and the initial
+    /// layout — which fire no delegate callback at all and therefore settle
+    /// themselves. Nothing turn-shaped happens per frame: a drag that merely
+    /// crosses the halfway point mutates no durable state, steals no first
+    /// responder, decodes no ink, and arms no save, because the user may yet
+    /// abandon it. "There is no resting position between two pages"
+    /// (`Contract.md` — Navigation) — so there is no turn before rest either.
+    private func settle() {
         guard scrollView.bounds.width > 0, hasSettledInitialPage else { return }
 
         let settled = Int((scrollView.contentOffset.x / scrollView.bounds.width).rounded())
@@ -402,16 +415,29 @@ final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
         onPageChanged?(settled)
     }
 
+    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+        settle()
+    }
+
+    func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) {
+        settle()
+    }
+
     /// A drag that ends past the last page's trailing edge is the append
     /// gesture. Reported, never acted on here: growing the document is the
-    /// session's decision (`Contract.md` — Owners).
+    /// session's decision (`Contract.md` — Owners). An ordinary drag that ends
+    /// without deceleration is already at rest, so it settles here.
     func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate: Bool) {
         guard scrollView.bounds.width > 0 else { return }
         let lastPageOffset = scrollView.bounds.width * CGFloat(pageCount - 1)
         if scrollView.contentOffset.x > lastPageOffset + Self.appendTriggerFraction
             * scrollView.bounds.width {
+            // The session's append drives `setPages`, which settles the new
+            // page itself.
             onReachedEndBoundary?()
+            return
         }
+        if !willDecelerate { settle() }
     }
 
     /// How far past the last page you must pull before it counts as asking for a

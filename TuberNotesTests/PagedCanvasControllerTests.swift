@@ -127,22 +127,49 @@ struct PagedCanvasControllerTests {
         #expect(after.canvasView.drawing.strokes.count == 1)
     }
 
-    @Test("A settled scroll reports the new page exactly once")
+    @Test("A turn commits once, at rest, from any settle callback")
     func pageChangeIsReportedOnceWhenSettled() {
         var reported: [Int] = []
         let controller = hosted { $0.onPageChanged = { reported.append($0) } }
         controller.setPages(count: 5, currentPageIndex: 0)
+        let scroll = controller.scrollView
 
-        turn(controller, to: 1)
-        turn(controller, to: 2)
-        // A second scroll to the same place is not another turn.
-        controller.scrollView.contentOffset = CGPoint(
-            x: controller.scrollView.bounds.width * 2,
-            y: 0
-        )
-        controller.scrollViewDidScroll(controller.scrollView)
+        // A deceleration that comes to rest on page 1.
+        scroll.contentOffset = CGPoint(x: scroll.bounds.width, y: 0)
+        controller.scrollViewDidEndDecelerating(scroll)
+        // A drag that ends dead on page 2 with no deceleration.
+        scroll.contentOffset = CGPoint(x: scroll.bounds.width * 2, y: 0)
+        controller.scrollViewDidEndDragging(scroll, willDecelerate: false)
+        // Settling again in the same place is not another turn.
+        controller.scrollViewDidEndDecelerating(scroll)
+        controller.scrollViewDidEndScrollingAnimation(scroll)
 
         #expect(reported == [1, 2])
+    }
+
+    @Test("A half-drag past the midpoint commits nothing")
+    func halfDragCommitsNothing() throws {
+        var reported: [Int] = []
+        let controller = hosted { $0.onPageChanged = { reported.append($0) } }
+        controller.setPages(count: 5, currentPageIndex: 0)
+        let before = try #require(controller.livePage(at: 0))
+        let scroll = controller.scrollView
+
+        // The finger is past the halfway point of a drag toward page 1. The
+        // old runtime declared the turn settled here — rebuilding the window,
+        // stealing first responder, and arming a save for a turn the user may
+        // yet abandon. Nothing has settled: no callback fires mid-drag.
+        scroll.contentOffset = CGPoint(x: scroll.bounds.width * 0.7, y: 0)
+        #expect(reported.isEmpty)
+        #expect(controller.currentPageIndex == 0)
+
+        // The drag is abandoned; the scroll snaps back and rests where it
+        // began. The abandoned half-drag has retired and rebuilt nothing.
+        scroll.contentOffset = .zero
+        controller.scrollViewDidEndDecelerating(scroll)
+        #expect(reported.isEmpty)
+        #expect(controller.currentPageIndex == 0)
+        #expect(controller.livePage(at: 0) === before)
     }
 
     @Test("Pulling past the last page asks for a new one, and never adds it")
@@ -193,11 +220,12 @@ struct PagedCanvasControllerTests {
         return controller
     }
 
-    /// Drives a page turn the way a settled scroll does, without a gesture.
+    /// Drives a page turn the way a settled scroll does, without a gesture:
+    /// the offset comes to rest on the page and the settle callback fires.
     private func turn(_ controller: PagedCanvasController, to page: Int) {
         let scroll = controller.scrollView
         scroll.contentOffset = CGPoint(x: scroll.bounds.width * CGFloat(page), y: 0)
-        controller.scrollViewDidScroll(scroll)
+        controller.scrollViewDidEndDecelerating(scroll)
     }
 
     private func strokeAcrossPage() -> PKDrawing {
