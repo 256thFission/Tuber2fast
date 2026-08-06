@@ -26,7 +26,7 @@ struct PagedCanvasControllerTests {
             controller.setPages(count: count, currentPageIndex: 0)
             // The window is the visible page and one either side. It is the
             // count that matters, not the number: it must not scale with
-            // `count` (`DataContract.md` §9).
+            // `count` (`Contract.md` — Performance).
             #expect(controller.liveCanvasCount <= 3)
             #expect(controller.liveCanvasCount <= count)
         }
@@ -44,7 +44,8 @@ struct PagedCanvasControllerTests {
         }
 
         // The failure this catches is retention that grows with pages visited —
-        // the multi-page form of the monotonic retention §9 forbids.
+        // the multi-page form of the monotonic retention `Contract.md` —
+        // Performance forbids.
         #expect(highWaterMark <= 3)
         #expect(controller.liveCanvasCount <= 3)
     }
@@ -127,7 +128,7 @@ struct PagedCanvasControllerTests {
         controller.scrollViewDidEndDragging(scroll, willDecelerate: false)
 
         #expect(asked == 1)
-        // The runtime never grows the document by itself (§2 rule 7a).
+        // The runtime never grows the document by itself (`Contract.md` — Owners).
         #expect(controller.pageCount == 3)
     }
 

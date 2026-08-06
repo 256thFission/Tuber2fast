@@ -1,0 +1,522 @@
+#!/bin/bash
+# One command between "I want to hand-exercise the canvas" and a captured
+# session you can cite in a pull request.
+#
+#   Tools/device            diagnose, build, install, launch, capture
+#   Tools/device --check    diagnose only, then stop
+#   Tools/device --install  diagnose, build, install, then stop — no capture
+#
+# Exit codes:
+#   0  READY          — it ran, or (with --check) the iPad is usable
+#   2  BLOCKED        — something physical must change: plug in, unlock, trust
+#   1  MISCONFIGURED  — something in this repo or toolchain is wrong
+#
+# BLOCKED is a skip; MISCONFIGURED is a failure. Confusing the two is how
+# someone "fixes" a signing config to work around an unplugged cable.
+#
+# WHY THIS EXISTS. The simulator has no Apple Pencil, so the whole of this
+# project's risk lives in the on-device loop. Device behaviour is observable
+# from a script through exactly one mechanism — `devicectl device process
+# launch --console`, the stream CanvasLog.swift mirrors trace output to — and
+# this is that stream's reader.
+#
+# WHAT THIS MUST NEVER DO:
+#   - Render a verdict about the branch. It may say the iPad is locked; it may
+#     never say the ink is good, or that the app "passed". Pencil feel, stroke
+#     fidelity, palm rejection, and pan/zoom quality are a maintainer's
+#     judgment, and this tool exists to record the journey and leave it alone.
+#   - Be consumed by CI or become a merge precondition. Everything it writes
+#     comes from an untrusted machine and is trivially forgeable. A human cites
+#     it; nothing verifies it.
+#   - Auto-remediate. No unlocking, no re-pairing, no mounting a DDI, no
+#     editing Local.xcconfig, no installing anything. It prints the remedy.
+#   - Choose among several paired iPads. It refuses and names them.
+#   - Install onto com.tubernotes.app, the behavioral reference app.
+
+# Deliberately not `set -e`. The diagnosis phase must run every check and report
+# all of them at once — a preflight that stops at the first problem makes you
+# re-run it once per problem. Build, install, and launch each classify their own
+# failure explicitly instead.
+set -uo pipefail
+
+# Captured before the cd below: everything else here is repo-relative, but a
+# path the caller typed is relative to where they typed it.
+INVOKED_FROM="$PWD"
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT" || exit 1
+
+# Absolute paths on purpose. A tool resolved through the invoking shell's PATH
+# inherits its shims: a pyenv `python3` whose pinned version is missing breaks
+# iPad diagnosis with a Python error, and Homebrew's `openssl` prints a subject
+# format this script's OU regex does not match. Neither tool's identity should
+# depend on the invoking shell's PATH.
+JQ=/usr/bin/jq
+OPENSSL=/usr/bin/openssl
+
+ARTIFACTS="$REPO_ROOT/Artifacts"
+LOCAL_CONFIG="$REPO_ROOT/Local.xcconfig"
+PROJECT="$REPO_ROOT/TuberNotes.xcodeproj"
+SCHEME=TuberNotes
+APP_NAME=TuberNotes
+REFERENCE_BUNDLE=com.tubernotes.app
+DERIVED_DATA="$REPO_ROOT/DerivedData"
+
+CHECK_ONLY=0
+INSTALL_ONLY=0
+DIGEST_ONLY=""
+case "${1:-}" in
+  --check) CHECK_ONLY=1 ;;
+  --install) INSTALL_ONLY=1 ;;
+  --digest) DIGEST_ONLY="${2:-}"
+            [ -n "$DIGEST_ONLY" ] || { printf 'usage: Tools/device --digest <console.log>\n' >&2; exit 1; } ;;
+  -h|--help) sed -n '2,35p' "$0" | sed 's|^# \{0,1\}||'; exit 0 ;;
+  "") ;;
+  *) printf 'unknown argument: %s (try --check, --install, or --help)\n' "$1" >&2; exit 1 ;;
+esac
+
+BLOCKED=0
+MISCONFIGURED=0
+
+ok()      { printf '  ✓ %s\n' "$1"; }
+blocked() { printf '  ⊘ %s\n     → %s\n' "$1" "$2"; BLOCKED=1; }
+bad()     { printf '  ✗ %s\n     → %s\n' "$1" "$2" >&2; MISCONFIGURED=1; }
+step()    { printf '\n── %s ──\n' "$1"; }
+
+# Compare dotted versions: true when $1 >= $2.
+version_ge() { [ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -1)" = "$2" ]; }
+
+# Read one setting out of an xcconfig, ignoring comments and surrounding space.
+xcconfig_value() {
+  [ -f "$2" ] || return 1
+  sed 's|//.*||' "$2" \
+    | sed -nE "s|^[[:space:]]*$1[[:space:]]*=[[:space:]]*(.*[^[:space:]])[[:space:]]*$|\1|p" \
+    | head -1
+}
+
+# The team ID of every Apple Development certificate in the keychain. The Team
+# ID is the certificate's OU; the parenthetical in the common name is the person
+# identifier and is a different string entirely. Matching the CN confirms a
+# DEVELOPMENT_TEAM that is not a team at all, and the failure surfaces much
+# later as "No Account for Team" from xcodebuild.
+keychain_team_ids() {
+  security find-certificate -a -c "Apple Development" -p 2>/dev/null \
+    | "$OPENSSL" crl2pkcs7 -nocrl -certfile /dev/stdin 2>/dev/null \
+    | "$OPENSSL" pkcs7 -print_certs -noout 2>/dev/null \
+    | sed -nE 's|^subject=.*/OU=([A-Z0-9]{10})/.*|\1|p' | sort -u
+}
+
+digest_trace() {
+  local CONSOLE="$1"
+  printf '\n'
+
+  if [ ! -s "$CONSOLE" ] || ! grep -q 'TN\[' "$CONSOLE" 2>/dev/null; then
+    # A tool that summarises an empty stream produces a beautiful and entirely
+    # false report. Say nothing was captured rather than printing zeroes that
+    # read as "nothing went wrong".
+    printf '  NO TRACE CAPTURED.\n'
+    printf '  The stderr mirror in CanvasLog is DEBUG-only and gated on TN_TRACE.\n'
+    printf '  In a Release build it is compiled out entirely, and devicectl\n'
+    printf '  connects the app'\''s streams only when it starts the process.\n'
+    printf '  No counts are reported: zeroes here would read as "nothing went\n'
+    printf '  wrong" when the truth is that nothing was observed.\n'
+    return
+  fi
+
+  # No `|| echo 0` here: grep -c already prints 0 when it matches nothing and
+  # exits 1, so a fallback would append a second line and make these two-line
+  # strings that break every numeric test below.
+  local saves appends fatals
+  saves="$(grep -c 'wrote .* page file(s)' "$CONSOLE" 2>/dev/null)"
+  appends="$(grep -c 'appended page' "$CONSOLE" 2>/dev/null)"
+  fatals="$(grep -c 'TN\[fatal\]' "$CONSOLE" 2>/dev/null)"
+
+  grep -q 'session ready' "$CONSOLE" && printf '  session ready:      yes\n' \
+                                     || printf '  session ready:      NOT SEEN\n'
+  grep -q 'first touch reached the canvas' "$CONSOLE" \
+    && printf '  first touch:        reached the canvas\n' \
+    || printf '  first touch:        NOT SEEN (no touch was delivered)\n'
+  printf '  saves:              %s\n' "$saves"
+  printf '  pages appended:     %s\n' "$appends"
+
+  # "The save trace names only changed pages" is checkable because each save
+  # logs how many page files it wrote out of how many exist. A save that writes
+  # every page on every turn looks different from one that writes one.
+  if [ "$saves" -gt 0 ]; then
+    printf '  page files per save:\n'
+    grep -oE 'wrote [0-9]+ page file\(s\) of [0-9]+' "$CONSOLE" \
+      | sort | uniq -c | sed 's|^|      |'
+  fi
+
+  # The contract puts encoding off the main thread. This reports what the app
+  # observed about itself; it does not decide whether that is acceptable.
+  if grep -q 'serialized drawing snapshot' "$CONSOLE"; then
+    printf '  serialization on main thread:\n'
+    grep -oE 'mainThread=(true|false)' "$CONSOLE" | sort | uniq -c | sed 's|^|      |'
+  fi
+
+  if [ "$fatals" -gt 0 ]; then
+    printf '\n  TN[fatal] PRESENT (%s):\n' "$fatals"
+    grep -m1 -A3 'TN\[fatal\]' "$CONSOLE" | sed 's|^|      |'
+  else
+    printf '  TN[fatal]:          absent\n'
+  fi
+
+  printf '\n'
+  printf '  No verdict was rendered here. Ink is a maintainer'\''s judgment:\n'
+  printf '  what you saw goes in the pull request, in your own words.\n'
+}
+
+# Placed after digest_trace is defined so replay needs none of the device state.
+if [ -n "$DIGEST_ONLY" ]; then
+  case "$DIGEST_ONLY" in
+    /*) ;;
+    *) DIGEST_ONLY="$INVOKED_FROM/$DIGEST_ONLY" ;;
+  esac
+  [ -f "$DIGEST_ONLY" ] || { printf 'no such capture: %s\n' "$DIGEST_ONLY" >&2; exit 1; }
+  step "Replay of $DIGEST_ONLY"
+  digest_trace "$DIGEST_ONLY"
+  exit 0
+fi
+
+mkdir -p "$ARTIFACTS"
+
+# A stale device id from a previous READY run must not be readable after a run
+# that refused. The file's existence means "this run vetted this device".
+rm -f "$ARTIFACTS/device-id.txt"
+
+# ---------------------------------------------------------------- toolchain --
+step "Host toolchain"
+
+if [ -x "$JQ" ]; then
+  ok "jq $("$JQ" --version 2>/dev/null)"
+else
+  # Everything downstream parses JSON. Without this the device id silently
+  # becomes an empty string and the failure surfaces somewhere useless.
+  bad "$JQ not found" "macOS ships jq at this path; check your system integrity"
+  printf '\n  VERDICT: MISCONFIGURED\n' >&2
+  exit 1
+fi
+
+if command -v xcodebuild >/dev/null 2>&1; then
+  ok "$(xcodebuild -version 2>/dev/null | head -1) at $(xcode-select -p)"
+else
+  bad "xcodebuild not found" "install Xcode, then run: xcode-select --switch /Applications/Xcode.app"
+fi
+
+SDK_VERSION="$(xcodebuild -showsdks 2>/dev/null | sed -nE 's/.*-sdk iphoneos([0-9.]+).*/\1/p' | sort -V | tail -1)"
+if [ -n "$SDK_VERSION" ]; then
+  ok "iOS device SDK $SDK_VERSION"
+else
+  bad "no iOS device SDK installed" "install the iOS platform in Xcode → Settings → Components"
+fi
+
+if [ -d "$PROJECT" ]; then
+  ok "TuberNotes.xcodeproj present"
+else
+  bad "no generated project" "run Tools/setup"
+fi
+
+# ------------------------------------------------------------------ signing --
+step "Signing"
+
+if [ -f "$LOCAL_CONFIG" ]; then
+  ok "Local.xcconfig present"
+else
+  bad "no Local.xcconfig (per-developer signing)" "run Tools/setup"
+fi
+
+TEAM="$(xcconfig_value TN_DEVELOPMENT_TEAM "$LOCAL_CONFIG" 2>/dev/null)"
+if [ -z "$TEAM" ]; then
+  bad "Local.xcconfig sets no TN_DEVELOPMENT_TEAM" \
+      "run Tools/setup, or set it by hand to your 10-character Team ID"
+elif [ "$TEAM" = "PUT_YOUR_TEAM_ID_HERE" ]; then
+  bad "Local.xcconfig still holds the placeholder team" \
+      "set TN_DEVELOPMENT_TEAM in Local.xcconfig to your own 10-character Team ID (Xcode → Settings → Accounts)"
+else
+  # No check for downloaded provisioning profiles: automatic signing fetches one
+  # on demand under -allowProvisioningUpdates, so their absence is not a
+  # precondition. Only the build itself can prove signing works.
+  CERT_TEAMS="$(keychain_team_ids)"
+  if printf '%s\n' "$CERT_TEAMS" | grep -qx "$TEAM"; then
+    ok "signing identity present for team $TEAM"
+  else
+    bad "no codesigning identity whose team (certificate OU) is $TEAM" \
+        "teams in installed certificates: ${CERT_TEAMS:-none}; correct TN_DEVELOPMENT_TEAM in Local.xcconfig, or sign in at Xcode → Settings → Accounts"
+  fi
+fi
+
+# The authoritative bundle id is what xcodebuild resolves through the whole
+# xcconfig include chain, not what Local.xcconfig appears to say. The check that
+# protects the reference app must read the value that will actually be signed.
+BUNDLE_ID=""
+DEPLOYMENT_TARGET=""
+if [ -d "$PROJECT" ]; then
+  SETTINGS_JSON="$ARTIFACTS/build-settings.json"
+  if xcodebuild -project "$PROJECT" -target "$APP_NAME" -showBuildSettings -json \
+       >"$SETTINGS_JSON" 2>/dev/null; then
+    BUNDLE_ID="$("$JQ" -r '.[0].buildSettings.PRODUCT_BUNDLE_IDENTIFIER // empty' "$SETTINGS_JSON" 2>/dev/null)"
+    DEPLOYMENT_TARGET="$("$JQ" -r '.[0].buildSettings.IPHONEOS_DEPLOYMENT_TARGET // empty' "$SETTINGS_JSON" 2>/dev/null)"
+  fi
+fi
+
+if [ -z "$BUNDLE_ID" ]; then
+  # Never default this. A tool that invents a bundle id will cheerfully report
+  # that it differs from the reference app while the build signs something else.
+  bad "could not resolve PRODUCT_BUNDLE_IDENTIFIER from the project" \
+      "run Tools/setup to regenerate, and check TN_BUNDLE_ID_PREFIX in Local.xcconfig"
+elif [ "$BUNDLE_ID" = "$REFERENCE_BUNDLE" ]; then
+  bad "bundle id collides with the reference app ($REFERENCE_BUNDLE)" \
+      "installing would overwrite the comparison app on the iPad; change TN_BUNDLE_ID_PREFIX in Local.xcconfig"
+else
+  ok "bundle id $BUNDLE_ID (distinct from the reference app)"
+fi
+[ -n "$DEPLOYMENT_TARGET" ] && ok "deployment target iOS $DEPLOYMENT_TARGET"
+
+# ------------------------------------------------------------------- device --
+DEVICE_NAME="${TN_DEVICE_NAME:-$(xcconfig_value TN_DEVICE_NAME "$LOCAL_CONFIG" 2>/dev/null)}"
+step "Device: ${DEVICE_NAME:-the paired iPad}"
+
+DEVICES_JSON="$ARTIFACTS/devices.json"
+if ! xcrun devicectl list devices --json-output "$DEVICES_JSON" >/dev/null 2>&1; then
+  blocked "devicectl could not enumerate devices" \
+          "check that Xcode is installed and that no other tool holds the device"
+  printf '\n  VERDICT: BLOCKED\n'
+  exit 2
+fi
+
+# Device family 2 is iPad. An empty TN_DEVICE_NAME means "the one iPad this Mac
+# knows about"; two iPads is ambiguous and must be resolved by the person, not
+# guessed at.
+DEVICE_ROW="$("$JQ" -r --arg want "$DEVICE_NAME" '
+  [ .result.devices[]
+    | select((.hardwareProperties.supportedDeviceFamilies // []) | index(2))
+    | select($want == "" or .deviceProperties.name == $want) ] as $ipads
+  | if ($ipads | length) == 1 then
+      $ipads[0]
+      | [ "ONE",
+          .identifier,
+          .deviceProperties.name,
+          (.hardwareProperties.marketingName // "unknown"),
+          (.deviceProperties.osVersionNumber // "0"),
+          (.connectionProperties.pairingState // "unknown"),
+          (.deviceProperties.developerModeStatus // "unknown"),
+          (.connectionProperties.lastConnectionDate // "never") ] | @tsv
+    else
+      [ "MANY", (($ipads | length) | tostring),
+        ([$ipads[].deviceProperties.name] | join(", ")) ] | @tsv
+    end' "$DEVICES_JSON" 2>/dev/null)"
+
+if [ -z "$DEVICE_ROW" ]; then
+  bad "could not parse the device list" "inspect $DEVICES_JSON"
+  printf '\n  VERDICT: MISCONFIGURED\n' >&2
+  exit 1
+fi
+
+IFS=$'\t' read -r D_KIND D_ID D_NAME D_MODEL D_OS D_PAIRING D_DEVMODE D_LAST_SEEN <<EOF
+$DEVICE_ROW
+EOF
+
+if [ "$D_KIND" != "ONE" ]; then
+  # Here D_ID holds the count and D_NAME the joined names.
+  if [ "${D_ID:-0}" -gt 1 ] 2>/dev/null; then
+    blocked "more than one iPad is paired with this Mac ($D_NAME)" \
+            "choose one: set TN_DEVICE_NAME in Local.xcconfig to a name from that list"
+  elif [ -n "$DEVICE_NAME" ]; then
+    blocked "'$DEVICE_NAME' is not known to this Mac" \
+            "connect that iPad by cable and trust this computer, or correct TN_DEVICE_NAME in Local.xcconfig"
+  else
+    blocked "no iPad is paired with this Mac" "connect the iPad by cable and trust this computer"
+  fi
+  printf '\n  VERDICT: BLOCKED\n'
+  exit 2
+fi
+
+ok "found $D_NAME — $D_MODEL, iPadOS $D_OS ($D_ID)"
+
+case "$D_PAIRING" in
+  paired) ok "paired with this Mac" ;;
+  *)      blocked "pairing state is '$D_PAIRING'" "connect by cable and tap Trust on the iPad" ;;
+esac
+
+case "$D_DEVMODE" in
+  enabled) ok "Developer Mode enabled" ;;
+  *)       blocked "Developer Mode is '$D_DEVMODE'" \
+                   "on the iPad: Settings → Privacy & Security → Developer Mode → On, then reboot" ;;
+esac
+
+# Reachability is proved by talking to the device, never by reading a cached
+# field. `devicectl list devices` serves a stored record whose tunnelState is
+# "disconnected" and ddiServicesAvailable false for a device that is plugged in
+# and perfectly usable: the tunnel is established lazily, on first real request.
+# Trusting the cached value reports BLOCKED for a ready iPad, turning a good
+# device into a phantom configuration problem. Do not "simplify" this back.
+DETAILS="$ARTIFACTS/device-details.json"
+if xcrun devicectl device info details --device "$D_ID" --json-output "$DETAILS" >/dev/null 2>&1; then
+  ok "device answered a live query (tunnel established on demand)"
+  LIVE_DDI="$("$JQ" -r 'if .result.deviceProperties.ddiServicesAvailable then "1" else "0" end' "$DETAILS" 2>/dev/null)"
+  if [ "$LIVE_DDI" = "1" ]; then
+    ok "developer disk image services available"
+  else
+    blocked "developer disk image services unavailable" \
+            "unlock the iPad and leave it unlocked; Xcode mounts the DDI on first connection"
+  fi
+else
+  blocked "device did not answer a live query (last seen $D_LAST_SEEN)" \
+          "plug the iPad in and unlock it, or join it to this Mac's network for wireless debugging"
+fi
+
+if [ -n "$DEPLOYMENT_TARGET" ]; then
+  if version_ge "$D_OS" "$DEPLOYMENT_TARGET"; then
+    ok "iPadOS $D_OS satisfies deployment target $DEPLOYMENT_TARGET"
+  else
+    bad "iPadOS $D_OS is older than the deployment target $DEPLOYMENT_TARGET" \
+        "update the iPad, or lower the deployment target in project.yml"
+  fi
+fi
+
+# An Xcode that predates the device's OS cannot install to it at all.
+if [ -n "$SDK_VERSION" ]; then
+  sdk_mm="$(printf '%s' "$SDK_VERSION" | cut -d. -f1,2)"
+  dev_mm="$(printf '%s' "$D_OS" | cut -d. -f1,2)"
+  if version_ge "$sdk_mm" "$dev_mm"; then
+    ok "SDK $SDK_VERSION supports iPadOS $D_OS"
+  else
+    bad "iPadOS $D_OS is newer than the installed SDK $SDK_VERSION" \
+        "update Xcode; this Xcode cannot install to that iPadOS"
+  fi
+fi
+
+# ------------------------------------------------------------------ verdict --
+printf '\n'
+if [ "$MISCONFIGURED" -eq 1 ]; then
+  printf '  VERDICT: MISCONFIGURED — fix the repo or toolchain before retrying\n' >&2
+  exit 1
+elif [ "$BLOCKED" -eq 1 ]; then
+  printf '  VERDICT: BLOCKED — device evidence cannot be collected yet\n'
+  exit 2
+fi
+
+printf '%s' "$D_ID" >"$ARTIFACTS/device-id.txt"
+
+if [ "$CHECK_ONLY" -eq 1 ]; then
+  printf '  VERDICT: READY — you can build and run on this iPad\n'
+  exit 0
+fi
+
+# -------------------------------------------------------------------- build --
+SHA="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"
+DIRTY=clean
+[ -n "$(git status --porcelain 2>/dev/null)" ] && DIRTY=dirty
+STAMP="$(date -u '+%Y%m%dT%H%M%SZ')"
+SESSION="$ARTIFACTS/device/$STAMP-$SHA"
+CONSOLE="$SESSION/console.log"
+mkdir -p "$SESSION"
+
+step "Build for $D_NAME"
+
+# The destination names the actual iPad rather than generic/platform=iOS.
+# Automatic signing can only register a device it has been told about: with a
+# generic destination and a team that has no devices yet, provisioning fails
+# with "Your team has no devices from which to generate a provisioning profile".
+if ! xcodebuild build \
+       -project "$PROJECT" \
+       -scheme "$SCHEME" \
+       -destination "platform=iOS,id=$D_ID" \
+       -derivedDataPath "$DERIVED_DATA" \
+       -allowProvisioningUpdates \
+       >"$SESSION/build.log" 2>&1; then
+  bad "device build failed" "last 40 lines follow; full log at $SESSION/build.log"
+  tail -40 "$SESSION/build.log" >&2
+  exit 1
+fi
+ok "signed device build succeeded"
+
+APP="$DERIVED_DATA/Build/Products/Debug-iphoneos/$APP_NAME.app"
+if [ ! -d "$APP" ]; then
+  bad "no device app at $APP" "the build reported success but produced nothing; read $SESSION/build.log"
+  exit 1
+fi
+
+step "Install"
+if ! xcrun devicectl device install app --device "$D_ID" "$APP" \
+       >"$SESSION/install.log" 2>&1; then
+  bad "install failed" "see $SESSION/install.log"
+  tail -20 "$SESSION/install.log" >&2
+  exit 1
+fi
+ok "installed $BUNDLE_ID on $D_NAME"
+
+if [ "$INSTALL_ONLY" -eq 1 ]; then
+  # Installed but never launched: no console stream exists, so nothing from
+  # this run is citable as device evidence. Say so rather than exiting mutely —
+  # a silent success here would read as "session done" when no session ran.
+  printf '\n  Installed %s (%s, %s) — not launched.\n' "$SHA" "$BRANCH" "$DIRTY"
+  printf '  No console was captured; this run produced no citable device\n'
+  printf '  evidence. A plain Tools/device run launches and captures one.\n'
+  printf '  Logs: %s\n' "$SESSION"
+  exit 0
+fi
+
+# ------------------------------------------------------------------- digest --
+# Printed once, when the session ends. Everything here is an observation about
+# what the app emitted. Nothing here is a judgment about whether it is good.
+digest() {
+  printf '\n'
+  step "Session"
+
+  printf '  iPad:    %s — %s, iPadOS %s\n' "$D_NAME" "$D_MODEL" "$D_OS"
+  printf '  UDID:    %s\n' "$D_ID"
+  printf '  Build:   %s (%s), %s\n' "$SHA" "$BRANCH" "$DIRTY"
+  printf '  Bundle:  %s\n' "$BUNDLE_ID"
+  printf '  Console: %s\n' "$CONSOLE"
+  digest_trace "$CONSOLE"
+}
+
+# Split out from the identity header so it can be run against a saved capture —
+# `Tools/device --digest <console.log>` — which is what makes this function
+# negative-testable. A summariser that has never been fed a log it should refuse
+# to summarise is decoration.
+
+on_interrupt() { printf '\n  (session ended)\n'; digest; exit 0; }
+trap on_interrupt INT
+
+
+step "Launch — write on the iPad; Ctrl-C here ends the session"
+printf '  streaming to %s\n\n' "$CONSOLE"
+
+# --terminate-existing is load-bearing, not tidiness: devicectl connects the
+# app's standard streams to its own only when it starts the process. Attaching
+# to an already-running app yields an empty console and a digest that says
+# nothing happened.
+#
+# TN_TRACE is what turns on CanvasLog's stderr mirror. The flag takes a JSON
+# dictionary, not KEY=VALUE.
+xcrun devicectl device process launch \
+  --console \
+  --terminate-existing \
+  --device "$D_ID" \
+  --environment-variables '{"TN_TRACE":"1"}' \
+  "$BUNDLE_ID" 2>&1 | tee "$CONSOLE"
+LAUNCH_STATUS="${PIPESTATUS[0]}"
+
+if [ "$LAUNCH_STATUS" -ne 0 ]; then
+  # A development profile from a personal team must be trusted on the device
+  # itself before iOS will launch anything signed with it. Nothing on the Mac
+  # can do it, and the raw error blames the code signature, which sends you
+  # looking in Xcode instead of in Settings. This is BLOCKED, not a failure.
+  if grep -q "explicitly trusted" "$CONSOLE" 2>/dev/null; then
+    printf '\n'
+    blocked "the developer profile is not trusted on '$D_NAME'" \
+            "on the iPad: Settings → General → VPN & Device Management → Developer App → trust the certificate, then re-run"
+    printf '\n  VERDICT: BLOCKED\n'
+    exit 2
+  fi
+  printf '\n'
+  bad "launch failed" "see $CONSOLE"
+  exit 1
+fi
+
+digest
+exit 0

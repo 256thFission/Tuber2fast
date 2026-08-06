@@ -21,10 +21,7 @@ final class EditorLifecycle {
     static func makeDefault() -> EditorLifecycle {
         EditorLifecycle(
             session: EditorSession(
-                store: DocumentStore(
-                    directoryURL: DocumentStore.defaultDirectoryURL(),
-                    legacyFileURL: DocumentStore.defaultLegacyFileURL()
-                )
+                store: DocumentStore(directoryURL: DocumentStore.defaultDirectoryURL())
             )
         )
     }

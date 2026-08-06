@@ -1,16 +1,14 @@
 import Foundation
 import Observation
 
-/// Coordinates the canvas runtime and the document store (`DataContract.md` §2).
+/// Coordinates the canvas runtime and the document store (`Contract.md` — Owners).
 ///
-/// It owns page order and identity, and the active save policy — which pages
-/// are dirty, `saveInFlight`, the debounce. Live drawings live in PencilKit and
-/// are captured only at save time. Page geometry is fixed and belongs to
-/// `PageGeometry`, so there is no durable geometry state to own here.
-///
+/// It owns page order and identity, and the active save policy.
+//  Live drawings live in PencilKit and
+/// are captured only at save time.
 /// `@Observable` is deliberate and narrow. SwiftUI observes `phase` and
-/// `lastSaveError` — user-action-frequency values. It never observes the
-/// drawing, pan, zoom, or Pencil samples, which is what §9 and §10 forbid.
+/// `lastSaveError` — user-action-frequency values. It is forbidden to observe the
+/// drawing, pan, zoom, or Pencil samples.
 @MainActor
 @Observable
 final class EditorSession {
@@ -22,12 +20,10 @@ final class EditorSession {
 
     private(set) var phase: Phase = .loading
 
-    /// Surfaced so a failed autosave is visible rather than silent. It is not
-    /// durable state and is not a product concept.
+    /// Surfaced so a failed autosave is visible 
     private(set) var lastSaveError: String?
 
-    /// The page the user is looking at. Page identity is the session's
-    /// (`DataContract.md` §2 rule 7a); no canvas ever learns it.
+    /// The page the user is looking at. Page belongs to the session's
     var currentPageID: UUID { index.pageIDs[index.currentPageIndex] }
 
     /// The number of saved pages.
@@ -79,7 +75,7 @@ final class EditorSession {
     private let debounce: Duration
 
     /// The document index as last loaded or saved. `EditorSession` owns page
-    /// identity and order (`DataContract.md` §2); the canvas never sees it.
+    /// identity and order (`Contract.md` — Owners); the canvas never sees it.
     ///
     /// It is not `@Observable` state: SwiftUI has nothing to render from it yet,
     /// and it changes at save frequency rather than user-action frequency.
@@ -104,11 +100,21 @@ final class EditorSession {
     /// Saved bytes for the pages currently in the runtime's window, plus any
     /// captured from a page that scrolled out before its save landed.
     ///
-    /// This is not a second mutable drawing (§2 rule 5): a live page's authority
-    /// is its `PKCanvasView`, and an entry here is either a copy of what is on
-    /// disk or the final bytes of a page that no longer has a canvas. It is
+    /// This is not a second mutable drawing (`Contract.md` — Owners): a live
+    /// page's authority is its `PKCanvasView`, and an entry here is either a
+    /// copy of what is on disk or the final bytes of a page that no longer has
+    /// a canvas. It is
     /// pruned to the window on every turn, so it cannot grow with pages visited.
     @ObservationIgnored private var pageData: [UUID: Data] = [:]
+
+    /// Ink handed over by a page that left the live window before it was saved.
+    ///
+    /// Custody rather than a second copy (`Contract.md` — Owners, golden rule
+    /// 5): every page in here has no live canvas, so this value is the only
+    /// authority for it. Bounded by the dirty set — an entry is added only for
+    /// a dirty page and dropped once that page is saved — which is the "any
+    /// page whose ink is not yet saved" clause of the held-bytes bound.
+    @ObservationIgnored private var retiredInk: [UUID: DrawingSnapshot] = [:]
 
     /// Pages whose bytes are being fetched. Prevents a scroll back and forth
     /// from starting the same load repeatedly.
@@ -123,13 +129,13 @@ final class EditorSession {
     /// This is what makes a transient failure recover by itself: without it a
     /// failed save left the editor dirty with nothing scheduled, and durability
     /// resumed only if the user happened to draw again, tap Retry, or background
-    /// the app (`DataContract.md` §5, retry policy).
+    /// the app (`Contract.md` — Saving, retry policy).
     private var consecutiveSaveFailures = 0
 
     /// How long the last whole-drawing serialization took. The debounce is
     /// derived from it so that a document large enough to be expensive to
-    /// serialize does not chain back-to-back serializations (`DataContract.md`
-    /// §5). Zero until the first save, which is the same as no back-off.
+    /// serialize does not chain back-to-back serializations (`Contract.md` —
+    /// Saving). Zero until the first save, which is the same as no back-off.
     private var lastSerializeDuration: Duration = .zero
 
     /// Serializing is allowed to widen the debounce by this factor: a save that
@@ -143,7 +149,7 @@ final class EditorSession {
     /// this ceiling, not rescued by it.
     private static let maximumRetryDelay: Duration = .seconds(5)
 
-    /// Failure doublings past this point are pointless — at the contract's
+    /// Failure doublings past this point are pointless — at the default
     /// 500 ms interval the fourth doubling already exceeds `maximumRetryDelay` —
     /// and an unbounded shift would overflow.
     private static let maximumFailureDoublings = 10
@@ -155,10 +161,10 @@ final class EditorSession {
     private var startWaiters: [CheckedContinuation<Void, Never>] = []
 
     /// `debounce` is injectable only so tests need not wait 500 ms of real time.
-    /// The contract's interval is the default and the only one the app uses. It
-    /// is a hard floor and never a ceiling: the adaptive debounce may widen it
-    /// for a document that is expensive to serialize, and can never shorten it
-    /// (`DataContract.md` §5).
+    /// The default is the only interval the app uses. It is a hard floor and
+    /// never a ceiling: the adaptive debounce may widen it for a document that
+    /// is expensive to serialize, and can never shorten it (`Contract.md` —
+    /// Saving).
     /// Builds no UIKit object. See `canvas` for why that matters.
     init(store: DocumentStore, debounce: Duration = .milliseconds(500)) {
         self.store = store
@@ -167,13 +173,11 @@ final class EditorSession {
 
     // MARK: - Launch
 
-    /// Loads once, before the canvas becomes editable (`DataContract.md` §6).
+    /// Loads once, before the canvas becomes editable (`Contract.md` — Lifecycle).
     ///
     /// No document means first launch: generate the IDs and save an empty
-    /// one-page document. A format version 1 file is migrated by the store, and
-    /// arrives here indistinguishable from a version 2 document. Invalid data
-    /// fails loudly and leaves what is on disk untouched — it is never replaced
-    /// with a blank drawing.
+    /// one-page document. Invalid data fails loudly and leaves what is on disk
+    /// untouched — it is never replaced with a blank drawing.
     func start() async {
         guard phase == .loading else { return }
         if startInFlight {
@@ -200,7 +204,8 @@ final class EditorSession {
                 index = DocumentIndex.newDocument(documentID: UUID(), pageID: UUID())
                 // Empty bytes are the blank page. Serializing an empty
                 // `PKDrawing` to get the same meaning would drag PencilKit into
-                // this file, which §3 confines to the canvas runtime.
+                // this file, which `Contract.md` — Owners confines to the
+                // canvas runtime.
                 pageData[index.pageIDs[0]] = Data()
                 try await store.save(index: index, changedPages: [index.pageIDs[0]: Data()])
             }
@@ -228,6 +233,11 @@ final class EditorSession {
     private func content(forPageAt pageIndex: Int) -> PagedCanvasController.PageContent {
         guard index.pageIDs.indices.contains(pageIndex) else { return .blank }
         let pageID = index.pageIDs[pageIndex]
+        // Ink this page handed over when it last retired outranks anything on
+        // disk: it is newer by construction. Rebuilding from `pageData` instead
+        // is what silently restored pre-edit ink when a page was turned away
+        // from and back to before its save landed.
+        if let snapshot = retiredInk[pageID] { return .retained(snapshot) }
         guard let data = pageData[pageID] else {
             let around = index.currentPageIndex
             Task { [weak self] in
@@ -268,7 +278,8 @@ final class EditorSession {
     /// Drops held bytes for pages far from the visible one.
     ///
     /// Without this, `pageData` would grow with every page visited — the
-    /// monotonic retention `DataContract.md` §9 forbids, wearing a different hat.
+    /// monotonic retention `Contract.md` — Performance forbids, wearing a
+    /// different hat.
     /// A page with unsaved ink is never dropped.
     private func prunePageData() {
         let lower = max(0, index.currentPageIndex - Self.prefetchRadius)
@@ -286,10 +297,15 @@ final class EditorSession {
 
     /// Adds a blank page at the end and turns to it.
     ///
-    /// The page is durable immediately here, rather than on first ink as
-    /// `PagesAndTurning.md` §8 describes. That refinement is P3's; appending
-    /// eagerly is the smaller change and loses nothing, because an empty page
-    /// costs one small file.
+    /// KNOWN DEFECT: the page is durable immediately here, rather than on first
+    /// ink. Nothing drops a
+    /// never-written trailing page at save time: this seeds empty `Data`,
+    /// inserts it into the dirty set, and `DocumentStore.save` writes every
+    /// entry in `changedPages` with no emptiness check. An accidental swipe
+    /// past the end therefore grows the document permanently.
+    ///
+    /// This is a knowing divergence, and the contract is the side that is
+    /// right. Appending eagerly was the smaller change and loses no ink.
     private func appendPage() {
         guard phase == .ready, !saveInFlight else { return }
 
@@ -311,11 +327,14 @@ final class EditorSession {
 
     /// The one place a drawing change is judged to be user editing.
     ///
-    /// The phase guard is the sole mechanism that keeps a load from dirtying the
-    /// document: installing a loaded drawing fires this callback (synchronously,
-    /// per `PageCanvasControllerTests`) while the phase is still `.loading`. It
-    /// also covers `.failed`, where autosaving would overwrite a document that
-    /// could not be read — which `DataContract.md` §6 forbids.
+    /// What keeps a load from dirtying the document is the wiring order in
+    /// `PagedCanvasController.makePage`, not this guard: PencilKit reports a
+    /// programmatic assignment synchronously, so the callback is attached only
+    /// after the install and never sees it.
+    ///
+    /// The phase guard remains for `.failed`, where autosaving would overwrite a
+    /// document that could not be read, and for `.loading`, where no page should
+    /// be reporting anything yet.
     private func drawingChanged(atPageIndex pageIndex: Int) {
         guard phase == .ready, index.pageIDs.indices.contains(pageIndex) else { return }
         dirtyPageIDs.insert(index.pageIDs[pageIndex])
@@ -324,19 +343,21 @@ final class EditorSession {
 
     /// Takes custody of a page's ink as its canvas is released.
     ///
-    /// Serialization is asynchronous, so the bytes land in `pageData` after the
-    /// canvas is gone. That is safe because the page is out of the window and
-    /// cannot be drawn on; if the user turns back before this lands, the page is
-    /// simply rebuilt from whatever `pageData` then holds.
+    /// Synchronous, and that is the whole point (`Contract.md` — Saving: "a page
+    /// leaving the live window hands over a value rather than starting a second
+    /// capture"). Taking the value here leaves the save path as the only code
+    /// that serializes, which is what makes the contract's claim that stale
+    /// generations cannot exist true rather than aspirational.
+    ///
+    /// Handing over a promise instead — a `Task` that serialized and wrote the
+    /// bytes back later — left a window in which the page had no canvas and no
+    /// held ink. A save landing in that window found only the last bytes that
+    /// reached disk, wrote those over the newer ink, and marked the page clean.
     private func pageIsRetiring(atPageIndex pageIndex: Int, snapshot: DrawingSnapshot) {
         guard phase == .ready, index.pageIDs.indices.contains(pageIndex) else { return }
         let pageID = index.pageIDs[pageIndex]
         guard dirtyPageIDs.contains(pageID) else { return }
-
-        Task { [weak self] in
-            let data = await snapshot.serialized().data
-            self?.pageData[pageID] = data
-        }
+        retiredInk[pageID] = snapshot
     }
 
     /// The visible page settled on a new index.
@@ -370,21 +391,33 @@ final class EditorSession {
         }
     }
 
-    /// The debounce actually used: the contract interval, widened when the last
-    /// serialization was expensive (`DataContract.md` §5).
+    /// The debounce actually used: the default interval, widened when the last
+    /// serialization was expensive (`Contract.md` — Saving).
     ///
-    /// A fixed interval was correct while the page was one screen tall. It is
-    /// not once the page can grow to many times that height, because every save
-    /// serializes the whole drawing: at 200 ms per serialization a 500 ms
-    /// debounce spends most of its time encoding. Small documents measure near
-    /// zero and stay at exactly the floor, so their behavior is unchanged.
+    /// A fixed interval chains serializations back to back once serialization
+    /// is expensive: at 200 ms per serialization a 500 ms debounce spends most
+    /// of its time encoding. Small documents measure near zero and stay at
+    /// exactly the floor, so their behavior is unchanged.
+    ///
+    /// KNOWN DEFECT: `lastSerializeDuration` sums across every dirty page, so
+    /// this interval grows with *how many pages changed* rather than with what
+    /// writing a page costs. Pages restored from already-serialized bytes
+    /// contribute zero to that sum, so a save consisting only of retired pages
+    /// records a duration of zero and discards the previous warm measurement.
+    ///
+    /// KNOWN DEFECT: the measurement is warm-only. `lastSerializeDuration`
+    /// starts at zero and is written only in `performOneSave`, so the first
+    /// save of a session gets no backoff at all. Measured at 20,000 strokes /
+    /// 4.6 MB: 126 ms cold against 48 ms warm — so the first save after launch,
+    /// which is also the one most likely to be interrupted, is systematically
+    /// under-estimated.
     private var adaptiveDebounce: Duration {
         max(debounce, lastSerializeDuration * Self.serializeBackoffFactor)
     }
 
     /// Exponential back-off for a retry after a failed save: the first retry
     /// waits the ordinary debounce interval and each further consecutive failure
-    /// doubles it, capped (`DataContract.md` §5).
+    /// doubles it, capped (`Contract.md` — Saving).
     ///
     /// The cap matters more than the curve. A disk that is full or a container
     /// that is unavailable will not clear in the next 20 ms, and retrying at
@@ -398,6 +431,12 @@ final class EditorSession {
     /// Flushes all currently dirty work. If another caller already owns a save,
     /// this caller waits for it rather than returning while durability is still
     /// unresolved.
+    ///
+    /// KNOWN DEFECT: on success this loops straight back into `performOneSave`
+    /// with nothing in between, so a user-initiated Retry can serialize back to
+    /// back. `Contract.md` — Saving requires a fresh debounce instead. Only the
+    /// failure path arms a timer. `performAutosavePass` does the right thing —
+    /// one pass, then re-arm — so the two paths in this file disagree.
     func saveIfNeeded() async {
         debounceTask?.cancel()
         debounceTask = nil
@@ -434,7 +473,7 @@ final class EditorSession {
         // success, so a transient failure parked the editor dirty with no timer
         // running and recovery waited on the user drawing again, tapping Retry,
         // or a scene transition. The retry backs off so that a persistently
-        // failing store is not hammered (`DataContract.md` §5).
+        // failing store is not hammered (`Contract.md` — Saving).
         scheduleSave(after: lastSaveError == nil ? nil : retryDelay)
     }
 
@@ -450,15 +489,36 @@ final class EditorSession {
         // Capture every dirty page as one generation before either actor can
         // suspend, so a save never pairs one generation's identity with another's
         // ink. A page that is live and loaded is captured from its canvas; one
-        // that has scrolled out was captured as it retired.
+        // that has scrolled out yields the value it handed over as it retired.
+        //
+        // Capture is total (`Contract.md` — Saving). The dirty set was cleared
+        // above, so a page this loop cannot account for would be reported clean
+        // while its ink existed nowhere — the one failure that turns a save into
+        // silent data loss. It traps instead.
         var snapshots: [UUID: DrawingSnapshot] = [:]
         var alreadySerialized: [UUID: Data] = [:]
         for pageID in capturedPages {
             if let pageIndex = capturedIndex.pageIDs.firstIndex(of: pageID),
                let snapshot = liveRuntime?.snapshot(at: pageIndex) {
                 snapshots[pageID] = snapshot
+            } else if let snapshot = retiredInk[pageID] {
+                snapshots[pageID] = snapshot
             } else if let data = pageData[pageID] {
                 alreadySerialized[pageID] = data
+            } else {
+                // KNOWN DEFECT: reachable today by drawing on a page that
+                // entered the live window before its bytes arrived. Such a page
+                // accepts Pencil input, is excluded from retirement, and holds
+                // no bytes, so it arrives here dirty and empty-handed. The queue
+                // item `unloaded-page-is-not-a-canvas` closes it by refusing the
+                // input rather than accepting and then failing to account for
+                // it. Trapping is the contract-correct behaviour meanwhile:
+                // the alternative is dropping the page silently, which is what
+                // this code did before.
+                preconditionFailure(
+                    "dirty page \(pageID) yielded no ink to capture: "
+                        + "no live canvas, no retired ink, no held bytes"
+                )
             }
         }
 
@@ -470,7 +530,7 @@ final class EditorSession {
             totalDuration += serialized.duration
         }
         // Measured where the work happens rather than timed again here: the next
-        // debounce is derived from this cost (`DataContract.md` §5).
+        // debounce is derived from this cost (`Contract.md` — Saving).
         lastSerializeDuration = totalDuration
 
         do {
@@ -479,6 +539,11 @@ final class EditorSession {
             try await store.save(index: capturedIndex, changedPages: changedPages)
             for (pageID, data) in changedPages {
                 pageData[pageID] = data
+                // Custody ends when the ink is durable — but only if the page
+                // has not been dirtied again since this save captured it. A
+                // page redrawn and retired during an in-flight save holds its
+                // newer ink here and nowhere else.
+                if !dirtyPageIDs.contains(pageID) { retiredInk[pageID] = nil }
             }
             lastSaveError = nil
             consecutiveSaveFailures = 0
@@ -511,7 +576,7 @@ final class EditorSession {
     /// another chance to be killed mid-write for ink that was already captured by
     /// the pass before it. If the session is still dirty when this returns it
     /// stays dirty — `resumeForForeground` retries, which is exactly what
-    /// `DataContract.md` §6 promises ("no promised flush duration").
+    /// `Contract.md` — Lifecycle promises ("no promised flush duration").
     func flushForBackground() async {
         debounceTask?.cancel()
         debounceTask = nil

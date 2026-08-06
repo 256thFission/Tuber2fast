@@ -2,11 +2,20 @@
 DerivedData/
 *.xcuserstate
 xcuserdata/
-.tubernotes-device-session.json
 tmp/
 
 # XcodeGen owns the project file; project.yml is the source of truth.
 *.xcodeproj
 
-# Gate evidence is regenerated, never reviewed as source.
+# Per-developer signing. Tracked as Local.xcconfig.example only.
+Local.xcconfig
+
+# Build logs and captured device sessions. Regenerated, never reviewed as
+# source. Cite paths from here as evidence; never commit it.
 Artifacts/
+
+# Working proposals: comprehensive designs too large to be a queue item and not
+# yet rules. Local because nothing here is in force — a proposal that has been
+# accepted lands in Docs/Contract.md and Docs/Queue.md, and the rest is thinking
+# nobody else should have to read as though it were decided.
+Proposals/

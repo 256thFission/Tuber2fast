@@ -45,7 +45,7 @@ question.
 
 ## Consequences that must not be violated early
 
-These follow from `Docs/Architecture/DataContract.md` and must survive into the
+These follow from `Docs/Contract.md` and must survive into the
 gesture milestone:
 
 - Input interpretation lives entirely inside `PageCanvasController`'s runtime.
@@ -66,7 +66,7 @@ location, timeOffset, force, azimuth, altitude). The committed `PKDrawing` is
 therefore both the classifier's input and a replayable regression fixture. A
 dedicated live sample buffer would only be justified by Fork B, which is not the
 chosen path. Any separate diagnostic/event log records app-level actions, not a
-per-sample firehose, and stays within the DataContract performance invariants.
+per-sample firehose, and stays within the contract's performance invariants.
 
 ## Relationship to `Just a Canvas`
 
@@ -75,5 +75,5 @@ confirms PencilKit as a durable foundation, closes the live-sample-capture
 question, and defines the future gesture layer as a post-stroke classifier owned
 by `PageCanvasController` that mutates the one live drawing through the ordinary
 save loop. Shape recognition and lasso are also listed as tools in
-`Docs/Architecture/PDFImageFirstClass.md`; this note governs the recognition
+`Docs/Forks/PDFAndImages.md`; this note governs the recognition
 *mechanism* for the Pencil-authored subset.

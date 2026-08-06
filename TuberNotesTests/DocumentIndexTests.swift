@@ -79,25 +79,6 @@ struct DocumentIndexTests {
         #expect(throws: (any Error).self) { try sample(pageWidth: .nan).validated() }
     }
 
-    @Test("A version 1 file migrates to a one-page document preserving identity")
-    func migratesFromVersionOne() throws {
-        let legacy = CanvasFile(
-            formatVersion: CanvasFile.currentFormatVersion,
-            documentID: UUID(),
-            pageID: UUID(),
-            pageWidth: PageGeometry.width,
-            pageHeight: PageGeometry.height,
-            drawingData: Data([0x01, 0x02])
-        )
-
-        let migrated = try DocumentIndex.migrated(from: legacy).validated()
-
-        #expect(migrated.formatVersion == 2)
-        #expect(migrated.documentID == legacy.documentID)
-        #expect(migrated.pageIDs == [legacy.pageID])
-        #expect(migrated.currentPageIndex == 0)
-    }
-
     private func sample(
         formatVersion: UInt32 = DocumentIndex.currentFormatVersion,
         pageWidth: Double = PageGeometry.width,

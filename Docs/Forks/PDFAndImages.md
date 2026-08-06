@@ -47,12 +47,11 @@ There is an explicit, invertible mapping from source space to page space. Ink ca
 
 ### 4. Non-destructive persistence
 
-The file model moves from the single binary property list to a document package or manifest-plus-assets model:
+The file model moves to a document package or manifest-plus-assets model:
 
 - original PDF/image assets stored with checksums;
 - vector ink and annotation metadata stored separately;
-- incremental saves that touch only changed layers;
-- a defined migration from `Just a Canvas`'s single-file format.
+- incremental saves that touch only changed layers.
 
 ### 5. Performance at notebook scale
 
@@ -76,6 +75,6 @@ The file model moves from the single binary property list to a document package 
 
 ## Relationship to `Just a Canvas`
 
-`Just a Canvas` deliberately excludes PDFs, images, rotation, crop, multiple pages, layers, and annotation semantics. Its job is to prove that the live ink runtime, ownership boundaries, and atomic save loop can be trusted on a single blank page.
+`Just a Canvas` deliberately excludes PDFs, images, rotation, crop, layers, and annotation semantics. Its job is to prove that the live ink runtime, ownership boundaries, and atomic save loop can be trusted on blank pages.
 
 When PDF/image support becomes the active milestone, the contract, file format, page model, and possibly the ownership boundaries may need to be retooled or torn down. That is an intended outcome. The foundation is meant to be proven, not assumed to scale.

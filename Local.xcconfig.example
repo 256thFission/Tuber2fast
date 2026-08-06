@@ -1,0 +1,28 @@
+// Per-developer build settings. Copy to Local.xcconfig, which is gitignored.
+//
+// `Tools/setup` writes Local.xcconfig for you and fills in the team ID from the
+// Apple Development certificates already in your keychain. Edit it by hand only
+// when that guess is wrong or you have more than one team.
+//
+// Nothing here may move into project.yml: project.yml is tracked, so a team ID
+// in it makes every peer's checkout permanently dirty.
+
+// Your Apple Developer Team ID — the 10-character certificate OU, not the
+// parenthetical in the certificate's common name. Xcode → Settings → Accounts
+// shows it next to the team name.
+//
+// The placeholder is deliberately not a valid OU. A real team ID here would be
+// one person's, and anyone who copied this file instead of running Tools/setup
+// would sign against it and hit a provisioning error that names the wrong
+// cause. Underscores cannot be an OU, so bypassing setup fails loudly instead.
+TN_DEVELOPMENT_TEAM = PUT_YOUR_TEAM_ID_HERE
+
+// Bundle identifier prefix. Change this if you and a peer install onto the
+// same iPad; two builds sharing an id overwrite each other. It must never be
+// com.tubernotes.app, which is the behavioral reference app.
+TN_BUNDLE_ID_PREFIX = com.tubernotes.greenfield
+
+// The physical iPad for device work. Leave empty for "the one iPad this Mac
+// knows about" — Tools/device auto-selects when exactly one is paired and
+// refuses to guess when several are. Set it only if you have more than one.
+TN_DEVICE_NAME =

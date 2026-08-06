@@ -143,7 +143,7 @@ struct DocumentStoreTests {
         try await store.save(index: index, changedPages: [index.pageIDs[0]: Data([0x01])])
 
         // Exactly what a crash between the page write and the index write leaves
-        // behind (`DataContract.md` §4a).
+        // behind (`Contract.md` — Durable form).
         let orphan = UUID()
         try scratch.writeRawPage(orphan, drawingData: Data([0x09]))
 
@@ -198,60 +198,6 @@ struct DocumentStoreTests {
         }
     }
 
-    // MARK: - Migration
-
-    @Test("A format version 1 file migrates preserving IDs and drawing bytes")
-    func migratesVersionOneDocument() async throws {
-        let scratch = try Scratch()
-        let ink = Data((0..<2048).map { UInt8($0 % 253) })
-        let legacy = scratch.legacyFile(drawingData: ink)
-        try scratch.writeLegacy(legacy)
-
-        let migrated = try await scratch.store().load()
-
-        #expect(migrated?.formatVersion == 2)
-        #expect(migrated?.documentID == legacy.documentID)
-        #expect(migrated?.pageIDs == [legacy.pageID])
-        #expect(migrated?.currentPageIndex == 0)
-        #expect(try await scratch.store().loadPage(legacy.pageID) == ink)
-    }
-
-    @Test("Migration leaves the version 1 file untouched")
-    func migrationDoesNotDeleteTheSource() async throws {
-        let scratch = try Scratch()
-        let legacy = scratch.legacyFile(drawingData: Data([0x07]))
-        try scratch.writeLegacy(legacy)
-        let before = try Data(contentsOf: scratch.legacyURL)
-
-        _ = try await scratch.store().load()
-
-        // An interrupted migration has to be a retry, not a loss, and the only
-        // thing that makes it a retry is the original still being there.
-        #expect(try Data(contentsOf: scratch.legacyURL) == before)
-    }
-
-    @Test("A migrated document is not migrated again")
-    func migrationRunsOnce() async throws {
-        let scratch = try Scratch()
-        try scratch.writeLegacy(scratch.legacyFile(drawingData: Data([0x07])))
-
-        let first = try await scratch.store().load()
-        let store = scratch.store()
-        let pageID = try #require(first?.pageIDs.first)
-        try await store.save(index: try #require(first), changedPages: [pageID: Data([0x42])])
-
-        // A second migration would overwrite this with the version 1 bytes.
-        #expect(try await scratch.store().loadPage(pageID) == Data([0x42]))
-    }
-
-    @Test("A version 1 file with a grown height fails to migrate")
-    func grownLegacyHeightFailsMigration() async throws {
-        let scratch = try Scratch()
-        try scratch.writeLegacy(scratch.legacyFile(height: PageGeometry.height * 2))
-
-        await #expect(throws: (any Error).self) { try await scratch.store().load() }
-    }
-
     /// A unique directory per test, removed afterwards. A class, not a
     /// noncopyable struct, because the assertion closures below capture it.
     private final class Scratch {
@@ -260,7 +206,6 @@ struct DocumentStoreTests {
         private let defaultPageID = UUID()
 
         var documentURL: URL { root.appendingPathComponent("JustACanvas.tubernotes") }
-        var legacyURL: URL { root.appendingPathComponent("JustACanvas.canvas") }
         var indexURL: URL { documentURL.appendingPathComponent("document.plist") }
         var pagesURL: URL { documentURL.appendingPathComponent("pages") }
 
@@ -278,7 +223,7 @@ struct DocumentStoreTests {
         /// in-memory record of the last written index, so assertions about what
         /// is on disk are about disk.
         func store() -> DocumentStore {
-            DocumentStore(directoryURL: documentURL, legacyFileURL: legacyURL)
+            DocumentStore(directoryURL: documentURL)
         }
 
         func index(
@@ -296,28 +241,8 @@ struct DocumentStoreTests {
             )
         }
 
-        func legacyFile(
-            height: Double = PageGeometry.height,
-            drawingData: Data = Data([0x00])
-        ) -> CanvasFile {
-            CanvasFile(
-                formatVersion: CanvasFile.currentFormatVersion,
-                documentID: documentID,
-                pageID: defaultPageID,
-                pageWidth: PageGeometry.width,
-                pageHeight: height,
-                drawingData: drawingData
-            )
-        }
-
         func createDirectories() throws {
             try FileManager.default.createDirectory(at: pagesURL, withIntermediateDirectories: true)
-        }
-
-        func writeLegacy(_ file: CanvasFile) throws {
-            let encoder = PropertyListEncoder()
-            encoder.outputFormat = .binary
-            try encoder.encode(file).write(to: legacyURL, options: .atomic)
         }
 
         /// Writes a page file directly, bypassing the store — the only way to

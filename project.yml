@@ -7,13 +7,20 @@ options:
   createIntermediateGroups: true
   generateEmptyDirectories: false
 
+# Per-developer signing lives in Local.xcconfig, which is gitignored and
+# written by Tools/setup. A team ID committed here would make every
+# peer's checkout dirty the moment they built.
+configFiles:
+  Debug: Local.xcconfig
+  Release: Local.xcconfig
+
 settings:
   base:
     SWIFT_VERSION: "6.0"
     SWIFT_TREAT_WARNINGS_AS_ERRORS: YES
     GCC_TREAT_WARNINGS_AS_ERRORS: YES
     ENABLE_USER_SCRIPT_SANDBOXING: YES
-    DEVELOPMENT_TEAM: AX444DZQ8V
+    DEVELOPMENT_TEAM: $(TN_DEVELOPMENT_TEAM)
     CODE_SIGN_STYLE: Automatic
 
 targets:
@@ -24,7 +31,7 @@ targets:
       - path: TuberNotesApp
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.tubernotes.greenfield
+        PRODUCT_BUNDLE_IDENTIFIER: $(TN_BUNDLE_ID_PREFIX)
         PRODUCT_NAME: TuberNotes
         TARGETED_DEVICE_FAMILY: "2"
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
@@ -45,22 +52,7 @@ targets:
       - target: TuberNotes
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.tubernotes.greenfield.tests
-        GENERATE_INFOPLIST_FILE: YES
-
-  # Touch delivery is the one path no other target can exercise: unit tests
-  # drive the controller headlessly and the simulator has no Pencil, so an app
-  # that crashed on the first stroke passed every gate.
-  TuberNotesUITests:
-    type: bundle.ui-testing
-    platform: iOS
-    sources:
-      - path: TuberNotesUITests
-    dependencies:
-      - target: TuberNotes
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.tubernotes.greenfield.uitests
+        PRODUCT_BUNDLE_IDENTIFIER: $(TN_BUNDLE_ID_PREFIX).tests
         GENERATE_INFOPLIST_FILE: YES
 
 schemes:
@@ -74,4 +66,3 @@ schemes:
       config: Debug
       targets:
         - TuberNotesTests
-        - TuberNotesUITests

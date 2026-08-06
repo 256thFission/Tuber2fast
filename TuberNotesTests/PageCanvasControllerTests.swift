@@ -38,7 +38,8 @@ struct PageCanvasControllerTests {
         #expect(abs(canvas.zoomScale - fitWidth) < 0.001)
 
         // You can zoom out past a whole page, so the floor is strictly below
-        // the scale at which one full page fits (`DataContract.md` §7).
+        // the scale at which one full page fits
+        // (`Contract.md` — Geometry and coordinates).
         let fitPage = min(fitWidth, root.frame.height / PageGeometry.height)
         #expect(canvas.minimumZoomScale < fitPage)
         #expect(canvas.minimumZoomScale > 0)
@@ -76,6 +77,64 @@ struct PageCanvasControllerTests {
         // A repeated layout pass must not move the floor.
         root.layoutIfNeeded()
         #expect(canvas.minimumZoomScale == floor)
+    }
+
+    @Test("A viewport resize re-fits the zoom range and keeps the user's scale")
+    func viewportResizeReestablishesZoomRange() {
+        let controller = PageCanvasController(toolPicker: PKToolPicker())
+        let root = controller.view!
+        root.frame = CGRect(x: 0, y: 0, width: 820, height: 1180)
+        root.layoutIfNeeded()
+
+        let canvas = controller.canvasView
+        let portraitFitWidth = 820 / PageGeometry.width
+
+        // The user zooms to twice the scale the page opened at.
+        canvas.zoomScale = portraitFitWidth * 2
+
+        // Rotate: a different viewport, not a repeated layout pass.
+        root.frame = CGRect(x: 0, y: 0, width: 1180, height: 820)
+        root.layoutIfNeeded()
+
+        // The floor now describes the screen that exists, so a whole page still
+        // fits at minimum zoom.
+        #expect(PageGeometry.width * canvas.minimumZoomScale <= 1180)
+        #expect(PageGeometry.height * canvas.minimumZoomScale <= 820)
+
+        // And the user's zoom survives as a ratio of fit-width rather than
+        // snapping back to fit.
+        let landscapeFitWidth = 1180 / PageGeometry.width
+        #expect(abs(canvas.zoomScale - landscapeFitWidth * 2) < 0.001)
+    }
+
+    @Test("A page smaller than the viewport is centred in it")
+    func pageIsCentredWhenSmallerThanViewport() {
+        let controller = PageCanvasController(toolPicker: PKToolPicker())
+        let root = controller.view!
+        root.frame = CGRect(x: 0, y: 0, width: 820, height: 1180)
+        root.layoutIfNeeded()
+
+        let canvas = controller.canvasView
+
+        // At the floor the whole page fits with room to spare in both axes, so
+        // the leftover room must fall evenly on both sides.
+        canvas.zoomScale = canvas.minimumZoomScale
+        root.layoutIfNeeded()
+
+        let expectedHorizontal = (canvas.bounds.width - canvas.contentSize.width) / 2
+        let expectedVertical = (canvas.bounds.height - canvas.contentSize.height) / 2
+        #expect(expectedHorizontal > 0)
+        #expect(expectedVertical > 0)
+        #expect(abs(canvas.contentInset.left - expectedHorizontal) < 0.5)
+        #expect(canvas.contentInset.left == canvas.contentInset.right)
+        #expect(abs(canvas.contentInset.top - expectedVertical) < 0.5)
+        #expect(canvas.contentInset.top == canvas.contentInset.bottom)
+
+        // Filling the viewport horizontally leaves no horizontal room to give.
+        canvas.zoomScale = canvas.maximumZoomScale
+        root.layoutIfNeeded()
+        #expect(canvas.contentInset.left == 0)
+        #expect(canvas.contentInset.top == 0)
     }
 
     @Test("Ink stays in page space through zoom and pan")

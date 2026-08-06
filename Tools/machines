@@ -1,0 +1,231 @@
+#!/bin/bash
+# What can this Mac actually do?
+#
+#   Tools/machines
+#
+# Two of the six machines in this fleet are unproven — a Hackintosh and a VM
+# Mac — and "can it build and test" is the wrong question to ask them. The
+# fleet has four independent capabilities, and a machine that fails one is not
+# useless:
+#
+#   generate    xcodegen turns project.yml into a project
+#   compile     the app compiles for a device with no simulator and no iPad
+#   simulate    the pinned simulator boots and runs a test
+#   see-iPad    devicectl can see a physical iPad
+#
+# A Hackintosh with no working Metal device compiles fine and never boots a
+# simulator. A VM Mac with no USB passthrough runs every test and can never do
+# device work. Both are useful; neither is "CI-only", which is what a pass/fail
+# answer would have called them.
+#
+# THIS MUST NEVER INSTALL ANYTHING. No brew, no xcodebuild -downloadPlatform.
+# A diagnostic that mutates the machine cannot be re-run to confirm its own
+# diagnosis, and a multi-gigabyte runtime download is not a decision a script
+# makes on someone else's computer. It prints the command and stops.
+#
+# It also writes nothing tracked. The role this suggests belongs in a commit
+# message, per Docs/Queue.md — a table of who-can-do-what in a tracked file is
+# per-person data that would rot within a week.
+
+set -uo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT" || exit 1
+
+PIN_FILE="$REPO_ROOT/Tools/pinned-simulator"
+SIM_TIMEOUT=300
+
+yes_()  { printf '  ✓ %-28s %s\n' "$1" "$2"; }
+no_()   { printf '  ✗ %-28s %s\n' "$1" "$2"; }
+note()  { printf '      → %s\n' "$1"; }
+
+CAN_GENERATE=0
+CAN_COMPILE=0
+CAN_SIMULATE=0
+CAN_SEE_IPAD=0
+
+printf '\n── This machine ──\n'
+printf '  %s\n' "$(sw_vers -productName) $(sw_vers -productVersion) ($(uname -m))"
+
+printf '\n── Probes ──\n'
+
+# 1. Full Xcode, or only the Command Line Tools? This is the most commonly
+#    misdiagnosed state: CLT provides xcodebuild, which then fails in ways that
+#    read as "Xcode is broken".
+DEVELOPER_DIR="$(xcode-select -p 2>/dev/null)"
+case "$DEVELOPER_DIR" in
+  *CommandLineTools*)
+    no_ "Xcode" "only the Command Line Tools at $DEVELOPER_DIR"
+    note "install Xcode, then: sudo xcode-select --switch /Applications/Xcode.app"
+    ;;
+  "")
+    no_ "Xcode" "no developer directory selected"
+    note "install Xcode, then: sudo xcode-select --switch /Applications/Xcode.app"
+    ;;
+  *)
+    XCODE_VERSION="$(xcodebuild -version 2>/dev/null | head -1 | awk '{print $2}')"
+    if [ -n "$XCODE_VERSION" ]; then
+      yes_ "Xcode" "$XCODE_VERSION at $DEVELOPER_DIR"
+    else
+      no_ "Xcode" "xcodebuild at $DEVELOPER_DIR did not report a version"
+    fi
+    ;;
+esac
+
+# 2. Xcode 26 or newer. The contract forbids backwards shims, so below 26 is a
+#    named no rather than something to work around.
+XCODE_MAJOR="${XCODE_VERSION:-0}"
+XCODE_MAJOR="${XCODE_MAJOR%%.*}"
+if [ "${XCODE_MAJOR:-0}" -ge 26 ] 2>/dev/null; then
+  yes_ "Xcode >= 26" "$XCODE_VERSION"
+else
+  no_ "Xcode >= 26" "found ${XCODE_VERSION:-none}"
+  note "this project targets iOS 26 and does not carry shims for older toolchains"
+fi
+
+# 3. XcodeGen. Architecture mismatches on a Hackintosh tend to surface here.
+if command -v xcodegen >/dev/null 2>&1; then
+  yes_ "xcodegen" "$(xcodegen --version 2>&1 | awk '{print $NF}')"
+else
+  no_ "xcodegen" "not installed"
+  note "brew install xcodegen"
+fi
+
+# 4. Generate. Everything downstream needs a project.
+if [ ! -f "$REPO_ROOT/Local.xcconfig" ]; then
+  no_ "generate" "no Local.xcconfig"
+  note "run Tools/setup first"
+elif xcodegen generate >/dev/null 2>&1; then
+  yes_ "generate" "project.yml → TuberNotes.xcodeproj"
+  CAN_GENERATE=1
+else
+  no_ "generate" "xcodegen failed"
+  note "run 'xcodegen generate' to see why"
+fi
+
+# 5. Compile for a device. This needs no simulator and no iPad, so it is the
+#    probe a Metal-less machine passes — and the reason such a machine still
+#    gives its owner a real compile loop.
+#
+#    CODE_SIGNING_ALLOWED=NO is load-bearing: a generic iOS destination
+#    otherwise fails with "No profiles for '...' were found" long before the
+#    compiler is reached, which would report a signing problem as an inability
+#    to compile. Whether this machine can sign is a different question, and
+#    Tools/device answers it.
+if [ "$CAN_GENERATE" -eq 1 ]; then
+  if xcodebuild build -project TuberNotes.xcodeproj -scheme TuberNotes \
+       -destination 'generic/platform=iOS' -derivedDataPath DerivedData \
+       CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+       >"$REPO_ROOT/Artifacts/machines-compile.log" 2>&1; then
+    yes_ "compile (no sim, no iPad)" "the app builds for iOS"
+    CAN_COMPILE=1
+  else
+    no_ "compile (no sim, no iPad)" "build failed"
+    note "see Artifacts/machines-compile.log"
+  fi
+else
+  no_ "compile (no sim, no iPad)" "skipped; no project"
+fi
+
+# 6. Is the iOS runtime even installed? This is the likeliest failure, and the
+#    one that otherwise surfaces as an opaque "unable to find a destination".
+if xcrun simctl list runtimes 2>/dev/null | grep -qE 'iOS 26'; then
+  yes_ "iOS 26 runtime" "installed"
+  RUNTIME_OK=1
+else
+  no_ "iOS 26 runtime" "not installed"
+  note "xcodebuild -downloadPlatform iOS   (several GB; run it yourself)"
+  RUNTIME_OK=0
+fi
+
+# 7. Does the pinned device exist? Runtime present but device absent is a
+#    different problem with a different fix.
+SIM_NAME=""
+if [ -s "$PIN_FILE" ]; then
+  SIM_NAME="$(< "$PIN_FILE")"
+  if xcrun simctl list devices available 2>/dev/null | grep -qF "$SIM_NAME ("; then
+    yes_ "pinned simulator" "$SIM_NAME"
+    SIM_PRESENT=1
+  else
+    no_ "pinned simulator" "'$SIM_NAME' is not on this machine"
+    note "available iPads: $(xcrun simctl list devices available 2>/dev/null | grep -i ipad | sed 's/^ *//' | paste -sd'; ' - | cut -c1-100)"
+    SIM_PRESENT=0
+  fi
+else
+  no_ "pinned simulator" "$PIN_FILE is missing or empty"
+  SIM_PRESENT=0
+fi
+
+# 8. Boot it and run one test, under a hard timeout. "Booted but never became
+#    responsive" is the VM/Hackintosh Metal failure, and it is not the same
+#    answer as "failed to boot" — without a bound, xcodebuild would sit here
+#    until the job or the person gave up.
+if [ "$CAN_GENERATE" -eq 1 ] && [ "$SIM_PRESENT" -eq 1 ] && [ "$RUNTIME_OK" -eq 1 ]; then
+  # No `timeout(1)` on macOS. Run in the background and poll.
+  xcodebuild test -project TuberNotes.xcodeproj -scheme TuberNotes \
+    -destination "platform=iOS Simulator,name=$SIM_NAME" \
+    -derivedDataPath DerivedData \
+    -only-testing:TuberNotesTests/ContractStructureTests \
+    >"$REPO_ROOT/Artifacts/machines-simulate.log" 2>&1 &
+  probe_pid=$!
+  waited=0
+  while kill -0 "$probe_pid" 2>/dev/null && [ "$waited" -lt "$SIM_TIMEOUT" ]; do
+    sleep 5
+    waited=$((waited + 5))
+  done
+
+  if kill -0 "$probe_pid" 2>/dev/null; then
+    kill -9 "$probe_pid" 2>/dev/null
+    wait "$probe_pid" 2>/dev/null
+    no_ "simulator runs tests" "still running after ${SIM_TIMEOUT}s — killed"
+    note "the simulator likely boots but never becomes responsive (no working Metal device)"
+    note "this machine can still compile; it cannot be trusted for test results"
+  elif wait "$probe_pid"; then
+    yes_ "simulator runs tests" "booted and executed a test suite"
+    CAN_SIMULATE=1
+  else
+    no_ "simulator runs tests" "the test run failed"
+    note "see Artifacts/machines-simulate.log"
+  fi
+else
+  no_ "simulator runs tests" "skipped; needs a project, the runtime, and the pinned device"
+fi
+
+# 9. Can this machine see an iPad at all? A VM without USB passthrough never
+#    will, no matter what else works, and that is a permanent property worth
+#    knowing before anyone is assigned canvas-runtime work.
+# --json-output must be a real file. Pointed at /dev/stdout it yields devicectl's
+# human-readable table instead, which parses as no devices at all — a probe that
+# reported "no iPad paired" for a Mac with one sitting right there.
+DEVICES_JSON="$REPO_ROOT/Artifacts/machines-devices.json"
+IPADS=0
+if xcrun devicectl list devices --json-output "$DEVICES_JSON" >/dev/null 2>&1; then
+  IPADS="$(/usr/bin/jq -r '[.result.devices[]? | select((.hardwareProperties.supportedDeviceFamilies // []) | index(2))] | length' "$DEVICES_JSON" 2>/dev/null)"
+fi
+if [ "${IPADS:-0}" -gt 0 ] 2>/dev/null; then
+  yes_ "sees a physical iPad" "$IPADS paired"
+  CAN_SEE_IPAD=1
+else
+  no_ "sees a physical iPad" "none paired"
+  note "plug one in and trust this Mac; if this is a VM, check USB passthrough"
+fi
+
+# ------------------------------------------------------------------ summary --
+printf '\n── Suggested role ──\n'
+
+if [ "$CAN_COMPILE" -eq 1 ] && [ "$CAN_SIMULATE" -eq 1 ] && [ "$CAN_SEE_IPAD" -eq 1 ]; then
+  printf '  full local loop — including device evidence for canvas-runtime work\n'
+elif [ "$CAN_COMPILE" -eq 1 ] && [ "$CAN_SIMULATE" -eq 1 ]; then
+  printf '  build and test locally; no device evidence from this machine\n'
+  printf '  good for document, persistence, and geometry work, which a test settles\n'
+elif [ "$CAN_COMPILE" -eq 1 ]; then
+  printf '  compile loop only — this machine catches type errors in seconds,\n'
+  printf '  which is most of the value; CI settles the tests\n'
+elif [ "$CAN_GENERATE" -eq 1 ]; then
+  printf '  CI-and-TestFlight-only. That is a fine outcome; see Docs/DeviceBuilds.md\n'
+else
+  printf '  nothing yet — fix the failures above, starting from the top\n'
+fi
+
+printf '\n  Record this in a commit message, not in a tracked file. A table of\n'
+printf '  who-can-do-what is per-person data that rots within a week.\n\n'

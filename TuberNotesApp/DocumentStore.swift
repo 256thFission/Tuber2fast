@@ -1,6 +1,6 @@
 import Foundation
 
-/// The sole writer of the saved document (`DataContract.md` §2, §4a).
+/// The sole writer of the saved document (`Contract.md` — Owners, Durable form).
 ///
 /// It is an actor so that encoding and disk I/O are off the main actor by
 /// construction rather than by discipline, and so two saves can never interleave.
@@ -15,7 +15,6 @@ import Foundation
 /// index that references them.
 actor DocumentStore {
     private let directoryURL: URL
-    private let legacyFileURL: URL?
 
     /// The index as it currently exists on disk, as far as this store knows.
     ///
@@ -25,11 +24,8 @@ actor DocumentStore {
     /// read from or successfully written to disk.
     private var lastKnownIndex: DocumentIndex?
 
-    /// - Parameter legacyFileURL: the format version 1 file to migrate from, if
-    ///   one is present. `nil` in tests that are not exercising migration.
-    init(directoryURL: URL, legacyFileURL: URL? = nil) {
+    init(directoryURL: URL) {
         self.directoryURL = directoryURL
-        self.legacyFileURL = legacyFileURL
     }
 
     private var indexURL: URL { directoryURL.appendingPathComponent("document.plist") }
@@ -44,25 +40,24 @@ actor DocumentStore {
     /// The document index, or `nil` when no document exists — a first launch,
     /// not an error.
     ///
-    /// If there is no version 2 document but a version 1 file is present, it is
-    /// migrated here and the migrated index returned. A decode error, an
-    /// unsupported version, invalid geometry, or an index naming a page file
-    /// that is not there all throw, and nothing on disk is modified.
+    /// A decode error, an unsupported version, invalid geometry, or an index
+    /// naming a page file that is not there all throw, and nothing on disk is
+    /// modified.
     func load() throws -> DocumentIndex? {
         let data: Data
         do {
             data = try Data(contentsOf: indexURL)
         } catch let error as NSError where Self.isFileNotFound(error) {
-            return try migrateLegacyDocumentIfPresent()
+            return nil
         }
 
         do {
             let decoded = try PropertyListDecoder().decode(DocumentIndex.self, from: data)
             let index = try decoded.validated()
             // A dangling reference is fatal and an orphan is not
-            // (`DataContract.md` §4a). Existence only: reading every page here
-            // would make opening a notebook scale with its total size, which is
-            // the thing this format exists to avoid.
+            // (`Contract.md` — Durable form). Existence only: reading every
+            // page here would make opening a notebook scale with its total
+            // size, which is the thing this format exists to avoid.
             for pageID in index.pageIDs where !FileManager.default.fileExists(
                 atPath: pageURL(pageID).path
             ) {
@@ -126,8 +121,8 @@ actor DocumentStore {
         // the file is not actually there — a failed earlier write, or anything
         // that removed it underneath us — skipping the write would leave page
         // files with no index naming them, which is the unopenable document
-        // §4a's write ordering exists to prevent. One `stat` per save is
-        // nothing next to the page write it guards.
+        // `Contract.md` — Durable form's write ordering exists to prevent. One
+        // `stat` per save is nothing next to the page write it guards.
         let indexNeedsWriting = lastKnownIndex != validated
             || !FileManager.default.fileExists(atPath: indexURL.path)
         if indexNeedsWriting {
@@ -153,37 +148,6 @@ actor DocumentStore {
         for url in contents ?? [] where !kept.contains(url.lastPathComponent) {
             try? FileManager.default.removeItem(at: url)
         }
-    }
-
-    // MARK: - Migration
-
-    /// Migrates a format version 1 file to a one-page version 2 document.
-    ///
-    /// The version 1 file is left untouched. It is not this store's to delete:
-    /// an interrupted migration must be a retry, not a loss, and the only thing
-    /// that makes it a retry is the original still being there.
-    private func migrateLegacyDocumentIfPresent() throws -> DocumentIndex? {
-        guard let legacyFileURL else { return nil }
-
-        let data: Data
-        do {
-            data = try Data(contentsOf: legacyFileURL)
-        } catch let error as NSError where Self.isFileNotFound(error) {
-            return nil
-        }
-
-        let legacy = try PropertyListDecoder().decode(CanvasFile.self, from: data).validated()
-        let index = DocumentIndex.migrated(from: legacy)
-
-        CanvasLog.event(
-            CanvasLog.save, "save",
-            "migrating format version 1 document \(legacy.documentID) to version 2"
-        )
-
-        // `lastKnownIndex` is nil here, so this writes the page file and then
-        // the index, in that order.
-        try save(index: index, changedPages: [legacy.pageID: legacy.drawingData])
-        return index
     }
 
     // MARK: - Files
@@ -222,11 +186,5 @@ extension DocumentStore {
     /// being initialized.
     static func defaultDirectoryURL() -> URL {
         applicationSupport().appendingPathComponent("JustACanvas.tubernotes")
-    }
-
-    /// The format version 1 file this app used to write, kept as the migration
-    /// source. It exists on devices that ran the single-page build.
-    static func defaultLegacyFileURL() -> URL {
-        applicationSupport().appendingPathComponent("JustACanvas.canvas")
     }
 }

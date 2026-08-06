@@ -1,0 +1,152 @@
+#!/bin/bash
+# One command between a fresh clone and an Xcode window.
+#
+#   Tools/setup
+#
+# Checks the toolchain, writes the gitignored Local.xcconfig with your own
+# signing team, and generates TuberNotes.xcodeproj. Safe to re-run: an existing
+# Local.xcconfig is never overwritten.
+#
+# This decides nothing about whether work is done — CI and review do that, and
+# CI drives xcodebuild directly rather than through anything in Tools/.
+
+set -uo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT" || exit 1
+
+# Absolute path: a Homebrew openssl earlier on PATH prints a different subject
+# format, and this script's OU regex would silently match nothing — reporting
+# "no certificate" on a machine that has one. That false negative fires exactly
+# on the unproven machines, where you will least trust your own instincts.
+OPENSSL=/usr/bin/openssl
+
+LOCAL_CONFIG="$REPO_ROOT/Local.xcconfig"
+LOCAL_EXAMPLE="$REPO_ROOT/Local.xcconfig.example"
+PLACEHOLDER=PUT_YOUR_TEAM_ID_HERE
+
+FAILED=0
+ok()   { printf '  ✓ %s\n' "$1"; }
+bad()  { printf '  ✗ %s\n' "$1" >&2; FAILED=1; }
+note() { printf '    %s\n' "$1"; }
+step() { printf '\n▸ %s\n' "$1"; }
+
+xcconfig_value() {
+  [ -f "$2" ] || return 1
+  sed 's|//.*||' "$2" \
+    | sed -nE "s|^[[:space:]]*$1[[:space:]]*=[[:space:]]*(.*[^[:space:]])[[:space:]]*$|\1|p" \
+    | head -1
+}
+
+# The Team ID is the certificate's OU. The parenthetical in an "Apple
+# Development" common name is the person identifier and is a different string
+# entirely; matching it produces a DEVELOPMENT_TEAM that is not a team, and
+# the failure surfaces much later as "No Account for Team" from xcodebuild.
+keychain_team_ids() {
+  security find-certificate -a -c "Apple Development" -p 2>/dev/null \
+    | "$OPENSSL" crl2pkcs7 -nocrl -certfile /dev/stdin 2>/dev/null \
+    | "$OPENSSL" pkcs7 -print_certs -noout 2>/dev/null \
+    | sed -nE 's|^subject=.*/OU=([A-Z0-9]{10})/.*|\1|p' | sort -u
+}
+
+step "Toolchain"
+
+if command -v xcodebuild >/dev/null 2>&1; then
+  ok "$(xcodebuild -version 2>/dev/null | head -1)"
+else
+  bad "xcodebuild not found"
+  note "install Xcode from the App Store, then: xcode-select --switch /Applications/Xcode.app"
+fi
+
+if command -v xcodegen >/dev/null 2>&1; then
+  ok "xcodegen $(xcodegen --version 2>&1 | awk '{print $NF}')"
+else
+  bad "xcodegen not installed"
+  note "brew install xcodegen"
+fi
+
+[ "$FAILED" -eq 0 ] || { printf '\nFix the above and re-run.\n' >&2; exit 1; }
+
+step "Signing (Local.xcconfig)"
+
+if [ -f "$LOCAL_CONFIG" ]; then
+  ok "Local.xcconfig already exists — leaving it alone"
+else
+  teams="$(keychain_team_ids)"
+  count="$(printf '%s' "$teams" | grep -c .)"
+
+  # One team is unambiguous, so fill it in. Zero or several is a decision, and
+  # a tool that guesses at a signing identity is a tool that signs someone
+  # else's build. Write the placeholder and say what to do.
+  if [ "$count" -eq 1 ]; then
+    sed -E "s|^TN_DEVELOPMENT_TEAM = .*|TN_DEVELOPMENT_TEAM = $teams|" \
+      "$LOCAL_EXAMPLE" >"$LOCAL_CONFIG"
+    ok "wrote Local.xcconfig for team $teams"
+  else
+    cp "$LOCAL_EXAMPLE" "$LOCAL_CONFIG"
+    if [ "$count" -eq 0 ]; then
+      bad "no Apple Development certificate found in your keychain"
+      note "sign in at Xcode → Settings → Accounts, then re-run this script"
+      note "or set TN_DEVELOPMENT_TEAM in Local.xcconfig by hand"
+    else
+      bad "your keychain has more than one team; the choice is yours"
+      note "teams: $(printf '%s' "$teams" | tr '\n' ' ')"
+      note "set TN_DEVELOPMENT_TEAM in Local.xcconfig"
+    fi
+  fi
+fi
+
+# Re-read: the file may have just been created, and an existing one may still
+# carry the placeholder from a clone that never finished setting up. Either way
+# this must fail loudly rather than let xcodegen produce a project that builds
+# against a team that does not exist.
+TEAM="$(xcconfig_value TN_DEVELOPMENT_TEAM "$LOCAL_CONFIG")"
+if [ -z "$TEAM" ] || [ "$TEAM" = "$PLACEHOLDER" ]; then
+  bad "TN_DEVELOPMENT_TEAM in Local.xcconfig is still unset"
+  note "put your 10-character Team ID there — Xcode → Settings → Accounts shows it"
+  note "simulator builds do not need it; device builds cannot work without it"
+else
+  ok "team $TEAM"
+fi
+
+BUNDLE="$(xcconfig_value TN_BUNDLE_ID_PREFIX "$LOCAL_CONFIG")"
+if [ -z "$BUNDLE" ]; then
+  # Never default this. An empty prefix produces an empty bundle identifier
+  # while every tool that reads the file cheerfully reports the value it
+  # invented, and the two then disagree about what is being signed.
+  bad "TN_BUNDLE_ID_PREFIX in Local.xcconfig is empty"
+  note "set it to com.tubernotes.greenfield, or your own prefix if you share an iPad"
+elif [ "$BUNDLE" = "com.tubernotes.app" ]; then
+  bad "TN_BUNDLE_ID_PREFIX is com.tubernotes.app, the behavioral reference app"
+  note "installing this build would overwrite it on the iPad; choose another prefix"
+else
+  ok "bundle id $BUNDLE"
+fi
+
+step "Project"
+
+if out="$(xcodegen generate 2>&1)"; then
+  ok "generated TuberNotes.xcodeproj from project.yml"
+else
+  printf '%s\n' "$out" >&2
+  bad "xcodegen failed"
+fi
+
+if [ "$FAILED" -eq 0 ]; then
+  cat <<'EOF'
+
+Ready.
+
+  open TuberNotes.xcodeproj     edit and run on a simulator
+  Tools/device --check          diagnose signing and the iPad
+  Tools/device                  build, install, and capture a session on the iPad
+
+Done is green CI plus an approving review — see CONTRIBUTING.md.
+
+Never commit Local.xcconfig or TuberNotes.xcodeproj; both are yours alone.
+EOF
+  exit 0
+fi
+
+printf '\nSetup incomplete — see the failures above.\n' >&2
+exit 1

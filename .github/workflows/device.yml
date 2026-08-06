@@ -1,0 +1,233 @@
+# Push a branch, get that build on your iPad.
+#
+# This exists for the contributors who cannot build: they push, it builds and
+# tests, and on green a signed ad hoc build is distributed to the registered
+# iPads. Roughly five minutes end to end, nearly all of it CI overhead — a
+# clean Release device build of this app takes eight seconds.
+#
+# Ad hoc, not TestFlight, on purpose: Apple processes every TestFlight upload
+# (5-30 minutes, outside our control). An ad hoc build is signed against a
+# profile that already names each device by UDID, so nothing of Apple's sits
+# between the export and the install, and there is no trust prompt on device.
+#
+# UNLIKE ci.yml, THIS WORKFLOW HOLDS SIGNING SECRETS. It is a separate file for
+# exactly that reason: ci.yml stays secret-free so fork pull requests can run
+# it. This one is triggered only by pushes to this repository.
+
+name: device build
+
+# Deliberately NOT `push: ['**']`. That fired this workflow alongside ci.yml on
+# every push to a PR branch, and the two then ran identical generate/build/test
+# steps — two macOS runners spending the same minutes on the same work, against
+# a free-tier pool capped below six concurrent jobs.
+#
+# It is also closer to the actual loop: a contributor without a Mac does not
+# want an .ipa for every typo fix, and every run notifies every registered iPad
+# (see the distribution step's `groups: devices`). They want a build when the
+# branch is worth looking at, which is what workflow_dispatch is for.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Six contributors pushing at once would otherwise queue behind each other on a
+# capped macOS runner pool. A newer push makes an in-flight build irrelevant.
+concurrency:
+  group: device-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-distribute:
+    runs-on: macos-26
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      # A step that fails ends the job, so everything below the build and test
+      # only runs on green. That is the whole "on green, it shows up" contract,
+      # and it costs one runner spin-up rather than two separate jobs.
+      - name: Pin signing inputs
+        env:
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          BUNDLE_ID: ${{ vars.CANONICAL_BUNDLE_ID }}
+        run: |
+          # The ad hoc profile is issued for one App ID, so CI must build that
+          # identifier exactly — not a developer's local .dev variant.
+          cat > Local.xcconfig <<EOF
+          TN_DEVELOPMENT_TEAM = $TEAM_ID
+          TN_BUNDLE_ID_PREFIX = $BUNDLE_ID
+          EOF
+
+      - name: Generate the project
+        run: xcodegen generate
+
+      # Build and test against the same pinned simulator ci.yml uses, so a
+      # device build never ships something CI would have rejected. Both read
+      # Tools/pinned-simulator, and neither has a fallback.
+      #
+      # This duplicates ci.yml's verification and zero-test guard rather than
+      # factoring them into a shared script. That is deliberate: what "green"
+      # means must stay readable by the two contributors who have no Mac and
+      # cannot execute anything we would factor it into. Six legible lines in
+      # two files beat one program the arbiter depends on.
+      - name: Build and test
+        run: |
+          set -o pipefail
+          mkdir -p Artifacts
+          PIN=Tools/pinned-simulator
+          if [ ! -s "$PIN" ]; then
+            echo "::error::$PIN is missing or empty; there is no pinned simulator to build against"
+            exit 1
+          fi
+          SIM="$(< "$PIN")"
+          if ! xcrun simctl list devices available | grep -qF "$SIM ("; then
+            echo "::error::pinned simulator '$SIM' is not on this runner"
+            echo "available iPads:"
+            xcrun simctl list devices available | grep -i ipad || echo "  none"
+            exit 1
+          fi
+          xcodebuild build \
+            -project TuberNotes.xcodeproj \
+            -scheme TuberNotes \
+            -destination "platform=iOS Simulator,name=$SIM" \
+            -derivedDataPath DerivedData \
+            2>&1 | tee Artifacts/build.log
+          xcodebuild test \
+            -project TuberNotes.xcodeproj \
+            -scheme TuberNotes \
+            -destination "platform=iOS Simulator,name=$SIM" \
+            -derivedDataPath DerivedData \
+            2>&1 | tee Artifacts/test.log
+
+      # Without this, an .ipa reaches six iPads off a run that executed nothing:
+      # xcodebuild exits 0 when a scheme runs no tests, which would make this
+      # distribution path less trustworthy than ci.yml, which decides nothing.
+      #
+      # The count must be non-zero. A real log contains "Executed 0 tests" for
+      # suites that legitimately hold none, so [0-9]+ here would match a run
+      # that executed nothing at all — the exact failure this step exists to
+      # catch.
+      - name: Refuse a run with no executed tests
+        run: |
+          if ! grep -qE 'Test run with [1-9][0-9]* test|Executed [1-9][0-9]* test' Artifacts/test.log; then
+            echo "::error::test log shows no executed tests; refusing to sign and distribute this build"
+            exit 1
+          fi
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: device-logs-${{ github.run_number }}
+          path: Artifacts/
+          retention-days: 14
+
+      # Signing assets live in a throwaway keychain scoped to this run. The
+      # runner is ephemeral, but an unlocked default keychain is still the kind
+      # of thing that leaks into unrelated steps.
+      - name: Import signing certificate and profile
+        env:
+          CERT_P12_BASE64: ${{ secrets.DIST_CERT_P12_BASE64 }}
+          CERT_P12_PASSWORD: ${{ secrets.DIST_CERT_P12_PASSWORD }}
+          PROFILE_BASE64: ${{ secrets.ADHOC_PROFILE_BASE64 }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+
+          echo "$CERT_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -P "$CERT_P12_PASSWORD" \
+            -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          # Without this, codesign blocks on a GUI prompt that never comes.
+          security set-key-partition-list -S apple-tool:,apple: \
+            -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
+
+          # Derive the profile's own name rather than hardcoding it, so
+          # regenerating the profile after adding a device does not silently
+          # break the build.
+          echo "$PROFILE_BASE64" | base64 --decode > "$RUNNER_TEMP/adhoc.mobileprovision"
+          PLIST="$(security cms -D -i "$RUNNER_TEMP/adhoc.mobileprovision")"
+          UUID="$(printf '%s' "$PLIST" | plutil -extract UUID raw -)"
+          NAME="$(printf '%s' "$PLIST" | plutil -extract Name raw -)"
+
+          # Xcode 16+ reads the second path; the first remains the classic
+          # location. Installing to both costs nothing and avoids a guess.
+          for DIR in "$HOME/Library/MobileDevice/Provisioning Profiles" \
+                     "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"; do
+            mkdir -p "$DIR"
+            cp "$RUNNER_TEMP/adhoc.mobileprovision" "$DIR/$UUID.mobileprovision"
+          done
+
+          echo "PROFILE_NAME=$NAME" >> "$GITHUB_ENV"
+          rm -f "$RUNNER_TEMP/cert.p12"
+
+      - name: Archive
+        env:
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          xcodebuild archive \
+            -project TuberNotes.xcodeproj \
+            -scheme TuberNotes \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/TuberNotes.xcarchive" \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM="$TEAM_ID" \
+            PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME" \
+            CODE_SIGN_IDENTITY="Apple Distribution"
+
+      - name: Export ad hoc IPA
+        env:
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          BUNDLE_ID: ${{ vars.CANONICAL_BUNDLE_ID }}
+        run: |
+          set -euo pipefail
+          # 'ad-hoc' is deprecated in Xcode 26 — the current spelling is
+          # 'release-testing'. The old name still exports, with a warning.
+          cat > "$RUNNER_TEMP/ExportOptions.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>release-testing</string>
+            <key>teamID</key><string>$TEAM_ID</string>
+            <key>signingStyle</key><string>manual</string>
+            <key>signingCertificate</key><string>Apple Distribution</string>
+            <key>provisioningProfiles</key>
+            <dict><key>$BUNDLE_ID</key><string>$PROFILE_NAME</string></dict>
+            <key>compileBitcode</key><false/>
+            <key>stripSwiftSymbols</key><true/>
+          </dict>
+          </plist>
+          EOF
+
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/TuberNotes.xcarchive" \
+            -exportPath "$RUNNER_TEMP/export" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist"
+
+          ls -la "$RUNNER_TEMP/export"
+
+      # Third-party action receiving your Firebase credentials: pin it to a
+      # commit SHA rather than a tag before this handles anything you mind
+      # losing. A tag can be moved; a SHA cannot.
+      - name: Distribute to registered iPads
+        uses: wzieba/Firebase-Distribution-Github-Action@v1
+        with:
+          appId: ${{ secrets.FIREBASE_APP_ID }}
+          serviceCredentialsFileContent: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          groups: devices
+          file: ${{ runner.temp }}/export/TuberNotes.ipa
+          releaseNotes: |
+            ${{ github.ref_name }} @ ${{ github.sha }}
+            ${{ github.event.head_commit.message }}

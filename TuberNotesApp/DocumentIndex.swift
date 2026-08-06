@@ -1,6 +1,6 @@
 import Foundation
 
-/// The index of a format version 2 document (`DataContract.md` §4a).
+/// The index of a format version 2 document (`Contract.md` — Durable form).
 ///
 /// It holds page identity, order, and geometry — and no ink. Ink lives in one
 /// `PageFile` per page, so a save can rewrite one page without touching the
@@ -91,19 +91,6 @@ extension DocumentIndex {
             pageHeight: pageHeight,
             pageIDs: pageIDs,
             currentPageIndex: currentPageIndex
-        )
-    }
-
-    /// The version 2 form of a version 1 file, preserving both IDs and leaving
-    /// the drawing bytes untouched (`DataContract.md` §4a).
-    static func migrated(from file: CanvasFile) -> DocumentIndex {
-        DocumentIndex(
-            formatVersion: Self.currentFormatVersion,
-            documentID: file.documentID,
-            pageWidth: file.pageWidth,
-            pageHeight: file.pageHeight,
-            pageIDs: [file.pageID],
-            currentPageIndex: 0
         )
     }
 }

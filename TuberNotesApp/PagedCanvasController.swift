@@ -3,13 +3,13 @@ import SwiftUI
 import UIKit
 
 /// Hosts an ordered run of pages and turns between them
-/// (`Docs/Milestones/PagesAndTurning.md`).
+/// (`Docs/Contract.md` — Navigation).
 ///
 /// A horizontal paging `UIScrollView` holds one page-sized slot per page, but
 /// only a small window of slots has a live `PageCanvasController` in it. The
 /// live count is bounded by a constant and does not grow with the page count,
-/// which is what `DataContract.md` §9 requires; a retired page's controller is
-/// released, not parked for a possible return.
+/// which is what `Contract.md` — Performance requires; a retired page's
+/// controller is released, not parked for a possible return.
 ///
 /// Nesting is doing the hard work here, and it is deliberate. `PKCanvasView` is
 /// itself a `UIScrollView` that owns pinch-zoom and in-page panning. A nested
@@ -17,8 +17,8 @@ import UIKit
 /// direction, so at fit-width scale — where a page cannot pan horizontally at
 /// all — a horizontal drag reaches this scroll view and turns the page, and
 /// zoomed in it pans within the page until it hits the page's own edge. That is
-/// exactly the rule the milestone commits to in §6, obtained from the framework
-/// rather than from gesture recognizers of ours.
+/// exactly the rule `Contract.md` — Navigation commits to, obtained from the
+/// framework rather than from gesture recognizers of ours.
 @MainActor
 final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
     /// How many pages either side of the visible one stay live. One, so that a
@@ -44,11 +44,14 @@ final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
     enum PageContent {
         case blank
         case ink(Data)
+        /// Ink this page handed over when it last retired, before it was saved.
+        /// It outranks anything on disk because it is newer by construction.
+        case retained(DrawingSnapshot)
         case unavailable
     }
 
     /// Reports that a live page's drawing changed. The index is the page's, and
-    /// nothing else travels with it (`DataContract.md` §5).
+    /// nothing else travels with it (`Contract.md` — Saving).
     var onDrawingChanged: ((Int) -> Void)?
 
     /// Hands a retiring page's ink to the session before the controller is
@@ -177,13 +180,21 @@ final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
         livePages[index]
     }
 
-    /// How many page canvases are alive. The bound §9 requires is on this
-    /// number, and gate 40 asserts it does not grow with `pageCount`.
+    /// How many page canvases are alive. The bound `Contract.md` — Performance
+    /// requires is on this number, and gate 40 asserts it does not grow with
+    /// `pageCount`.
     var liveCanvasCount: Int { livePages.count }
 
     /// A snapshot of one live, loaded page. `nil` when the page is outside the
     /// window or was never loaded, both of which mean the session must not
     /// write it.
+    ///
+    /// KNOWN DEFECT: returning `nil` here is what protects an unread page's
+    /// bytes, but it protects them by *discarding* ink rather than refusing it.
+    /// `PageCanvasController.isEditable` gates nothing at runtime, so a Pencil
+    /// stroke on a not-yet-loaded page is drawn on screen and then dropped
+    /// here, with no indication to the user. The contract's rule is satisfied
+    /// in effect and violated in spirit.
     func snapshot(at index: Int) -> DrawingSnapshot? {
         guard !unloadedPages.contains(index) else { return nil }
         return livePages[index]?.drawingSnapshot()
@@ -249,11 +260,14 @@ final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
         layoutLivePages()
     }
 
+    /// KNOWN DEFECT: this runs synchronously on main, reached from
+    /// `scrollViewDidScroll` via `refreshWindow`. It constructs the controller,
+    /// forces `view` (and so `PKCanvasView` setup), and synchronously decodes
+    /// ink via `PKDrawing(data:)`. The one-page prefetch window hides the cost
+    /// for an ordinary turn but does not make it asynchronous. Unmeasured — a
+    /// fast flick across several pages is the case to watch.
     private func makePage(at index: Int) -> PageCanvasController {
         let page = PageCanvasController(toolPicker: toolPicker)
-        page.onDrawingChanged = { [weak self] in
-            self?.onDrawingChanged?(index)
-        }
 
         addChild(page)
         page.view.frame = slotFrame(for: index)
@@ -276,8 +290,21 @@ final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
                 )
                 isLoaded = false
             }
+        case .retained(let snapshot):
+            page.installDrawing(from: snapshot)
         case .unavailable:
             isLoaded = false
+        }
+
+        // Wired only now, after the install, and that ordering is the rule
+        // rather than a tidiness preference. PencilKit reports a programmatic
+        // assignment as a drawing change, synchronously, so a callback wired
+        // before the install reports loading as user editing — which marked
+        // every page in the opening window dirty and rewrote the document on
+        // every launch (`Contract.md` — Lifecycle: "installing ink is never
+        // reported as an edit").
+        page.onDrawingChanged = { [weak self] in
+            self?.onDrawingChanged?(index)
         }
 
         if isLoaded {
@@ -316,7 +343,7 @@ final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
 
     /// A drag that ends past the last page's trailing edge is the append
     /// gesture. Reported, never acted on here: growing the document is the
-    /// session's decision (`DataContract.md` §2 rule 7a).
+    /// session's decision (`Contract.md` — Owners).
     func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate: Bool) {
         guard scrollView.bounds.width > 0 else { return }
         let lastPageOffset = scrollView.bounds.width * CGFloat(pageCount - 1)
@@ -336,7 +363,7 @@ final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
 ///
 /// The controller is owned by `EditorSession` and merely handed here, so
 /// re-evaluating the SwiftUI body cannot rebuild it or its pages
-/// (`DataContract.md` §2 rule 6).
+/// (`Contract.md` — Owners).
 ///
 /// `updateUIViewController` is deliberately empty: intentions travel to the
 /// session, which drives the runtime directly. Nothing about the canvas is

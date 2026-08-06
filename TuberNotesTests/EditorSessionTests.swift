@@ -77,11 +77,48 @@ struct EditorSessionTests {
         let second = scratch.session()
         await second.start()
 
-        // Installing the loaded drawing fires PencilKit's change callback. If
-        // that were treated as an edit, this save would rewrite the file.
-        let before = try Data(contentsOf: scratch.currentPageURL(of: second))
+        // Laying out is what builds the pages and installs their ink, and
+        // installing is what fires PencilKit's change callback. Without this
+        // line the runtime never loads, no canvas is ever built, and the test
+        // asserts that a file nothing touched is unchanged — which is what it
+        // used to do.
+        _ = canvas(of: second)
+
+        // Deleting the page file makes a rewrite unmissable: a session that
+        // believes the loaded page is dirty recreates it, and a clean one leaves
+        // it absent. Comparing bytes would not do, because re-serializing the
+        // same drawing can reproduce them exactly.
+        let pageURL = scratch.currentPageURL(of: second)
+        try FileManager.default.removeItem(at: pageURL)
         await second.saveIfNeeded()
-        #expect(try Data(contentsOf: scratch.currentPageURL(of: second)) == before)
+        #expect(!FileManager.default.fileExists(atPath: pageURL.path))
+    }
+
+    @Test("A page that retires with unsaved ink keeps it, on screen and on disk")
+    func retiredPageKeepsItsInk() async throws {
+        let scratch = Scratch()
+        let session = scratch.session()
+        await session.start()
+        _ = canvas(of: session)
+        let firstPageID = session.currentPageID
+
+        // Three pages, so page 0 leaves the live window once page 2 is visible.
+        pullPastTheEnd(session)
+        pullPastTheEnd(session)
+        await session.saveIfNeeded()
+
+        turn(session, to: 0)
+        canvas(of: session).drawing = twoStrokesAcrossPage()
+        // Away before the debounce fires: page 0's canvas is released here, and
+        // its ink survives only if retirement handed the value over rather than
+        // promising to serialize it later.
+        turn(session, to: 2)
+        turn(session, to: 0)
+
+        #expect(canvas(of: session).drawing.strokes.count == 2)
+
+        await session.saveIfNeeded()
+        #expect(try PKDrawing(data: await scratch.store.loadPage(firstPageID)).strokes.count == 2)
     }
 
     @Test("Restarting the view task does not reload over live ink")
@@ -321,13 +358,13 @@ struct EditorSessionTests {
         #expect(try PKDrawing(data: flushed).strokes.count == 1)
 
         // The newer ink is still dirty rather than dropped, which is what
-        // `resumeForForeground` retries (`DataContract.md` §6).
+        // `resumeForForeground` retries (`Contract.md` — Lifecycle).
         await session.saveIfNeeded()
         let resumed = try #require(try await savedDrawing(scratch.store))
         #expect(try PKDrawing(data: resumed).strokes.count == 2)
     }
 
-    @Test("The debounce never drops below the contract's 500 ms floor")
+    @Test("The debounce never drops below the default 500 ms floor")
     func debounceFloorHolds() async throws {
         let scratch = Scratch()
         // The interval the app itself uses, not the tests' short one.
@@ -439,6 +476,15 @@ struct EditorSessionTests {
         session.pages.view.layoutIfNeeded()
     }
 
+    /// Turns to a page the way a settled scroll does, without a gesture.
+    @MainActor
+    private func turn(_ session: EditorSession, to page: Int) {
+        let scroll = session.pages.scrollView
+        scroll.contentOffset = CGPoint(x: scroll.bounds.width * CGFloat(page), y: 0)
+        session.pages.scrollViewDidScroll(scroll)
+        session.pages.view.layoutIfNeeded()
+    }
+
     /// The live canvas of the session's current page.
     ///
     /// The paged runtime builds page canvases during layout, so a session that
@@ -504,8 +550,8 @@ struct EditorSessionTests {
     }
 
     /// A document expensive enough to serialize that the debounce must adapt to
-    /// it. Real handwriting reaches these stroke counts on a grown page, which is
-    /// the situation a fixed 500 ms interval was measured against and lost.
+    /// it. Real handwriting reaches these stroke counts, which is the situation
+    /// a fixed 500 ms interval was measured against and lost.
     private func manyStrokes(count: Int) -> PKDrawing {
         let ink = PKInk(.pen, color: .black)
         let strokes = (0..<count).map { index in

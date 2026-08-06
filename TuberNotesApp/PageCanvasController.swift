@@ -17,10 +17,21 @@ struct DrawingSnapshot: Sendable {
         self.drawing = drawing
     }
 
+    /// The copied drawing, for rebuilding a canvas from ink that never reached
+    /// disk.
+    ///
+    /// Main actor only, and no encoding: this hands back the same value `init`
+    /// copied. A page that retired dirty and then returns to the live window is
+    /// rebuilt from this rather than from the last bytes that were saved, which
+    /// is what stops a fast turn away and back from restoring pre-edit ink
+    /// (`Contract.md` — Owners, golden rule 5: custody, not a second copy).
+    @MainActor
+    var drawingValue: PKDrawing { drawing }
+
     /// Serializes off the main actor and reports how long it took.
     ///
     /// The duration is returned rather than only logged because `EditorSession`
-    /// derives the autosave debounce from it (`DataContract.md` §5): the cost of
+    /// derives the autosave debounce from it (`Contract.md` — Saving): the cost of
     /// a whole-drawing serialization is only knowable here, and measuring it a
     /// second time on the session side would mean serializing twice.
     func serialized() async -> (data: Data, duration: Duration) {
@@ -47,13 +58,14 @@ struct DrawingSnapshot: Sendable {
 
 /// The live runtime for exactly one page.
 ///
-/// Per `Docs/Architecture/DataContract.md` §2 this owner holds the live
+/// Per `Docs/Contract.md` — Owners, this owner holds the live
 /// `PKDrawing`, pan, zoom, gestures, and page projection. It never reads or
 /// writes files and never chooses save policy.
 ///
 /// It does not know its own page index, its neighbours, or how many pages exist
-/// (§2 rule 7a). `PagedCanvasController` places it and `EditorSession` decides
-/// which page it shows; this type is told, and never asks.
+/// (`Contract.md` — Owners). `PagedCanvasController` places it and
+/// `EditorSession` decides which page it shows; this type is told, and never
+/// asks.
 ///
 /// `PKCanvasView` is itself a `UIScrollView`, so pan and zoom within a page are
 /// the framework's own — no gesture recognizers of ours, and no frame-frequency
@@ -63,13 +75,19 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
     let canvasView = PKCanvasView()
 
     /// One coarse notification that the drawing changed. It carries no drawing,
-    /// no sample, and no generation number (`DataContract.md` §5).
+    /// no sample, and no generation number (`Contract.md` — Saving).
     var onDrawingChanged: (() -> Void)?
 
     /// Shared across pages and owned by `PagedCanvasController`. One picker per
     /// page would mean the selected tool resetting every time you turn one.
     private let toolPicker: PKToolPicker
-    private var hasEstablishedInitialZoom = false
+
+    /// The viewport size the current zoom range was computed for, or `nil`
+    /// before the first layout. Keyed on the size rather than on a bool so that
+    /// repeated layout passes at one size change nothing, while a genuine
+    /// viewport change — rotation, Split View — re-fits. See
+    /// `establishZoomIfNeeded`.
+    private var zoomRangeBounds: CGSize?
 
     /// A hairline showing where the page ends.
     ///
@@ -89,6 +107,13 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
     /// `EditorSession` writes it, once, at the transition to its ready phase; the
     /// canvas only remembers it. It exists to enforce that a loaded drawing is
     /// installed strictly before editing begins — see `installDrawing`.
+    ///
+    /// KNOWN DEFECT: this gates nothing at runtime. It is read only by an
+    /// `installDrawing` precondition, and `drawingPolicy` is `.pencilOnly`
+    /// unconditionally, so a page that entered the live window before its bytes
+    /// arrived still accepts Pencil input. The stroke is drawn and then
+    /// discarded by `PagedCanvasController.snapshot(at:)`. Refusing the input
+    /// is the fix; discarding it is what happens today.
     private var isEditable = false
     private var hasLoggedFirstTouch = false
     private var hasLoggedFirstChange = false
@@ -186,13 +211,6 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
         )
     }
 
-    /// Whether the page is at the scale it opens at, where a horizontal drag
-    /// cannot pan within the page and therefore belongs to the page turn
-    /// (`PagesAndTurning.md` §6).
-    var isAtFitWidthScale: Bool {
-        canvasView.contentSize.width <= canvasView.bounds.width + 0.5
-    }
-
     /// The first touch to reach the canvas, and nothing after it.
     ///
     /// This exists to answer one question the crash reports could not: whether
@@ -208,23 +226,44 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        establishInitialZoomIfNeeded()
+        establishZoomIfNeeded()
+        centerPageInViewport()
     }
 
     /// How far below a full page you may zoom out. Two full pages of overview.
     private static let overviewFactor = 0.5
 
-    /// Establishes the viewport once. Later layout passes must not reset it
-    /// (`Docs/Milestones/JustACanvas.md`, spatial behavior gates).
+    /// Establishes the zoom range for the current viewport, and re-establishes
+    /// it when the viewport itself changes size.
     ///
     /// Two separate scales, and the distinction is the point
-    /// (`DataContract.md` §7): the opening scale fits the page *width*, which is
-    /// the comfortable scale to write at, while the floor fits the whole page
-    /// with room to spare.
-    private func establishInitialZoomIfNeeded() {
-        guard !hasEstablishedInitialZoom else { return }
+    /// (`Contract.md` — Geometry and coordinates): the opening scale fits the page *width*,
+    /// which is the comfortable scale to write at, while the floor fits the
+    /// whole page with room to spare.
+    ///
+    /// A repeated layout pass at one size does nothing, which is the invariant
+    /// in `Contract.md` — Performance that rebuilding SwiftUI views rebuilds
+    /// neither a canvas nor its undo manager: host-view updates must not reset
+    /// the viewport. A rotation or a Split View resize is not a host-view
+    /// update — it is a different viewport, and leaving the old range in place
+    /// would strand the page at a scale that no longer fits the screen and a
+    /// floor computed for a screen that no longer exists.
+    ///
+    /// The user's zoom survives that change rather than snapping back to fit:
+    /// the scale is carried across as a ratio of fit-width, so a page examined
+    /// at twice fit-width is still at twice fit-width after a rotation. On the
+    /// first pass the ratio is 1, so opening at fit-width is the same code path.
+    ///
+    /// KNOWN DEFECT: zoom lives per page and dies with the controller. A page
+    /// retired from the live window is released with no zoom saved, so turning
+    /// back rebuilds it at fit-width, while pages still inside the window keep
+    /// their scale — inconsistent by distance rather than uniformly wrong. The
+    /// tool picker is shared across pages for exactly this reason; zoom is not.
+    /// Whether zoom *should* be shared is a feel question, and Phillip's.
+    private func establishZoomIfNeeded() {
         let bounds = canvasView.bounds.size
         guard bounds.width > 0, bounds.height > 0 else { return }
+        guard bounds != zoomRangeBounds else { return }
 
         let fitWidth = bounds.width / PageGeometry.width
         let fitPage = min(fitWidth, bounds.height / PageGeometry.height)
@@ -232,11 +271,40 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
             return
         }
 
+        let previousFitWidth = zoomRangeBounds.map { $0.width / PageGeometry.width }
+        let ratio = previousFitWidth.map { canvasView.zoomScale / $0 } ?? 1
+
+        // Order matters: the range must admit the new scale before it is set,
+        // or UIScrollView clamps it to the range still describing the old
+        // viewport.
         canvasView.minimumZoomScale = fitPage * Self.overviewFactor
         canvasView.maximumZoomScale = fitWidth * 8
-        canvasView.zoomScale = fitWidth
-        hasEstablishedInitialZoom = true
+        canvasView.zoomScale = min(
+            max(fitWidth * ratio, canvasView.minimumZoomScale),
+            canvasView.maximumZoomScale
+        )
+        zoomRangeBounds = bounds
         updatePageBoundary()
+    }
+
+    /// Keeps the page centred once it is smaller than the viewport.
+    ///
+    /// Below fit-width — and vertically at most scales, since the page is taller
+    /// than it is wide — the scaled page does not fill the canvas. Without this
+    /// it pins to the top-left and the empty room all falls to one side.
+    /// `contentInset` is the mechanism rather than a content transform, because
+    /// it moves only where the scroll view may rest, leaving content
+    /// coordinates — and therefore page space and the boundary layer — alone.
+    private func centerPageInViewport() {
+        let bounds = canvasView.bounds.size
+        let content = canvasView.contentSize
+        let horizontal = max(0, (bounds.width - content.width) / 2)
+        let vertical = max(0, (bounds.height - content.height) / 2)
+        let inset = UIEdgeInsets(
+            top: vertical, left: horizontal, bottom: vertical, right: horizontal
+        )
+        guard canvasView.contentInset != inset else { return }
+        canvasView.contentInset = inset
     }
 
     // MARK: - Drawing transfer
@@ -259,7 +327,7 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
     }
 
     /// Opens the canvas for user editing. Called once by `EditorSession` when the
-    /// document is loaded and the ready phase begins (`DataContract.md` §6).
+    /// document is loaded and the ready phase begins (`Contract.md` — Lifecycle).
     func markEditable() {
         isEditable = true
     }
@@ -277,7 +345,7 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
     /// That leaves the ordering itself as the load-bearing invariant, so it is
     /// enforced rather than described: installing over a canvas the user can
     /// already draw on would overwrite live ink with an older load result, which
-    /// `DataContract.md` §6 forbids outright.
+    /// `Contract.md` — Lifecycle forbids outright.
     func installDrawing(from data: Data) throws {
         precondition(
             !isEditable,
@@ -285,6 +353,20 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
                 + "it would overwrite live ink with a loaded drawing"
         )
         canvasView.drawing = try PKDrawing(data: data)
+    }
+
+    /// Installs ink a page handed over when it retired before being saved.
+    ///
+    /// Same ordering rule as `installDrawing(from:)` and the same reason. There
+    /// is no decode and nothing can throw, because this value never became
+    /// bytes.
+    func installDrawing(from snapshot: DrawingSnapshot) {
+        precondition(
+            !isEditable,
+            "installDrawing must not run once the canvas is editable; "
+                + "it would overwrite live ink with a retired drawing"
+        )
+        canvasView.drawing = snapshot.drawingValue
     }
 
     // MARK: - PKCanvasViewDelegate
@@ -307,5 +389,6 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
     /// frame assignment on one view, no publication and no allocation.
     func scrollViewDidZoom(_ scrollView: UIScrollView) {
         updatePageBoundary()
+        centerPageInViewport()
     }
 }
