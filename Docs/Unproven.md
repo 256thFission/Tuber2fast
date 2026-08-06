@@ -24,8 +24,17 @@ Nothing here is a reason not to ship. It is a reason not to be surprised.
 
 - **Nothing has been exercised on the device since page turning landed.** No
   swipe, turn, zoom-versus-swipe, append, or multi-page relaunch has been
-  performed by anyone. The unit tests drive turns by setting `contentOffset`,
-  which proves the bookkeeping and nothing about the gesture.
+  performed by anyone. The unit tests drive turns by setting `contentOffset`
+  and firing the settle callbacks, which proves the bookkeeping and nothing
+  about the gesture.
+- **Turns now settle at rest, and no one has felt it.** The window refresh,
+  first-responder move, and page-change commit moved off the drag path onto
+  the settle callbacks. A fast multi-page flick may briefly show a loading
+  placeholder where the old runtime built canvases mid-drag. This is the
+  largest feel change in the tree and it is entirely Phillip's verdict.
+- **The loading/unreadable placeholder has never been seen on a device**, and
+  the refusal of Pencil input on it — the placeholder accepts no input at all —
+  is a device check by nature; the simulator has no Pencil.
 - **The writing loop's hand-exercised checks were never performed** — launch
   first-contact ink, scroll and zoom against the page, background-flush
   survival, autosave spacing under continuous writing, and the five-second
@@ -69,44 +78,33 @@ manifest. Those are held by code review alone.
 
 Swift 6 actor isolation and warnings-as-errors cover two more rules for free.
 
-## A review's findings, none reproduced
+## A review's findings, most now reproduced and fixed
 
-An agent read the whole of `TuberNotesApp/` against the contract and asserted
-the following. Every one is reasoning from source — no failing test, no device
-run, no reproduction — which is what puts them here rather than in the code as
-`KNOWN DEFECT:` blocks. Reproducing one is what promotes it.
+An agent read the whole of `TuberNotesApp/` against the contract and asserted a
+list of defects, all reasoning from source. Most have since been reproduced and
+fixed and are gone from this list — each now has a test that fails against the
+code as it was: a page retiring with unsaved ink losing it to a save that read
+the last durable bytes; opening a document marking every page in the opening
+window dirty; a page retiring during a failed save losing its ink to the retry;
+a not-yet-loaded page accepting and then dropping Pencil input; a half-drag
+treated as a settled turn; an append silently refused during a save; work
+arriving during a flush parked with no timer; and one unreadable page file
+failing the whole launch. None of the fixes has been exercised on the device,
+which is a different gap and is recorded above.
 
-Two have since been reproduced and fixed, and are gone from this list: a page
-retiring with unsaved ink losing it to a save that read the last durable bytes,
-and opening a document marking every page in the opening window dirty. Both now
-have tests that fail against the code as it was. Neither has been exercised on
-the device, which is a different gap and is recorded above.
+Still asserted and not reproduced:
 
-- **A dirty page with neither a live canvas, retired ink, nor held bytes now
-  traps rather than being dropped.** It is still reachable — a page that
-  entered the live window before its bytes arrived accepts Pencil input and is
-  excluded from retirement, so it arrives at a save dirty and empty-handed. The
-  `KNOWN DEFECT:` block at the trap says so, and `unloaded-page-is-not-a-canvas`
-  closes it by refusing the input.
-- **`scrollViewDidScroll` treats the halfway point of a drag as a settled
-  turn.** Asserted consequences, all mid-gesture: canvas construction with a
-  synchronous drawing decode, a first-responder steal, a prefetch task and its
-  actor hop, and the index marked dirty for a turn the user then abandoned. An
-  aborted half-drag does all of it twice.
-- **Swiping past the last page does nothing while a save is in flight.**
-  `appendPage` guards on `saveInFlight` and returns without feedback, which
-  contradicts *Navigation*'s "immediately". The guard carries no rationale.
-- **One unreadable page file stops the whole prefetch window.** `fetchPageData`
-  throws out of its loop and both callers discard the error with `try?`.
-  Asserted: the page stays non-editable and renders as blank forever, with no
-  signal to the user and no negative caching, which is *Invalid states fail
-  loud* inverted on the path that most needs it.
 - **`fetchPageData` computes its bounds before awaiting and indexes after.**
   Latent only: nothing removes pages today.
 - **`DocumentStore.save` reports a page absent from the index as
   `missingPageFile`**, which names the wrong condition on a diagnostic path.
 - **`deleteOrphanedPages` has no caller**, so orphans from a failed save
   accumulate for the life of the document.
+- **The runtime is index-keyed while the session is identity-keyed.** Correct
+  today because the page list is append-only; the first delete or reorder
+  makes every callback a wrong-page write. The Handovers proposal's S8 (opaque
+  page tokens) is the answer, deliberately not built until such a feature
+  exists.
 
 ## Doc comments are not checked against the code
 

@@ -89,34 +89,6 @@ digest rather than read as silence.
 
 
 
-## rearm-has-an-owner — one exit re-arms the debounce
-
-The duty to re-arm the debounce after a save is spread across `markDirty`,
-`saveIfNeeded`, `performAutosavePass`, and `performOneSave`, and the
-`saveInFlight` early-returns do not agree about it. Move it to the single exit of
-`performOneSave`. The `while true` loop in `saveIfNeeded` and the `KNOWN DEFECT:`
-block above it go with it.
-
-**Exit:** a test that work arriving during an in-flight save receives a fresh
-debounce — from every entry point, including `flushForBackground` — fails before
-the change and passes after.
-
-
-## append-during-save — *Navigation* says "immediately"
-
-`appendPage` guards on `!saveInFlight` and returns with no feedback, which
-contradicts *Navigation*'s "Swiping past the last page yields a blank writable
-page immediately". Nothing found so far explains the guard: the capture loop in
-`performOneSave` never suspends, `capturedIndex` is a value, and
-`DocumentStore.save` validates the batch against it. Delete it — but only after
-`rearm-has-an-owner`, without which an append during a save is left dirty with no
-timer armed, because `markDirty` returns early under `saveInFlight`.
-
-**Exit:** a test that a pull past the last page during an in-flight save appends
-a page and saves it, fails before the change and passes after.
-
-*Blocked by:* `rearm-has-an-owner`.
-
 ## failure-has-a-taxonomy — decide what loud means before writing more of it
 
 *Invalid states fail loud* is the contract's strongest rule and the only one with
@@ -135,15 +107,17 @@ is logged and continued from.
 
 Three consequences, all violated today:
 
-- `try?` has no legitimate use here. Of its five occurrences, two swallow a
-  durability failure and two are inside `DocumentStore.deleteOrphanedPages`,
+- `try?` has no legitimate use here. Two occurrences are inside
+  `DocumentStore.deleteOrphanedPages`,
   which has no caller at all — delete it rather than fix it, since an orphan is
   inert by *Durable form* and nothing has ever needed pruning. Ban `try?` with an
   empty-allowlist structural test; the one real use, `Task.sleep` cancellation,
   is a two-line `do`/`catch`.
-- `fetchPageData` throws out of its loop, so one unreadable page file stops the
-  whole window and both callers discard the error. Pages after the failing one
-  never load, and the page renders as an ordinary editable blank.
+- ~~`fetchPageData` throws out of its loop~~ — fixed: one unreadable page marks
+  itself unreadable, is surfaced at the session boundary, renders as a refusing
+  placeholder, and stalls neither its neighbours nor the launch. What remains
+  for this item is the taxonomy itself and the typed error the placeholder
+  message should carry.
 - `RootCanvasView` renders `String(describing: error)` into the UI. Carry a typed
   value and render it with one exhaustive `switch` — the exhaustive switch is the
   mechanism that forces a human sentence per case.
@@ -163,118 +137,28 @@ ink. The user-visible half needs no Pencil and is provable in the simulator.
 
 *Blocked by:* `loud-by-default`, which is how a trap would be observed at all.
 
-## unloaded-page-is-not-a-canvas — the same hole twice is structural
+## handovers-landed — the structural save-path rework awaits device evidence
 
-A page can enter the live window before its bytes arrive. `makePage` builds it
-anyway, records it in `unloadedPages`, and leaves it non-editable. Three
-`KNOWN DEFECT:` blocks now describe what happens instead: `isEditable` gates
-nothing at runtime and `drawingPolicy` is `.pencilOnly` unconditionally, so the
-page accepts Pencil input and draws it; `snapshot(at:)` returns `nil` for it; and
-since `sync-retirement` made capture total, such a page reaching a save dirty and
-empty-handed **traps**.
+The Handovers proposal's S1–S7 are in the code: retirement hands over a
+drawing value synchronously; per-page ink state is one `Page` value with
+named transitions (`dirtyPageIDs`, `pageData`, `retiredInk`, and
+`unloadedPages` are gone); the save captures totally and acknowledges only
+after the store returns; an unloaded or unreadable page is a placeholder,
+never a canvas; `saveInFlight` and both waiter arrays are task handles; and
+a turn commits only at rest, on the settle callbacks. Each closed finding
+has a test that fails against the pre-change code.
 
-That trap is the contract-correct answer to a state that must not exist, and it
-is reachable today by drawing on a page whose ink has not arrived. It is loud
-where the old behaviour was silent, which is an improvement and not a fix.
+What no test can prove, and what this item now is:
 
-The rule is satisfied in effect and violated in spirit — unread ink is protected
-by refusing to account for the user's ink rather than by refusing the ink. That
-the same hole needed patching in three places is the signal it is structural and
-not a set of oversights.
+- **Turn feel after settling** is Phillip's verdict. The window refresh now
+  happens at rest, so a fast multi-page flick may briefly show a loading
+  placeholder where the old runtime built canvases mid-drag.
+- **The placeholder itself** has never been seen on a device.
+- The *Owners* wording still names the old fields; the amendment is drafted
+  and awaits Phillip's authorship — no agent writes contract text.
 
-An unloaded page should not be a `PKCanvasView` at all. It is a placeholder that
-says the page is still loading, or that it could not be read, and it takes no
-input. Ink cannot be discarded, or fail to be accounted for, if it was never
-accepted.
-
-Retires all three `KNOWN DEFECT:` blocks, and removes `unloadedPages` from what
-`page-ink-has-one-state` must absorb.
-
-**Exit:** Pencil input on a page whose bytes have not arrived is refused rather
-than drawn, and no save can trap on a page that yielded no ink. The simulator has
-no Pencil, so the refusal itself is Phillip's check; the placeholder appearing at
-all is a test's.
-
-*Blocked by:* `failure-has-a-taxonomy`, which decides what an unreadable page
-says.
-
-## turn-settles-once — a half-drag is not a page turn
-
-`scrollViewDidScroll` computes the current page with `.rounded()`, which crosses
-at the midpoint of the drag rather than at rest. Its own doc comment claims the
-callback fires "once per settled turn, not per frame". It fires when the finger
-passes halfway, and twice for a drag that is abandoned and returned.
-
-Each crossing runs, mid-gesture: `refreshWindow`, which constructs a controller
-and decodes a `PKDrawing` synchronously; `becomeFirstResponder`, stealing
-responder status during a drag; a prefetch `Task` and its actor hop, which is
-file I/O started from a scroll callback; and a durable write of the current page
-index for a turn the user then abandoned.
-
-*Performance* forbids task creation, actor hops, and file access per input
-sample. This is not per sample, but it is on the drag path, and it is the most
-expensive work the runtime does.
-
-A turn settles in `scrollViewDidEndDecelerating`,
-`scrollViewDidEndDragging(willDecelerate: false)`, and
-`scrollViewDidEndScrollingAnimation`. One trap worth naming before starting:
-`setPages` scrolls with `animated: false`, which fires no delegate callback at
-all, so the programmatic path has to settle itself.
-
-This is the largest feel risk in the queue, so it ships after the durability
-items rather than before them.
-
-**Exit:** a turn commits once, at rest, and an abandoned half-drag commits
-nothing. Device evidence required, and the verdict is Phillip's.
-
-## page-ink-has-one-state — stop asking four fields where the ink is
-
-A page's ink is described by four fields that can each disagree: the live
-`PKCanvasView`, `dirtyPageIDs`, `pageData`, and `retiredInk`. `sync-retirement`
-separated the last two — held bytes now mean "a copy of what is on disk" and
-nothing else, where one dictionary previously carried that meaning and "the final
-bytes of a retired page" at once. That removed the ambiguity by adding a field,
-which is the right trade at that size and the wrong one to keep making.
-
-The capture loop in `performOneSave` is the evidence: it asks three places in
-priority order and traps if all three come up empty. Correct, and a state machine
-would make the question unaskable instead of answering it carefully.
-
-`pageData` is also the cache that *Performance* requires to state a bound: it is
-pruned to the prefetch radius plus the dirty set, which the contract now names
-as the bound. `retiredInk` is bounded by the dirty set alone. Both are legal and
-neither is simple.
-
-One owned value per page, carrying one state:
-
-```text
-loading | unreadable | clean | live(canvas) | held(DrawingSnapshot) | saving(Data, at: Version)
-```
-
-What that makes unrepresentable rather than fixed: a dirty page with no ink to
-save, because `dirty` stops being a separate set; a load installed over live ink,
-because `live` and `loading` are different cases; a retired page's bytes arriving
-after the save that needed them, because `held` carries the value instead of
-promising it; and a stale write, because `saving` carries the version it
-captured.
-
-This is the largest item here and the last of the structural moves, deliberately.
-Everything above it stops active ink loss with changes a reviewer can hold in
-their head. Doing this first would mean rewriting the save path before anything
-had confirmed which of its failures are real.
-
-It absorbs `dirtyPageIDs`, `pageData`, `retiredInk`, and `unloadedPages`, and with them the
-`PageBytes` extraction held in reserve. It needs the *Owners* table to name the
-new state, so it carries a `CONTRACT:` amendment of its own.
-
-Not part of this item: replacing the runtime's `Int` page keys with an opaque
-token. It is correct, it is cheap, and it defends page deletion and reordering,
-which do not exist. Do it when they do.
-
-**Exit:** the four fields are gone, and every route the items above it fixed
-still has a test that fails when the fix is reverted. Device evidence required.
-
-*Blocked by:* `sync-retirement` and `unloaded-page-is-not-a-canvas`.
+**Exit:** Phillip accepts the settle feel and the placeholder on the iPad, or
+returns bounded findings; the contract amendment is authored or refused.
 
 ## turn-feel — Phillip's verdict on page turning
 
@@ -295,9 +179,9 @@ Hand-exercise on the named iPad and record, before asking for a verdict:
 
 **Exit:** Phillip accepts the turn feel, or returns bounded findings.
 
-*Blocked by:* `load-is-not-an-edit`. Until that lands, every page entering the
-window is saved on arrival, so this item's own check that the save trace names
-only changed pages fails for a reason that is not about turn feel.
+*Was blocked by* loading marking pages dirty; that is fixed and pinned by
+`turningAwayAndBackDoesNotRewriteThePage`, so the save-trace check can now
+fail only for reasons that are about turn feel.
 
 
 
