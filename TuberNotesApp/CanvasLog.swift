@@ -26,18 +26,33 @@ enum CanvasLog {
     static let save = Logger(subsystem: subsystem, category: "save")
     static let contract = Logger(subsystem: subsystem, category: "contract")
 
+    /// One name per event stream. The case is both the `Logger` and the
+    /// stderr bracket label, so the two sinks cannot disagree at a call site.
+    enum Category: String {
+        case lifecycle, canvas, save, contract
+
+        var logger: Logger {
+            switch self {
+            case .lifecycle: CanvasLog.lifecycle
+            case .canvas: CanvasLog.canvas
+            case .save: CanvasLog.save
+            case .contract: CanvasLog.contract
+            }
+        }
+    }
+
     #if DEBUG
     private static let mirrorsToStderr = ProcessInfo.processInfo.environment["TN_TRACE"] != nil
     #else
     private static let mirrorsToStderr = false
     #endif
 
-    /// One event, to both sinks. `category` names the `Logger` it belongs to.
-    static func event(_ logger: Logger, _ category: StaticString, _ message: String) {
-        logger.log("\(message, privacy: .public)")
+    /// One event, to both sinks.
+    static func event(_ category: Category, _ message: String) {
+        category.logger.log("\(message, privacy: .public)")
         guard mirrorsToStderr else { return }
         // stderr only. This is a stream the launcher captures, not storage.
-        fputs("TN[\(category)] \(message)\n", stderr)
+        fputs("TN[\(category.rawValue)] \(message)\n", stderr)
     }
 
     /// Logs an uncaught Objective-C exception before the process dies.

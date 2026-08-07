@@ -311,7 +311,7 @@ final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
                 // The same refusal as `.unreadable`, discovered one step
                 // later: never an editable blank.
                 CanvasLog.event(
-                    CanvasLog.canvas, "canvas",
+                    .canvas,
                     "page \(index) drawing failed to decode: \(error)"
                 )
                 return .placeholder(makePlaceholder(saying: "This page could not be read."))

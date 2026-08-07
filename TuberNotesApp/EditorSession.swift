@@ -396,13 +396,13 @@ final class EditorSession {
             // holds, and a page whose bytes have not arrived stays closed.
             pages.markEditable()
             CanvasLog.event(
-                CanvasLog.lifecycle, "lifecycle",
+                .lifecycle,
                 "session ready; pages=\(index.pageIDs.count) "
                     + "current=\(index.currentPageIndex)"
             )
         } catch {
             phase = .failed(String(describing: error))
-            CanvasLog.event(CanvasLog.lifecycle, "lifecycle", "session failed to start: \(error)")
+            CanvasLog.event(.lifecycle, "session failed to start: \(error)")
         }
     }
 
@@ -499,7 +499,7 @@ final class EditorSession {
                 pageStates[stateIndex(of: pageID)].bytesLoaded(data)
             } catch {
                 CanvasLog.event(
-                    CanvasLog.lifecycle, "lifecycle",
+                    .lifecycle,
                     "page \(pageID) failed to load: \(error)"
                 )
                 pageStates[stateIndex(of: pageID)].loadFailed(String(describing: error))
@@ -559,7 +559,7 @@ final class EditorSession {
 
         pages.setPages(count: index.pageIDs.count, currentPageIndex: index.currentPageIndex)
         CanvasLog.event(
-            CanvasLog.canvas, "canvas",
+            .canvas,
             "appended page \(index.currentPageIndex); pages=\(index.pageIDs.count)"
         )
         markDirty()

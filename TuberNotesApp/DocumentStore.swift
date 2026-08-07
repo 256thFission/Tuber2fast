@@ -70,7 +70,7 @@ actor DocumentStore {
             // can do, so it says exactly what it read.
             let prefix = data.prefix(8).map { String(format: "%02x", $0) }.joined()
             CanvasLog.event(
-                CanvasLog.save, "save",
+                .save,
                 "refusing to open \(indexURL.path): \(data.count) bytes, "
                     + "starts \(prefix), error \(error)"
             )
@@ -131,7 +131,7 @@ actor DocumentStore {
         }
 
         CanvasLog.event(
-            CanvasLog.save, "save",
+            .save,
             "wrote \(changedPages.count) page file(s) of \(validated.pageIDs.count); "
                 + "index rewritten=\(indexNeedsWriting)"
         )

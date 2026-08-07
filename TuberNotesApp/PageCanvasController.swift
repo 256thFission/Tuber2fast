@@ -46,7 +46,7 @@ struct DrawingSnapshot: Sendable {
             // context for it. Dropping the field would drop the evidence.
             let onMainThread = { Thread.isMainThread }()
             CanvasLog.event(
-                CanvasLog.save, "save",
+                .save,
                 "serialized drawing snapshot; bytes=\(data.count) "
                     + "duration=\(duration) "
                     + "mainThread=\(onMainThread)"
@@ -201,7 +201,7 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
         canvasView.becomeFirstResponder()
         toolPicker.setVisible(true, forFirstResponder: canvasView)
         CanvasLog.event(
-            CanvasLog.canvas, "canvas",
+            .canvas,
             "appeared; firstResponder=\(canvasView.isFirstResponder) "
                 + "policy=\(canvasView.drawingPolicy.rawValue) "
                 + "contentSize=\(canvasView.contentSize) zoom=\(canvasView.zoomScale)"
@@ -218,7 +218,7 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
         guard !hasLoggedFirstTouch else { return }
         hasLoggedFirstTouch = true
         let types = touches.map { "\($0.type.rawValue)" }.joined(separator: ",")
-        CanvasLog.event(CanvasLog.canvas, "canvas", "first touch reached the canvas; types=[\(types)]")
+        CanvasLog.event(.canvas, "first touch reached the canvas; types=[\(types)]")
     }
 
     override func viewDidLayoutSubviews() {
@@ -316,7 +316,7 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
         let started = clock.now
         let snapshot = DrawingSnapshot(drawing: canvasView.drawing)
         CanvasLog.event(
-            CanvasLog.save, "save",
+            .save,
             "copied drawing snapshot; strokes=\(canvasView.drawing.strokes.count) "
                 + "duration=\(started.duration(to: clock.now))"
         )
@@ -364,7 +364,7 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
         if !hasLoggedFirstChange {
             hasLoggedFirstChange = true
             CanvasLog.event(
-                CanvasLog.canvas, "canvas",
+                .canvas,
                 "first drawing change; strokes=\(canvasView.drawing.strokes.count)"
             )
         }

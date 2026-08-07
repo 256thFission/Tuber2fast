@@ -4,7 +4,7 @@ import SwiftUI
 struct TuberNotesApp: App {
     init() {
         CanvasLog.installCrashDiagnostics()
-        CanvasLog.event(CanvasLog.lifecycle, "lifecycle", "app launched")
+        CanvasLog.event(.lifecycle, "app launched")
     }
 
     var body: some Scene {
