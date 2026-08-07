@@ -43,7 +43,7 @@ SwiftUI root ------- intentions --> EditorSession
 | Pan, zoom, gestures, page projection | `PageCanvasController` | frame/input | canvas session |
 | Which pages are live, the paging viewport, the active tool | `PagedCanvasController` | user action | app session |
 | Page order, page identity, current page index | `EditorSession` | user action | app session |
-| Dirty page set, `saveInFlight`, debounce | `EditorSession` | interaction | app session |
+| Per-page ink state, the save in progress, debounce | `EditorSession` | interaction | app session |
 | Held page bytes and their in-flight fetches | `EditorSession` | turn/save | app session |
 | Saved document | `DocumentStore` | autosave | across launches |
 | SwiftUI navigation and visible controls | SwiftUI root | user action | view session |
@@ -60,11 +60,11 @@ Golden rules:
 7. A `PageCanvasController` owns exactly one page's live drawing and renders the geometry it is given. It is blind to page numbers and turns: it is told, and never asks.
 8. `EditorLifecycle` owns the UIKit background-execution lease and nothing else.
 
-`dirty` is the set of page IDs whose live drawing differs from the last successful save. `saveInFlight` means one call to `DocumentStore.save` has started and has not returned or thrown. Both are private session state.
+Each page has exactly one ink state in the session, and that state names where the page's authoritative unsaved ink is: `clean` — the live drawing equals the last successful save; `live` — the authority is the page's `PKCanvasView`; `held` — the session holds the unsaved ink, as a drawing value taken when the canvas retired or as bytes a failed save already serialized; `saving` — a copy has been handed to `DocumentStore` and not acknowledged; `loading` — the page's bytes have been requested and the page is not editable; and `unreadable` — the page's bytes could not be read, so the page is refused rather than shown as blank. There is no second place a page's ink can be, and no page is in two states. `dirty` is derived, never stored. The save in progress is one `DocumentStore.save` call that has started and has not returned or thrown. All of it is private session state.
 
 Held page bytes are the session's copy of what is on disk for the pages it may shortly need, keyed by page ID because an index means a different page once the list changes. They are the cache *Performance* requires to state a bound, and the bound is the live window plus the pages fetched ahead of it, plus any page whose ink is not yet saved. A page's authority is its live canvas whenever it has one; a held entry is never a second drawing.
 
-Durable value types import Foundation only. UIKit and PencilKit may be imported only by the owners of frame-frequency canvas state and by the owner of the background-execution lease.
+Durable value types import Foundation only. UIKit and PencilKit may be imported only by the canvas runtime — the owners of frame-frequency canvas state, and the immutable values that carry a drawing out of them — and by the owner of the background-execution lease.
 
 ## Durable form
 
@@ -104,19 +104,19 @@ On `drawingChanged`: mark that page dirty, reset the debounce unless a save is a
 `saveIfNeeded` is serialized:
 
 ```text
-guard dirty is non-empty && !saveInFlight
-saveInFlight = true
+guard dirty is non-empty && no save is in progress
 capture every dirty page: a live page yields its drawing, a page that has
   left the live window yields the value it handed over as it retired
 capture is total — a dirty page yielding neither is a violation, not an omission
-clear the dirty set only for the pages actually captured
+mark the captured pages saving — this replaces clearing the dirty set
 create drawingData outside the PencilKit callback
 record the serialize duration; it sets the next debounce interval
 await DocumentStore.save(page files, then the index if it changed)
-saveInFlight = false
-on success, clear the retry backoff
-on failure, restore those page IDs to dirty, report the error,
-  and reschedule after the backoff
+on success, mark clean only the pages not edited since their capture,
+  and clear the retry backoff
+on failure, the captured pages stay dirty holding the bytes already
+  serialized — the retry never encodes twice; report the error and
+  reschedule after the backoff
 if still dirty, arm a fresh debounce rather than serializing again immediately
 ```
 
@@ -163,7 +163,7 @@ Swiping past the last page yields a blank writable page immediately; a turn that
 Turning and appending are navigation, not editing: neither is undoable, and PencilKit's undo manager never learns of them. An unwritten appended page is not durable, so no ink can be lost by the absence of undo.
 
 
-A page leaving the live window hands its ink to the session **before** its controller is released. Releasing first would silently discard edits on a page the user merely scrolled away from.
+A page leaving the live window hands its ink to the session **synchronously, before** its controller is released, and hands over a drawing value rather than bytes. Releasing first would silently discard edits on a page the user merely scrolled away from; handing over asynchronously is the same defect with a window instead of a certainty, because between the release and the bytes landing the save path finds neither and writes the page's last saved copy over its newer ink. Serializing that value is the save path's work and stays off the main thread.
 
 ## Lifecycle
 
@@ -172,6 +172,8 @@ On backgrounding, the editor cancels the debounce and makes one best-effort save
 Foregrounding reuses retained live state and never replaces newer live ink with an older load result.
 
 The document index loads once, when the editor session is created, before any page is built. Ink loads per page, whenever a page needs it: the live window is bounded and pages leave it, so a page's ink is read again when it returns. For each page the order is fixed and happens once — its ink is installed, and only then does that page's canvas become editable. A canvas that has become editable is never installed into again, and installing ink is never reported as an edit.
+
+A page whose bytes cannot be read is refused: it is neither shown as blank nor made editable, and the failure is surfaced. Rendering it blank invites the user to write on it, and the first save then replaces a page that merely could not be read with one that is genuinely empty.
 
 On first launch, `load` returns `nil`; the app generates the IDs and the canonical geometry, constructs an empty drawing, and saves.
 
