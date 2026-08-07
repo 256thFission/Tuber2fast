@@ -144,6 +144,94 @@ appended at the bottom of each section. Branch: `canvas-feature-complete`
     abandoned half-drag. The cache *permits* a neighbour's composite to
     survive; nothing creates one before its page is built.
 
+### Phase 4, transformable `image` layers — the decisions
+
+14. **A recognizer, not the chrome view.** The fork doc names a selection chrome
+    view owning its own recognizers as the escape hatch if fall-through fights
+    UIKit. It cannot be built: under the transparent `PKCanvasView` a chrome
+    view gets no touches (the canvas is above it), and above the canvas it eats
+    every Pencil touch over the selected image — you could no longer draw on a
+    picture you had selected. `LayerDragRecognizer` asks the same unit-square
+    question a view's `hitTest` would; it just asks it inside a recognizer that
+    *fails* rather than inside a view that must sit somewhere in the z-order.
+    Recorded in A11, because if this fights UIKit on device the finding is that
+    neither structure works.
+15. **The blank-page path grows nothing at all.** A page with no selectable
+    layer builds no `LayerSelectionRuntime`, so it has no tap recognizer and no
+    drag recognizer. The same narrowing decision 7 makes for transparency, and
+    it turns the fork doc's "zero new gesture cost" into a fact about the object
+    graph. A11 wants one sentence amended to say so.
+16. **Scale and rotate are handle drags. There is no pinch recognizer.** A
+    `UIPinchGestureRecognizer` contends directly with `PKCanvasView`'s own
+    pinch-zoom, which *Navigation* hands to the framework outright, and winning
+    that fight means either stealing zoom while an image is selected or losing
+    the scale. Handles need no arbitration — they are a different *place*, and
+    place is what the hit test already answers. Four corner handles scale
+    (uniform in the layer's own frame, anchored at the opposite corner) and one
+    handle above the top edge rotates about the centre. **This is a UX call an
+    agent made and Phillip may hate it.**
+17. **Rotation is applied in page space, scale in the layer's own frame**, and
+    the asymmetry is load-bearing. `fittingSource` sets `a` and `d`
+    independently, so a placed image is anisotropic in page space: rotating in
+    unit space and then applying that mapping is a *shear*, and the handle would
+    not track the finger. Scaling in the local frame is what preserves the
+    placed aspect ratio, which a page-space uniform scale would silently
+    destroy.
+18. **Excluding the selected layer needed no new mechanism.** `CompositeKey` is
+    already the list of layer IDs plus the scale, so the minus-one composite is
+    an ordinary second cache entry. It is also *stable under the drag*: moving
+    the selected layer changes nothing about the request that excludes it, so a
+    whole gesture — and every commit inside it — causes exactly zero
+    re-composites.
+19. **The fork doc's no-ghosting ordering is one step wrong, and the code does
+    the other order.** "Selection kicks off the minus-one recomposite; until it
+    lands the moving layer renders live over the stale composite" assumes the
+    live render is free. It is not — it needs a decode. So the code decodes the
+    lifted layer *first* and only then asks for the minus-one composite; before
+    the decode lands nothing has changed at all. The fork doc's order has a
+    window in which the composite has dropped the layer and nothing has picked
+    it up, and in that window the layer **vanishes**. Deselection is the mirror:
+    the full composite is asked for while the lift is still up and the lift is
+    dropped only when it lands.
+20. **The lifted layer is a sublayer of `PageBackdrop.page`**, which already
+    carries the mirror transform, so pan and zoom come free and the lift needs
+    only the layer's own page-space transform. Its bounds are the source's pixel
+    extent at `contentsScale` 1 and the pixel→unit-square scale is folded into
+    the transform, so nothing is resampled by the layer tree. `page` also gained
+    `masksToBounds = true`, so a layer dragged past the page edge clips exactly
+    where the committed composite will clip it — otherwise the picture changes
+    at the instant of commit.
+21. **The lifted source is not cached.** One decode per selection, off-main,
+    never during a drag. Putting it in the composite cache would mean a second
+    kind of entry under a byte bound whose whole arithmetic is stated in
+    page-sized composites.
+22. **Undo registers *after* the session accepted, which is the opposite of the
+    shape tool's order**, deliberately. The shape tool registers first because
+    it is about to mutate `canvasView.drawing` and PencilKit may register its
+    own undo for that assignment. A layer transform touches no drawing, so there
+    is nothing to interleave with, and the only real hazard is the other one: an
+    undo entry restoring a value the session refused. Asking first means exactly
+    one registration per committed edit and none per refusal.
+23. **The undo target is `self`, the page controller** — not a new object —
+    specifically so that `willRetire`'s existing `removeAllActions(withTarget:)`
+    already covers it. `UndoManager` does not retain a target; a second target
+    would need a second retirement hook and would be a second way to leave a
+    dangling one, which is a crash. Same `KNOWN DEFECT:` as the shape tool:
+    a transform committed on a page you turn away from and back is no longer
+    undoable.
+24. **`locked` was added, because phase 4 genuinely reads it** — twice, in two
+    owners — and it was given a *writer*, `EditorSession.setLayerLocked`, so
+    that it is not a bit only a test can set. No UI calls it, exactly as no UI
+    called `importImage` when phase 2 landed. **An envelope written before
+    `locked` existed decodes as unlocked**, which is the read-forward rule
+    *Durable form* already states for the pre-layer page form; the alternative
+    is every page file on disk becoming unreadable for a bit that changes no
+    other rule. One line to delete if Phillip would rather old files fail.
+25. **A refused commit is put back rather than papered over.** The commit
+    closure returns whether the session wrote it; on a refusal the selection
+    runtime restores the transform the drag began from. A picture that disagrees
+    with the file is worse than a drag that visibly did not stick.
+
 ## Discoveries
 
 1. **Cross-lane semantic merge conflict, caught by the compiler, not by git.**
@@ -295,6 +383,30 @@ appended at the bottom of each section. Branch: `canvas-feature-complete`
     stand-in — this is the second CI-testable thing in this project that was
     not obvious, after `PKDrawing.image(from:scale:)`.
 
+19. **An `unowned` canvas reference makes a bare-runtime test fixture crash, not
+    fail.** `LayerSelectionRuntime` holds its scroll view `unowned`, exactly as
+    `ShapeToolRuntime` does, which is right in the app because
+    `PageCanvasController` owns both. A test that wrote
+    `LayerSelectionRuntime(canvasView: UIScrollView())` let the scroll view
+    deallocate immediately — nothing else retains it, since a view retains its
+    recognizers and not the reverse — and the whole test *process* died with
+    "Attempted to read an unowned reference but the object was already
+    destroyed", taking every later suite with it and printing "Executed 0 tests"
+    over and over. It reads exactly like the shared-simulator wrong verdict
+    (discovery 8) and is not one. The fixture must hold the view.
+20. **`StaticLayerRenderTests`' pixel helper labels its bytes `(r, g, b)` and
+    the sampling context does not hand them over in that order.** A pure red
+    fill (`CGColor(srgbRed: 1, green: 0, blue: 0, alpha: 1)`) sampled through
+    that helper comes back as `(0, 0, 255)`, so index 2 is the red channel, not
+    index 0. Green is symmetric under the swap, which is why the existing
+    suite's green assertions pass; whether its `isRed`/`isBlue` assertions are
+    testing the channel they name is **not** something this lane verified, and
+    it is worth ten minutes. Phase 4's own composite test sidesteps the question
+    entirely by comparing two pixels of two composites rather than naming a
+    colour — the channel order cancels, and the claim being made ("the excluded
+    layer is gone and the one beneath shows through") is stated more directly
+    that way.
+
 ## Morning items — Phillip must address
 
 ### 1. The device session (do this first — three items resolve at once)
@@ -365,6 +477,72 @@ design forks, not formalities:
   `CONTRIBUTING.md` says CI calls no script in `Tools/`.
 - Whether phase 5's shape tool activation UI matches your taste at all —
   it was built to the smallest honest affordance, not to a design.
+
+### 3b. Phase 4 by hand — the checklist an agent cannot run
+
+None of this is provable off a device. Import an image onto a page first
+(`EditorSession.importImage` is still the only entry point — there is no import
+UI, so drive it from a test build or add a temporary call).
+
+**Selection and the arbitration rule — the part most likely to be wrong.**
+
+1. On a page with **no** image: pan, pinch, and swipe to turn. Everything must
+   feel exactly as it did before phase 4. It should, because such a page builds
+   no selection runtime at all — but this is the control, so do it first.
+2. On a page **with** an image and nothing selected: pan, pinch, and swipe to
+   turn, including a swipe that starts *on top of the image*. All three must
+   still work. This is the "zero new gesture cost" claim; the tap recognizer is
+   present here and must not be able to claim a drag.
+3. Tap the image. Chrome appears: an outline, four corner dots, and a dot on a
+   stalk above the top edge.
+4. **With the image selected**, swipe from bare page to turn the page. It must
+   turn, and the selection must go away as you begin. This is the fall-through
+   rule and the thing most likely to fight UIKit.
+5. **With the image selected**, at fit-width, drag horizontally starting *on
+   the image*. It must move the image and **not** turn the page.
+6. Zoom in past fit-width, then pan starting off the image — it must pan the
+   page. Pan starting on the image — it must move the image.
+7. Write with the Pencil over a selected image. Ink must land normally; the
+   selection must not eat it.
+
+**Move, scale, rotate feel.**
+
+8. Drag the body: the image should track the finger exactly, with no lag and no
+   rubber-banding.
+9. Drag a corner: the *opposite* corner must stay nailed to the page and the
+   aspect ratio must not change.
+10. Drag the stalk handle: it should rotate about the image's centre and the
+    handle should stay under the finger.
+11. Do all three at deep zoom. Handles are sized in view points, so they should
+    feel the same size at every zoom.
+12. Watch for a flash or a double image at three moments: when you tap to select
+    (the layer is lifted out of the composite here), during the drag, and when
+    you tap away to deselect (it is folded back). There should be none at any of
+    them; a brief soft-then-sharp is expected and is not the failure.
+13. Drag the image half off the page edge. It must clip at the page edge while
+    dragging and look identical after you let go.
+
+**Undo — the one that decides whether A10 is adoptable.**
+
+14. Move the image, then Cmd-Z (or the system undo gesture). **One undo must put
+    the image back exactly where it was, and must not also undo a stroke.**
+15. Cmd-Shift-Z must move it forward again.
+16. Draw a stroke, move the image, draw another stroke. Three undos must reverse
+    those three things in that order, one each.
+17. If undo does nothing at all for the image move, that is the unverified
+    claim failing: PencilKit is not tolerating a foreign registration in its
+    manager. It fails *silently* — the move is still saved correctly — so this
+    has to be checked deliberately rather than stumbled on. **A10 is not
+    adoptable until this passes.**
+18. Move the image, turn to the next page, turn back, then Cmd-Z. It will not
+    undo the move — that is the recorded `KNOWN DEFECT:`, shared with the shape
+    tool, not a new bug. Confirm it is *only* that, and that nothing crashes.
+
+**Taste calls that are yours alone:** the handle size and shape, the dot-on-a-
+stalk rotation affordance, the dashed handleless chrome for a locked layer, and
+whether handle-drags are the right answer at all versus a two-finger pinch on
+the layer. The reasoning for refusing the pinch is decision 16; the verdict is
+not an agent's.
 
 ### 4. Verdicts no agent may render
 

@@ -92,6 +92,26 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
     /// only to know what to render.
     private var staticLayers: [LayerEnvelope] = []
 
+    /// Selection and the transform gesture, built only for a page that carries
+    /// something selectable. See `LayerSelectionRuntime`: like the shape tool
+    /// and the backdrop it is this controller's own runtime rather than a
+    /// second owner, and it hands one committed transform back per gesture.
+    ///
+    /// `nil` on a page with no `image` layer, which is what makes "with no
+    /// selection, every touch behaves exactly as today" true of the recognizer
+    /// list itself rather than of a delegate's judgement.
+    private(set) var selection: LayerSelectionRuntime?
+
+    /// Reports one committed layer transform, and takes back whether the
+    /// session accepted it. The page index is added by
+    /// `PagedCanvasController`, because this controller is blind to which page
+    /// it is (`Contract.md` — Owners, golden rule 7).
+    var onLayerTransformed: ((UUID, PageSpaceTransform) -> Bool)?
+
+    /// Increments on every lifted-source request, so an image that arrives
+    /// after the selection moved on is dropped rather than shown.
+    private var liftGeneration = 0
+
     /// The request currently rendering or rendered, so a repeated layout pass
     /// at one size asks for nothing.
     private var renderedRequest: StaticLayerRequest?
@@ -189,6 +209,8 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
         // then lets layout force the view.
         if !staticLayers.isEmpty {
             installBackdropIfNeeded()
+            installSelectionIfNeeded()
+            selection?.setLayers(staticLayers)
         }
 
         #if TN_SPIKE_MIRROR
@@ -369,6 +391,8 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
         guard !layers.isEmpty else {
             backdrop?.remove()
             backdrop = nil
+            selection?.remove()
+            selection = nil
             // Back to the cheap path: an opaque canvas is one fewer full-screen
             // blend per frame.
             if isViewLoaded {
@@ -380,7 +404,102 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
 
         guard isViewLoaded else { return }
         installBackdropIfNeeded()
+        installSelectionIfNeeded()
+        selection?.setLayers(layers)
         requestCompositeIfNeeded()
+    }
+
+    /// Builds the selection runtime the first time this page carries something
+    /// a tap can address, and never for a page that carries nothing.
+    ///
+    /// The same shape as `installBackdropIfNeeded`, and for the same reason:
+    /// **the cost of this feature is paid per page that has a stack**, not once
+    /// for the app. A blank page has no gesture recognizer of ours at all,
+    /// which is the fork doc's "zero new gesture cost on the blank-page path"
+    /// as a property of the object graph rather than of a code path.
+    private func installSelectionIfNeeded() {
+        guard selection == nil, staticLayers.contains(where: \.isSelectable) else { return }
+        let installed = LayerSelectionRuntime(canvasView: canvasView)
+        installed.onSelectionChanged = { [weak self] in
+            self?.selectionChanged()
+        }
+        installed.onTransformPreview = { [weak self] transform in
+            // One frame of a drag: a single transform assignment on one layer.
+            // Nothing is published, nothing is saved, nothing is decoded.
+            self?.backdrop?.moveLift(to: transform)
+        }
+        installed.onTransformCommitted = { [weak self] layerID, previous, committed in
+            self?.commitLayerTransform(layerID, from: previous, to: committed) ?? true
+        }
+        selection = installed
+    }
+
+    /// A layer was selected or deselected.
+    ///
+    /// The ordering here is the whole no-ghosting story, and it is one step
+    /// more careful than the fork doc's:
+    ///
+    /// - **On selection**, the layer's own source is decoded first. Only once
+    ///   it is on screen — drawn live above the composite it is still baked
+    ///   into, which is one layer of overdraw and never a double image — is the
+    ///   minus-one composite asked for. The fork doc has selection kick off the
+    ///   recomposite immediately, which has a window in which the composite has
+    ///   dropped the layer and nothing has picked it up: the layer *vanishes*.
+    ///   Until the decode lands, nothing has changed at all.
+    /// - **On deselection**, the full composite is asked for while the lift is
+    ///   still up, and the lift is dropped only when that composite lands
+    ///   (`requestCompositeIfNeeded`'s completion). There is no frame in which
+    ///   the layer is in neither place.
+    private func selectionChanged() {
+        liftGeneration += 1
+        let generation = liftGeneration
+
+        guard let selected = selection?.selectedLayer,
+              let staticRenderer,
+              let scale = compositeScale()
+        else {
+            // Deselected. Ask for the whole stack again; the lift folds back
+            // when it lands.
+            requestCompositeIfNeeded()
+            return
+        }
+
+        Task { [weak self] in
+            let image = await staticRenderer.sourceImage(for: selected, at: scale)
+            guard let self, self.liftGeneration == generation else { return }
+            guard let image else {
+                // Nothing can draw this layer live, so nothing may take it out
+                // of the composite. Selection still works; the drag would move
+                // chrome over a picture that does not follow, which is the
+                // honest degradation and is unreachable in practice — the page
+                // is on screen, so its asset already decoded once.
+                CanvasLog.event(
+                    .canvas,
+                    "layer \(selected.layerID) selected but could not be lifted; "
+                        + "it stays in the composite"
+                )
+                return
+            }
+            self.backdrop?.showLift(image, at: selected.pageSpaceTransform)
+            self.requestCompositeIfNeeded()
+        }
+    }
+
+    /// The layers the composite draws: every static layer, minus the one being
+    /// manipulated once something else is drawing it.
+    ///
+    /// Excluding a layer needs no new mechanism, which is the point: a
+    /// `StaticLayerRequest` with one fewer layer is a different
+    /// `CompositeKey` — the key is the list of layer IDs — so the minus-one
+    /// composite is an ordinary second cache entry. It is also *stable* under
+    /// the drag: moving the selected layer changes nothing about the request
+    /// that excludes it, so a whole gesture, and every commit inside it, causes
+    /// exactly zero re-composites.
+    private var layersToComposite: [LayerEnvelope] {
+        guard let selected = selection?.selectedLayerID, backdrop?.hasLift == true else {
+            return staticLayers
+        }
+        return staticLayers.filter { $0.layerID != selected }
     }
 
     /// Builds the sibling stack and makes the ink surface transparent so it
@@ -411,7 +530,7 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
         guard let backdrop, let staticRenderer, !staticLayers.isEmpty else { return }
         guard let scale = compositeScale() else { return }
 
-        let request = StaticLayerRequest(layers: staticLayers, pixelsPerPagePoint: scale)
+        let request = StaticLayerRequest(layers: layersToComposite, pixelsPerPagePoint: scale)
         guard request != renderedRequest else { return }
         renderedRequest = request
 
@@ -427,6 +546,12 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
             let render = await staticRenderer.composite(for: request)
             guard let self, self.compositeGeneration == generation else { return }
             self.backdrop?.show(render)
+            // The fold-back, and the one moment it is safe: this composite
+            // contains every layer, so the lift is now a second copy of
+            // something already drawn — dropping it changes no pixel.
+            if self.selection?.selectedLayerID == nil {
+                self.backdrop?.hideLift()
+            }
         }
     }
 
@@ -533,6 +658,103 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
         }
     }
 
+    // MARK: - Committing a layer transform
+
+    /// The handover: one immutable committed value leaves the canvas runtime.
+    ///
+    /// This is the ink handover pattern verbatim (`Contract.md` — Owners,
+    /// Navigation). Everything about a transform in progress — the selection,
+    /// the grab, the per-frame value — stayed inside this runtime and reached
+    /// no file and no SwiftUI observation. At the lift, one `PageSpaceTransform`
+    /// crosses to `EditorSession`, which is the layer list's one writer, and
+    /// the change follows the ordinary save path from there.
+    ///
+    /// Returns whether the session took it. A refusal is put back by the
+    /// selection runtime rather than papered over: a picture that disagrees
+    /// with the file is worse than a drag that visibly did not stick.
+    ///
+    /// ## Undo, and exactly what is and is not proven about it
+    ///
+    /// `Contract.proposed.md` A10: the inverse — the prior transform — is
+    /// registered with **the responder chain's undo manager, PencilKit's own**,
+    /// exactly once per commit. There is no second manager, nothing wraps or
+    /// filters PencilKit's registrations, and undoing a layer edit re-emits the
+    /// prior value through this same path, so it saves like any other edit.
+    ///
+    /// The registration comes **after** the session accepted, and the ordering
+    /// is deliberately the opposite of `commit(_:)`'s. The shape tool registers
+    /// first because it is about to mutate `canvasView.drawing`, and PencilKit
+    /// may register an undo of its own for that assignment — registering first
+    /// is what keeps the two in the right order. A layer transform touches no
+    /// drawing at all, so there is no PencilKit registration to interleave
+    /// with, and the only real hazard is the opposite one: an undo entry
+    /// restoring a value the session refused to write. Asking first and
+    /// registering only on acceptance means exactly one registration per
+    /// committed edit and none per refusal, with nothing to unwind. The
+    /// explicit group is kept regardless, so the entry is one Cmd-Z step.
+    ///
+    /// The target is `self`, and that is deliberate rather than incidental:
+    /// `UndoManager` does not retain an action's target, and `willRetire`
+    /// already calls `removeAllActions(withTarget: self)` before this
+    /// controller is released. Registering against any other object would need
+    /// a second retirement hook and would be a second way to leave a dangling
+    /// target, which is a crash.
+    ///
+    /// **UNVERIFIED, and load-bearing for A10:** that PencilKit tolerates
+    /// foreign registrations in its manager at all. No spike has run —
+    /// `undoManager` walks the responder chain, so an unhosted controller
+    /// reports `nil` and *none of this is testable off a device*
+    /// (`Docs/Unproven.md` — Environment traps). If PencilKit ignores or drops
+    /// foreign actions the failure is silent and benign: the layer edit is
+    /// simply not undoable, the durable value is still correct, and nothing
+    /// crashes. It is a device check, and it is on Phillip's list.
+    ///
+    /// KNOWN DEFECT: exactly as for the shape tool, a layer transform committed
+    /// on a page that then leaves the live window is no longer undoable —
+    /// `willRetire` drops the actions because their target is about to stop
+    /// existing. Undo across a page turn is not a property this project claims
+    /// (`Contract.md` — Navigation: turning is not undoable), and a dangling
+    /// target is a crash, so the safe half is taken.
+    @discardableResult
+    func commitLayerTransform(
+        _ layerID: UUID,
+        from previous: PageSpaceTransform,
+        to committed: PageSpaceTransform
+    ) -> Bool {
+        precondition(
+            committed.isInvertible,
+            "layer \(layerID) was committed with a singular transform, which is not placeable"
+        )
+
+        let accepted = onLayerTransformed?(layerID, committed) ?? true
+        guard accepted else {
+            CanvasLog.event(.canvas, "layer \(layerID) transform refused by the session")
+            return false
+        }
+
+        // No manager in the responder chain — an unhosted canvas, which in
+        // practice means a test. The edit still landed; it is simply not
+        // undoable, and nothing here fabricates a manager to hold an action
+        // nobody can reach.
+        guard let undoManager = canvasView.undoManager else { return true }
+
+        undoManager.beginUndoGrouping()
+        undoManager.registerUndo(withTarget: self) { controller in
+            // Not actor-isolated, and undo is invoked from the main thread by
+            // the responder chain that reached it. Asserting that loudly is
+            // better than hopping and losing the ordering.
+            MainActor.assumeIsolated {
+                // Recursive by construction: running this registers the
+                // opposite move, which `UndoManager` files as the redo while it
+                // is undoing. That is how a value-restoring undo stays undoable
+                // and redoable indefinitely without a stack of its own.
+                controller.commitLayerTransform(layerID, from: committed, to: previous)
+            }
+        }
+        undoManager.endUndoGrouping()
+        return true
+    }
+
     /// Called by `PagedCanvasController` immediately before this page leaves
     /// the live window, after its ink has been handed over.
     ///
@@ -551,6 +773,11 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
     /// and a dangling target is a crash, so the safe half is taken here.
     func willRetire() {
         canvasView.undoManager?.removeAllActions(withTarget: self)
+        // The selection is canvas-session state and dies with the canvas. It
+        // also owns two recognizers on a view that is about to go, so leaving
+        // it installed would leave them behind.
+        selection?.remove()
+        selection = nil
     }
 
     // MARK: - Drawing transfer
@@ -629,6 +856,10 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
         // when no shape is being dragged — which is every zoom that is not also
         // a Pencil drag.
         shapeTool?.viewportChanged()
+        // Re-traces the selection chrome at the new scale, and returns
+        // immediately with nothing selected — which is every zoom on every page
+        // the user is merely reading.
+        selection?.viewportChanged()
         // After centering, so the mirror reads the settled offset for this
         // tick. One transform assignment, and nothing at all on a page with no
         // static layers — no composite is asked for here, at any zoom.

@@ -47,7 +47,12 @@ existing rules one level down rather than introducing new owners:
 | Committed layer values, held layer bytes | `EditorSession` (custody) | edit/save | app session |
 | Asset files | `DocumentStore` (import path) | import | across launches |
 
-Two rows are **AHEAD**, not forced until phase 4 builds manipulation:
+The first of the two rows below is now **FORCED (phase 4)** — selection and a
+transform in progress live in `PageCanvasController`'s own
+`LayerSelectionRuntime` and are checked by a structural test that fails if any
+of it appears in `EditorSession`. The second is still **AHEAD**: nothing
+decodes tiles, and the one decoded image phase 4 holds (the lifted layer) is
+owned by `PageBackdrop` for the length of a selection rather than cached.
 
 | State | Sole writer | Frequency | Lifetime |
 |---|---|---|---|
@@ -284,7 +289,7 @@ device — and lens rendering wants a bounded detail level anyway. Cheap to
 adopt, and it gates a flag that would otherwise destroy image data against a
 moving limit.
 
-## A10. *Undo* — one manager per page, two clients — **AHEAD (phase 4)**
+## A10. *Undo* — one manager per page, two clients — **AHEAD (phase 4 code is written; the spike still has not run)**
 
 Replace:
 
@@ -314,7 +319,26 @@ foreign registrations in its manager. Phase 4's device spike checks this
 before the amendment is adopted; if it does not tolerate them, this amendment
 is wrong and phase 4 needs a different design, not a workaround.
 
-## A11. *Navigation* — selection is the third drag claimant — **AHEAD (phase 4)**
+**Status after phase 4's code.** `PageCanvasController.commitLayerTransform`
+implements exactly this text — the responder chain's manager, the prior
+transform as the inverse, one explicit group per commit, target `self` so the
+existing `willRetire` cleanup covers it, and the undo re-emitting through
+`EditorSession` like any other edit. **The spike still has not run**, and it
+cannot run anywhere but on a device. Two things narrow the risk without
+removing it:
+
+- The registration happens **after** the session accepted, not before, which
+  is the opposite of the shape tool's order and deliberately so: a layer
+  transform mutates no `PKDrawing`, so there is no PencilKit registration to
+  interleave with, and the only real hazard is an undo entry restoring a value
+  that was refused.
+- If PencilKit ignores foreign registrations, the failure is **silent and
+  benign**: the layer edit is not undoable, the durable value is still correct,
+  and nothing crashes. So the spike is a yes/no on one Cmd-Z, not a
+  crash-hunt — but a silent failure is one nobody stumbles on, which is why it
+  has to be checked deliberately.
+
+## A11. *Navigation* — selection is the third drag claimant — **FORCED (phase 4, code is written and green)**
 
 Add after the paragraph settling the paging-vs-canvas drag contention:
 
@@ -337,8 +361,48 @@ fall-through rule is the part most likely to fight UIKit — if it does, the
 escape hatch is a selection chrome view owning its own recognizers, so
 arbitration happens by hit-testing rather than by recognizer delegates.
 
-**Do not adopt the `locked` bit until code reads it** — an unread bit is an
-undefined placeholder field, which *Forbidden patterns* bans.
+**One sentence needs amending before adoption, because the code does something
+narrower and better.** "With no selection, every touch behaves exactly as it
+does today — the blank-page path pays nothing" is implemented as *a page with
+no selectable layer builds no selection runtime at all*, so a blank page grows
+neither a tap recognizer nor a drag recognizer. That is the same narrowing
+`PageBackdrop` makes for transparency (paid per page that has a stack, not once
+for the app), and it makes the claim a property of the object graph rather than
+of a delegate's judgement. Suggested replacement for the first sentence:
+
+> With no selection, every touch behaves exactly as it does today, and a page
+> with nothing selectable on it carries no selection machinery at all.
+
+**The escape hatch as written cannot be built, and the reason belongs in the
+record.** A selection chrome *view* has nowhere to live: under the transparent
+`PKCanvasView` it receives no touches, because the canvas is above it and takes
+them; above the canvas it receives them and therefore eats every Pencil touch
+over the selected image, so you could no longer draw on top of a picture you
+had selected. Arbitration is still by hit test — `LayerDragRecognizer` asks the
+same unit-square question a view's `hitTest` would — it simply asks it inside a
+recognizer that declines instead of inside a view that must exist somewhere in
+the z-order. If this fights UIKit on device, the finding is that neither
+structure works, not that the hatch was skipped.
+
+**Scale and rotate are handle drags, not a pinch**, and that is a design
+decision this amendment should record. A `UIPinchGestureRecognizer` would
+contend directly with `PKCanvasView`'s own pinch-zoom — the one gesture
+*Navigation* hands to the framework outright — and winning that fight means
+either stealing zoom while an image is selected or losing the scale. Handles
+need no arbitration: they are a different *place*, and place is what the hit
+test already answers.
+
+~~**Do not adopt the `locked` bit until code reads it**~~ — **code now reads
+it**, in two owners: `LayerSelectionRuntime` refuses to begin a drag on a
+locked layer (so a locked image pans the page like bare paper, and its chrome
+is dashed and handleless to say so before the user finds out), and
+`EditorSession.transformLayer` refuses the durable edit outright. Its one
+writer is `EditorSession.setLayerLocked`, which no UI calls yet — exactly as no
+UI called `importImage` when phase 2 landed. An envelope written before
+`locked` existed decodes as unlocked; that read-forward is the same rule
+*Durable form* already states for the pre-layer page form, one level down, and
+it is the single most reversible call in phase 4 if Phillip would rather the
+old files simply fail.
 
 ## A12. *Performance* — the live-canvas bound survives layers — **FORCED (phase 1)**
 
