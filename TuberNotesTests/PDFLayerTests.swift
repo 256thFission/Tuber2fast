@@ -459,6 +459,39 @@ struct PDFLayerTests {
         #expect(!FileManager.default.fileExists(atPath: scratch.assetURL(assetID, "pdf").path))
     }
 
+    /// `evicted()` keeps a far page's layer list but drops its ink to
+    /// `.loading`, and a `.loading` page has no list to edit. That is a typed
+    /// refusal for the caller, never a trap: an evicted page is a state any
+    /// caller can reach by turning away.
+    @Test("Deleting a layer on an evicted page refuses with a typed error, never traps")
+    @MainActor
+    func deleteLayerOnAnEvictedPageRefusesLoudly() async throws {
+        let scratch = try Scratch()
+        let session = EditorSession(store: scratch.store(), debounce: .milliseconds(20))
+        await session.start()
+
+        // Four imported pages, so the last sits outside the prune radius of an
+        // early one.
+        let appended = try await session.importPDF(
+            pdf(
+                pageSizes: Array(repeating: CGSize(width: 612, height: 792), count: 4)
+            ) { _, _ in }
+        )
+        #expect(session.lastSaveError == nil)
+        let farPageID = appended[3]
+        let farLayerID = try #require(scratch.layersOnDisk(ofPage: farPageID).first).layerID
+
+        // Turning prunes: the last page is outside the new page ± 2 window, so
+        // its durable bytes drop and its ink becomes `.loading`.
+        turn(session, to: 1)
+
+        await #expect(throws: LayerEditError.pageNotReady(farPageID)) {
+            try await session.deleteLayer(farLayerID, fromPage: farPageID)
+        }
+        // And nothing was deleted: the page's layers survive untouched.
+        #expect(try scratch.layersOnDisk(ofPage: farPageID).count == 2)
+    }
+
     // MARK: - The layer split
 
     @Test("A page file is layer IDs, and each layer is its own file")

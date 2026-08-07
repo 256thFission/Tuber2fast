@@ -1522,6 +1522,19 @@ final class EditorSession {
             throw LayerEditError.pageNotFound(pageID)
         }
         let page = stateIndex(of: pageID)
+        // A page whose own bytes are not here has no layer list to edit —
+        // `layerListChanged` traps on it. An evicted far-away page is a state
+        // any caller can reach, not a session defect, so it is refused with a
+        // typed error rather than a trap; loading the page is the caller's
+        // repair. Deliberately checked without `requireLayerListIsEditable`,
+        // whose refusal guard would forbid the one deletion that repairs a
+        // refused page.
+        switch pageStates[page].ink {
+        case .clean, .live, .held, .saving:
+            break
+        case .loading, .unreadable:
+            throw LayerEditError.pageNotReady(pageID)
+        }
         guard let deleted = pageStates[page].staticLayers.first(
             where: { $0.layerID == layerID }
         ) else {
