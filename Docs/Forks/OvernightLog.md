@@ -407,6 +407,52 @@ appended at the bottom of each section. Branch: `canvas-feature-complete`
     layer is gone and the one beneath shows through") is stated more directly
     that way.
 
+## The single most important discovery of the night
+
+**`PKCanvasView` silently clamps `maximumZoomScale` to 10.** Measured, and
+undocumented: a plain `UIScrollView` keeps whatever it is given; a
+`PKCanvasView` reads back 10 for 11, 20, or 100.
+
+This is not a curiosity — it rewrites a premise the milestone was resting on:
+
+- **A9's premise is partly wrong.** Today's cap, `fitWidth × 8`, exceeds 10
+  whenever fit-width exceeds 1.25, which is every iPad in portrait. So most
+  devices were **already sitting on the framework's clamp**, not on our
+  arithmetic. The cap moved with the device far less than A9 claims — only the
+  smallest iPad in portrait (≈9.7) and Split View ever fell short of it.
+- **It decided the cap's value.** 1/20 page point per pixel — twenty device
+  pixels per page point — is exactly what the framework delivers at the 2×
+  grid every iPad has. Pinning it gains no detail; what it gains is a *stated*
+  number a durable claim can rest on, which is all A9 was ever for.
+- **Anything wanting deeper zoom needs a different ink surface, not a
+  different constant.** That is a much bigger statement than "raise the cap."
+
+The mechanism to catch it bit for real mid-run: the agent's first attempt
+pinned 1/40, the app wrote that to disk, and the next launch **crashed on the
+now-stale document**. That is the load-time refusal working — a document may
+not promise detail the canvas quietly will not give — and it is why the
+refusal exists at all.
+
+A test now asserts the clamp, so a future iOS that lifts it fails loudly
+rather than silently widening what documents may promise. It is measured on
+exactly one OS version (26.5, simulator) and is **behaviour, not contract**.
+
+## A decision I made against an agent's work
+
+The phase 3b agent wrote amendments A8 and A9 straight into `Contract.md` and
+tagged its commit `CONTRACT:`. **I kept its code and reverted its contract
+edit**, moving the text into `Contract.proposed.md` with everything else.
+
+`Contract.md`'s own words: "Every rule here is written by a human. No agent
+authors a rule, and no agent's output becomes a rule by having been
+committed." Every other lane staged its amendments; that one self-adopted.
+The agent itself flagged this and offered the separation.
+
+**The consequence to know:** `Contract.md` still says `pageWidth < pageHeight`
+while the code accepts landscape pages and has tests for them. The contract
+lags the code in exactly the places `Contract.proposed.md` lists — which is
+the gap that file exists to close in one deliberate pass.
+
 ## A cross-lane warning I checked, and the answer
 
 The phase 4 agent reported that `StaticLayerRenderTests`' pixel helper "labels

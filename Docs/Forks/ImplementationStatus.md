@@ -17,20 +17,31 @@ listed under *Owed evidence* rather than counted as done.
 | 1. Ink becomes a layer | **landed, reviewed, green** | `3a1a627` + review fixes `dee6044` | Independent review returned approve-with-nits; all findings fixed, the boundary test verified by reverting the fix |
 | 2. One `image` layer under the ink | **both halves landed, green** | `8e79ad6` (durable) + `8254cf6` (rendering) | Composite order, orientation, placement, the decode bound, the cache's byte bound and window eviction, and total refusal are asserted. Registration with ink at 120 Hz, overdraw, and both placeholder tints are device-only. |
 | 3a. `pdf` kind + the `layers/` split | **landed, green** | `b52221f` | Exit test verified by sabotage: a 5-page, 794 KB import, ink on page 4, asserts exactly one layer file rewritten by mtime **and** bytes. Amendments A13, A14 staged. |
-| 3b. per-page geometry, zoom cap | **not started** | — | A8/A9 still AHEAD. Consequence today: an imported landscape page is **letterboxed into the canonical portrait page**. |
-| 3c. base-and-lens, prefetch decode | **not started** | — | Wants spike 2 and `turn-settles-once`. Nothing rasterizes a PDF page anywhere in this build. |
-| 4. Transformable `image` layers | in progress overnight | — | Its arbitration and undo are device-only by nature; spike 3 is owed |
+| 3b. per-page geometry, zoom cap | **landed, green** | `f212587` | Mixed-geometry paging, per-page zoom floors, one shared ceiling, v2→v3 index read-forward. Found that `PKCanvasView` clamps `maximumZoomScale` to 10, which decided the cap's value. Contract half **reverted** — see below. |
+| 3c. base-and-lens, prefetch decode | **not started** | — | Wants spike 2 and `turn-settles-once`. Nothing rasterizes a PDF page anywhere in this build; the composite is fit-width detail and goes soft under deep zoom. |
+| 4. Transformable `image` layers | **landed, green** | `34acbe8` | Selection, handles, minus-one composite, `locked`, layer-edit undo. Arbitration, feel, and undo are device-only; spike 3 is owed. |
 | 5. The shape tool | **landed, green** | `6f72d18` | Synthesis and rasterized pixels asserted; everything between Pencil and stroke is device-only |
 
 ## Contract
 
 `f6522bd` adopted the phase 1 amendments (Owners golden rule 5 generalized;
-the *Durable form* layer-envelope block). Everything else the milestone needs
-is staged in [`Contract.proposed.md`](../Contract.proposed.md), marked LANDED
-/ FORCED / AHEAD. **The contract currently lags the code wherever an
-overnight lane landed a kind or a rule** — that gap is the first thing to
-close in the morning, and the proposed file is written to make closing it a
-matter of editing and moving text.
+the *Durable form* layer-envelope block) — the only human-authorized contract
+change in this branch. Everything else is staged in
+[`Contract.proposed.md`](../Contract.proposed.md) as A3–A15, marked LANDED /
+FORCED / AHEAD.
+
+**The contract lags the code, deliberately and in known places.** The most
+visible: `Contract.md` still says `pageWidth < pageHeight` while the code
+accepts landscape pages and tests them. One agent (phase 3b) wrote its
+amendments straight into `Contract.md`; that edit was **reverted** and its
+text staged with the rest, because the contract says no agent authors a rule
+and every other lane staged. Closing the gap is one deliberate editing pass,
+which is exactly what the proposed file is shaped for.
+
+Two staged items want a decision rather than a rubber stamp: **A15**, where an
+agent *widened a machine-checked rule* to ban `CoreGraphics`, and **A10**,
+whose premise (PencilKit tolerating foreign undo registrations) no spike has
+tested.
 
 ## Spikes
 
