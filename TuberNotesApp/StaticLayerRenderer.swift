@@ -76,7 +76,23 @@ actor StaticLayerRenderer {
     /// Requests being served right now, so two canvases asking for the same
     /// composite decode it once. The same idea as `EditorSession`'s
     /// `pageLoadsInFlight`, one level down.
-    private var inFlight: [CompositeKey: Task<StaticLayerRender, Never>] = [:]
+    ///
+    /// The full request travels with the task because the key deliberately
+    /// omits transforms (see `CompositeKey`): joining a running render on key
+    /// alone would hand a request for a *moved* layer the composite of where
+    /// the layer used to be — a wrong picture the caller then records as
+    /// satisfied. A non-matching request starts its own render and takes over
+    /// the slot; the superseded task still answers its own awaiters.
+    private var inFlight: [CompositeKey: (request: StaticLayerRequest, task: Task<StaticLayerRender, Never>)] = [:]
+
+    /// Awaited by every render task before it draws, when set. Exists so a
+    /// test can hold a render in flight deterministically; the app never sets
+    /// it.
+    private var renderGateForTesting: (@Sendable (StaticLayerRequest) async -> Void)?
+
+    func setRenderGateForTesting(_ gate: @escaping @Sendable (StaticLayerRequest) async -> Void) {
+        renderGateForTesting = gate
+    }
 
     private struct Entry {
         let request: StaticLayerRequest
@@ -145,7 +161,11 @@ actor StaticLayerRenderer {
             return entry.render
         }
 
-        if let running = inFlight[key] { return await running.value }
+        // Join a running render only when the *whole* request matches — the
+        // key alone says nothing about transforms.
+        if let running = inFlight[key], running.request == request {
+            return await running.task.value
+        }
 
         // KNOWN DEFECT: a `retain(layerIDs:)` that lands while this render is
         // in flight is undone by the `remember` below, so a page that left the
@@ -154,14 +174,22 @@ actor StaticLayerRenderer {
         // fix is a generation stamp compared after the await, and it is not
         // worth the machinery for a cache that self-corrects on the next
         // swipe.
+        let gate = renderGateForTesting
         let task = Task { [store] in
-            await Self.render(request, store: store)
+            if let gate { await gate(request) }
+            return await Self.render(request, store: store)
         }
-        inFlight[key] = task
+        inFlight[key] = (request, task)
         let render = await task.value
-        inFlight[key] = nil
 
-        remember(render, for: request, key: key)
+        // Only the key's latest render is remembered. A superseded render —
+        // one whose slot a newer request took over — still answers its own
+        // awaiters above, but caching it would park a stale transform under a
+        // key the newer request then misses forever.
+        if inFlight[key]?.task == task {
+            inFlight[key] = nil
+            remember(render, for: request, key: key)
+        }
         return render
     }
 

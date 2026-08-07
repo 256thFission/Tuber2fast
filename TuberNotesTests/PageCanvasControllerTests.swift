@@ -318,6 +318,205 @@ struct PageCanvasControllerTests {
         #expect(controller.canvasView.drawing.strokes.isEmpty)
     }
 
+    /// The clamp for hardware outside the supported pixel grid, in the form a
+    /// test can fail on. At a display scale of 1 — a trait collection not yet
+    /// attached, or a 1x external screen — the canonical cap asks for a zoom
+    /// scale of 20, which PKCanvasView silently refuses; the runtime clamps to
+    /// what the canvas delivers instead of trapping, because the durable cap
+    /// is validated against 2x hardware and a coarser display is outside that
+    /// promise, not a violation of it.
+    @Test("A display below the supported scale clamps the zoom ceiling instead of trapping")
+    func subMinimumDisplayScaleClampsInsteadOfTrapping() {
+        let controller = PageCanvasController(toolPicker: PKToolPicker(), projection: .canonical)
+        controller.traitOverrides.displayScale = 1
+        let root = controller.view!
+        root.frame = CGRect(x: 0, y: 0, width: 820, height: 1180)
+        root.layoutIfNeeded()
+
+        let canvas = controller.canvasView
+        #expect(Double(canvas.maximumZoomScale) == PageProjection.runtimeMaximumZoomScale)
+        #expect(canvas.maximumZoomScale > canvas.minimumZoomScale)
+        #expect(canvas.zoomScale <= canvas.maximumZoomScale)
+    }
+
+    // MARK: - Selection feeding the composite
+
+    @Test("Selection feeds the composite request: minus the selected layer, back in on deselect")
+    func selectionFeedsTheCompositeRequest() async throws {
+        let store = try scratchStore()
+        let first = try await imageLayer(
+            store: store, color: .red,
+            transform: PageSpaceTransform(a: 200, b: 0, c: 0, d: 100, tx: 50, ty: 50)
+        )
+        let second = try await imageLayer(
+            store: store, color: .green,
+            transform: PageSpaceTransform(a: 200, b: 0, c: 0, d: 100, tx: 50, ty: 400)
+        )
+
+        let controller = PageCanvasController(
+            toolPicker: PKToolPicker(), projection: .canonical,
+            staticRenderer: StaticLayerRenderer(store: store)
+        )
+        let root = controller.view!
+        root.frame = CGRect(x: 0, y: 0, width: 820, height: 1180)
+        controller.setStaticLayers([first, second])
+        root.layoutIfNeeded()
+
+        let full = try #require(controller.renderedRequestForTesting)
+        #expect(full.layers.map(\.layerID) == [first.layerID, second.layerID])
+
+        let selection = try #require(controller.selection)
+        selection.select(first)
+        // The exclusion may only follow the lift, so the request changes once
+        // the selected layer's source has decoded.
+        try await waitUntil("the composite request excludes the selected layer") {
+            controller.renderedRequestForTesting?.layers.map(\.layerID) == [second.layerID]
+        }
+
+        selection.select(nil)
+        try await waitUntil("deselection re-includes the layer") {
+            controller.renderedRequestForTesting?.layers.map(\.layerID) == [first.layerID, second.layerID]
+        }
+    }
+
+    @Test("Switching selection A to B never leaves A unrepresented")
+    func switchingSelectionHoldsTheHandover() async throws {
+        let store = try scratchStore()
+        let a = try await imageLayer(
+            store: store, color: .red,
+            transform: PageSpaceTransform(a: 200, b: 0, c: 0, d: 100, tx: 50, ty: 50)
+        )
+        let b = try await imageLayer(
+            store: store, color: .green,
+            transform: PageSpaceTransform(a: 200, b: 0, c: 0, d: 100, tx: 50, ty: 400)
+        )
+
+        let renderer = StaticLayerRenderer(store: store)
+        let controller = PageCanvasController(
+            toolPicker: PKToolPicker(), projection: .canonical,
+            staticRenderer: renderer
+        )
+        let root = controller.view!
+        root.frame = CGRect(x: 0, y: 0, width: 820, height: 1180)
+        controller.setStaticLayers([a, b])
+        root.layoutIfNeeded()
+
+        let backdrop = try #require(controller.backdrop)
+        let page = backdrop.pageLayerForTesting
+        let liftLayer = backdrop.liftLayerForTesting
+
+        try await waitUntil("the full composite lands") { page.contents != nil }
+        let fullContents = contents(of: page)
+
+        let selection = try #require(controller.selection)
+        selection.select(a)
+        try await waitUntil("A lifts") { backdrop.hasLift }
+        try await waitUntil("the minus-A composite lands") { self.contents(of: page) !== fullContents }
+        let minusA = contents(of: page)
+        let liftA = contents(of: liftLayer)
+        #expect(liftA != nil)
+
+        // Hold the next composite — the one that re-includes A — in flight,
+        // so the handover window is a state the test can inspect rather than
+        // a race it hopes to lose.
+        let hold = CompositeHold()
+        await renderer.setRenderGateForTesting { _ in await hold.wait() }
+
+        selection.select(b)
+        // B's source has decoded once the controller asks for the minus-B
+        // composite; the request seam is how the test knows it happened.
+        try await waitUntil("the minus-B composite is requested") {
+            controller.renderedRequestForTesting?.layers.map(\.layerID) == [a.layerID]
+        }
+
+        // The vanish window this test refuses: while the composite on screen
+        // still excludes A, the lift must still be drawing A — swapping it to
+        // B here would leave A in neither the composite nor the lift.
+        #expect(
+            contents(of: liftLayer) === liftA,
+            "the lift swapped to B while the composite on screen still excludes A"
+        )
+        #expect(contents(of: page) === minusA)
+
+        await hold.open()
+        try await waitUntil("the lift swaps to B") { self.contents(of: liftLayer) !== liftA }
+        #expect(
+            contents(of: page) !== minusA,
+            "the swap must land with the composite that re-includes A, never before it"
+        )
+    }
+
+    /// Blocks every gated render until opened. Late waiters pass through once
+    /// opened.
+    private actor CompositeHold {
+        private var opened = false
+        private var waiters: [CheckedContinuation<Void, Never>] = []
+
+        func wait() async {
+            if opened { return }
+            await withCheckedContinuation { waiters.append($0) }
+        }
+
+        func open() {
+            opened = true
+            for waiter in waiters { waiter.resume() }
+            waiters.removeAll()
+        }
+    }
+
+    // MARK: - Static-layer helpers
+
+    /// `CALayer.contents` as an identity, or nil. `Any?` cannot be compared
+    /// with `!==` directly.
+    private func contents(of layer: CALayer) -> AnyObject? {
+        guard let contents = layer.contents else { return nil }
+        return contents as AnyObject
+    }
+
+    /// A store over a unique scratch directory, the same shape as
+    /// `StaticLayerRenderTests` uses.
+    private func scratchStore() throws -> DocumentStore {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("tubernotes-controller-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(
+            at: root.appendingPathComponent("JustACanvas.tubernotes/pages"),
+            withIntermediateDirectories: true
+        )
+        return DocumentStore(directoryURL: root.appendingPathComponent("JustACanvas.tubernotes"))
+    }
+
+    /// Writes a solid PNG asset and returns the layer envelope naming it.
+    private func imageLayer(
+        store: DocumentStore,
+        color: UIColor,
+        transform: PageSpaceTransform
+    ) async throws -> LayerEnvelope {
+        let png = UIGraphicsImageRenderer(size: CGSize(width: 64, height: 64)).pngData { context in
+            color.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 64, height: 64))
+        }
+        let assetID = UUID()
+        try await store.writeAsset(png, assetID: assetID, format: .png)
+        return try LayerEnvelope.image(
+            layerID: UUID(),
+            ref: ImageLayerRef(assetID: assetID, format: .png),
+            pageSpaceTransform: transform
+        )
+    }
+
+    /// Polls until `condition` holds, or fails after a second.
+    private func waitUntil(
+        _ what: String,
+        _ condition: () -> Bool,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) async throws {
+        for _ in 0..<200 {
+            if condition() { return }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        Issue.record("timed out waiting for \(what)", sourceLocation: sourceLocation)
+    }
+
     /// A laid-out canvas for one page's geometry, in a portrait viewport.
     private func hostedCanvas(
         geometry: PageGeometry,

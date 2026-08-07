@@ -124,9 +124,29 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
     /// after the selection moved on is dropped rather than shown.
     private var liftGeneration = 0
 
+    /// The layer the backdrop's lift is currently drawing, or `nil` when
+    /// nothing is lifted. The lift may only be replaced or dropped once the
+    /// composite on screen re-includes this layer — `PageBackdrop`'s own
+    /// invariant that excluding a layer is only safe once something else draws
+    /// it.
+    private var liftedLayerID: UUID?
+
+    /// A decoded lift waiting for the composite that re-includes the
+    /// *previous* lifted layer. Switching the selection A→B must not replace
+    /// A's lift while A is still excluded from the composite on screen — that
+    /// is a window in which A is drawn nowhere. The swap happens in
+    /// `requestCompositeIfNeeded`'s completion, synchronously with showing the
+    /// composite that contains A again, so no frame renders between them.
+    private var pendingLift: (image: CGImage, layer: LayerEnvelope)?
+
     /// The request currently rendering or rendered, so a repeated layout pass
     /// at one size asks for nothing.
     private var renderedRequest: StaticLayerRequest?
+
+    /// The last composite request this controller issued, read only by tests:
+    /// the minus-one wiring — selection feeding the composite request — is
+    /// otherwise observable only by pixel diffing.
+    var renderedRequestForTesting: StaticLayerRequest? { renderedRequest }
 
     /// Increments on every composite request, so an answer that arrives after
     /// the page's layers changed is dropped rather than shown. A late render
@@ -363,9 +383,37 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
         let previousFitWidth = zoomRangeBounds.map { $0.width / geometry.width }
         let ratio = previousFitWidth.map { canvasView.zoomScale / $0 } ?? 1
 
-        let ceiling = projection.maximumZoomScale(
-            displayScale: Double(max(traitCollection.displayScale, 1))
-        )
+        let displayScale = Double(max(traitCollection.displayScale, 1))
+        let required = projection.maximumZoomScale(displayScale: displayScale)
+
+        // The durable cap is validated against `minimumSupportedDisplayScale`
+        // (2x — every iPad), so on supported hardware `required` never exceeds
+        // what PKCanvasView delivers and the read-back precondition below
+        // still traps on any real violation of that promise. A coarser
+        // display — a trait collection not yet attached, or a 1x external
+        // screen — asks for a scale the canvas silently refuses, and that is
+        // not the document's promise breaking; it is hardware outside the
+        // promise. RULE: below the minimum supported display scale the
+        // ceiling clamps to `runtimeMaximumZoomScale`, loudly. Clamping is
+        // otherwise forbidden (`Contract.md` — Invalid states fail loud),
+        // which is why this clamp is confined to display scales no supported
+        // iPad has: the alternative is crashing the app for plugging in a
+        // monitor. The document's detail promise is unchanged and honored in
+        // full the moment the page is back on 2x glass.
+        let ceiling: Double
+        if displayScale < PageProjection.minimumSupportedDisplayScale,
+           required > PageProjection.runtimeMaximumZoomScale {
+            ceiling = PageProjection.runtimeMaximumZoomScale
+            CanvasLog.event(
+                .canvas,
+                "zoom ceiling clamped: display scale \(displayScale) is below the supported "
+                    + "minimum \(PageProjection.minimumSupportedDisplayScale); the cap of "
+                    + "\(projection.zoomCapPagePointsPerPixel) page points per pixel asks for "
+                    + "scale \(required) and the canvas delivers \(ceiling)"
+            )
+        } else {
+            ceiling = required
+        }
         // A page so small that a whole one of it fits below the deepest zoom
         // the document allows. It is an invalid state rather than a range to
         // reorder: the page would open above its own ceiling, and both the
@@ -453,6 +501,8 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
             backdrop = nil
             selection?.remove()
             selection = nil
+            liftedLayerID = nil
+            pendingLift = nil
             // Back to the cheap path: an opaque canvas is one fewer full-screen
             // blend per frame.
             if isViewLoaded {
@@ -486,7 +536,12 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
         installed.onTransformPreview = { [weak self] transform in
             // One frame of a drag: a single transform assignment on one layer.
             // Nothing is published, nothing is saved, nothing is decoded.
-            self?.backdrop?.moveLift(to: transform)
+            //
+            // Only while the lift draws the selected layer: during an A→B
+            // handover the lift still shows A, and moving it with B's
+            // transform would drag the wrong picture.
+            guard let self, self.liftedLayerID == self.selection?.selectedLayerID else { return }
+            self.backdrop?.moveLift(to: transform)
         }
         installed.onTransformCommitted = { [weak self] layerID, previous, committed in
             self?.commitLayerTransform(layerID, from: previous, to: committed) ?? true
@@ -513,6 +568,8 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
     private func selectionChanged() {
         liftGeneration += 1
         let generation = liftGeneration
+        // Whatever swap was queued is for a selection that no longer exists.
+        pendingLift = nil
 
         guard let selected = selection?.selectedLayer,
               let staticRenderer,
@@ -538,10 +595,27 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
                     "layer \(selected.layerID) selected but could not be lifted; "
                         + "it stays in the composite"
                 )
+                if self.liftedLayerID != nil {
+                    // A previous layer's lift is still up but no longer
+                    // matches the selection; fold it back into the full
+                    // composite (the completion drops it once that lands).
+                    self.requestCompositeIfNeeded()
+                }
                 return
             }
-            self.backdrop?.showLift(image, at: selected.pageSpaceTransform)
-            self.requestCompositeIfNeeded()
+            if self.backdrop?.hasLift == true, self.liftedLayerID != selected.layerID {
+                // Switching A→B: the composite on screen excludes A and only
+                // the lift draws it. Hold A's lift until the composite that
+                // re-includes A lands, and swap to B in the same main-actor
+                // stretch that shows it — no frame in which either layer is
+                // unrepresented.
+                self.pendingLift = (image, selected)
+                self.requestCompositeIfNeeded()
+            } else {
+                self.backdrop?.showLift(image, at: selected.pageSpaceTransform)
+                self.liftedLayerID = selected.layerID
+                self.requestCompositeIfNeeded()
+            }
         }
     }
 
@@ -556,7 +630,13 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
     /// that excludes it, so a whole gesture, and every commit inside it, causes
     /// exactly zero re-composites.
     private var layersToComposite: [LayerEnvelope] {
-        guard let selected = selection?.selectedLayerID, backdrop?.hasLift == true else {
+        // The selected layer leaves the composite only once something else
+        // draws it — the lift already showing it, or the pending swap that
+        // will show it synchronously with this composite landing. A lift left
+        // over from a *previous* selection excludes nothing.
+        guard let selected = selection?.selectedLayerID,
+              liftedLayerID == selected || pendingLift?.layer.layerID == selected
+        else {
             return staticLayers
         }
         return staticLayers.filter { $0.layerID != selected }
@@ -614,11 +694,22 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
             let render = await staticRenderer.composite(for: request)
             guard let self, self.compositeGeneration == generation else { return }
             self.backdrop?.show(render)
-            // The fold-back, and the one moment it is safe: this composite
-            // contains every layer, so the lift is now a second copy of
-            // something already drawn — dropping it changes no pixel.
-            if self.selection?.selectedLayerID == nil {
+            if let pending = self.pendingLift {
+                // The A→B swap: this composite re-includes the previously
+                // lifted layer, so replacing the lift here — in the same
+                // main-actor stretch, before any frame renders — leaves no
+                // moment in which either layer is unrepresented.
+                self.pendingLift = nil
+                self.backdrop?.showLift(pending.image, at: pending.layer.pageSpaceTransform)
+                self.liftedLayerID = pending.layer.layerID
+            } else if self.selection?.selectedLayerID != self.liftedLayerID {
+                // The fold-back, and the one moment it is safe: this composite
+                // contains the lifted layer, so the lift is now a second copy
+                // of something already drawn — dropping it changes no pixel.
+                // Reached on deselection and when a lift outlived its
+                // selection (a switch whose new layer could not be decoded).
                 self.backdrop?.hideLift()
+                self.liftedLayerID = nil
             }
         }
     }
