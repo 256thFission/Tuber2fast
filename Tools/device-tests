@@ -1,0 +1,176 @@
+#!/bin/bash
+# What `Tools/device --digest` says about a capture, held against fixtures.
+#
+#   Tools/device-tests        run every case, print a line each, exit non-zero
+#                             on the first failing expectation
+#
+# WHY THIS EXISTS. `digest_trace` is the only part of Tools/device that runs
+# without an iPad, and it is the part that speaks last: whatever it prints is
+# what ends up quoted in a pull request. Its failure mode is not an error, it is
+# a *sentence*. It once answered a launch-time crash with "NO TRACE CAPTURED",
+# text that tells the reader nothing was observed — the most alarming case
+# wearing the most boring words. Nothing about that is visible from reading the
+# script, and no device run would have caught it either, because the console it
+# needs is one from a build that crashed.
+#
+# So the fixtures below are consoles, written by hand, one per thing that can
+# come out of an iPad. Each case asserts on the *words*: what must appear, and —
+# more important — what must not.
+#
+# This is NOT run by CI and must not become a merge gate. CONTRIBUTING.md keeps
+# every script in Tools/ out of what "green" means, and this file is a script in
+# Tools/. Run it when you touch the digest; a change to digest_trace with no run
+# of this is a change nobody checked.
+
+set -uo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+DEVICE="$REPO_ROOT/Tools/device"
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+
+PASSED=0
+FAILED=0
+
+# One case: a fixture body, then any number of expectations against the digest
+# of it. `must` and `must_not` are separate on purpose — a summariser is judged
+# at least as much by what it does not say.
+CASE_NAME=""
+CASE_OUTPUT=""
+
+begin() {
+  CASE_NAME="$1"
+  local body="$2"
+  local fixture="$WORK/${CASE_NAME// /-}.log"
+  printf '%s' "$body" >"$fixture"
+  CASE_OUTPUT="$("$DEVICE" --digest "$fixture" 2>&1)"
+  printf '\n── %s ──\n' "$CASE_NAME"
+}
+
+must() {
+  if printf '%s' "$CASE_OUTPUT" | grep -qF -- "$1"; then
+    printf '  ✓ says %s\n' "$(printf '%q' "$1")"; PASSED=$((PASSED + 1))
+  else
+    printf '  ✗ DOES NOT SAY %s\n' "$(printf '%q' "$1")" >&2
+    printf '%s\n' "$CASE_OUTPUT" | sed 's|^|        |' >&2
+    FAILED=$((FAILED + 1))
+  fi
+}
+
+must_not() {
+  if printf '%s' "$CASE_OUTPUT" | grep -qF -- "$1"; then
+    printf '  ✗ SAYS %s, AND MUST NOT\n' "$(printf '%q' "$1")" >&2
+    printf '%s\n' "$CASE_OUTPUT" | sed 's|^|        |' >&2
+    FAILED=$((FAILED + 1))
+  else
+    printf '  ✓ does not say %s\n' "$(printf '%q' "$1")"; PASSED=$((PASSED + 1))
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# A Swift trap during launch, before the app logged anything.
+#
+# This is CanvasFeatureComplete device spike 1 variant B's expected result: it
+# inserts a subview into PKCanvasView, which has crashed UIKit in
+# _delayTouchesForEvent: in this project before. A crash IS the spike's answer,
+# so a digest that calls it silence loses the whole run.
+begin "swift trap with no trace at all" "$(cat <<'EOF'
+Launching application...
+TuberNotes/PageCanvasController.swift:212: Fatal error: Unexpectedly found nil while unwrapping an Optional value
+2026-08-07 09:14:02.113 TuberNotes[913:44201] Trace/BPT trap: 5
+EOF
+)"
+must "THE PROCESS CRASHED"
+must "Fatal error:"
+must_not "NO TRACE CAPTURED"
+# The exact false sentence the old digest produced for this fixture.
+must_not "nothing was observed"
+
+# ---------------------------------------------------------------------------
+# The same crash, after the app got far enough to trace. The counts must still
+# be reported — and the crash must not be buried under them.
+begin "swift trap after a real trace" "$(cat <<'EOF'
+TN[lifecycle] app launched
+TN[canvas] session ready; pages=3
+TN[canvas] first touch reached the canvas; types=[2]
+TN[canvas] SPIKE mirror installing variant=inside: INSERTING SUBVIEW INTO PKCanvasView at index 0
+TuberNotes/SpikeMirrorFidelity.swift:152: Fatal error: -[UIGestureRecognizer _delayTouchesForEvent:]
+EOF
+)"
+must "THE PROCESS CRASHED"
+must "session ready:      yes"
+must "first touch:        reached the canvas"
+must "trap:               PRESENT"
+must_not "NO TRACE CAPTURED"
+
+# ---------------------------------------------------------------------------
+# A native crash devicectl reports with no Swift wording and no app output.
+begin "native crash, no app output" "$(cat <<'EOF'
+Launching application...
+Application terminated: EXC_BAD_ACCESS (SIGSEGV) at 0x0000000000000010
+EOF
+)"
+must "THE PROCESS CRASHED"
+must_not "NO TRACE CAPTURED"
+
+# ---------------------------------------------------------------------------
+# The app's own uncaught-NSException handler. Distinct from a trap: this one
+# leaves TN[fatal] behind, and both must be reported as what they are.
+begin "uncaught NSException" "$(cat <<'EOF'
+TN[lifecycle] app launched
+TN[fatal] UNCAUGHT NSInvalidArgumentException: -[NSNull length]: unrecognized selector
+  0   CoreFoundation   0x0000000180b3c1f4
+EOF
+)"
+must "TN[fatal] PRESENT"
+must "trap:               none"
+must_not "NO TRACE CAPTURED"
+
+# ---------------------------------------------------------------------------
+# Genuinely nothing. This is the one case that may say NO TRACE CAPTURED, and
+# it must never print counts.
+begin "empty capture" ""
+must "NO TRACE CAPTURED"
+must_not "THE PROCESS CRASHED"
+must_not "saves:"
+
+# ---------------------------------------------------------------------------
+# A stream with output but no trace — a launch without TN_TRACE, or an attach
+# to an already-running process. Also NO TRACE CAPTURED, and the explanation
+# must no longer claim Release compiles the mirror out, because it does not.
+begin "launched without TN_TRACE" "$(cat <<'EOF'
+Launching application...
+Launched application with com.tubernotes.greenfield.dev bundle identifier.
+EOF
+)"
+must "NO TRACE CAPTURED"
+must "gated only on TN_TRACE"
+must_not "THE PROCESS CRASHED"
+must_not "DEBUG-only"
+
+# ---------------------------------------------------------------------------
+# An ordinary good session. Nothing here may read as a crash, and the digest
+# must still refuse to render a verdict.
+begin "clean session" "$(cat <<'EOF'
+TN[lifecycle] app launched
+TN[canvas] session ready; pages=2
+TN[canvas] first touch reached the canvas; types=[2]
+TN[save] serialized drawing snapshot; bytes=8112 duration=0.004 mainThread=false
+TN[save] wrote 1 page file(s) of 2
+TN[save] wrote 1 page file(s) of 2
+TN[canvas] appended page 3
+EOF
+)"
+must "saves:              2"
+must "serialization on main thread:"
+must "mainThread=false"
+must "trap:               none"
+must "No verdict was rendered here"
+must_not "THE PROCESS CRASHED"
+must_not "NO TRACE CAPTURED"
+
+# ---------------------------------------------------------------------------
+printf '\n── result ──\n'
+printf '  %s expectation(s) held, %s failed\n' "$PASSED" "$FAILED"
+[ "$FAILED" -eq 0 ] || exit 1
+exit 0

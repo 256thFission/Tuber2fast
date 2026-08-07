@@ -15,10 +15,16 @@
 //      exactly that reason (see `PageCanvasController.pageBoundary`).
 //
 // Everything here compiles only under TN_SPIKE_MIRROR (see `project.yml`,
-// `TN_SPIKE_CONDITIONS`). With the flag off this file contributes nothing and
-// the app behaves identically. Variant selection is at launch, via the
-// TN_SPIKE_MIRROR_VARIANT environment variable: unset or "sibling" runs A,
-// "inside" runs B.
+// `TN_SPIKE_CONDITIONS`), in Debug or Release. With the flag off this file
+// contributes nothing and the app behaves identically. Variant selection is at
+// launch, via the TN_SPIKE_MIRROR_VARIANT environment variable: unset or
+// "sibling" runs A, "inside" runs B; `Tools/device` forwards that variable to
+// the device when it is set in the invoking shell.
+//
+// Variant B is expected to crash, and a crash is its answer. The trap will be
+// a `Fatal error:` or a signal, not an NSException, so nothing prints
+// TN[fatal] — `Tools/device`'s digest greps for the trap itself, ahead of any
+// question of whether the capture is empty.
 //
 // The contract's frame-path rules apply even here, because latency is what is
 // being measured: the per-tick path is one CATransform3D assignment plus a few

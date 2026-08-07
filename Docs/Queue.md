@@ -56,32 +56,32 @@ derived artifact reaching disk, and a cache that states no bound.
 three rules, fails the suite. The recursion is covered by the checker's own
 tests, because an untested checker can go dead and keep passing.
 
-## loud-by-default — the build five people hold emits nothing
+## loud-by-default — the loud path has still never run on an iPad
 
-`CanvasLog`'s stderr mirror is wrapped in `#if DEBUG`. `device.yml` archives
-`-configuration Release` and distributes that build to every registered iPad, so
-the only sink a person can read without a Mac is compiled out of the only build
-most contributors will ever run. The loud path has never been exercised by the
-build that ships.
+The mechanical half is done. `CanvasLog`'s stderr mirror carries no
+configuration check: `TN_TRACE` is the sole gate, read once per process into a
+`static let`, so a launch that does not set it pays a branch per event and never
+materializes the environment. `Tools/device` grows `--release`, forwards
+`TN_SPIKE_MIRROR_VARIANT` alongside `TN_TRACE`, and its digest looks for a trap
+(`Fatal error:`, `Assertion failed:`, `EXC_BAD_ACCESS`, `SIGABRT`,
+`Trace/BPT trap`, and the rest) **before** deciding a stream is empty — a crash
+now reads as a crash. `Tools/device-tests` holds that digest against a fixture
+per outcome and fails against the old one. `CONTRIBUTING.md` no longer claims a
+Release build emits nothing, and now lists `CanvasLog` as *requiring* device
+evidence, which is the honest consequence of shipping the loud path.
 
-`TN_TRACE` is already the real gate, costs nothing on a home-screen launch, and
-`devicectl --environment-variables` reaches an ad hoc build. Deleting the
-`#if DEBUG` turns five iPads into evidence sources for every item below this one.
+What is left is the part no build machine can do:
 
-One defect travels with it:
+- **Nobody has watched a Release build talk.** `xcodebuild build -configuration
+  Release` compiles; that is not the same as an iPad emitting through the mirror.
+- **No planted trap has been seen through the fixed digest on real hardware.**
+  The fixtures are hand-written consoles, not a console an iPad produced.
 
-- `Tools/device`'s `digest_trace` returns early unless the stream contains `TN[`,
-  and counts fatals by grepping `TN[fatal]`. A Swift trap writes `Fatal error:`
-  and neither. A crash during launch is therefore reported as
-  `NO TRACE CAPTURED`, whose own text explains it as nothing having been
-  observed — the tool's most alarming case reads as its most boring one. Grep for
-  a trap before the no-trace gate, and correct `CONTRIBUTING.md`'s claim that a
-  Release build emits nothing.
-
-`CONTRIBUTING.md` lists `CanvasLog` as needing no device evidence.
+Spike 1 variant B answers both at once for free: it is expected to trap, and
+that trap arrives on the same capture as the trace.
 
 **Exit:** a Release build on a registered iPad, launched with `TN_TRACE` set,
-produces a readable trace, and a deliberately planted trap is reported by the
+produces a readable trace, and a real trap on that hardware is reported by the
 digest rather than read as silence.
 
 
@@ -218,7 +218,7 @@ pushed to it. Settle where this repository lives before wiring CI to it.
 `Tools/` is four files — `pinned-simulator`, `setup`, `device`, and
 `machines`. Everything mechanical about it has been exercised on exactly one
 Mac and one iPad: the device diagnosis to READY, BLOCKED, and
-MISCONFIGURED; the digest against captured, empty, release, and crash fixtures;
+MISCONFIGURED; the digest against the fixtures now kept in `Tools/device-tests`;
 the structural tests against a planted violation; the CI log parser against
 compile, assertion, zero-test, and linker fixtures.
 
