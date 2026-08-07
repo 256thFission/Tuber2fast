@@ -42,6 +42,26 @@ Nothing here is a reason not to ship. It is a reason not to be surprised.
 - **Pencil feel, stroke fidelity, palm rejection, and Pencil/touch separation
   are unrendered.** They are Phillip's verdict alone, and no mechanical evidence
   substitutes.
+- **The shape tool has never met a Pencil.** What a shape *is* is proven
+  mechanically — the strokes, the ink they carry, and the pixels PencilKit
+  renders from them are all asserted in `ShapeToolTests`. Everything between
+  the Pencil and those strokes is not, and none of it can be:
+  - that a Pencil drag reaches `PencilDragRecognizer` at all, and that
+    recognizing on touch-down beats the enclosing scroll views to the claim
+    rather than losing the first few points to a pan;
+  - that a finger still pans, pinches, and turns the page with the tool on —
+    the recognizer refuses non-Pencil touches, but only a hand proves the
+    scroll views still see them;
+  - that `PKCanvasView.isDrawingEnabled = false` suppresses freehand ink
+    without suppressing anything else, and that it restores cleanly;
+  - that the `CAShapeLayer` preview is visible *above* existing ink rather
+    than beneath it, and that it tracks the Pencil without lag;
+  - that a committed shape is **one** undo step. `undoManager` is `nil` for an
+    unhosted canvas, so whether PencilKit registers an undo of its own for a
+    programmatic `drawing` assignment is unmeasured, and the commit is written
+    to be correct either way. One Cmd-Z must remove a whole rectangle;
+  - and whether a shape feels like the pen that drew it. That is a verdict,
+    not a measurement.
 
 ## Nothing exercises a touch
 

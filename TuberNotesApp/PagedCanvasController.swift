@@ -100,6 +100,14 @@ final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
     private var isEditable = false
     private var hasSettledInitialPage = false
 
+    /// The shape the Pencil draws, or `nil` for freehand ink.
+    ///
+    /// It lives here for the same reason the tool picker does: the active tool
+    /// is this runtime's state (`Contract.md` — Owners), one setting for the
+    /// document rather than one per page, so choosing "rectangle" and turning
+    /// the page does not silently put the pen back in your hand.
+    private(set) var shapeTool: ShapeKind?
+
     init() {
         super.init(nibName: nil, bundle: nil)
     }
@@ -183,6 +191,17 @@ final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
         isEditable = true
         for case .canvas(let page) in slots.values {
             page.markEditable()
+        }
+    }
+
+    /// Selects the shape a Pencil drag commits on every page, live or later.
+    ///
+    /// An intention from the SwiftUI root by way of `EditorSession`; nothing
+    /// about it is durable, and no page's ink changes here.
+    func setShapeTool(_ kind: ShapeKind?) {
+        shapeTool = kind
+        for case .canvas(let page) in slots.values {
+            page.setShapeTool(kind)
         }
     }
 
@@ -272,6 +291,10 @@ final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
             switch slot {
             case .canvas(let page):
                 onPageRetiring?(index, page.drawingSnapshot())
+                // After the handover and before the release: the ink is safe,
+                // and what goes now is only this page's undo actions, whose
+                // target is about to stop existing.
+                page.willRetire()
                 page.willMove(toParent: nil)
                 page.view.removeFromSuperview()
                 page.removeFromParent()
@@ -355,6 +378,11 @@ final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
         page.onDrawingChanged = { [weak self] in
             self?.onDrawingChanged?(index)
         }
+
+        // A page built while the shape tool is on draws shapes too. Applied
+        // after the install for the same reason the callback is: nothing about
+        // the tool may participate in loading a page's ink.
+        page.setShapeTool(shapeTool)
 
         if isEditable { page.markEditable() }
         return page

@@ -267,6 +267,18 @@ final class EditorSession {
         return created
     }
 
+    /// An intention from the SwiftUI root: which idealized shape a Pencil drag
+    /// commits, or `nil` for ordinary freehand ink.
+    ///
+    /// Forwarded, not stored. The active tool is the paging runtime's state
+    /// (`Contract.md` — Owners), and a copy kept here would be a second writer
+    /// of it. This exists only so the root sends an intention to the session
+    /// rather than reaching into the runtime, which is the one direction the
+    /// owners diagram allows.
+    func setShapeTool(_ kind: ShapeKind?) {
+        pages.setShapeTool(kind)
+    }
+
     @ObservationIgnored private var liveRuntime: PagedCanvasController?
 
     private let store: DocumentStore

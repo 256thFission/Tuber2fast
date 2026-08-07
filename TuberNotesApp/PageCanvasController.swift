@@ -60,6 +60,19 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
     private var hasLoggedFirstTouch = false
     private var hasLoggedFirstChange = false
 
+    /// The shape tool's live half, built with the view. See `ShapeToolRuntime`:
+    /// it is this controller's own runtime rather than a second owner, and it
+    /// writes nothing — it hands finished strokes back to `commit(_:)`, which
+    /// is the one writer of the live drawing.
+    private var shapeTool: ShapeToolRuntime?
+
+    /// The shape the tool would draw, remembered until the view exists.
+    ///
+    /// `PagedCanvasController` sets the tool on every canvas, including one
+    /// built while the tool is already on, and a canvas is configured before
+    /// anything guarantees its view has loaded.
+    private var shapeKind: ShapeKind?
+
     #if TN_SPIKE_MIRROR
     /// THROWAWAY SPIKE — CanvasFeatureComplete device spike 1, "Mirror
     /// fidelity". Compiled only under TN_SPIKE_MIRROR; see
@@ -122,6 +135,13 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
         pageBoundary.borderColor = UIColor.separator.cgColor
         canvasView.layer.addSublayer(pageBoundary)
         updatePageBoundary()
+
+        let shapes = ShapeToolRuntime(canvasView: canvasView)
+        shapes.onCommit = { [weak self] strokes in
+            self?.commit(strokes)
+        }
+        shapes.setKind(shapeKind)
+        shapeTool = shapes
 
         toolPicker.addObserver(canvasView)
 
@@ -269,6 +289,107 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
         canvasView.contentInset = inset
     }
 
+    // MARK: - The shape tool
+
+    /// Selects the shape a Pencil drag commits, or `nil` for freehand ink.
+    ///
+    /// The active tool belongs to `PagedCanvasController` (`Contract.md` —
+    /// Owners), which is why this is told and never asked: every live page and
+    /// every page built afterwards carries the same setting, so the tool
+    /// survives a page turn exactly as the pen does.
+    func setShapeTool(_ kind: ShapeKind?) {
+        shapeKind = kind
+        shapeTool?.setKind(kind)
+    }
+
+    /// Commits synthesized strokes into the live drawing.
+    ///
+    /// One assignment, not four appends, and that is the whole undo story: a
+    /// rectangle's four strokes land in a single drawing mutation inside a
+    /// single undo group, so one Cmd-Z removes the rectangle rather than one
+    /// side of it.
+    ///
+    /// The undo action is registered **before** the mutation, deliberately.
+    /// PencilKit may or may not register an undo of its own for a programmatic
+    /// `drawing` assignment — its documentation does not say, and the simulator
+    /// cannot answer it because `undoManager` walks the responder chain. Both
+    /// answers are safe here. Registering first means our restore is the
+    /// *older* entry, so if PencilKit did register one its own undo runs first
+    /// and against the state it recorded; ours then assigns the same drawing
+    /// again, which is a no-op in content. And whether one action or two, the
+    /// explicit group makes it exactly one undo step.
+    ///
+    /// It is not an interception and not a second manager (`Contract.md` —
+    /// Undo): it is the same live undo manager, reached the same way, invoked
+    /// exactly once per commit, and the resulting change follows the ordinary
+    /// save path because it is an ordinary drawing change.
+    func commit(_ strokes: [PKStroke]) {
+        precondition(
+            isEditable,
+            "a shape cannot be committed into a canvas the session has not opened for editing"
+        )
+        guard !strokes.isEmpty else { return }
+
+        let previous = canvasView.drawing
+        var updated = previous
+        updated.strokes.append(contentsOf: strokes)
+
+        guard let undoManager = canvasView.undoManager else {
+            // No manager in the responder chain — the canvas is unhosted, which
+            // in practice means a test. The commit still happens; it is simply
+            // not undoable, and nothing here fabricates a manager to hold an
+            // action nobody can reach.
+            canvasView.drawing = updated
+            CanvasLog.event(.canvas, "committed \(strokes.count) shape stroke(s); no undo manager")
+            return
+        }
+
+        undoManager.beginUndoGrouping()
+        registerRestore(of: previous, with: undoManager)
+        canvasView.drawing = updated
+        undoManager.endUndoGrouping()
+
+        CanvasLog.event(
+            .canvas,
+            "committed \(strokes.count) shape stroke(s); strokes=\(canvasView.drawing.strokes.count)"
+        )
+    }
+
+    /// Registers one undo that restores `drawing`, and re-registers itself as
+    /// the redo when it runs. Recursion is how a value-restoring undo stays
+    /// undoable and redoable indefinitely without holding a stack of its own.
+    private func registerRestore(of drawing: PKDrawing, with undoManager: UndoManager) {
+        undoManager.registerUndo(withTarget: self) { controller in
+            // The handler is not actor-isolated, and undo is invoked from the
+            // main thread by the responder chain that reached it. Asserting
+            // that loudly is better than hopping and losing the ordering.
+            MainActor.assumeIsolated {
+                controller.registerRestore(of: controller.canvasView.drawing, with: undoManager)
+                controller.canvasView.drawing = drawing
+            }
+        }
+    }
+
+    /// Called by `PagedCanvasController` immediately before this page leaves
+    /// the live window, after its ink has been handed over.
+    ///
+    /// `UndoManager` does not retain an action's target, so an action left
+    /// behind by a retired page points at a released controller. The manager
+    /// itself belongs to the responder chain and outlives the page, so the
+    /// actions have to go with the page.
+    ///
+    /// KNOWN DEFECT: this drops the undo history for shapes committed on a page
+    /// that then left the live window — turn away and back, and the shape is
+    /// still there but no longer undoable. What PencilKit does with its own
+    /// stroke actions in the same situation is unverified, so whether this is
+    /// consistent with freehand ink or worse than it is unknown; both are
+    /// device evidence. Undo across a page turn is not a property this project
+    /// has ever claimed (`Contract.md` — Navigation: turning is not undoable),
+    /// and a dangling target is a crash, so the safe half is taken here.
+    func willRetire() {
+        canvasView.undoManager?.removeAllActions(withTarget: self)
+    }
+
     // MARK: - Drawing transfer
 
     /// Takes an independent drawing snapshot for later serialization.
@@ -341,6 +462,10 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
     func scrollViewDidZoom(_ scrollView: UIScrollView) {
         updatePageBoundary()
         centerPageInViewport()
+        // Re-traces a shape preview at the new scale, and returns immediately
+        // when no shape is being dragged — which is every zoom that is not also
+        // a Pencil drag.
+        shapeTool?.viewportChanged()
         #if TN_SPIKE_MIRROR
         // After centering, so the mirror reads the settled offset for this
         // tick. One transform assignment; see SpikeMirror.mirror.

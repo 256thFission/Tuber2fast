@@ -114,6 +114,12 @@ final class ContractStructureTests: XCTestCase {
             "TuberNotesApp/PageCanvasController.swift",   // the live PencilKit canvas
             "TuberNotesApp/PagedCanvasController.swift",  // paging and gesture arbitration
             "TuberNotesApp/EditorLifecycle.swift",        // the background-execution lease
+            // The shape tool. Both files are the canvas runtime: one builds the
+            // live values PencilKit renders (`PKStroke`s from a drag), the other
+            // is `PageCanvasController`'s own drag handling and its preview
+            // layer, split out for size rather than made a second owner.
+            "TuberNotesApp/ShapeSynthesis.swift",
+            "TuberNotesApp/ShapeToolRuntime.swift",
             // THROWAWAY SPIKE — CanvasFeatureComplete device spike 1. Compiled
             // only under TN_SPIKE_MIRROR and instruments the canvas runtime,
             // where UIKit is already allowed; the entry dies with the file.
