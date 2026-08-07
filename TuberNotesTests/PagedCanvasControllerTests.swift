@@ -227,6 +227,108 @@ struct PagedCanvasControllerTests {
         #expect(asked == 0)
     }
 
+    /// The appended blank page must be there the moment the drag ends: a blank
+    /// page has nothing to load, so no loading placeholder may ever stand in
+    /// for it, and the slots already on screen must not be rebuilt around it
+    /// (device finding, 2026-08-07: the whole area flashed grey on append).
+    @Test("An appended blank page is a ready canvas immediately, and existing slots survive")
+    func appendedBlankPageIsReadyImmediately() throws {
+        var count = 3
+        let controller = hosted { $0.contentForPage = { _ in .blank } }
+        controller.setPages(count: count, currentPageIndex: 2)
+        controller.markEditable()
+        // The session's shape: the append is synchronous in intent.
+        controller.onReachedEndBoundary = { [unowned controller] in
+            count += 1
+            controller.setPages(count: count, currentPageIndex: count - 1)
+        }
+        let kept = try #require(controller.livePage(at: 2))
+
+        let scroll = controller.scrollView
+        scroll.contentOffset = CGPoint(x: scroll.bounds.width * 2.5, y: 0)
+        controller.scrollViewDidEndDragging(scroll, willDecelerate: true)
+
+        // Immediately — before any runloop turn, fetch, or animation — the new
+        // slot is a live, editable, empty canvas, never a placeholder.
+        let appended = try #require(controller.livePage(at: 3))
+        #expect(appended.canvasView.drawing.strokes.isEmpty)
+        #expect(controller.currentPageIndex == 3)
+        // And the slot the user was just writing on was not rebuilt.
+        #expect(controller.livePage(at: 2) === kept)
+    }
+
+    /// The device finding of 2026-08-07: the turn onto the appended page
+    /// sometimes rubber-banded back. UIKit computes the gesture's deceleration
+    /// target before `scrollViewDidEndDragging`, against the contentSize that
+    /// still ends at the old last page, and arms that animation after the
+    /// delegate returns — overriding the offset `setPages` wrote. The runtime
+    /// re-asserts the target on the next runloop turn, which cancels the
+    /// bounce. This test plants that override and fails without the re-assert.
+    @Test("The append gesture lands on the new page even against the armed rubber-band")
+    func appendGestureLandsOnTheNewPage() async throws {
+        var count = 3
+        let controller = hosted { $0.contentForPage = { _ in .blank } }
+        controller.setPages(count: count, currentPageIndex: 2)
+        controller.onReachedEndBoundary = { [unowned controller] in
+            count += 1
+            controller.setPages(count: count, currentPageIndex: count - 1)
+        }
+
+        let scroll = controller.scrollView
+        scroll.contentOffset = CGPoint(x: scroll.bounds.width * 2.5, y: 0)
+        controller.scrollViewDidEndDragging(scroll, willDecelerate: true)
+
+        // The bookkeeping is synchronous: the content spans the new page, so
+        // the gesture has somewhere to land, and the offset already names it.
+        #expect(controller.pageCount == 4)
+        #expect(scroll.contentSize.width == scroll.bounds.width * 4)
+        #expect(scroll.contentOffset.x == scroll.bounds.width * 3)
+
+        // UIKit's armed bounce drags the offset back toward the old last page.
+        scroll.contentOffset = CGPoint(x: scroll.bounds.width * 2.3, y: 0)
+
+        // The re-assert queued at drag end must win, and no turn away from the
+        // committed index may fire.
+        for _ in 0..<20 {
+            await Task.yield()
+            if scroll.contentOffset.x == scroll.bounds.width * 3 { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(scroll.contentOffset.x == scroll.bounds.width * 3)
+        #expect(controller.currentPageIndex == 3)
+    }
+
+    /// A pull that ends short of the trigger is an abandoned drag: no append,
+    /// no queued re-assert fighting the ordinary rubber-band, and the settle
+    /// back onto the last real page is not a turn.
+    @Test("An abandoned pull below the trigger appends nothing and rubber-bands cleanly")
+    func abandonedPullBelowTriggerRubberBandsCleanly() async throws {
+        var asked = 0
+        var reported: [Int] = []
+        let controller = hosted {
+            $0.onReachedEndBoundary = { asked += 1 }
+            $0.onPageChanged = { reported.append($0) }
+        }
+        controller.setPages(count: 3, currentPageIndex: 2)
+
+        let scroll = controller.scrollView
+        scroll.contentOffset = CGPoint(x: scroll.bounds.width * 2.3, y: 0)
+        controller.scrollViewDidEndDragging(scroll, willDecelerate: true)
+        #expect(asked == 0)
+        #expect(controller.pageCount == 3)
+        #expect(scroll.contentSize.width == scroll.bounds.width * 3)
+
+        // The rubber-band returns to the last real page and settles there.
+        scroll.contentOffset = CGPoint(x: scroll.bounds.width * 2, y: 0)
+        controller.scrollViewDidEndDecelerating(scroll)
+        #expect(reported.isEmpty)
+        #expect(controller.currentPageIndex == 2)
+
+        // And nothing queued at drag end moves the offset afterwards.
+        try await Task.sleep(for: .milliseconds(20))
+        #expect(scroll.contentOffset.x == scroll.bounds.width * 2)
+    }
+
     // MARK: - Mixed geometry
 
     /// The ordinary state of an annotated import: a portrait page, a landscape
@@ -293,9 +395,10 @@ struct PagedCanvasControllerTests {
         }
     }
 
-    /// A landscape page next to a portrait one gets its own zoom floor, and the
-    /// whole of it fits at that floor. Sharing a floor would mean a landscape
-    /// worksheet you could not see the bottom of.
+    /// A landscape page next to a portrait one gets its own zoom floor — its
+    /// own fit-width, since the floor is fit-width (maintainer verdict, device
+    /// session 2026-08-07). Sharing a floor would mean one of the two pages
+    /// resting with dead space beside it.
     @Test("Each page's zoom floor comes from its own geometry")
     func floorsAreNotSharedAcrossMixedGeometry() throws {
         let landscape = PageGeometry(width: 842, height: 595)
@@ -315,12 +418,10 @@ struct PagedCanvasControllerTests {
         let slot = controller.scrollView.bounds
 
         #expect(portraitCanvas.minimumZoomScale != landscapeCanvas.minimumZoomScale)
-        #expect(landscape.width * Double(landscapeCanvas.minimumZoomScale) <= Double(slot.width))
-        #expect(landscape.height * Double(landscapeCanvas.minimumZoomScale) <= Double(slot.height))
-        #expect(PageGeometry.canonical.width * Double(portraitCanvas.minimumZoomScale)
-            <= Double(slot.width))
-        #expect(PageGeometry.canonical.height * Double(portraitCanvas.minimumZoomScale)
-            <= Double(slot.height))
+        #expect(abs(landscape.width * Double(landscapeCanvas.minimumZoomScale)
+            - Double(slot.width)) < 0.001)
+        #expect(abs(PageGeometry.canonical.width * Double(portraitCanvas.minimumZoomScale)
+            - Double(slot.width)) < 0.001)
 
         // One document, one ceiling.
         #expect(portraitCanvas.maximumZoomScale == landscapeCanvas.maximumZoomScale)
