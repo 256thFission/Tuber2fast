@@ -238,7 +238,11 @@ struct LayerEnvelopeTests {
         // The layer is refused as a typed state; the page's ink still loads.
         let store = scratch.store()
         let loaded = try await store.loadPage(pageID)
-        #expect(loaded.refusedLayers == [RefusedLayer(layerID: unknownID, kind: "sticker")])
+        #expect(
+            loaded.refusedLayers == [
+                RefusedLayer(layerID: unknownID, kind: "sticker", reason: .unknownKind)
+            ]
+        )
         #expect(loaded.inkData == ink)
         #expect(loaded.inkLayerID == inkID)
 

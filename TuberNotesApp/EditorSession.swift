@@ -1,6 +1,19 @@
 import Foundation
 import Observation
 
+/// A layer edit the session refuses. Each is a caller's mistake or a page that
+/// is not in a state to be edited — never a durable-form violation, which
+/// `DocumentStore` owns and fails loud on.
+enum LayerEditError: Error, Equatable {
+    case sessionNotReady
+    case pageNotFound(UUID)
+    /// The page's own bytes are not here, or could not be read.
+    case pageNotReady(UUID)
+    /// The page carries a refused layer, so it takes no input.
+    case pageRefusesInput(UUID)
+    case layerNotFound(layerID: UUID, pageID: UUID)
+}
+
 /// Coordinates the canvas runtime and the document store (`Contract.md` — Owners).
 ///
 /// It owns page order and identity, per-page ink state, and the active save
@@ -46,9 +59,26 @@ final class EditorSession {
         /// Layers this build refused on load — a typed refused state, never a
         /// dropped one. The page refuses input while any exist: a page is
         /// editable exactly when its ink layer is editable and no layer is
-        /// refused or unreadable. Such a page can never dirty, so no save can
-        /// ever carry the refusal; `DocumentStore.save` refuses one anyway.
+        /// refused or unreadable. Such a page can never dirty from ink, so no
+        /// ordinary save can carry the refusal; `DocumentStore.save` refuses
+        /// one anyway. Deleting the refused layer is the one repair, and it
+        /// clears the entry here as it clears the envelope below.
         private(set) var refusedLayers: [RefusedLayer] = []
+
+        /// The page's recognized layers below the ink, in order — the session's
+        /// custody copy of the layer list it is the sole writer of
+        /// (`Contract.md` — Owners, golden rule 5). Refs, never bytes.
+        ///
+        /// It is custody rather than a cache: without it, an ink save would
+        /// write a layer list containing only ink and silently delete the
+        /// page's images. `durable` may be dropped by a prune; this may not,
+        /// while it holds an unsaved change.
+        private(set) var staticLayers: [LayerEnvelope] = []
+
+        /// The layer list differs from what the last successful save wrote.
+        /// Ink's own unsaved state is `ink`; this is the same fact for the
+        /// list, and a page can carry either, both, or neither.
+        private(set) var layersUnsaved = false
 
         private(set) var ink: Ink
 
@@ -80,11 +110,13 @@ final class EditorSession {
         }
 
         /// Derived, never stored (`Contract.md` — Saving): the page carries
-        /// unsaved ink that no save has yet captured.
+        /// unsaved work — ink, its layer list, or both — that no save has yet
+        /// captured.
         var isDirty: Bool {
+            if layersUnsaved { return true }
             switch ink {
-            case .live, .held: true
-            case .loading, .unreadable, .clean, .saving: false
+            case .live, .held: return true
+            case .loading, .unreadable, .clean, .saving: return false
             }
         }
 
@@ -120,8 +152,30 @@ final class EditorSession {
             }
             durable = loaded.inkData
             inkLayerID = loaded.inkLayerID
+            staticLayers = loaded.staticLayers
+            layersUnsaved = false
             refusedLayers = loaded.refusedLayers
             ink = .clean
+        }
+
+        /// The session rewrote this page's layer list — an import, a deletion.
+        /// The list is durable state with one writer, so the change is recorded
+        /// here and lands through the ordinary save path, exactly as ink does.
+        mutating func layerListChanged(
+            to layers: [LayerEnvelope],
+            refusedLayers newRefusals: [RefusedLayer]
+        ) {
+            switch ink {
+            case .clean, .live, .held, .saving:
+                staticLayers = layers
+                refusedLayers = newRefusals
+                layersUnsaved = true
+            case .loading, .unreadable:
+                preconditionFailure(
+                    "page \(id) changed its layer list while \(ink); a page whose "
+                        + "own bytes are not here has no list to change"
+                )
+            }
         }
 
         /// The page's saved bytes could not be read.
@@ -172,7 +226,18 @@ final class EditorSession {
             switch ink {
             case .live, .held:
                 ink = .saving(captured)
-            case .clean, .loading, .unreadable:
+            case .clean:
+                // A page whose ink is clean is still captured when its layer
+                // list changed: a page file is written whole, so the ink it is
+                // written with is the ink already on disk. Without the layer
+                // change there would be nothing to write, which is the
+                // violation the other cases trap.
+                precondition(
+                    layersUnsaved,
+                    "page \(id) captured for saving while clean with nothing unsaved"
+                )
+                ink = .saving(captured)
+            case .loading, .unreadable:
                 preconditionFailure("page \(id) captured for saving while \(ink)")
             case .saving:
                 preconditionFailure(
@@ -194,9 +259,12 @@ final class EditorSession {
         /// follows evidence — the page becomes clean only if nothing edited it
         /// since its capture; one edited during the save is `.live` again and
         /// stays dirty with no special case (`Contract.md` — Saving).
-        mutating func saveSucceeded(written data: Data) {
+        mutating func saveSucceeded(written data: Data, layersWritten: [LayerEnvelope]) {
             durable = data
             if case .saving = ink { ink = .clean }
+            // The same rule the ink follows, for the list: a list edited since
+            // its capture is still unsaved, and says so, with no special case.
+            if staticLayers == layersWritten { layersUnsaved = false }
         }
 
         /// The store threw. The page stays dirty and keeps the bytes the save
@@ -209,6 +277,11 @@ final class EditorSession {
         /// Only `durable` is droppable; unsaved ink is never touched
         /// (`Contract.md` — Performance, held-bytes bound).
         mutating func evicted() {
+            // A page holding an unsaved layer change keeps its durable bytes:
+            // they are the ink the pending page write must be written with, and
+            // dropping them would leave the page dirty forever with nothing the
+            // save path could capture. Unsaved work is never what a prune drops.
+            guard !layersUnsaved else { return }
             durable = nil
             if case .clean = ink { ink = .loading }
         }
@@ -480,10 +553,7 @@ final class EditorSession {
             //
             // PROVISIONAL WORDING: the final user-facing sentence belongs to
             // the failure-taxonomy work; the scope is decided here.
-            return .unreadable(
-                "This page carries a layer of kind \"\(refused.kind)\" "
-                    + "that this version of TuberNotes cannot open."
-            )
+            return .unreadable(Self.refusalMessage(refused))
         }
         switch pageStates[pageIndex].ink {
         case .loading:
@@ -512,6 +582,28 @@ final class EditorSession {
             case .serialized(let data):
                 return data.isEmpty ? .blank : .ink(data)
             }
+        }
+    }
+
+    /// What a page carrying a refused layer says instead of taking ink.
+    ///
+    /// PROVISIONAL WORDING, all of it: `failure-has-a-taxonomy` owns the
+    /// sentences. What is decided here, and is not provisional, is the scope —
+    /// the layer is refused, the page refuses input, the document opens.
+    private static func refusalMessage(_ refused: RefusedLayer) -> String {
+        switch refused.reason {
+        case .unknownKind:
+            "This page carries a layer of kind \"\(refused.kind)\" "
+                + "that this version of TuberNotes cannot open."
+        case .unreadablePayload:
+            "This page carries a \(refused.kind) layer whose contents "
+                + "could not be read."
+        case .unsupportedAssetFormat(_, let format):
+            "This page carries a \(refused.kind) layer in a format "
+                + "(\"\(format)\") that this version of TuberNotes cannot open."
+        case .missingAsset(let assetID):
+            "This page references an image (\(assetID.uuidString)) "
+                + "that is missing from this notebook."
         }
     }
 
@@ -773,11 +865,28 @@ final class EditorSession {
         let capturedIndexWasDirty = indexDirty
         indexDirty = false
 
-        var captures: [(pageID: UUID, unsaved: Page.UnsavedInk)] = []
+        var captures: [Capture] = []
         for pageIndex in pageStates.indices {
+            // Captured with the ink, because the page file is written whole:
+            // the list this pass writes is the list as it is now, and a later
+            // edit to it is a later pass's work, never this one's.
+            let layers = pageStates[pageIndex].staticLayers
             switch pageStates[pageIndex].ink {
-            case .clean, .loading, .unreadable:
+            case .loading, .unreadable:
                 continue
+            case .clean:
+                // Clean ink and a changed layer list: the page file still has
+                // to be rewritten, and the ink it is rewritten with is exactly
+                // what the last save wrote.
+                guard pageStates[pageIndex].layersUnsaved else { continue }
+                guard let durable = pageStates[pageIndex].durable else {
+                    preconditionFailure(
+                        "page \(pageStates[pageIndex].id) has an unsaved layer list "
+                            + "but no durable ink to write it with"
+                    )
+                }
+                pageStates[pageIndex].beginSaving(.serialized(durable))
+                captures.append(Capture(pageStates[pageIndex].id, .serialized(durable), layers))
             case .live:
                 guard let snapshot = liveRuntime?.snapshot(at: pageIndex) else {
                     preconditionFailure(
@@ -786,10 +895,10 @@ final class EditorSession {
                     )
                 }
                 pageStates[pageIndex].beginSaving(.drawing(snapshot))
-                captures.append((pageStates[pageIndex].id, .drawing(snapshot)))
+                captures.append(Capture(pageStates[pageIndex].id, .drawing(snapshot), layers))
             case .held(let unsaved):
                 pageStates[pageIndex].beginSaving(unsaved)
-                captures.append((pageStates[pageIndex].id, unsaved))
+                captures.append(Capture(pageStates[pageIndex].id, unsaved, layers))
             case .saving:
                 preconditionFailure(
                     "page \(pageStates[pageIndex].id) was already saving when a new "
@@ -810,13 +919,28 @@ final class EditorSession {
         return save
     }
 
+    /// One page's whole unsaved generation: its ink, and the layer list that
+    /// ink belongs to. Both are captured at the same instant, so the file this
+    /// pass writes is one coherent moment of the page rather than two.
+    private struct Capture {
+        let pageID: UUID
+        let unsaved: Page.UnsavedInk
+        let staticLayers: [LayerEnvelope]
+
+        init(_ pageID: UUID, _ unsaved: Page.UnsavedInk, _ staticLayers: [LayerEnvelope]) {
+            self.pageID = pageID
+            self.unsaved = unsaved
+            self.staticLayers = staticLayers
+        }
+    }
+
     /// The body of one save pass: serialize, write, acknowledge. Runs only
     /// inside the task `beginSave` registered as `currentSave`, over the
     /// generation `beginSave` captured, and clears the handle on the way out.
     private func performOneSave(
         capturedIndex: DocumentIndex,
         capturedIndexWasDirty: Bool,
-        captures: [(pageID: UUID, unsaved: Page.UnsavedInk)]
+        captures: [Capture]
     ) async {
         // Serialize off the main actor, on the save path, never at the
         // handover (`Contract.md` — Performance). Ink a previous pass already
@@ -824,9 +948,9 @@ final class EditorSession {
         // costs nothing again.
         var changedPages: [UUID: Data] = [:]
         var totalDuration: Duration = .zero
-        for (pageID, unsaved) in captures {
+        for capture in captures {
             let data: Data
-            switch unsaved {
+            switch capture.unsaved {
             case .serialized(let alreadySerialized):
                 data = alreadySerialized
             case .drawing(let snapshot):
@@ -834,8 +958,8 @@ final class EditorSession {
                 data = serialized.data
                 totalDuration += serialized.duration
             }
-            changedPages[pageID] = data
-            pageStates[stateIndex(of: pageID)].serializedWhileSaving(data)
+            changedPages[capture.pageID] = data
+            pageStates[stateIndex(of: capture.pageID)].serializedWhileSaving(data)
         }
         // Measured where the work happens rather than timed again here: the next
         // debounce is derived from this cost (`Contract.md` — Saving).
@@ -847,12 +971,16 @@ final class EditorSession {
 
         // The session is the one writer of a page's layer list (`Docs/Forks/
         // CanvasFeatureComplete.md` — One value, one writer), so the envelopes
-        // are built here, not in the store: one ink layer per page, identity
-        // transform, under the identity loaded from or first written to disk.
+        // are built here, not in the store: the page's static layers in order,
+        // then its one ink layer, identity transform, under the identity loaded
+        // from or first written to disk. Ink last is by construction here and
+        // checked again by the store on the way in and on the way out.
         var changedLayers: [UUID: [LayerEnvelope]] = [:]
-        for (pageID, data) in changedPages {
-            let page = pageStates[stateIndex(of: pageID)]
-            changedLayers[pageID] = [inkEnvelope(for: page, payload: data)]
+        for capture in captures {
+            guard let data = changedPages[capture.pageID] else { continue }
+            let page = pageStates[stateIndex(of: capture.pageID)]
+            changedLayers[capture.pageID] =
+                capture.staticLayers + [inkEnvelope(for: page, payload: data)]
         }
 
         do {
@@ -862,8 +990,12 @@ final class EditorSession {
             // Acknowledgement follows evidence: only now, with the write
             // returned, does any page become clean — and only one nothing
             // edited since its capture.
-            for (pageID, data) in changedPages {
-                pageStates[stateIndex(of: pageID)].saveSucceeded(written: data)
+            for capture in captures {
+                guard let data = changedPages[capture.pageID] else { continue }
+                pageStates[stateIndex(of: capture.pageID)].saveSucceeded(
+                    written: data,
+                    layersWritten: capture.staticLayers
+                )
             }
             lastSaveError = nil
             consecutiveSaveFailures = 0
@@ -905,6 +1037,174 @@ final class EditorSession {
             payload: payload,
             pageSpaceTransform: .identity
         )
+    }
+
+    // MARK: - Layers
+
+    /// Imports one image as a layer on a page, beneath its ink.
+    ///
+    /// Leaf to root, in this order and for this reason: the asset is written
+    /// first and is durable before any page file names it, so an interruption
+    /// at any point leaves an orphan asset — inert, merely heavy — and never a
+    /// page file naming an asset that is not there. `DocumentStore.save`
+    /// enforces the same order rather than trusting this one caller.
+    ///
+    /// `sourceWidth` and `sourceHeight` are the image's own extent, in any
+    /// consistent unit: only their ratio is used, to fit the image inside the
+    /// page. Nothing about the source is durable — the layer's
+    /// `pageSpaceTransform` maps the image's unit square into page space, so
+    /// placement never restates what the asset's own bytes say.
+    ///
+    /// No UI calls this, and it is on no interaction path: it awaits a file
+    /// write and then a save. It is the entry point phase 2's durable half is
+    /// testable through, and the one the import UI will call when it exists.
+    ///
+    /// The save is immediate rather than debounced. A debounce exists to
+    /// coalesce Pencil-frequency edits; an import is one discrete action whose
+    /// heavy bytes are already on disk, and every millisecond it stays unsaved
+    /// is a millisecond the asset is an orphan.
+    @discardableResult
+    func importImage(
+        _ bytes: Data,
+        format: AssetFormat,
+        sourceWidth: Double,
+        sourceHeight: Double,
+        onPage pageID: UUID? = nil
+    ) async throws -> UUID {
+        guard phase == .ready else { throw LayerEditError.sessionNotReady }
+        let targetPageID = pageID ?? currentPageID
+        try requireLayerListIsEditable(targetPageID)
+
+        // The leaf, first and on its own: nothing yet references it, so a
+        // failure here leaves the document exactly as it was.
+        let assetID = UUID()
+        try await store.writeAsset(bytes, assetID: assetID, format: format)
+
+        // The page may have moved through states while that write ran.
+        try requireLayerListIsEditable(targetPageID)
+
+        let layerID = UUID()
+        let envelope = try LayerEnvelope.image(
+            layerID: layerID,
+            ref: ImageLayerRef(assetID: assetID, format: format),
+            pageSpaceTransform: .fittingSource(
+                width: sourceWidth,
+                height: sourceHeight,
+                inPageOfWidth: index.pageWidth,
+                height: index.pageHeight
+            )
+        )
+
+        let page = stateIndex(of: targetPageID)
+        // Appended, so it lands above the page's existing static layers and
+        // below the ink. Ink last is not a rule this site remembers: the save
+        // path builds `staticLayers + [ink]`, so it cannot write anything else.
+        pageStates[page].layerListChanged(
+            to: pageStates[page].staticLayers + [envelope],
+            refusedLayers: pageStates[page].refusedLayers
+        )
+        CanvasLog.event(
+            .canvas,
+            "imported asset \(assetID) as layer \(layerID) on page \(targetPageID)"
+        )
+
+        await saveIfNeeded()
+        return layerID
+    }
+
+    /// Deletes one layer from a page — **the** site that deletes layers, and
+    /// therefore the site delete-inline asset reclamation lives at.
+    ///
+    /// Root to leaf, the mirror of the write order: the page file drops the ref
+    /// first, the asset dies second. An interruption between them leaves an
+    /// orphan asset, never a dangling ref.
+    ///
+    /// Reclamation is safe whether or not that save succeeded, and not because
+    /// this checks: the store answers "does anything still reference this?"
+    /// from the page files on disk, so a page write that failed leaves the ref
+    /// there and the asset lives.
+    ///
+    /// Crash orphans still accumulate — an import interrupted before its page
+    /// write, a delete interrupted before its asset write — and that is
+    /// accepted for now. Sweep-on-open is deferred behind
+    /// `failure-has-a-taxonomy`, because a sweep that deletes the wrong file is
+    /// a durability failure and needs the taxonomy to say what it does when it
+    /// cannot tell. An orphan is inert and merely heavy.
+    func deleteLayer(_ layerID: UUID, fromPage pageID: UUID) async throws {
+        guard phase == .ready else { throw LayerEditError.sessionNotReady }
+        guard index.pageIDs.contains(pageID) else {
+            throw LayerEditError.pageNotFound(pageID)
+        }
+        let page = stateIndex(of: pageID)
+        guard let deleted = pageStates[page].staticLayers.first(
+            where: { $0.layerID == layerID }
+        ) else {
+            throw LayerEditError.layerNotFound(layerID: layerID, pageID: pageID)
+        }
+
+        let refusalsBefore = pageStates[page].refusedLayers.count
+        pageStates[page].layerListChanged(
+            to: pageStates[page].staticLayers.filter { $0.layerID != layerID },
+            // Deleting the layer clears its refusal with it: dropping a layer
+            // whose asset is missing is the one repair for such a page, and the
+            // page is editable again the moment nothing on it is refused.
+            refusedLayers: pageStates[page].refusedLayers.filter { $0.layerID != layerID }
+        )
+        CanvasLog.event(.canvas, "deleted layer \(layerID) from page \(pageID)")
+
+        await saveIfNeeded()
+
+        // Re-resolved rather than reused: `page` was computed before an await,
+        // and an index that outlives one is the class of bug this file already
+        // carries elsewhere. Pages are append-only today, which makes this
+        // caution rather than a fix.
+        if pageStates[stateIndex(of: pageID)].refusedLayers.count != refusalsBefore,
+           let visible = index.pageIDs.firstIndex(of: pageID) {
+            // A page that was refusing input may now accept it, so the runtime
+            // rebuilds the placeholder into a canvas. Only ever reached from a
+            // page that had a refusal, which is a page with no live canvas.
+            liveRuntime?.reloadPage(at: visible)
+        }
+
+        await reclaimAsset(of: deleted)
+    }
+
+    /// Deletes the asset a just-deleted layer referenced, if it was the last
+    /// reference to it. A failure here costs an orphan, never data, so it is
+    /// reported and not thrown: the layer is already gone from the page.
+    private func reclaimAsset(of deleted: LayerEnvelope) async {
+        guard deleted.recognizedKind == .image else { return }
+        do {
+            let ref = try ImageLayerRef(payload: deleted.payload)
+            guard let format = ref.recognizedFormat else { return }
+            try await store.deleteAssetIfUnreferenced(assetID: ref.assetID, format: format)
+        } catch {
+            CanvasLog.event(
+                .save,
+                "layer \(deleted.layerID) deleted, but its asset was not reclaimed: "
+                    + "\(error); it is an inert orphan"
+            )
+        }
+    }
+
+    /// A page whose layer list may be rewritten: its own bytes are here, and it
+    /// is not refusing input. A page carrying a refused layer takes no edit of
+    /// any kind — that is what "the page refuses input" means — except the
+    /// deletion that repairs it.
+    private func requireLayerListIsEditable(_ pageID: UUID) throws {
+        guard index.pageIDs.contains(pageID) else {
+            throw LayerEditError.pageNotFound(pageID)
+        }
+        let page = stateIndex(of: pageID)
+        guard pageStates[page].refusedLayers.isEmpty else {
+            throw LayerEditError.pageRefusesInput(pageID)
+        }
+        switch pageStates[page].ink {
+        case .clean, .live, .held, .saving:
+            return
+        case .loading, .unreadable:
+            throw LayerEditError.pageNotReady(pageID)
+        }
     }
 
     // MARK: - Lifecycle

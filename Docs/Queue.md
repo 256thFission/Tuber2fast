@@ -130,6 +130,10 @@ Three consequences, all violated today:
   start, page load, save failure — and `RootCanvasView` renders those strings
   into the UI. Carry a typed value and render it with one exhaustive `switch` —
   the exhaustive switch is the mechanism that forces a human sentence per case.
+  (One class already has that shape and can be copied: a refused layer carries a
+  typed `RefusedLayer.Reason` and `EditorSession.refusalMessage` is the
+  exhaustive switch over it. Its four sentences are provisional and are yours to
+  write.)
 
 There should be no divergence between the developer build and the shipping one.
 A loud path that only DEBUG exercises has never run in the build that ships. That
