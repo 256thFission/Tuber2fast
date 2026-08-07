@@ -42,6 +42,17 @@ targets:
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: UIInterfaceOrientationPortrait
         GENERATE_INFOPLIST_FILE: YES
         ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS: NO
+      configs:
+        # THROWAWAY SPIKE wiring — CanvasFeatureComplete device spike 1.
+        # TN_SPIKE_CONDITIONS is empty by default, so this line is inert and
+        # the flag-off app compiles with exactly the conditions it always had
+        # (DEBUG). To build the spike in, pass the setting on the command line
+        #   xcodebuild build ... TN_SPIKE_CONDITIONS=TN_SPIKE_MIRROR
+        # or add `TN_SPIKE_CONDITIONS = TN_SPIKE_MIRROR` to Local.xcconfig for
+        # Tools/device runs (and remove it after). Debug only: the spike's
+        # trace depends on CanvasLog's stderr mirror, which is DEBUG-only.
+        Debug:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG $(TN_SPIKE_CONDITIONS)
 
   TuberNotesTests:
     type: bundle.unit-test

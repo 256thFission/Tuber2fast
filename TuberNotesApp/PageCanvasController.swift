@@ -60,6 +60,15 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
     private var hasLoggedFirstTouch = false
     private var hasLoggedFirstChange = false
 
+    #if TN_SPIKE_MIRROR
+    /// THROWAWAY SPIKE — CanvasFeatureComplete device spike 1, "Mirror
+    /// fidelity". Compiled only under TN_SPIKE_MIRROR; see
+    /// `SpikeMirrorFidelity.swift` for what it measures and why. Every use in
+    /// this file is gated the same way, so with the flag off this controller
+    /// is unchanged.
+    private var spikeMirror: SpikeMirror?
+    #endif
+
     init(toolPicker: PKToolPicker) {
         self.toolPicker = toolPicker
         super.init(nibName: nil, bundle: nil)
@@ -115,6 +124,12 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
         updatePageBoundary()
 
         toolPicker.addObserver(canvasView)
+
+        #if TN_SPIKE_MIRROR
+        // Installed after the canvas's own setup so the spike's transparency
+        // override wins over the opaque-white assignment above.
+        spikeMirror = SpikeMirror.install(under: canvasView, in: view)
+        #endif
     }
 
     /// Traces the page rect in page space, scaled into content coordinates.
@@ -170,6 +185,11 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
         super.viewDidLayoutSubviews()
         establishZoomIfNeeded()
         centerPageInViewport()
+        #if TN_SPIKE_MIRROR
+        // Establishes initial registration and re-registers after a viewport
+        // change; not a frame-frequency path.
+        spikeMirror?.mirror(offset: canvasView.contentOffset, zoom: canvasView.zoomScale)
+        #endif
     }
 
     /// How far below a full page you may zoom out. Two full pages of overview.
@@ -321,5 +341,33 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
     func scrollViewDidZoom(_ scrollView: UIScrollView) {
         updatePageBoundary()
         centerPageInViewport()
+        #if TN_SPIKE_MIRROR
+        // After centering, so the mirror reads the settled offset for this
+        // tick. One transform assignment; see SpikeMirror.mirror.
+        spikeMirror?.mirror(offset: scrollView.contentOffset, zoom: scrollView.zoomScale)
+        #endif
     }
+
+    #if TN_SPIKE_MIRROR
+    // THROWAWAY SPIKE hooks — the mirror tick on every scroll callback, and
+    // one stats line at each gesture end. Nothing below exists with the flag
+    // off; `PagedCanvasController` is the delegate of the *outer* paging
+    // scroll view, so these observe only this page's own canvas.
+
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        spikeMirror?.mirror(offset: scrollView.contentOffset, zoom: scrollView.zoomScale)
+    }
+
+    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+        spikeMirror?.flushStats("fling settled;")
+    }
+
+    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate: Bool) {
+        if !willDecelerate { spikeMirror?.flushStats("drag ended at rest;") }
+    }
+
+    func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) {
+        spikeMirror?.flushStats("pinch ended;")
+    }
+    #endif
 }

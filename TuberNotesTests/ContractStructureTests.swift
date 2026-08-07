@@ -114,6 +114,10 @@ final class ContractStructureTests: XCTestCase {
             "TuberNotesApp/PageCanvasController.swift",   // the live PencilKit canvas
             "TuberNotesApp/PagedCanvasController.swift",  // paging and gesture arbitration
             "TuberNotesApp/EditorLifecycle.swift",        // the background-execution lease
+            // THROWAWAY SPIKE — CanvasFeatureComplete device spike 1. Compiled
+            // only under TN_SPIKE_MIRROR and instruments the canvas runtime,
+            // where UIKit is already allowed; the entry dies with the file.
+            "TuberNotesApp/SpikeMirrorFidelity.swift",
         ]
 
         for source in try appSources() where !allowed.contains(source.path) {
