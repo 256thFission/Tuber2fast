@@ -37,7 +37,7 @@ struct StaticLayerRenderTests {
             store: store,
             color: .red,
             transform: PageSpaceTransform(
-                a: PageGeometry.width, b: 0, c: 0, d: PageGeometry.height, tx: 0, ty: 0
+                a: PageGeometry.canonical.width, b: 0, c: 0, d: PageGeometry.canonical.height, tx: 0, ty: 0
             )
         )
         // The top half of the page only, so "which one is on top" and "which
@@ -46,7 +46,7 @@ struct StaticLayerRenderTests {
             store: store,
             color: .green,
             transform: PageSpaceTransform(
-                a: PageGeometry.width, b: 0, c: 0, d: PageGeometry.height / 2, tx: 0, ty: 0
+                a: PageGeometry.canonical.width, b: 0, c: 0, d: PageGeometry.canonical.height / 2, tx: 0, ty: 0
             )
         )
 
@@ -74,7 +74,7 @@ struct StaticLayerRenderTests {
             store: store,
             image: Scratch.twoTonePNG(top: .blue, bottom: .yellow),
             transform: PageSpaceTransform(
-                a: PageGeometry.width, b: 0, c: 0, d: PageGeometry.height, tx: 0, ty: 0
+                a: PageGeometry.canonical.width, b: 0, c: 0, d: PageGeometry.canonical.height, tx: 0, ty: 0
             )
         )
 
@@ -108,7 +108,7 @@ struct StaticLayerRenderTests {
         let scratch = try Scratch()
         let renderer = StaticLayerRenderer(store: scratch.store)
         let render = await renderer.composite(
-            for: StaticLayerRequest(layers: [], pixelsPerPagePoint: 1)
+            for: StaticLayerRequest(layers: [], geometry: .canonical, pixelsPerPagePoint: 1)
         )
         guard case .empty = render else {
             Issue.record("an empty layer list rendered as \(render)")
@@ -175,7 +175,7 @@ struct StaticLayerRenderTests {
             image: Scratch.solidPNG(width: 1600, height: 1000, color: .red),
             transform: PageSpaceTransform(a: 60, b: 0, c: 0, d: 37.5, tx: 10, ty: 10)
         )
-        let request = StaticLayerRequest(layers: [layer], pixelsPerPagePoint: 2)
+        let request = StaticLayerRequest(layers: [layer], geometry: .canonical, pixelsPerPagePoint: 2)
         let bound = StaticLayerRenderer.maxPixelSize(of: layer.pageSpaceTransform, at: 2)
         #expect(bound == 120, "the decode is bounded by the placement, not by the source")
 
@@ -242,10 +242,10 @@ struct StaticLayerRenderTests {
         let layer = try await scratch.imageLayer(store: store, color: .red, transform: .fullPage)
 
         let coarse = try await composited(
-            renderer, request: StaticLayerRequest(layers: [layer], pixelsPerPagePoint: 1)
+            renderer, request: StaticLayerRequest(layers: [layer], geometry: .canonical, pixelsPerPagePoint: 1)
         )
         let fine = try await composited(
-            renderer, request: StaticLayerRequest(layers: [layer], pixelsPerPagePoint: 2)
+            renderer, request: StaticLayerRequest(layers: [layer], geometry: .canonical, pixelsPerPagePoint: 2)
         )
         #expect(fine.image.width == coarse.image.width * 2)
         #expect(await renderer.cachedCompositeCount == 2)
@@ -291,7 +291,7 @@ struct StaticLayerRenderTests {
         // The broken layer is second, so a partial composite would be the
         // plausible wrong answer: everything below it drew fine.
         let render = await renderer.composite(
-            for: StaticLayerRequest(layers: [good, broken], pixelsPerPagePoint: 1)
+            for: StaticLayerRequest(layers: [good, broken], geometry: .canonical, pixelsPerPagePoint: 1)
         )
         guard case .refused(let why) = render else {
             Issue.record("a stack with an undecodable layer rendered as \(render)")
@@ -313,7 +313,7 @@ struct StaticLayerRenderTests {
             pageSpaceTransform: .fullPage
         )
         let render = await renderer.composite(
-            for: StaticLayerRequest(layers: [layer], pixelsPerPagePoint: 1)
+            for: StaticLayerRequest(layers: [layer], geometry: .canonical, pixelsPerPagePoint: 1)
         )
         guard case .refused(let why) = render else {
             Issue.record("an unreadable format rendered as \(render)")
@@ -334,7 +334,7 @@ struct StaticLayerRenderTests {
             pageSpaceTransform: .fullPage
         )
         let render = await renderer.composite(
-            for: StaticLayerRequest(layers: [layer], pixelsPerPagePoint: 1)
+            for: StaticLayerRequest(layers: [layer], geometry: .canonical, pixelsPerPagePoint: 1)
         )
         guard case .refused = render else {
             Issue.record("a missing asset rendered as \(render)")
@@ -373,7 +373,7 @@ struct StaticLayerRenderTests {
         let renderer = StaticLayerRenderer(store: store)
         let layer = try await scratch.imageLayer(store: store, color: .red, transform: .fullPage)
 
-        let controller = PageCanvasController(toolPicker: PKToolPicker(), staticRenderer: renderer)
+        let controller = PageCanvasController(toolPicker: PKToolPicker(), projection: .canonical, staticRenderer: renderer)
         let root = controller.view!
         root.frame = CGRect(x: 0, y: 0, width: 820, height: 1180)
         controller.setStaticLayers([layer])
@@ -413,15 +413,15 @@ struct StaticLayerRenderTests {
         // the failure message prints both operands as `612.0`, which is as
         // confusing as a test failure gets. Convert explicitly at every mixed
         // comparison in this repository.
-        #expect(Double(backdrop.pageLayerForTesting.bounds.width) == PageGeometry.width)
-        #expect(Double(backdrop.pageLayerForTesting.bounds.height) == PageGeometry.height)
+        #expect(Double(backdrop.pageLayerForTesting.bounds.width) == PageGeometry.canonical.width)
+        #expect(Double(backdrop.pageLayerForTesting.bounds.height) == PageGeometry.canonical.height)
         #expect(backdrop.pageLayerForTesting.anchorPoint == .zero)
     }
 
     @Test("A page with no static layers installs no stack and keeps an opaque canvas")
     @MainActor
     func aBlankPagePaysNothing() {
-        let controller = PageCanvasController(toolPicker: PKToolPicker())
+        let controller = PageCanvasController(toolPicker: PKToolPicker(), projection: .canonical)
         let root = controller.view!
         root.frame = CGRect(x: 0, y: 0, width: 820, height: 1180)
         controller.setStaticLayers([])
@@ -445,7 +445,7 @@ struct StaticLayerRenderTests {
         )
 
         let controller = PageCanvasController(
-            toolPicker: PKToolPicker(), staticRenderer: StaticLayerRenderer(store: store)
+            toolPicker: PKToolPicker(), projection: .canonical, staticRenderer: StaticLayerRenderer(store: store)
         )
         let root = controller.view!
         root.frame = CGRect(x: 0, y: 0, width: 820, height: 1180)
@@ -483,7 +483,7 @@ struct StaticLayerRenderTests {
         let layer = try await scratch.imageLayer(store: store, color: .red, transform: .fullPage)
 
         let controller = PageCanvasController(
-            toolPicker: PKToolPicker(), staticRenderer: StaticLayerRenderer(store: store)
+            toolPicker: PKToolPicker(), projection: .canonical, staticRenderer: StaticLayerRenderer(store: store)
         )
         let root = controller.view!
         root.frame = CGRect(x: 0, y: 0, width: 820, height: 1180)
@@ -511,7 +511,7 @@ struct StaticLayerRenderTests {
         )
 
         let controller = PageCanvasController(
-            toolPicker: PKToolPicker(), staticRenderer: StaticLayerRenderer(store: store)
+            toolPicker: PKToolPicker(), projection: .canonical, staticRenderer: StaticLayerRenderer(store: store)
         )
         let root = controller.view!
         root.frame = CGRect(x: 0, y: 0, width: 820, height: 1180)
@@ -597,7 +597,7 @@ struct StaticLayerRenderTests {
         layers: [LayerEnvelope]
     ) async throws -> StaticComposite {
         try await composited(
-            renderer, request: StaticLayerRequest(layers: layers, pixelsPerPagePoint: 1)
+            renderer, request: StaticLayerRequest(layers: layers, geometry: .canonical, pixelsPerPagePoint: 1)
         )
     }
 
@@ -706,9 +706,7 @@ struct StaticLayerRenderTests {
             DocumentIndex(
                 formatVersion: DocumentIndex.currentFormatVersion,
                 documentID: UUID(),
-                pageWidth: PageGeometry.width,
-                pageHeight: PageGeometry.height,
-                pageIDs: pageIDs,
+                pages: pageIDs.map { PageRecord(id: $0, geometry: .canonical) },
                 currentPageIndex: 0
             )
         }
@@ -800,6 +798,6 @@ private extension PageSpaceTransform {
     /// The whole page, the way `EditorSession.importImage` places a source with
     /// the page's own aspect ratio.
     static let fullPage = PageSpaceTransform(
-        a: PageGeometry.width, b: 0, c: 0, d: PageGeometry.height, tx: 0, ty: 0
+        a: PageGeometry.canonical.width, b: 0, c: 0, d: PageGeometry.canonical.height, tx: 0, ty: 0
     )
 }

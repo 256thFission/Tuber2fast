@@ -651,13 +651,13 @@ struct MinusOneCompositeTests {
         let background = try await scratch.imageLayer(
             colour: CGColor(srgbRed: 1, green: 0, blue: 0, alpha: 1),
             transform: PageSpaceTransform(
-                a: PageGeometry.width, b: 0, c: 0, d: PageGeometry.height, tx: 0, ty: 0
+                a: PageGeometry.canonical.width, b: 0, c: 0, d: PageGeometry.canonical.height, tx: 0, ty: 0
             )
         )
         let overlay = try await scratch.imageLayer(
             colour: CGColor(srgbRed: 0, green: 1, blue: 0, alpha: 1),
             transform: PageSpaceTransform(
-                a: PageGeometry.width, b: 0, c: 0, d: PageGeometry.height / 2, tx: 0, ty: 0
+                a: PageGeometry.canonical.width, b: 0, c: 0, d: PageGeometry.canonical.height / 2, tx: 0, ty: 0
             )
         )
 
@@ -735,7 +735,7 @@ struct MinusOneCompositeTests {
         layers: [LayerEnvelope]
     ) async throws -> CGImage {
         let render = await renderer.composite(
-            for: StaticLayerRequest(layers: layers, pixelsPerPagePoint: 1)
+            for: StaticLayerRequest(layers: layers, geometry: .canonical, pixelsPerPagePoint: 1)
         )
         guard case .composited(let composite) = render else {
             Issue.record("the stack rendered as \(render)")

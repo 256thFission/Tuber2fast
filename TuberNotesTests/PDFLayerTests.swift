@@ -280,6 +280,144 @@ struct PDFLayerTests {
         #expect(try scratch.assetFileCount() == 1)
     }
 
+    // MARK: - Per-page geometry: the imported page is its source
+
+    /// The payoff of phase 3b, and the defect it repairs. Phase 3a had one
+    /// document-wide geometry, so an 842 × 595 landscape worksheet was fitted
+    /// into a 612 × 792 portrait page: the layer's transform scaled it to
+    /// 612 × 432 and centred it, leaving 180 points of white band the source
+    /// never had. Now the page *is* the source page, and the transform maps the
+    /// unit square edge to edge.
+    @Test("An imported page carries its source's size rather than being letterboxed")
+    @MainActor
+    func importedPagesCarryTheirSourceSize() async throws {
+        let scratch = try Scratch()
+        let session = EditorSession(store: scratch.store(), debounce: .milliseconds(20))
+        await session.start()
+
+        let sizes = [
+            CGSize(width: 612, height: 792),
+            CGSize(width: 842, height: 595),
+            CGSize(width: 595.276, height: 841.89),
+        ]
+        let appended = try await session.importPDF(pdf(pageSizes: sizes) { _, _ in })
+        #expect(session.lastSaveError == nil)
+        #expect(appended.count == sizes.count)
+
+        let index = try #require(await scratch.store().load())
+        for (offset, pageID) in appended.enumerated() {
+            let position = try #require(index.pageIDs.firstIndex(of: pageID))
+            let geometry = try #require(index.geometry(ofPageAt: position))
+            let source = sizes[offset]
+
+            #expect(abs(geometry.width - Double(source.width)) < 0.01)
+            #expect(abs(geometry.height - Double(source.height)) < 0.01)
+
+            // And no letterboxing: the pdf layer's transform maps the source's
+            // unit square onto the whole page, with no offset and no bands.
+            let placed = try scratch.layersOnDisk(ofPage: pageID)[0].pageSpaceTransform
+            #expect(abs(placed.a - geometry.width) < 0.01)
+            #expect(abs(placed.d - geometry.height) < 0.01)
+            #expect(abs(placed.tx) < 0.01)
+            #expect(abs(placed.ty) < 0.01)
+        }
+
+        // The landscape page really is landscape — the sentence the old
+        // `pageWidth < pageHeight` rule made unwriteable.
+        let landscapePosition = try #require(index.pageIDs.firstIndex(of: appended[1]))
+        let landscape = try #require(index.geometry(ofPageAt: landscapePosition))
+        #expect(landscape.width > landscape.height)
+    }
+
+    /// Mixed geometry has to survive the round trip, per page and in order, or
+    /// an annotated import is a different document after a relaunch.
+    @Test("Per-page geometry round trips through a save and a relaunch")
+    @MainActor
+    func perPageGeometryRoundTrips() async throws {
+        let scratch = try Scratch()
+        let first = EditorSession(store: scratch.store(), debounce: .milliseconds(20))
+        await first.start()
+        let appended = try await first.importPDF(twoPageFixture())
+        await first.saveIfNeeded()
+
+        let second = EditorSession(store: scratch.store(), debounce: .milliseconds(20))
+        await second.start()
+        #expect(second.phase == .ready)
+
+        let index = try #require(await scratch.store().load())
+        #expect(index.pageIDs.suffix(2) == ArraySlice(appended))
+        #expect(
+            index.pages.map(\.geometry) == [
+                .canonical,
+                PageGeometry(width: 612, height: 792),
+                PageGeometry(width: 842, height: 595),
+            ]
+        )
+        #expect(index.zoomCapPagePointsPerPixel
+            == DocumentIndex.canonicalZoomCapPagePointsPerPixel)
+    }
+
+    /// "Mixed geometry is the normal case, not an edge case": swiping past the
+    /// last page of a landscape import appends a blank *canonical portrait*
+    /// page, so a portrait page after a landscape worksheet is the ordinary
+    /// state of any annotated import.
+    @Test("A page appended past a landscape import is canonical portrait")
+    @MainActor
+    func appendingPastALandscapeImportGivesACanonicalPage() async throws {
+        let scratch = try Scratch()
+        let session = EditorSession(store: scratch.store(), debounce: .milliseconds(20))
+        await session.start()
+        try await session.importPDF(pdf(pageSizes: [CGSize(width: 842, height: 595)]) { _, _ in })
+
+        // The append gesture, as the runtime reports it: a deliberate pull past
+        // the last page's trailing edge.
+        let root = session.pages.view!
+        root.frame = CGRect(x: 0, y: 0, width: 820, height: 1180)
+        root.layoutIfNeeded()
+        let scroll = session.pages.scrollView
+        let last = session.pageCount - 1
+        scroll.contentOffset = CGPoint(x: scroll.bounds.width * (CGFloat(last) + 0.5), y: 0)
+        session.pages.scrollViewDidEndDragging(scroll, willDecelerate: false)
+        await session.saveIfNeeded()
+
+        let index = try #require(await scratch.store().load())
+        #expect(index.pages.count == 3)
+        #expect(index.pages[1].geometry == PageGeometry(width: 842, height: 595))
+        #expect(index.pages[2].geometry == .canonical)
+    }
+
+    /// An image dropped on a page fits **that** page. Under one document-wide
+    /// geometry it fitted a page that might not be the one it landed on.
+    @Test("An image import fits the page it lands on, not a document-wide page")
+    @MainActor
+    func imageImportFitsItsOwnPage() async throws {
+        let scratch = try Scratch()
+        let session = EditorSession(store: scratch.store(), debounce: .milliseconds(20))
+        await session.start()
+        let landscapePage = try await session.importPDF(
+            pdf(pageSizes: [CGSize(width: 842, height: 595)]) { _, _ in }
+        )[0]
+
+        // A square source, so the fit is decided entirely by the page.
+        try await session.importImage(
+            Data([0x89, 0x50, 0x4E, 0x47]),
+            format: .png,
+            sourceWidth: 100,
+            sourceHeight: 100,
+            onPage: landscapePage
+        )
+
+        let layers = try scratch.layersOnDisk(ofPage: landscapePage)
+        let image = try #require(layers.first { $0.recognizedKind == .image })
+        // Fitted to the landscape page's *height* — 595 — and centred across
+        // its 842-point width. Against the canonical portrait page it would
+        // have been 612 wide and centred vertically instead.
+        #expect(abs(image.pageSpaceTransform.a - 595) < 0.01)
+        #expect(abs(image.pageSpaceTransform.d - 595) < 0.01)
+        #expect(abs(image.pageSpaceTransform.tx - (842 - 595) / 2) < 0.01)
+        #expect(abs(image.pageSpaceTransform.ty) < 0.01)
+    }
+
     @Test("A PDF this build cannot open imports nothing")
     @MainActor
     func anUnreadablePDFImportsNothing() async throws {
@@ -480,7 +618,7 @@ struct PDFLayerTests {
             ref: ImageLayerRef(assetID: assetID, format: .png),
             pageSpaceTransform: .fittingSource(
                 width: 100, height: 50,
-                inPageOfWidth: PageGeometry.width, height: PageGeometry.height
+                inPageOfWidth: PageGeometry.canonical.width, height: PageGeometry.canonical.height
             )
         )
         let ink = inkEnvelope(payload: Data([0x01]))
@@ -785,9 +923,7 @@ struct PDFLayerTests {
             DocumentIndex(
                 formatVersion: DocumentIndex.currentFormatVersion,
                 documentID: UUID(),
-                pageWidth: PageGeometry.width,
-                pageHeight: PageGeometry.height,
-                pageIDs: pageIDs,
+                pages: pageIDs.map { PageRecord(id: $0, geometry: .canonical) },
                 currentPageIndex: 0
             )
         }

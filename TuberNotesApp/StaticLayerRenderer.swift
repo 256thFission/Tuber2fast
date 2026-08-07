@@ -97,10 +97,18 @@ actor StaticLayerRenderer {
     private struct CompositeKey: Hashable {
         let layerIDs: [UUID]
         let scaleMilli: Int
+        /// Geometry is per page since phase 3b, so it belongs in the key: the
+        /// same layer list flattened into a differently sized page is a
+        /// different texture, and a key that ignored it would hand a landscape
+        /// page the portrait composite of the same layers.
+        let widthMilli: Int
+        let heightMilli: Int
 
         init(_ request: StaticLayerRequest) {
             layerIDs = request.layers.map(\.layerID)
             scaleMilli = Int((request.pixelsPerPagePoint * 1000).rounded())
+            widthMilli = Int((request.geometry.width * 1000).rounded())
+            heightMilli = Int((request.geometry.height * 1000).rounded())
         }
     }
 
@@ -369,8 +377,8 @@ actor StaticLayerRenderer {
             ))
         }
 
-        let widthPixels = Int((PageGeometry.width * scale).rounded())
-        let heightPixels = Int((PageGeometry.height * scale).rounded())
+        let widthPixels = Int((request.geometry.width * scale).rounded())
+        let heightPixels = Int((request.geometry.height * scale).rounded())
         guard widthPixels > 0, heightPixels > 0 else {
             return .refused("a composite of \(widthPixels)x\(heightPixels) pixels is not a page")
         }
@@ -495,6 +503,13 @@ struct StaticLayerRequest: Sendable, Equatable {
     /// containing ink would be a derived artifact restating what the ink
     /// already says (`Contract.md` — Forbidden patterns).
     let layers: [LayerEnvelope]
+
+    /// The page these layers are placed in, in page points. Part of the request
+    /// since phase 3b: geometry is per page, so the composite's extent is a
+    /// property of the page being asked about rather than of the application.
+    /// It is part of the cache key too — the same layers in a differently sized
+    /// page are a different picture.
+    let geometry: PageGeometry
 
     /// Composite pixels per page point. Fit-width times the display scale, so
     /// the texture is pixel-exact at the scale the page opens at and merely

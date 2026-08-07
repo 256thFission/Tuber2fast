@@ -343,7 +343,7 @@ struct ShapeToolRuntimeTests {
 
     @Test("Committing appends the shape and leaves earlier ink untouched")
     func commitAppendsWithoutDisturbingExistingInk() {
-        let controller = PageCanvasController(toolPicker: PKToolPicker())
+        let controller = PageCanvasController(toolPicker: PKToolPicker(), projection: .canonical)
         _ = controller.view
 
         let existing = ShapeSynthesis.strokes(
@@ -382,7 +382,7 @@ struct ShapeToolRuntimeTests {
 
     @Test("Committing nothing changes nothing")
     func committingNoStrokesIsANoOp() {
-        let controller = PageCanvasController(toolPicker: PKToolPicker())
+        let controller = PageCanvasController(toolPicker: PKToolPicker(), projection: .canonical)
         _ = controller.view
         controller.markEditable()
 
@@ -392,7 +392,7 @@ struct ShapeToolRuntimeTests {
 
     @Test("The shape tool switches PencilKit's own inking off, and finger behaviour is untouched")
     func theToolModeArbitratesOnlyThePencil() {
-        let controller = PageCanvasController(toolPicker: PKToolPicker())
+        let controller = PageCanvasController(toolPicker: PKToolPicker(), projection: .canonical)
         _ = controller.view
         let canvas = controller.canvasView
 
@@ -416,7 +416,7 @@ struct ShapeToolRuntimeTests {
 
     @Test("The shape recognizer accepts the Pencil and nothing else")
     func theRecognizerIsPencilOnly() {
-        let controller = PageCanvasController(toolPicker: PKToolPicker())
+        let controller = PageCanvasController(toolPicker: PKToolPicker(), projection: .canonical)
         _ = controller.view
 
         let recognizer = pencilDragRecognizers(on: controller.canvasView)[0]

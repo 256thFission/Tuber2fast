@@ -144,11 +144,29 @@ Nothing here is a reason not to ship. It is a reason not to be surprised.
   reverse. **Also unproven: that CropBox-with-`/Rotate` is the rectangle users
   mean** — no PDF with a CropBox smaller than its MediaBox, and no rotated
   page, has been imported from the wild; both are simulator fixtures.
-- **Imported pages are letterboxed into the canonical portrait page**, because
-  per-page geometry (A8) has not landed. A landscape worksheet imports as a
-  landscape rectangle centred in a portrait page rather than as a landscape
-  page. This is a known missing amendment, not a defect in the import path,
-  and the payload was chosen so that adopting A8 changes nothing durable.
+- **Mixed geometry has never been swiped through.** Per-page geometry landed
+  in phase 3b, so the letterboxing is gone: an imported landscape worksheet is
+  a landscape page, and the blank page a swipe past the end appends is
+  canonical portrait beside it. Every claim about that is about files and
+  arithmetic. What nobody has *seen* is the turn itself — whether the scale
+  changing under you as you cross from a portrait page to a landscape one reads
+  as correct or as a glitch, whether a landscape page opening at its own
+  fit-width and leaving room above and below looks deliberate, and whether the
+  grey either side of a narrower page in a uniform slot is comfortable. All of
+  it is Phillip's verdict on a physical iPad; none of it is a thing a simulator
+  can answer.
+- **The zoom cap's number has never been felt.** Twenty device pixels per page
+  point is now the ceiling on every device, where before it was the same number
+  on most of them and a little less on the smallest. Nobody has zoomed to it on
+  an iPad and decided whether it is deep enough to write small, or whether the
+  composite's softness at that depth is worse than it was. The *arithmetic* is
+  tested; the depth is a verdict.
+- **`PKCanvasView`'s zoom clamp is measured on one iOS version.** Assigning a
+  `maximumZoomScale` above 10 reads back as 10, on iOS 26.5 in the simulator. It
+  is not documented by Apple, so it is a behaviour rather than a contract, and
+  the durable cap is pinned against it. A test asserts the clamp so that a
+  future iOS lifting it fails loudly rather than silently leaving the cap
+  shallower than it needs to be.
 - **The exit test proves which bytes moved, and nothing about time.** "Ink on
   page 4 of a large import writes one small file" is asserted as a set of
   files; that the resulting save is *fast*, on a device, with a 50 MB import
@@ -261,7 +279,7 @@ Not gaps — properties of the tooling that read as project defects when hit.
   pressure cannot be proven off-device at all.
 - **`#expect(aCGFloat == aDouble)` fails on identical bit patterns.** Swift's
   implicit CGFloat/Double conversion does not survive Swift Testing's macro
-  expansion, so `#expect(layer.bounds.width == PageGeometry.width)` fails while
+  expansion, so `#expect(layer.bounds.width == PageGeometry.canonical.width)` fails while
   printing `(… → 612.0) == (… → 612.0)` — the two operands' `bitPattern`s were
   compared and are the same. Convert explicitly (`Double(layer.bounds.width)`)
   at every mixed comparison. Cost of not knowing this: an hour spent looking

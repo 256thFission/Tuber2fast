@@ -134,7 +134,7 @@ struct ImageLayerTests {
             ref: ImageLayerRef(assetID: assetID, format: .png),
             pageSpaceTransform: .fittingSource(
                 width: 100, height: 50,
-                inPageOfWidth: PageGeometry.width, height: PageGeometry.height
+                inPageOfWidth: PageGeometry.canonical.width, height: PageGeometry.canonical.height
             )
         )
         let ink = inkEnvelope(payload: Data([0x01]))
@@ -234,7 +234,7 @@ struct ImageLayerTests {
             ref: ImageLayerRef(assetID: assetID, format: .png),
             pageSpaceTransform: .fittingSource(
                 width: 640, height: 480,
-                inPageOfWidth: PageGeometry.width, height: PageGeometry.height
+                inPageOfWidth: PageGeometry.canonical.width, height: PageGeometry.canonical.height
             )
         )
         try await store.save(
@@ -391,10 +391,10 @@ struct ImageLayerTests {
         let placed = layers[0].pageSpaceTransform
         #expect(!placed.isIdentity)
         #expect(placed.isInvertible)
-        #expect(placed.a == PageGeometry.width)
-        #expect(placed.d == PageGeometry.width / 2)
+        #expect(placed.a == PageGeometry.canonical.width)
+        #expect(placed.d == PageGeometry.canonical.width / 2)
         #expect(placed.tx == 0)
-        #expect(placed.ty == (PageGeometry.height - PageGeometry.width / 2) / 2)
+        #expect(placed.ty == (PageGeometry.canonical.height - PageGeometry.canonical.width / 2) / 2)
 
         // The asset is where the ref says, byte for byte.
         let ref = try ImageLayerRef(payload: layers[0].payload)
@@ -652,9 +652,7 @@ struct ImageLayerTests {
             DocumentIndex(
                 formatVersion: DocumentIndex.currentFormatVersion,
                 documentID: UUID(),
-                pageWidth: PageGeometry.width,
-                pageHeight: PageGeometry.height,
-                pageIDs: pageIDs,
+                pages: pageIDs.map { PageRecord(id: $0, geometry: .canonical) },
                 currentPageIndex: 0
             )
         }

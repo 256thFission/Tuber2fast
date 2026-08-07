@@ -124,7 +124,7 @@ final class SpikeMirror {
 
         patternLayer.anchorPoint = .zero
         patternLayer.position = .zero
-        patternLayer.bounds = CGRect(x: 0, y: 0, width: PageGeometry.width, height: PageGeometry.height)
+        patternLayer.bounds = CGRect(x: 0, y: 0, width: PageGeometry.canonical.width, height: PageGeometry.canonical.height)
         patternLayer.contents = Self.renderPattern().cgImage
         // Nearest-at-magnification would exaggerate softness; linear is what a
         // real composite texture would do. Softness under deep zoom is
@@ -245,7 +245,7 @@ final class SpikeMirror {
     ///   100 pt-inset corners and the page center: the spots to stare at
     ///   during pinch, fling, and rubber-band.
     private static func renderPattern() -> UIImage {
-        let size = CGSize(width: PageGeometry.width, height: PageGeometry.height)
+        let size = CGSize(width: PageGeometry.canonical.width, height: PageGeometry.canonical.height)
         let format = UIGraphicsImageRendererFormat()
         format.scale = 2
         return UIGraphicsImageRenderer(size: size, format: format).image { context in

@@ -27,6 +27,18 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
     /// page would mean the selected tool resetting every time you turn one.
     private let toolPicker: PKToolPicker
 
+    /// This page's own size and the document's zoom cap, told at construction
+    /// and never changed (`Contract.md` — Geometry and coordinates: geometry is
+    /// per page, set at page creation, immutable afterward).
+    ///
+    /// `let`, which is the enforcement: there is no setter, so "no owner mutates
+    /// geometry after creation" is a property of the type rather than a rule
+    /// this file remembers. A page whose geometry changed would be a page whose
+    /// ink moved under it.
+    private let projection: PageProjection
+
+    private var geometry: PageGeometry { projection.geometry }
+
     /// The viewport size the current zoom range was computed for, or `nil`
     /// before the first layout. Keyed on the size rather than on a bool so that
     /// repeated layout passes at one size change nothing, while a genuine
@@ -140,8 +152,13 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
     private var spikeMirror: SpikeMirror?
     #endif
 
-    init(toolPicker: PKToolPicker, staticRenderer: StaticLayerRenderer? = nil) {
+    init(
+        toolPicker: PKToolPicker,
+        projection: PageProjection,
+        staticRenderer: StaticLayerRenderer? = nil
+    ) {
         self.toolPicker = toolPicker
+        self.projection = projection
         self.staticRenderer = staticRenderer
         super.init(nibName: nil, bundle: nil)
 
@@ -152,9 +169,9 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
         //
         // Assigned unzoomed, which is correct because `zoomScale` is still 1
         // here and `UIScrollView` scales `contentSize` itself whenever the scale
-        // changes. Nothing writes `contentSize` again: the page geometry is
-        // fixed, so this is the only assignment it ever needs.
-        canvasView.contentSize = CGSize(width: PageGeometry.width, height: PageGeometry.height)
+        // changes. Nothing writes `contentSize` again: this page's geometry is
+        // fixed for its life, so this is the only assignment it ever needs.
+        canvasView.contentSize = CGSize(width: geometry.width, height: geometry.height)
         canvasView.delegate = self
     }
 
@@ -236,8 +253,8 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
         pageBoundary.frame = CGRect(
             x: 0,
             y: 0,
-            width: PageGeometry.width * scale,
-            height: PageGeometry.height * scale
+            width: geometry.width * scale,
+            height: geometry.height * scale
         )
         CATransaction.commit()
     }
@@ -312,31 +329,74 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
     /// at twice fit-width is still at twice fit-width after a rotation. On the
     /// first pass the ratio is 1, so opening at fit-width is the same code path.
     ///
+    /// **The floor derives from this page**, not from a global — which is what
+    /// per-page geometry changes here. A landscape page fits its own width and
+    /// zooms out to its own whole page; a portrait neighbour does the same with
+    /// different numbers, and neither reads the other's.
+    ///
+    /// **The ceiling derives from the document's durable cap and nothing else.**
+    /// It was `fitWidth × 8` — a function of the viewport, so it moved with the
+    /// device, the rotation, and Split View, and a smaller iPad reached barely
+    /// half the detail a larger one did on the same document. Now one device
+    /// pixel represents `zoomCapPagePointsPerPixel` page points at maximum zoom,
+    /// on every device (A9).
+    ///
     /// KNOWN DEFECT: zoom lives per page and dies with the controller. A page
     /// retired from the live window is released with no zoom saved, so turning
     /// back rebuilds it at fit-width, while pages still inside the window keep
     /// their scale — inconsistent by distance rather than uniformly wrong. The
     /// tool picker is shared across pages for exactly this reason; zoom is not.
-    /// Whether zoom *should* be shared is a feel question, and Phillip's.
+    /// Whether zoom *should* be shared is a feel question, and Phillip's. Mixed
+    /// geometry sharpens it: a shared *scale* across pages of different sizes
+    /// would mean a turn changes how much of the page you can see.
     private func establishZoomIfNeeded() {
         let bounds = canvasView.bounds.size
         guard bounds.width > 0, bounds.height > 0 else { return }
         guard bounds != zoomRangeBounds else { return }
 
-        let fitWidth = bounds.width / PageGeometry.width
-        let fitPage = min(fitWidth, bounds.height / PageGeometry.height)
+        let fitWidth = bounds.width / geometry.width
+        let fitPage = min(fitWidth, bounds.height / geometry.height)
         guard fitWidth > 0, fitWidth.isFinite, fitPage > 0, fitPage.isFinite else {
             return
         }
 
-        let previousFitWidth = zoomRangeBounds.map { $0.width / PageGeometry.width }
+        let previousFitWidth = zoomRangeBounds.map { $0.width / geometry.width }
         let ratio = previousFitWidth.map { canvasView.zoomScale / $0 } ?? 1
+
+        let ceiling = projection.maximumZoomScale(
+            displayScale: Double(max(traitCollection.displayScale, 1))
+        )
+        // A page so small that a whole one of it fits below the deepest zoom
+        // the document allows. It is an invalid state rather than a range to
+        // reorder: the page would open above its own ceiling, and both the
+        // floor and the cap would be describing something that is not a page.
+        // Reachable only from a source whose box is a few dozen points across,
+        // which is a page this build refuses rather than rounds.
+        precondition(
+            CGFloat(ceiling) >= fitPage * Self.overviewFactor,
+            "page \(geometry.width)x\(geometry.height) is smaller than the "
+                + "document's zoom cap allows: its overview scale "
+                + "\(fitPage * Self.overviewFactor) is past the ceiling \(ceiling)"
+        )
 
         // Order matters: the range must admit the new scale before it is set,
         // or UIScrollView clamps it to the range still describing the old
         // viewport.
         canvasView.minimumZoomScale = fitPage * Self.overviewFactor
-        canvasView.maximumZoomScale = fitWidth * 8
+        canvasView.maximumZoomScale = CGFloat(ceiling)
+        // `PKCanvasView` silently clamps `maximumZoomScale` to 10 — measured,
+        // undocumented, and invisible unless something reads the value back.
+        // A document that pinned a deeper cap would promise a detail level the
+        // canvas quietly does not deliver, which is precisely the clamped
+        // invalid state the contract refuses. So it is read back and trapped
+        // here, at the one place that can see it happen.
+        precondition(
+            abs(Double(canvasView.maximumZoomScale) - ceiling) < 1e-6,
+            "this document's zoom cap of \(projection.zoomCapPagePointsPerPixel) page "
+                + "points per pixel asks for a maximum zoom scale of \(ceiling), and "
+                + "PKCanvasView accepted \(canvasView.maximumZoomScale); it refuses "
+                + "anything above \(PageProjection.runtimeMaximumZoomScale)"
+        )
         canvasView.zoomScale = min(
             max(fitWidth * ratio, canvasView.minimumZoomScale),
             canvasView.maximumZoomScale
@@ -513,7 +573,7 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
         canvasView.backgroundColor = .clear
         canvasView.isOpaque = false
         view.backgroundColor = .white
-        let installed = PageBackdrop(under: canvasView, in: view)
+        let installed = PageBackdrop(under: canvasView, in: view, geometry: geometry)
         installed.viewportChanged(to: view.bounds)
         installed.mirror(offset: canvasView.contentOffset, zoom: canvasView.zoomScale)
         backdrop = installed
@@ -530,7 +590,15 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
         guard let backdrop, let staticRenderer, !staticLayers.isEmpty else { return }
         guard let scale = compositeScale() else { return }
 
-        let request = StaticLayerRequest(layers: layersToComposite, pixelsPerPagePoint: scale)
+        // `layersToComposite` rather than `staticLayers`: a selected layer is
+        // lifted out of the composite it is being dragged from (phase 4's
+        // minus-one). `geometry` is the page's own, not the canonical one, so
+        // a landscape page composites at its own extent (phase 3b).
+        let request = StaticLayerRequest(
+            layers: layersToComposite,
+            geometry: geometry,
+            pixelsPerPagePoint: scale
+        )
         guard request != renderedRequest else { return }
         renderedRequest = request
 
@@ -570,8 +638,12 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
         let width = canvasView.bounds.width
         guard width > 0 else { return nil }
         let displayScale = max(traitCollection.displayScale, 1)
-        let fitWidth = width / PageGeometry.width
-        let cap = Self.maximumCompositeLongEdge / PageGeometry.height
+        let fitWidth = width / geometry.width
+        // The page's own long edge, so a landscape page is capped by its width
+        // where a portrait one is capped by its height. Capping on a fixed axis
+        // would let a wide page render past the texture budget the number
+        // exists to state.
+        let cap = Self.maximumCompositeLongEdge / max(geometry.width, geometry.height)
         let scale = min(max(Double(fitWidth * displayScale), 1), cap)
         guard scale.isFinite, scale > 0 else { return nil }
         return (scale * 100).rounded() / 100

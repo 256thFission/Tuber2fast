@@ -352,6 +352,14 @@ final class EditorSession {
         created.staticLayersForPage = { [weak self] pageIndex in
             self?.staticLayers(forPageAt: pageIndex) ?? []
         }
+        created.projectionForPage = { [weak self] pageIndex in
+            // Out of range only when the runtime lays out before `start()` has
+            // populated the session, exactly as `contentForPage` can be. The
+            // canonical page is the right answer there for the same reason
+            // `.blank` is: the session replaces the slot the moment it knows
+            // better, through `setPages`.
+            self?.index.projection(ofPageAt: pageIndex) ?? .canonical
+        }
         created.onDrawingChanged = { [weak self] pageIndex in
             self?.drawingChanged(atPageIndex: pageIndex)
         }
@@ -770,9 +778,16 @@ final class EditorSession {
         // `performOneSave`'s exit re-arms, so the next pass writes both.
         guard phase == .ready else { return }
 
-        let appended = UUID()
-        pageStates.append(Page(appended: appended))
-        index = index.withPages(index.pageIDs + [appended], currentPageIndex: index.pageIDs.count)
+        // **The canonical geometry, always** — which is what makes mixed
+        // geometry the normal state of an annotated import rather than an edge
+        // case: swiping past the last page of a landscape worksheet lands you
+        // on a portrait page. The appended page is this application's own page,
+        // not a continuation of whatever was imported before it, and a blank
+        // page shaped like the last import would make the shape of a new page
+        // depend on where you happened to be standing.
+        let appended = PageRecord(id: UUID(), geometry: .canonical)
+        pageStates.append(Page(appended: appended.id))
+        index = index.withPages(index.pages + [appended], currentPageIndex: index.pages.count)
         indexDirty = true
         alignedWithIndex()
 
@@ -828,7 +843,7 @@ final class EditorSession {
         guard phase == .ready, index.pageIDs.indices.contains(pageIndex) else { return }
         guard pageIndex != index.currentPageIndex else { return }
 
-        index = index.withPages(index.pageIDs, currentPageIndex: pageIndex)
+        index = index.withPages(index.pages, currentPageIndex: pageIndex)
         indexDirty = true
         alignedWithIndex()
         pruneDurableBytes()
@@ -1210,14 +1225,24 @@ final class EditorSession {
         try requireLayerListIsEditable(targetPageID)
 
         let layerID = UUID()
+        // The geometry of **the page it lands on**, not the document's — there
+        // is no document geometry any more. An image dropped on a landscape
+        // worksheet fits that worksheet; the same image on the portrait page
+        // after it fits differently, which is what "the zoom floor derives from
+        // the page it belongs to" means one level down.
+        guard let targetIndex = index.pageIDs.firstIndex(of: targetPageID),
+              let geometry = index.geometry(ofPageAt: targetIndex)
+        else {
+            throw LayerEditError.pageNotFound(targetPageID)
+        }
         let envelope = try LayerEnvelope.image(
             layerID: layerID,
             ref: ImageLayerRef(assetID: assetID, format: format),
             pageSpaceTransform: .fittingSource(
                 width: sourceWidth,
                 height: sourceHeight,
-                inPageOfWidth: index.pageWidth,
-                height: index.pageHeight
+                inPageOfWidth: geometry.width,
+                height: geometry.height
             )
         )
 
@@ -1290,21 +1315,29 @@ final class EditorSession {
         // The session may have moved on while that write ran.
         guard phase == .ready else { throw LayerEditError.sessionNotReady }
 
-        var appended: [UUID] = []
+        var appended: [PageRecord] = []
         for source in sourcePages {
-            let pageID = UUID()
+            // **The imported page is its source's size**, in page points. Until
+            // phase 3b geometry was one global value, so this fitted an
+            // 842 × 595 worksheet into a 612 × 792 page and letterboxed it —
+            // the page had white bands the source never had, and the ink you
+            // wrote in them belonged to nothing. Now the page *is* the source
+            // page, so `fittingSource` below places the unit square edge to
+            // edge and the bands are gone.
+            let geometry = PageGeometry(width: source.width, height: source.height)
+            let page = PageRecord(id: UUID(), geometry: geometry)
             let envelope = try LayerEnvelope.pdf(
                 layerID: UUID(),
                 ref: PDFLayerRef(assetID: assetID, sourcePageIndex: source.index),
                 pageSpaceTransform: .fittingSource(
                     width: source.width,
                     height: source.height,
-                    inPageOfWidth: index.pageWidth,
-                    height: index.pageHeight
+                    inPageOfWidth: geometry.width,
+                    height: geometry.height
                 )
             )
-            pageStates.append(Page(appended: pageID))
-            appended.append(pageID)
+            pageStates.append(Page(appended: page.id))
+            appended.append(page)
             // Ink last is not a rule this site remembers: the save path builds
             // `staticLayers + [ink]`, so it cannot write anything else.
             pageStates[pageStates.count - 1].layerListChanged(
@@ -1314,7 +1347,7 @@ final class EditorSession {
         }
 
         index = index.withPages(
-            index.pageIDs + appended,
+            index.pages + appended,
             currentPageIndex: index.currentPageIndex
         )
         indexDirty = true
@@ -1332,7 +1365,7 @@ final class EditorSession {
         // discrete action whose heavy bytes are already on disk. Every
         // millisecond it stays unsaved is a millisecond the asset is an orphan.
         await saveIfNeeded()
-        return appended
+        return appended.map(\.id)
     }
 
     /// The canvas runtime committed one layer transform.

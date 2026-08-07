@@ -150,11 +150,14 @@ struct ImageLayerRef: Codable, Sendable, Equatable {
 ///    independently, and the two can then drift with no way to detect it. The
 ///    unit square delegates the choice to one place — `PDFSource`, which states
 ///    it — and stays correct as long as that one place is self-consistent.
-/// 4. **It would restate the page geometry too, once per-page geometry lands.**
-///    Under the proposed geometry amendment an imported page's own geometry
-///    *is* its source's size in points, so a durable size in the payload would
-///    be a third copy. The unit-square payload needs no reconciliation when
-///    that amendment arrives; a stored point size would.
+/// 4. **It would restate the page geometry, which is now a fact rather than a
+///    forecast.** Per-page geometry landed in phase 3b: an imported page's own
+///    geometry *is* its source's size in points, in `PageRecord`, so a durable
+///    size in this payload would be a third copy of one number. The unit-square
+///    payload needed no reconciliation when that landed — a stored point size
+///    would have — and the transform an imported page's `pdf` layer carries is
+///    now `{ a: pageWidth, d: pageHeight, tx: 0, ty: 0 }`, edge to edge, where
+///    under one document-wide geometry it was a letterbox.
 ///
 /// So `pageSpaceTransform` maps the source page's box — taken as the unit
 /// square, origin top-left, matching page space — into page space, exactly as

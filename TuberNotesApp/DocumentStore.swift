@@ -28,6 +28,19 @@ actor DocumentStore {
     /// read from or successfully written to disk.
     private var lastKnownIndex: DocumentIndex?
 
+    /// The index on disk is in a superseded form and must be written forward.
+    ///
+    /// Phase 1's precedent, at the index: read both forms, write forward on the
+    /// next save, never migrate eagerly. It lives here rather than on
+    /// `DocumentIndex` because it is a fact about the *file*, and because the
+    /// clearing has to happen at the write — a flag the caller carried would
+    /// either rewrite the index on every save forever or need the caller to
+    /// know it had been honoured.
+    ///
+    /// A document that is never saved again keeps its old index, which is what
+    /// "never migrate eagerly" means.
+    private var indexOnDiskIsSupersededForm = false
+
     init(directoryURL: URL) {
         self.directoryURL = directoryURL
     }
@@ -277,6 +290,15 @@ actor DocumentStore {
                 throw DocumentIndexError.missingPageFile(pageID)
             }
             lastKnownIndex = index
+            indexOnDiskIsSupersededForm = index.wasReadInSupersededForm
+            if index.wasReadInSupersededForm {
+                CanvasLog.event(
+                    .lifecycle,
+                    "index read in the pre-per-page-geometry form; \(index.pages.count) "
+                        + "page(s) took the document-wide geometry and it will be "
+                        + "written forward on the next save"
+                )
+            }
             return index
         } catch {
             // A refusal to open a document is the most alarming thing this type
@@ -626,12 +648,20 @@ actor DocumentStore {
         // files with no index naming them, which is the unopenable document
         // `Contract.md` — Durable form's write ordering exists to prevent. One
         // `stat` per save is nothing next to the page write it guards.
+        //
+        // An index still in a superseded form is rewritten even when nothing
+        // about the document changed — the page-file rule one level up
+        // (`PagePlan.pageFileNeedsWriting` rewrites a page file whose envelopes
+        // are still inline). `encode(to:)` writes only the current form, so
+        // one write is the whole migration and the flag is cleared by it.
         let indexNeedsWriting = lastKnownIndex != validated
+            || indexOnDiskIsSupersededForm
             || !FileManager.default.fileExists(atPath: indexURL.path)
         if indexNeedsWriting {
             try createDirectoriesIfNeeded()
             try encoder.encode(validated).write(to: indexURL, options: .atomic)
             lastKnownIndex = validated
+            indexOnDiskIsSupersededForm = false
         }
 
         CanvasLog.event(

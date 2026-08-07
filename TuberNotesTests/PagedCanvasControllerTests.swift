@@ -202,6 +202,105 @@ struct PagedCanvasControllerTests {
         #expect(asked == 0)
     }
 
+    // MARK: - Mixed geometry
+
+    /// The ordinary state of an annotated import: a portrait page, a landscape
+    /// worksheet, and the blank canonical page a swipe past the end appends.
+    /// Each page's canvas is built with its own geometry, and every page in the
+    /// run is reachable — the arithmetic that lands a turn is the same for all
+    /// three because the *slot* is uniform even though the pages are not.
+    @Test("Paging lands correctly across a mixed-geometry run")
+    func mixedGeometryRunTurnsCorrectly() throws {
+        let geometries: [PageGeometry] = [
+            .canonical,
+            PageGeometry(width: 842, height: 595),
+            .canonical,
+        ]
+        let controller = hosted {
+            $0.projectionForPage = { index in
+                PageProjection(
+                    geometry: geometries[index],
+                    zoomCapPagePointsPerPixel: DocumentIndex.canonicalZoomCapPagePointsPerPixel
+                )
+            }
+        }
+        controller.setPages(count: geometries.count, currentPageIndex: 0)
+        controller.markEditable()
+        controller.view.layoutIfNeeded()
+
+        let scroll = controller.scrollView
+        // A slot is one viewport wide whatever the page in it measures, so the
+        // content is exactly the run of pages and nothing is left over.
+        #expect(scroll.contentSize.width == scroll.bounds.width * 3)
+
+        for page in [0, 1, 2, 1, 0, 2] {
+            turn(controller, to: page)
+            // A slot that entered the window this turn was built during the
+            // settle and has not laid out yet; the app gets this pass from the
+            // run loop.
+            controller.view.layoutIfNeeded()
+            #expect(controller.currentPageIndex == page)
+
+            let canvas = try #require(controller.livePage(at: page)).canvasView
+            let expected = geometries[page]
+            let unscaled = CGSize(
+                width: canvas.contentSize.width / canvas.zoomScale,
+                height: canvas.contentSize.height / canvas.zoomScale
+            )
+            #expect(abs(Double(unscaled.width) - expected.width) < 0.5)
+            #expect(abs(Double(unscaled.height) - expected.height) < 0.5)
+
+            // The page sits inside its slot: it opens at its own fit-width, and
+            // the room left over falls evenly on both sides rather than pinning
+            // to a corner.
+            #expect(abs(Double(canvas.zoomScale) - Double(scroll.bounds.width) / expected.width) < 0.001)
+            #expect(canvas.contentInset.left == canvas.contentInset.right)
+            #expect(canvas.contentInset.top == canvas.contentInset.bottom)
+
+            // And its slot is where the arithmetic says it is: neighbours never
+            // bleed in, so nothing about the page's own size moves the turn.
+            #expect(canvas.superview?.frame == CGRect(
+                x: scroll.bounds.width * CGFloat(page),
+                y: 0,
+                width: scroll.bounds.width,
+                height: scroll.bounds.height
+            ))
+        }
+    }
+
+    /// A landscape page next to a portrait one gets its own zoom floor, and the
+    /// whole of it fits at that floor. Sharing a floor would mean a landscape
+    /// worksheet you could not see the bottom of.
+    @Test("Each page's zoom floor comes from its own geometry")
+    func floorsAreNotSharedAcrossMixedGeometry() throws {
+        let landscape = PageGeometry(width: 842, height: 595)
+        let controller = hosted {
+            $0.projectionForPage = { index in
+                PageProjection(
+                    geometry: index == 1 ? landscape : .canonical,
+                    zoomCapPagePointsPerPixel: DocumentIndex.canonicalZoomCapPagePointsPerPixel
+                )
+            }
+        }
+        controller.setPages(count: 2, currentPageIndex: 0)
+        controller.view.layoutIfNeeded()
+
+        let portraitCanvas = try #require(controller.livePage(at: 0)).canvasView
+        let landscapeCanvas = try #require(controller.livePage(at: 1)).canvasView
+        let slot = controller.scrollView.bounds
+
+        #expect(portraitCanvas.minimumZoomScale != landscapeCanvas.minimumZoomScale)
+        #expect(landscape.width * Double(landscapeCanvas.minimumZoomScale) <= Double(slot.width))
+        #expect(landscape.height * Double(landscapeCanvas.minimumZoomScale) <= Double(slot.height))
+        #expect(PageGeometry.canonical.width * Double(portraitCanvas.minimumZoomScale)
+            <= Double(slot.width))
+        #expect(PageGeometry.canonical.height * Double(portraitCanvas.minimumZoomScale)
+            <= Double(slot.height))
+
+        // One document, one ceiling.
+        #expect(portraitCanvas.maximumZoomScale == landscapeCanvas.maximumZoomScale)
+    }
+
     /// A laid-out runtime.
     ///
     /// `configure` runs before the first layout on purpose: the initial window

@@ -99,13 +99,18 @@ final class PageBackdrop {
     /// `canvasView` is typed as `UIView` rather than `PKCanvasView` because
     /// nothing here needs PencilKit's vocabulary — only a layer to insert
     /// below.
-    init(under canvasView: UIView, in hostView: UIView) {
+    ///
+    /// `geometry` is this page's own, told at construction and never changed:
+    /// the texture layer's bounds *are* the page rectangle in page points, so a
+    /// backdrop that read a global would draw a landscape page's worksheet into
+    /// a portrait frame. It is the whole of this file's phase 3b change.
+    init(under canvasView: UIView, in hostView: UIView, geometry: PageGeometry) {
         clip.masksToBounds = true
         clip.frame = hostView.bounds
 
         page.anchorPoint = .zero
         page.position = .zero
-        page.bounds = CGRect(x: 0, y: 0, width: PageGeometry.width, height: PageGeometry.height)
+        page.bounds = CGRect(x: 0, y: 0, width: geometry.width, height: geometry.height)
         // Linear at magnification is what a real texture does under zoom;
         // trilinear at minification is what stops an overview zoom from
         // aliasing the composite into noise. Softness under deep zoom is the
