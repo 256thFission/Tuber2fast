@@ -331,6 +331,11 @@ final class EditorSession {
         liveRuntime?.livePage(at: index.currentPageIndex)
     }
 
+    /// Read only by tests: the prefetch warm is observable nowhere else —
+    /// "the neighbour's composite is already in the cache before its canvas
+    /// exists" is a claim about this actor's contents.
+    var staticRendererForTesting: StaticLayerRenderer { staticRenderer }
+
     /// The paged canvas runtime, created once and owned here so that SwiftUI
     /// rebuilding its body cannot replace it.
     ///
@@ -654,23 +659,70 @@ final class EditorSession {
     /// is the same rule wearing a different hat: nothing is retained because it
     /// might be wanted again (`Contract.md` — Performance).
     ///
-    /// Warming those neighbours' composites *ahead* of a turn is deliberately
-    /// not done here — that is the fork doc's phase 3c, not this method. Its
-    /// gate, `turn-settles-once`, is met: a turn commits once, at rest, on the
-    /// settle callbacks, so an abandoned half-drag reaches here zero times and
-    /// a completed turn exactly once. This only permits a neighbour's
-    /// composite to survive; nothing creates one before its page is built.
+    /// This is also where the warm happens — phase 3c's "at turn: prefetch"
+    /// bullet. Its gate, `turn-settles-once`, is met: a turn commits once, at
+    /// rest, on the settle callbacks
+    /// (`PagedCanvasControllerTests.halfDragCommitsNothing`,
+    /// `pageChangeIsReportedOnceWhenSettled`, `flingAcrossPagesReportsOneTurn`),
+    /// so an abandoned half-drag reaches here zero times and a completed turn
+    /// exactly once — nothing can double-decode. The visible page's layers
+    /// travel as the protected set, so warming can never answer byte-bound
+    /// pressure by evicting the composite on screen; a warm for a page that
+    /// leaves the window before it lands is dropped by the next retain, which
+    /// is this path's droppability.
     private func retainRenderedLayers() {
-        let lower = max(0, index.currentPageIndex - Self.prefetchRadius)
-        let upper = min(pageStates.count - 1, index.currentPageIndex + Self.prefetchRadius)
+        let current = index.currentPageIndex
+        let lower = max(0, current - Self.prefetchRadius)
+        let upper = min(pageStates.count - 1, current + Self.prefetchRadius)
         guard lower <= upper else { return }
 
         var live: Set<UUID> = []
         for pageIndex in lower...upper {
             for layer in pageStates[pageIndex].staticLayers { live.insert(layer.layerID) }
         }
+        let visible = Set(pageStates[current].staticLayers.map(\.layerID))
         let renderer = staticRenderer
-        Task { await renderer.retain(layerIDs: live) }
+        Task { await renderer.retain(layerIDs: live, protecting: visible) }
+    }
+
+    /// Warms the prefetch window's other pages' base composites, outermost
+    /// first, so the nearest neighbour is the most recently inserted when the
+    /// byte bound bites.
+    ///
+    /// Called after the turn's `fetchPageData` returns, not beside the
+    /// retain: a neighbour's layer list arrives with its bytes, and warming
+    /// before the fetch would find every un-visited page empty and warm
+    /// nothing. The window is re-read here rather than captured at the turn,
+    /// which is what makes a warm for an already-departed window a no-op
+    /// rather than wasted decode.
+    ///
+    /// A page carrying a refusal is skipped for the reason
+    /// `staticLayers(forPageAt:)` answers it empty: no partial composite may
+    /// exist to be mistaken for a correct one. The decode runs on the
+    /// renderer's global-executor path, never here and never on main; a page
+    /// already cached or already rendering costs one dictionary look.
+    private func warmNeighbourComposites() {
+        let current = index.currentPageIndex
+        let lower = max(0, current - Self.prefetchRadius)
+        let upper = min(pageStates.count - 1, current + Self.prefetchRadius)
+        guard lower <= upper else { return }
+        let renderer = staticRenderer
+
+        for pageIndex in (lower...upper).sorted(by: {
+            abs($0 - current) > abs($1 - current)
+        }) where pageIndex != current {
+            guard pageStates[pageIndex].refusedLayers.isEmpty,
+                  !pageStates[pageIndex].staticLayers.isEmpty,
+                  let geometry = index.geometry(ofPageAt: pageIndex),
+                  let detail = liveRuntime?.compositeDetail(forPageAt: pageIndex)
+            else { continue }
+            let request = StaticLayerRequest(
+                layers: pageStates[pageIndex].staticLayers,
+                geometry: geometry,
+                pixelsPerPagePoint: detail
+            )
+            Task { await renderer.warm(request) }
+        }
     }
 
     /// What a page carrying a refused layer says instead of taking ink.
@@ -850,6 +902,11 @@ final class EditorSession {
         retainRenderedLayers()
         Task { [weak self] in
             await self?.fetchPageData(forPagesAround: pageIndex)
+            // Only after the fetch: a prefetch-distance page's layer list
+            // arrives with its bytes, and this is the one moment — a settled
+            // turn, which fires exactly once — the fork doc's "at turn:
+            // prefetch" attaches to.
+            self?.warmNeighbourComposites()
         }
         markDirty()
     }

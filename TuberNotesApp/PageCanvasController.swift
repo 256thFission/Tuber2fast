@@ -755,16 +755,33 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
     /// Quantized to a hundredth so that a sub-pixel layout difference is not a
     /// whole new composite.
     private func compositeScale() -> Double? {
-        let width = canvasView.bounds.width
-        guard width > 0 else { return nil }
-        let displayScale = max(traitCollection.displayScale, 1)
-        let fitWidth = width / geometry.width
+        Self.compositeDetail(
+            viewportWidth: canvasView.bounds.width,
+            displayScale: traitCollection.displayScale,
+            geometry: geometry
+        )
+    }
+
+    /// The one derivation of a page's base level of detail, `static` so the
+    /// prefetch warm can reproduce it exactly: a warmed composite is a cache
+    /// hit only if its request — including this number — is byte-for-byte the
+    /// request this controller will make when the page turns live. Two copies
+    /// of this arithmetic would be two numbers that drift, and a drifted warm
+    /// is a cache that never hits while looking like it works.
+    static func compositeDetail(
+        viewportWidth: CGFloat,
+        displayScale: CGFloat,
+        geometry: PageGeometry
+    ) -> Double? {
+        guard viewportWidth > 0 else { return nil }
+        let clampedDisplayScale = max(displayScale, 1)
+        let fitWidth = viewportWidth / geometry.width
         // The page's own long edge, so a landscape page is capped by its width
         // where a portrait one is capped by its height. Capping on a fixed axis
         // would let a wide page render past the texture budget the number
         // exists to state.
         let cap = Self.maximumCompositeLongEdge / max(geometry.width, geometry.height)
-        let scale = min(max(Double(fitWidth * displayScale), 1), cap)
+        let scale = min(max(Double(fitWidth * clampedDisplayScale), 1), cap)
         guard scale.isFinite, scale > 0 else { return nil }
         return (scale * 100).rounded() / 100
     }

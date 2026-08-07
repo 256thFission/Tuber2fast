@@ -193,6 +193,29 @@ actor StaticLayerRenderer {
         return render
     }
 
+    // MARK: - The prefetch warm
+
+    /// Renders a composite into the cache so a coming page turn finds it
+    /// warm, without counting as a use.
+    ///
+    /// The "at turn: prefetch" moment of the fork doc's zoom story: the
+    /// session calls this for the pages in its prefetch radius after a
+    /// settled turn — and turns settle exactly once
+    /// (`PagedCanvasControllerTests` pins it), so an abandoned half-drag
+    /// warms nothing and nothing decodes twice. A hit returns without
+    /// touching the entry's recency: a warm is speculation, and speculation
+    /// must not displace what a user actually looked at in the LRU order. A
+    /// warm for a page that leaves the window before it lands is dropped by
+    /// the next `retain`, which is the droppability this path needs —
+    /// cancellation buys nothing a bounded, self-correcting cache does not
+    /// already give (the accepted shape of review finding 13).
+    func warm(_ request: StaticLayerRequest) async {
+        guard !request.layers.isEmpty else { return }
+        let key = CompositeKey(request)
+        if let entry = cache[key], entry.request == request { return }
+        _ = await composite(for: request)
+    }
+
     // MARK: - The lens
 
     /// The visible sub-rect of one page's static stack, rendered at the
@@ -481,7 +504,15 @@ actor StaticLayerRenderer {
     /// Keyed on layer IDs rather than page IDs so that this actor never learns
     /// page identity. `EditorSession` — which owns page order — computes the
     /// live set.
-    func retain(layerIDs live: Set<UUID>) {
+    /// `protecting` names the layers of the page the user is looking at:
+    /// composites containing any of them are exempt from the byte-bound trim,
+    /// though never from this window eviction itself. It exists for the
+    /// prefetch warm (phase 3c) — five pages of warmed composites can
+    /// legitimately exceed the byte bound, and without this the LRU backstop
+    /// could answer that pressure by evicting the one composite that is on
+    /// screen, which is speculation costing the user a visible re-render.
+    func retain(layerIDs live: Set<UUID>, protecting visible: Set<UUID> = []) {
+        protectedLayerIDs = visible
         var dropped = 0
         for (key, entry) in cache where entry.layerIDs.isDisjoint(with: live) {
             cachedBytes -= entry.byteCount
@@ -518,11 +549,21 @@ actor StaticLayerRenderer {
     /// The entry just inserted is never a candidate: a composite bigger than
     /// the whole bound would otherwise be evicted before it was ever shown, and
     /// the page would re-render it on the next layout pass forever.
+    /// The layers of the visible page, exempt from the byte-bound trim. Set
+    /// by `retain(layerIDs:protecting:)` — the session, which is the one
+    /// place that knows which page is visible — and empty until it says.
+    private var protectedLayerIDs: Set<UUID> = []
+
     private func trimToByteBound(protecting key: CompositeKey) {
         guard cachedBytes > byteBound else { return }
         for candidate in cache.sorted(by: { $0.value.lastUsed < $1.value.lastUsed }) {
             guard cachedBytes > byteBound else { break }
             guard candidate.key != key else { continue }
+            // The visible page's composite is never traded for speculation.
+            // The loop simply finishes over-bound if everything left is
+            // protected — a bounded overshoot of one page's composites,
+            // corrected by the next retain.
+            guard candidate.value.layerIDs.isDisjoint(with: protectedLayerIDs) else { continue }
             cachedBytes -= candidate.value.byteCount
             cache[candidate.key] = nil
             CanvasLog.event(
