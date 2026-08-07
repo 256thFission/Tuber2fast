@@ -389,13 +389,21 @@ final class LayerSelectionRuntime: NSObject {
             // in page space by construction (`PageSpaceTransform.fittingSource`
             // sets `a` and `d` independently), so a page-space uniform scale
             // would silently reshape it.
-            guard let inverse = start.inverted else { return nil }
+            //
+            // The factor is a **page-space** distance ratio, finger-to-anchor
+            // over corner-to-anchor. It must not be measured in unit space:
+            // there the placed axes are compressed by 1/width and 1/height, so
+            // unit distance is proportional to page distance only on a square
+            // placement — on any other, the short axis outweighs the long one
+            // and the grabbed corner leaves the finger. Page-space distance is
+            // rotation-invariant, so a rotated placement measures the same.
             let anchor = Self.unitCorners[(corner + 2) % 4]
             let dragged = Self.unitCorners[corner]
-            let local = inverse.apply(x: Double(point.x), y: Double(point.y))
-            let reach = hypot(local.x - anchor.x, local.y - anchor.y)
-            let span = hypot(dragged.x - anchor.x, dragged.y - anchor.y)
+            let placedAnchor = start.apply(x: anchor.x, y: anchor.y)
+            let placedCorner = start.apply(x: dragged.x, y: dragged.y)
+            let span = hypot(placedCorner.x - placedAnchor.x, placedCorner.y - placedAnchor.y)
             guard span > 0 else { return nil }
+            let reach = hypot(Double(point.x) - placedAnchor.x, Double(point.y) - placedAnchor.y)
             let factor = reach / span
             guard factor.isFinite, factor > 0 else { return nil }
             let about = PageSpaceTransform

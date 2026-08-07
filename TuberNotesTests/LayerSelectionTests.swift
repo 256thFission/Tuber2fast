@@ -257,6 +257,99 @@ struct LayerSelectionTests {
         #expect(abs(scaled.a / scaled.d - start.a / start.d) < 1e-9)
     }
 
+    /// The scale factor is a page-space distance ratio, never a unit-space
+    /// one. In unit space a non-square placement compresses each axis by its
+    /// own placed extent, so distances there are not proportional to page
+    /// distances — measured that way, this exact drag lands the corner at
+    /// (643.4, 564.7), about 31 points from the finger and *below* it though
+    /// the finger moved only right.
+    @Test("Scaling a non-square placement measures distance in page space")
+    func scalingANonSquarePlacementUsesPageSpaceDistance() throws {
+        let canvas = UIScrollView()
+        let runtime = Self.runtime(on: canvas)
+        // A 1000x500 source fitted to the 612x792 page: 612 wide, 306 tall,
+        // vertically centred. Placed width is twice placed height, the
+        // anisotropy the unit-space metric mismeasures by exactly 2x.
+        let start = PageSpaceTransform(a: 612, b: 0, c: 0, d: 306, tx: 0, ty: 243)
+        let layer = Self.imageLayer(start)
+        runtime.setLayers([layer])
+        runtime.select(layer)
+
+        var committed: PageSpaceTransform?
+        runtime.onTransformCommitted = { _, _, to in
+            committed = to
+            return true
+        }
+
+        // Grab the bottom-right corner at (612, 549); its anchor is (0, 243).
+        // Drag 61.2 points straight right.
+        #expect(runtime.grab(atPagePoint: CGPoint(x: 612, y: 549)) == .scale(corner: 2))
+        #expect(runtime.beginTransform(atPagePoint: CGPoint(x: 612, y: 549)))
+        runtime.updateTransform(toPagePoint: CGPoint(x: 673.2, y: 549))
+        runtime.endTransform()
+
+        let scaled = try #require(committed)
+        let anchor = scaled.apply(x: 0, y: 0)
+        #expect(abs(anchor.x - 0) < 1e-9, "the opposite corner does not move")
+        #expect(abs(anchor.y - 243) < 1e-9)
+
+        // Uniform in the layer's own frame, factor the page-space ratio
+        // |finger - anchor| / |corner - anchor|: the corner stays on the
+        // anchor-to-corner ray at exactly the finger's distance from the
+        // anchor.
+        let factor = hypot(673.2 - 0, 549.0 - 243) / hypot(612.0 - 0, 549.0 - 243)
+        let corner = scaled.apply(x: 1, y: 1)
+        #expect(abs(corner.x - 612 * factor) < 1e-9)
+        #expect(abs(corner.y - (243 + 306 * factor)) < 1e-9)
+        #expect(
+            abs(hypot(corner.x - 0, corner.y - 243) - hypot(673.2, 549.0 - 243)) < 1e-9,
+            "the corner is at the finger's distance from the anchor"
+        )
+
+        // And specifically not where the unit-space metric put it.
+        #expect(hypot(corner.x - 643.4, corner.y - 564.7) > 10)
+
+        // The placed aspect ratio is exactly what it was.
+        #expect(abs(scaled.a / scaled.d - start.a / start.d) < 1e-9)
+    }
+
+    /// On a square placement unit-space and page-space distances are
+    /// proportional, so the page-space ratio reproduces the old arithmetic
+    /// exactly — including for a finger off the anchor-to-corner ray.
+    @Test("Scaling a square placement is unchanged")
+    func scalingASquarePlacementIsUnchanged() throws {
+        let canvas = UIScrollView()
+        let runtime = Self.runtime(on: canvas)
+        let start = PageSpaceTransform(a: 200, b: 0, c: 0, d: 200, tx: 100, ty: 100)
+        let layer = Self.imageLayer(start)
+        runtime.setLayers([layer])
+        runtime.select(layer)
+
+        var committed: PageSpaceTransform?
+        runtime.onTransformCommitted = { _, _, to in
+            committed = to
+            return true
+        }
+
+        // Corner (1, 1) is at (300, 300), anchor at (100, 100). The finger
+        // lands off the diagonal on purpose.
+        #expect(runtime.beginTransform(atPagePoint: CGPoint(x: 300, y: 300)))
+        runtime.updateTransform(toPagePoint: CGPoint(x: 400, y: 340))
+        runtime.endTransform()
+
+        let scaled = try #require(committed)
+        // The unit-space arithmetic this placement makes equivalent:
+        // local = ((400-100)/200, (340-100)/200) = (1.5, 1.2),
+        // factor = hypot(1.5, 1.2) / sqrt(2).
+        let factor = hypot(1.5, 1.2) / 2.0.squareRoot()
+        let corner = scaled.apply(x: 1, y: 1)
+        #expect(abs(corner.x - (100 + 200 * factor)) < 1e-9)
+        #expect(abs(corner.y - (100 + 200 * factor)) < 1e-9)
+        let anchor = scaled.apply(x: 0, y: 0)
+        #expect(abs(anchor.x - 100) < 1e-9)
+        #expect(abs(anchor.y - 100) < 1e-9)
+    }
+
     @Test("A handle drag rotates about the layer's centre")
     func aHandleDragRotates() throws {
         let canvas = UIScrollView()
