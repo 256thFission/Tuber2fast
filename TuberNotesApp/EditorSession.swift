@@ -36,6 +36,20 @@ final class EditorSession {
         /// held. A cache, never an authority.
         private(set) var durable: Data?
 
+        /// The durable identity of the page's single ink layer. Minted here
+        /// for a page that has never been saved in layered form — an appended
+        /// page, a first launch, a pre-layer file being read forward — and
+        /// replaced by the loaded identity when the page's bytes arrive, so
+        /// the identity a save writes is the one already on disk.
+        private(set) var inkLayerID = UUID()
+
+        /// Layers this build refused on load — a typed refused state, never a
+        /// dropped one. The page refuses input while any exist: a page is
+        /// editable exactly when its ink layer is editable and no layer is
+        /// refused or unreadable. Such a page can never dirty, so no save can
+        /// ever carry the refusal; `DocumentStore.save` refuses one anyway.
+        private(set) var refusedLayers: [RefusedLayer] = []
+
         private(set) var ink: Ink
 
         enum Ink {
@@ -97,14 +111,16 @@ final class EditorSession {
         // MARK: Transitions
 
         /// The page's saved bytes arrived from the store.
-        mutating func bytesLoaded(_ data: Data) {
+        mutating func bytesLoaded(_ loaded: LoadedPage) {
             guard case .loading = ink else {
                 preconditionFailure(
                     "page \(id) received loaded bytes while \(ink); "
                         + "a load result must never replace newer ink"
                 )
             }
-            durable = data
+            durable = loaded.inkData
+            inkLayerID = loaded.inkLayerID
+            refusedLayers = loaded.refusedLayers
             ink = .clean
         }
 
@@ -384,9 +400,14 @@ final class EditorSession {
                 // Empty bytes are the blank page. Serializing an empty
                 // `PKDrawing` to get the same meaning would drag PencilKit into
                 // this file, which `Contract.md` — Owners confines to the
-                // canvas runtime.
-                try await store.save(index: index, changedPages: [index.pageIDs[0]: Data()])
-                pageStates = [Page(clean: index.pageIDs[0], durable: Data())]
+                // canvas runtime. The page state is built first so the layer
+                // identity written to disk is the one the session keeps.
+                let firstPage = Page(clean: index.pageIDs[0], durable: Data())
+                try await store.save(
+                    index: index,
+                    changedPages: [firstPage.id: [inkEnvelope(for: firstPage, payload: Data())]]
+                )
+                pageStates = [firstPage]
             }
             alignedWithIndex()
             phase = .ready
@@ -438,6 +459,20 @@ final class EditorSession {
         // populated the session — reachable in tests alone, where hosting
         // order is the setup's choice.
         guard pageStates.indices.contains(pageIndex) else { return .blank }
+        if let refused = pageStates[pageIndex].refusedLayers.first {
+            // The refusal is the layer's, but the input refusal is the
+            // page's: a page is editable exactly when its ink layer is
+            // editable and no layer is refused or unreadable. The same
+            // placeholder path as an unreadable page, because both mean
+            // "shown, not writable, and it says why".
+            //
+            // PROVISIONAL WORDING: the final user-facing sentence belongs to
+            // the failure-taxonomy work; the scope is decided here.
+            return .unreadable(
+                "This page carries a layer of kind \"\(refused.kind)\" "
+                    + "that this version of TuberNotes cannot open."
+            )
+        }
         switch pageStates[pageIndex].ink {
         case .loading:
             let around = index.currentPageIndex
@@ -492,11 +527,11 @@ final class EditorSession {
             defer { pageLoadsInFlight.remove(pageID) }
 
             do {
-                let data = try await store.loadPage(pageID)
+                let loaded = try await store.loadPage(pageID)
                 // The page list can change while this is in flight; write the
                 // bytes under the identity they were loaded for, never under
                 // an index.
-                pageStates[stateIndex(of: pageID)].bytesLoaded(data)
+                pageStates[stateIndex(of: pageID)].bytesLoaded(loaded)
             } catch {
                 CanvasLog.event(
                     .lifecycle,
@@ -798,10 +833,20 @@ final class EditorSession {
             try? await Task.sleep(for: delay)
         }
 
+        // The session is the one writer of a page's layer list (`Docs/Forks/
+        // CanvasFeatureComplete.md` — One value, one writer), so the envelopes
+        // are built here, not in the store: one ink layer per page, identity
+        // transform, under the identity loaded from or first written to disk.
+        var changedLayers: [UUID: [LayerEnvelope]] = [:]
+        for (pageID, data) in changedPages {
+            let page = pageStates[stateIndex(of: pageID)]
+            changedLayers[pageID] = [inkEnvelope(for: page, payload: data)]
+        }
+
         do {
             // Only the pages that were edited. The store rewrites the index only
             // if it changed, so an ordinary ink save touches exactly one file.
-            try await store.save(index: capturedIndex, changedPages: changedPages)
+            try await store.save(index: capturedIndex, changedPages: changedLayers)
             // Acknowledgement follows evidence: only now, with the write
             // returned, does any page become clean — and only one nothing
             // edited since its capture.
@@ -836,6 +881,18 @@ final class EditorSession {
         if dirty {
             scheduleSave(after: lastSaveError == nil ? nil : retryDelay)
         }
+    }
+
+    /// The page's single ink layer, as the durable form carries it: the
+    /// serialized drawing as payload, identity transform, last — and, with
+    /// one layer, only — in the list.
+    private func inkEnvelope(for page: Page, payload: Data) -> LayerEnvelope {
+        LayerEnvelope(
+            layerID: page.inkLayerID,
+            kind: .ink,
+            payload: payload,
+            pageSpaceTransform: .identity
+        )
     }
 
     // MARK: - Lifecycle

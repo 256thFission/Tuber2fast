@@ -78,16 +78,65 @@ actor DocumentStore {
         }
     }
 
-    /// One page's drawing bytes. Throws if the page file is missing or names a
-    /// different page than the one asked for.
-    func loadPage(_ pageID: UUID) throws -> Data {
+    /// One page's layers, validated against the layer invariants. Throws if
+    /// the page file is missing, names a different page than the one asked
+    /// for, or violates an invariant — those are invalid states, not refusals.
+    ///
+    /// A layer whose kind this build does not recognize is refused at the
+    /// layer's own scope: it comes back as a typed `RefusedLayer`, the rest of
+    /// the page loads, and the document opens. The store remembers the page so
+    /// that a later save cannot silently drop what it refused.
+    func loadPage(_ pageID: UUID) throws -> LoadedPage {
         let data = try Data(contentsOf: pageURL(pageID))
         let page = try PropertyListDecoder().decode(PageFile.self, from: data)
         guard page.pageID == pageID else {
             throw DocumentIndexError.pageIDMismatch(expected: pageID, found: page.pageID)
         }
-        return page.drawingData
+        let (ink, refused) = try Self.validated(layers: page.layers, pageID: pageID)
+        if !refused.isEmpty { pagesRefusedOnLoad.insert(pageID) }
+        return LoadedPage(
+            inkLayerID: ink.layerID,
+            inkData: ink.payload,
+            refusedLayers: refused
+        )
     }
+
+    /// The layer invariants of phase 1, checked in one place for both
+    /// directions: a page has exactly one `ink` layer, that layer is last in
+    /// the list, and its transform is identity. An unrecognized kind is not a
+    /// violation — it is returned as a refusal for the caller to scope.
+    private static func validated(
+        layers: [LayerEnvelope],
+        pageID: UUID
+    ) throws -> (ink: LayerEnvelope, refused: [RefusedLayer]) {
+        var refused: [RefusedLayer] = []
+        var inkLayers: [LayerEnvelope] = []
+        for layer in layers {
+            switch layer.recognizedKind {
+            case .ink:
+                inkLayers.append(layer)
+            case nil:
+                refused.append(RefusedLayer(layerID: layer.layerID, kind: layer.kind))
+            }
+        }
+        guard inkLayers.count == 1, let ink = inkLayers.first else {
+            throw LayerError.notExactlyOneInkLayer(pageID: pageID, count: inkLayers.count)
+        }
+        guard layers.last == ink else {
+            throw LayerError.inkLayerNotLast(pageID: pageID)
+        }
+        guard ink.pageSpaceTransform.isIdentity else {
+            throw LayerError.nonIdentityInkTransform(layerID: ink.layerID)
+        }
+        return (ink, refused)
+    }
+
+    /// Pages whose file, as read this session, carried a layer this build
+    /// refused. Like `lastKnownIndex` this is a record of the store's own
+    /// reads, not a second authority: it exists so `save` can fail loud
+    /// rather than silently drop a refused layer. The session never dirties
+    /// such a page — it refuses input — so this guard firing is a defect.
+    private var pagesRefusedOnLoad: Set<UUID> = []
 
     // MARK: - Save
 
@@ -100,11 +149,33 @@ actor DocumentStore {
     ///
     /// Passing a page that did not change is a defect rather than a waste: it is
     /// the whole-document rewrite this format exists to prevent.
-    func save(index: DocumentIndex, changedPages: [UUID: Data]) throws {
+    ///
+    /// The layer *list* is the caller's — `EditorSession` is its one writer,
+    /// exactly as it is page order's — and the store only refuses lists that
+    /// violate the layer invariants. A page this store loaded with a refused
+    /// layer is refused outright: writing it would replace a list carrying a
+    /// layer this build cannot re-encode, which is the silent drop the layer
+    /// model forbids. Refusing the save is the smaller mechanism than
+    /// preserving the original envelope bytes through a re-encode, and it is
+    /// behavior-neutral, because a page carrying a refused layer refuses
+    /// input and therefore never has anything to save.
+    func save(index: DocumentIndex, changedPages: [UUID: [LayerEnvelope]]) throws {
         let validated = try index.validated()
 
         for pageID in changedPages.keys where !validated.pageIDs.contains(pageID) {
             throw DocumentIndexError.missingPageFile(pageID)
+        }
+
+        // Every page is validated before any page is written, so a batch that
+        // would fail cannot leave half its pages already rewritten.
+        for (pageID, layers) in changedPages {
+            guard !pagesRefusedOnLoad.contains(pageID) else {
+                throw LayerError.refusedLayerWouldBeLost(pageID: pageID)
+            }
+            let (_, refused) = try Self.validated(layers: layers, pageID: pageID)
+            if let first = refused.first {
+                throw LayerError.unknownKindOnSave(layerID: first.layerID, kind: first.kind)
+            }
         }
 
         try createDirectoriesIfNeeded()
@@ -112,8 +183,8 @@ actor DocumentStore {
         let encoder = PropertyListEncoder()
         encoder.outputFormat = .binary
 
-        for (pageID, drawingData) in changedPages {
-            let page = PageFile(pageID: pageID, drawingData: drawingData)
+        for (pageID, layers) in changedPages {
+            let page = PageFile(pageID: pageID, layers: layers)
             try encoder.encode(page).write(to: pageURL(pageID), options: .atomic)
         }
 

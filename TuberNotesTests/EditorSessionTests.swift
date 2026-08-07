@@ -118,7 +118,7 @@ struct EditorSessionTests {
         #expect(canvas(of: session).drawing.strokes.count == 2)
 
         await session.saveIfNeeded()
-        #expect(try PKDrawing(data: await scratch.store.loadPage(firstPageID)).strokes.count == 2)
+        #expect(try PKDrawing(data: await scratch.store.loadPage(firstPageID).inkData).strokes.count == 2)
     }
 
     @Test("Restarting the view task does not reload over live ink")
@@ -172,8 +172,8 @@ struct EditorSessionTests {
         await session.saveIfNeeded()
 
         // Read the pages back by identity, not by whatever is on screen.
-        #expect(try PKDrawing(data: await scratch.store.loadPage(firstPageID)).strokes.count == 1)
-        #expect(try PKDrawing(data: await scratch.store.loadPage(secondPageID)).strokes.count == 2)
+        #expect(try PKDrawing(data: await scratch.store.loadPage(firstPageID).inkData).strokes.count == 1)
+        #expect(try PKDrawing(data: await scratch.store.loadPage(secondPageID).inkData).strokes.count == 2)
     }
 
     @Test("A relaunch restores the page list and the page the user left on")
@@ -275,7 +275,7 @@ struct EditorSessionTests {
 
         await session.saveIfNeeded()
 
-        #expect(try PKDrawing(data: await scratch.store.loadPage(inkedPageID)).strokes.count == 1)
+        #expect(try PKDrawing(data: await scratch.store.loadPage(inkedPageID).inkData).strokes.count == 1)
     }
 
     @Test("Pulling past the last page during an in-flight save appends immediately")
@@ -380,7 +380,7 @@ struct EditorSessionTests {
         await session.saveIfNeeded()
 
         #expect(session.lastSaveError == nil)
-        #expect(try PKDrawing(data: await scratch.store.loadPage(inkedPageID)).strokes.count == 1)
+        #expect(try PKDrawing(data: await scratch.store.loadPage(inkedPageID).inkData).strokes.count == 1)
     }
 
     @Test("One unreadable page neither fails the launch nor stalls its neighbours")
@@ -699,7 +699,7 @@ struct EditorSessionTests {
     /// isolation boundary.
     private func savedDrawing(_ store: DocumentStore) async throws -> Data? {
         guard let index = try await store.load() else { return nil }
-        return try await store.loadPage(index.pageIDs[index.currentPageIndex])
+        return try await store.loadPage(index.pageIDs[index.currentPageIndex]).inkData
     }
 
     private func expectSavedStroke(in drawingData: Data?) throws {

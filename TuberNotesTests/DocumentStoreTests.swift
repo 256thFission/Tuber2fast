@@ -18,11 +18,11 @@ struct DocumentStoreTests {
         let index = scratch.index()
         let ink = Data((0..<4096).map { UInt8($0 % 251) })
 
-        try await store.save(index: index, changedPages: [index.pageIDs[0]: ink])
+        try await store.save(index: index, changedPages: [index.pageIDs[0]: inkLayer(ink)])
 
         let reopened = scratch.store()
         #expect(try await reopened.load() == index)
-        #expect(try await reopened.loadPage(index.pageIDs[0]) == ink)
+        #expect(try await reopened.loadPage(index.pageIDs[0]).inkData == ink)
     }
 
     @Test("Page order survives the round trip")
@@ -34,7 +34,7 @@ struct DocumentStoreTests {
 
         try await store.save(
             index: index,
-            changedPages: Dictionary(uniqueKeysWithValues: ids.map { ($0, Data([0x01])) })
+            changedPages: Dictionary(uniqueKeysWithValues: ids.map { ($0, inkLayer(Data([0x01]))) })
         )
 
         let loaded = try await scratch.store().load()
@@ -53,21 +53,21 @@ struct DocumentStoreTests {
 
         try await store.save(
             index: index,
-            changedPages: Dictionary(uniqueKeysWithValues: ids.map { ($0, Data([0x01])) })
+            changedPages: Dictionary(uniqueKeysWithValues: ids.map { ($0, inkLayer(Data([0x01]))) })
         )
         let before = try ids.map { try scratch.modificationDate(ofPage: $0) }
 
         // Far enough apart that an unwanted rewrite cannot hide inside the
         // filesystem's timestamp resolution.
         try await Task.sleep(for: .milliseconds(1100))
-        try await store.save(index: index, changedPages: [ids[2]: Data([0x02])])
+        try await store.save(index: index, changedPages: [ids[2]: inkLayer(Data([0x02]))])
 
         let after = try ids.map { try scratch.modificationDate(ofPage: $0) }
         #expect(after[0] == before[0])
         #expect(after[1] == before[1])
         #expect(after[2] != before[2])
         #expect(after[3] == before[3])
-        #expect(try await scratch.store().loadPage(ids[2]) == Data([0x02]))
+        #expect(try await scratch.store().loadPage(ids[2]).inkData == Data([0x02]))
     }
 
     @Test("An unchanged index is not rewritten")
@@ -76,11 +76,11 @@ struct DocumentStoreTests {
         let store = scratch.store()
         let index = scratch.index()
 
-        try await store.save(index: index, changedPages: [index.pageIDs[0]: Data([0x01])])
+        try await store.save(index: index, changedPages: [index.pageIDs[0]: inkLayer(Data([0x01]))])
         let before = try scratch.modificationDateOfIndex()
 
         try await Task.sleep(for: .milliseconds(1100))
-        try await store.save(index: index, changedPages: [index.pageIDs[0]: Data([0x02])])
+        try await store.save(index: index, changedPages: [index.pageIDs[0]: inkLayer(Data([0x02]))])
 
         #expect(try scratch.modificationDateOfIndex() == before)
     }
@@ -91,13 +91,13 @@ struct DocumentStoreTests {
         let store = scratch.store()
         let first = scratch.index()
 
-        try await store.save(index: first, changedPages: [first.pageIDs[0]: Data([0x01])])
+        try await store.save(index: first, changedPages: [first.pageIDs[0]: inkLayer(Data([0x01]))])
         let before = try scratch.modificationDateOfIndex()
 
         try await Task.sleep(for: .milliseconds(1100))
         let appended = UUID()
         let grown = first.withPages(first.pageIDs + [appended], currentPageIndex: 1)
-        try await store.save(index: grown, changedPages: [appended: Data([0x03])])
+        try await store.save(index: grown, changedPages: [appended: inkLayer(Data([0x03]))])
 
         #expect(try scratch.modificationDateOfIndex() != before)
         #expect(try await scratch.store().load()?.pageIDs.count == 2)
@@ -112,7 +112,7 @@ struct DocumentStoreTests {
         let index = scratch.index()
 
         await #expect(throws: (any Error).self) {
-            try await store.save(index: index, changedPages: [UUID(): Data([0x01])])
+            try await store.save(index: index, changedPages: [UUID(): inkLayer(Data([0x01]))])
         }
     }
 
@@ -125,7 +125,7 @@ struct DocumentStoreTests {
 
         try await store.save(
             index: index,
-            changedPages: Dictionary(uniqueKeysWithValues: ids.map { ($0, Data([0x01])) })
+            changedPages: Dictionary(uniqueKeysWithValues: ids.map { ($0, inkLayer(Data([0x01]))) })
         )
         try FileManager.default.removeItem(at: scratch.pageURL(ids[1]))
         let indexBytes = try Data(contentsOf: scratch.indexURL)
@@ -140,7 +140,7 @@ struct DocumentStoreTests {
         let store = scratch.store()
         let index = scratch.index()
 
-        try await store.save(index: index, changedPages: [index.pageIDs[0]: Data([0x01])])
+        try await store.save(index: index, changedPages: [index.pageIDs[0]: inkLayer(Data([0x01]))])
 
         // Exactly what a crash between the page write and the index write leaves
         // behind (`Contract.md` — Durable form).
@@ -157,7 +157,7 @@ struct DocumentStoreTests {
         let tall = scratch.index(pageHeight: PageGeometry.height * 3)
 
         await #expect(throws: (any Error).self) {
-            try await store.save(index: tall, changedPages: [tall.pageIDs[0]: Data([0x01])])
+            try await store.save(index: tall, changedPages: [tall.pageIDs[0]: inkLayer(Data([0x01]))])
         }
         #expect(try await scratch.store().load() == nil)
     }
@@ -189,13 +189,26 @@ struct DocumentStoreTests {
         let scratch = try Scratch()
         let store = scratch.store()
         let index = scratch.index()
-        try await store.save(index: index, changedPages: [index.pageIDs[0]: Data([0x01])])
+        try await store.save(index: index, changedPages: [index.pageIDs[0]: inkLayer(Data([0x01]))])
 
         // The page file exists, so the load succeeds; reading it must not.
         try scratch.writeRawPage(index.pageIDs[0], pageID: UUID(), drawingData: Data([0x02]))
         await #expect(throws: (any Error).self) {
             try await scratch.store().loadPage(index.pageIDs[0])
         }
+    }
+
+    /// One ink layer carrying `data`, as `EditorSession` would build it — the
+    /// layer list a phase-1 save always writes.
+    private func inkLayer(_ data: Data) -> [LayerEnvelope] {
+        [
+            LayerEnvelope(
+                layerID: UUID(),
+                kind: .ink,
+                payload: data,
+                pageSpaceTransform: .identity
+            )
+        ]
     }
 
     /// A unique directory per test, removed afterwards. A class, not a
@@ -251,7 +264,17 @@ struct DocumentStoreTests {
             try createDirectories()
             let encoder = PropertyListEncoder()
             encoder.outputFormat = .binary
-            let page = PageFile(pageID: pageID ?? fileName, drawingData: drawingData)
+            let page = PageFile(
+                pageID: pageID ?? fileName,
+                layers: [
+                    LayerEnvelope(
+                        layerID: UUID(),
+                        kind: .ink,
+                        payload: drawingData,
+                        pageSpaceTransform: .identity
+                    )
+                ]
+            )
             try encoder.encode(page).write(to: pageURL(fileName), options: .atomic)
         }
 

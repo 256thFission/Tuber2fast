@@ -22,7 +22,14 @@ struct DocumentIndexTests {
     func pageRoundTrip() throws {
         let original = PageFile(
             pageID: UUID(),
-            drawingData: Data((0..<1024).map { UInt8($0 % 251) })
+            layers: [
+                LayerEnvelope(
+                    layerID: UUID(),
+                    kind: .ink,
+                    payload: Data((0..<1024).map { UInt8($0 % 251) }),
+                    pageSpaceTransform: .identity
+                )
+            ]
         )
 
         let encoder = PropertyListEncoder()
