@@ -157,6 +157,74 @@ actor StaticLayerRenderer {
         return render
     }
 
+    // MARK: - One layer, on its own
+
+    /// One layer's own source, decoded for where that layer lands.
+    ///
+    /// Phase 4's lift: while a layer is being manipulated it is drawn live
+    /// above a composite rendered *without* it, and this is the image that
+    /// draws it. It is deliberately **not** a composite — no page-sized
+    /// context, no white fill, no other layer — because it has to sit over the
+    /// stack with its own alpha rather than replace it.
+    ///
+    /// **Not cached, and that is deliberate.** A selection is a user action,
+    /// not a frame: this runs once when a layer is selected and never during
+    /// the drag it precedes. Adding it to the composite cache would put a
+    /// second kind of entry under a byte bound whose whole arithmetic is stated
+    /// in page-sized composites.
+    ///
+    /// `nil` is a refusal, and the caller's response is to leave the layer in
+    /// the composite where it already is. That ordering matters: the composite
+    /// may only drop a layer once something else is drawing it, or the layer
+    /// would simply vanish.
+    func sourceImage(for layer: LayerEnvelope, at pixelsPerPagePoint: Double) async -> CGImage? {
+        precondition(
+            pixelsPerPagePoint.isFinite && pixelsPerPagePoint > 0,
+            "a source at \(pixelsPerPagePoint) pixels per page point is not a level of detail"
+        )
+        return await Self.decodeSource(layer, at: pixelsPerPagePoint, store: store)
+    }
+
+    /// `nonisolated` for the same reason `render` is: the decode runs on the
+    /// global executor rather than on this actor, so it cannot queue behind a
+    /// composite or hold one up.
+    nonisolated static func decodeSource(
+        _ layer: LayerEnvelope,
+        at scale: Double,
+        store: DocumentStore
+    ) async -> CGImage? {
+        guard layer.recognizedKind == .image else { return nil }
+
+        let ref: ImageLayerRef
+        do {
+            ref = try ImageLayerRef(payload: layer.payload)
+        } catch {
+            CanvasLog.event(
+                .canvas,
+                "layer \(layer.layerID) cannot be lifted: its payload will not decode: \(error)"
+            )
+            return nil
+        }
+        guard let format = ref.recognizedFormat else { return nil }
+        guard layer.pageSpaceTransform.isInvertible else { return nil }
+
+        let bytes: Data
+        do {
+            bytes = try await store.loadAsset(assetID: ref.assetID, format: format)
+        } catch {
+            CanvasLog.event(
+                .canvas,
+                "layer \(layer.layerID) cannot be lifted: asset \(ref.assetID) "
+                    + "could not be read: \(error)"
+            )
+            return nil
+        }
+
+        // The same bound the composite decodes to, so a lifted layer is exactly
+        // as sharp as the one it replaced and no sharper.
+        return downsample(bytes, maxPixelSize: maxPixelSize(of: layer.pageSpaceTransform, at: scale))
+    }
+
     // MARK: - Eviction
 
     /// Drops every composite none of whose layers is still in the live window

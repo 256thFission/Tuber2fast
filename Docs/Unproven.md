@@ -32,6 +32,26 @@ Nothing here is a reason not to ship. It is a reason not to be surprised.
   the settle callbacks. A fast multi-page flick may briefly show a loading
   placeholder where the old runtime built canvases mid-drag. This is the
   largest feel change in the tree and it is entirely Phillip's verdict.
+- **Layer selection and the transform gesture have never met a real touch.**
+  Phase 4's arbitration — that a finger drag on a selected image moves the
+  image, that a drag beginning anywhere else still pans and turns exactly as
+  before, and that `LayerDragRecognizer` claiming a touch on touch-down really
+  does prevent both `UIScrollView` pans — is UIKit gesture arbitration on a
+  live touch stream, and none of it is observable in a simulator. The unit
+  tests drive the runtime's own methods with page points, which proves the
+  geometry and proves nothing about who wins a drag.
+- **Layer-edit undo is entirely unverified, and A10 rests on it.** Whether
+  PencilKit tolerates a foreign registration in the responder chain's undo
+  manager has still not been checked by anything — `undoManager` is `nil` for
+  an unhosted controller, so it cannot be. If it does not tolerate them the
+  failure is silent and benign (the edit is simply not undoable; the durable
+  value is still correct), which is worse for discovering it. One Cmd-Z on a
+  device after moving an image is the whole check.
+- **Nobody has seen a layer being dragged.** Whether the lifted layer stays
+  registered with the composite beneath it during a pan or pinch, whether the
+  hand-off at selection and at deselection is invisible, and whether the
+  selection chrome and its handles are the right size under the finger are all
+  device evidence and Phillip's verdict.
 - **The loading/unreadable placeholder has never been seen on a device**, and
   the refusal of Pencil input on it — the placeholder accepts no input at all —
   is a device check by nature; the simulator has no Pencil.

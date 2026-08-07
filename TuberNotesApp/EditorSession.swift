@@ -12,6 +12,10 @@ enum LayerEditError: Error, Equatable {
     /// The page carries a refused layer, so it takes no input.
     case pageRefusesInput(UUID)
     case layerNotFound(layerID: UUID, pageID: UUID)
+    /// The layer is locked against transforms. Locked is a bit on the
+    /// envelope, not a property of the kind — a locked layer is still
+    /// selectable and still deletable.
+    case layerIsLocked(layerID: UUID, pageID: UUID)
 }
 
 /// Coordinates the canvas runtime and the document store (`Contract.md` — Owners).
@@ -338,6 +342,9 @@ final class EditorSession {
         }
         created.onReachedEndBoundary = { [weak self] in
             self?.appendPage()
+        }
+        created.onLayerTransformed = { [weak self] pageIndex, layerID, transform in
+            self?.layerTransformed(atPageIndex: pageIndex, layerID: layerID, to: transform) ?? false
         }
         liveRuntime = created
         return created
@@ -1172,6 +1179,134 @@ final class EditorSession {
 
         await saveIfNeeded()
         return layerID
+    }
+
+    /// The canvas runtime committed one layer transform.
+    ///
+    /// The whole gesture — selection, the grab, every intermediate frame —
+    /// stayed inside `PageCanvasController` and reached nothing here. This is
+    /// the single point at which it crosses, carrying one immutable value, and
+    /// it is the same seam a retiring page's drawing crosses.
+    ///
+    /// Returns whether the edit was written. A refusal is answered rather than
+    /// thrown because the caller is a gesture, not a program: the canvas puts
+    /// the layer back where it was, so the picture never disagrees with the
+    /// file.
+    private func layerTransformed(
+        atPageIndex pageIndex: Int,
+        layerID: UUID,
+        to transform: PageSpaceTransform
+    ) -> Bool {
+        guard phase == .ready, index.pageIDs.indices.contains(pageIndex) else { return false }
+        do {
+            _ = try transformLayer(layerID, onPage: index.pageIDs[pageIndex], to: transform)
+            return true
+        } catch {
+            CanvasLog.event(
+                .canvas,
+                "layer \(layerID) on page \(pageIndex) was not transformed: \(error)"
+            )
+            return false
+        }
+    }
+
+    /// Moves, scales, or rotates one layer, and returns the value it replaced.
+    ///
+    /// The session is the layer list's one writer (`Contract.md` — Owners,
+    /// golden rule 5), so this is the only place a layer's placement changes.
+    /// It returns the **prior envelope** because that value is the inverse an
+    /// undo restores: recording it is the caller's, so that undo lives in the
+    /// one manager per page rather than in a history this object would have to
+    /// own (`Contract.proposed.md` A10 — no second manager).
+    ///
+    /// Debounced rather than saved immediately, unlike `importImage`. An import
+    /// races nothing but has an asset on disk that is an orphan until its page
+    /// file names it; a transform names nothing new, and a drag is exactly the
+    /// interaction-frequency edit a debounce exists to coalesce.
+    ///
+    /// A singular transform is a `precondition` and not a throw: the gesture
+    /// declines to produce one frame by frame, so one arriving here is a defect
+    /// in a caller rather than an edit to refuse (`Contract.md` — Invalid
+    /// states fail loud).
+    @discardableResult
+    func transformLayer(
+        _ layerID: UUID,
+        onPage pageID: UUID,
+        to transform: PageSpaceTransform
+    ) throws -> LayerEnvelope {
+        precondition(
+            transform.isInvertible,
+            "layer \(layerID) cannot be placed by a singular transform"
+        )
+        let existing = try replaceLayer(layerID, onPage: pageID) { layer in
+            guard !layer.locked else {
+                throw LayerEditError.layerIsLocked(layerID: layerID, pageID: pageID)
+            }
+            return layer.withPageSpaceTransform(transform)
+        }
+        CanvasLog.event(
+            .canvas,
+            "layer \(layerID) on page \(pageID) moved to "
+                + "(\(transform.a), \(transform.b), \(transform.c), \(transform.d), "
+                + "\(transform.tx), \(transform.ty))"
+        )
+        return existing
+    }
+
+    /// Locks or unlocks one layer, and returns the value it replaced.
+    ///
+    /// No UI calls this yet, exactly as no UI called `importImage` when phase 2
+    /// landed. It is here because `locked` is only allowed to exist at all if
+    /// something reads it, and something reading a bit nothing can ever write
+    /// is the same dead field wearing a different hat: this is its one writer,
+    /// `LayerSelectionRuntime` and `transformLayer` are its two readers.
+    @discardableResult
+    func setLayerLocked(
+        _ layerID: UUID,
+        onPage pageID: UUID,
+        locked: Bool
+    ) throws -> LayerEnvelope {
+        let existing = try replaceLayer(layerID, onPage: pageID) { $0.withLocked(locked) }
+        CanvasLog.event(.canvas, "layer \(layerID) on page \(pageID) locked=\(locked)")
+        return existing
+    }
+
+    /// Replaces one layer of a page's list with a new value, and returns the
+    /// old one. The one shape every non-structural layer edit takes.
+    private func replaceLayer(
+        _ layerID: UUID,
+        onPage pageID: UUID,
+        with replacement: (LayerEnvelope) throws -> LayerEnvelope
+    ) throws -> LayerEnvelope {
+        guard phase == .ready else { throw LayerEditError.sessionNotReady }
+        try requireLayerListIsEditable(pageID)
+
+        let page = stateIndex(of: pageID)
+        guard let existing = pageStates[page].staticLayers.first(
+            where: { $0.layerID == layerID }
+        ) else {
+            throw LayerEditError.layerNotFound(layerID: layerID, pageID: pageID)
+        }
+
+        let updated = try replacement(existing)
+        guard updated != existing else { return existing }
+
+        pageStates[page].layerListChanged(
+            to: pageStates[page].staticLayers.map { $0.layerID == layerID ? updated : $0 },
+            // Untouched: this edit neither creates nor repairs a refusal, and a
+            // page carrying one never reaches here — `requireLayerListIsEditable`
+            // refuses it.
+            refusedLayers: pageStates[page].refusedLayers
+        )
+
+        // The ink is untouched, so the canvas is told rather than rebuilt —
+        // the same distinction `importImage` and `deleteLayer` make, and the
+        // reason `reloadStaticLayers` exists separately from `reloadPage`.
+        if let visible = index.pageIDs.firstIndex(of: pageID) {
+            liveRuntime?.reloadStaticLayers(at: visible)
+        }
+        markDirty()
+        return existing
     }
 
     /// Deletes one layer from a page — **the** site that deletes layers, and

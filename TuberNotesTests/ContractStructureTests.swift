@@ -516,6 +516,14 @@ struct ContractStructureTests {
         // and composites off-main and imports CoreGraphics and ImageIO only,
         // because nothing in it is a view, a layer, or frame-frequency work.
         "TuberNotesApp/PageBackdrop.swift",
+        // Selection and the transform gesture: two gesture recognizers on the
+        // live canvas and a `CAShapeLayer` of chrome, both frame-frequency
+        // UIKit objects. `PageCanvasController`'s own runtime, split out for
+        // size exactly as the shape tool and the backdrop are — it writes
+        // nothing durable and hands one committed transform back per gesture.
+        // PencilKit is deliberately not imported there: it needs a scroll
+        // view's zoom scale and a layer, not a canvas's vocabulary.
+        "TuberNotesApp/LayerSelectionRuntime.swift",
         // THROWAWAY SPIKE — CanvasFeatureComplete device spike 1. Compiled
         // only under TN_SPIKE_MIRROR and instruments the canvas runtime,
         // where UIKit is already allowed; the entry dies with the file.

@@ -39,6 +39,34 @@ final class PageBackdrop {
     /// transform to it and nothing else.
     private let page = CALayer()
 
+    /// The layer being manipulated, drawn live above the composite it was
+    /// lifted out of.
+    ///
+    /// Phase 4's minus-one recompositing, and the reason there is no ghosting:
+    /// a layer under manipulation is baked into the composite it is being
+    /// lifted from, so while it is selected the composite beneath it is
+    /// re-rendered *without* it and this carries it instead. Moving it is one
+    /// transform assignment per frame — no decode, no re-composite, nothing on
+    /// the main thread but a property set.
+    ///
+    /// A **sublayer of `page`**, which is what makes that true: `page` already
+    /// carries the mirror transform for pan and zoom, and a sublayer inherits
+    /// it, so this needs only the layer's own page-space transform and the
+    /// mirror comes free. Sublayers draw above their superlayer's `contents`,
+    /// so it is above the composite and — being inside the backdrop — still
+    /// below the ink.
+    ///
+    /// MEMORY: at most one of these exists per live page, holding one decoded
+    /// source bounded by the same level-of-detail cap the composite uses (a
+    /// 2,800 px long edge, so about 31 MB worst case with alpha). It is
+    /// released the moment the layer is deselected.
+    private let lift = CALayer()
+
+    /// Whether `lift` is carrying an image. The controller reads it to decide
+    /// whether the composite may exclude that layer: **excluding a layer from
+    /// the composite is only safe once something else is drawing it.**
+    private(set) var hasLift = false
+
     /// Whether a composite has ever landed here. A second request keeps the
     /// texture it already has rather than blanking back to the placeholder:
     /// "a late render shows the placeholder or a scaled base, never a blank
@@ -85,6 +113,18 @@ final class PageBackdrop {
         page.magnificationFilter = .linear
         page.minificationFilter = .trilinear
         page.backgroundColor = Self.loadingTint
+        // So a lifted layer dragged past the page edge clips exactly where the
+        // committed composite will clip it. Without this the picture changes at
+        // the instant of commit, which reads as the drag having moved something
+        // it did not.
+        page.masksToBounds = true
+
+        lift.anchorPoint = .zero
+        lift.position = .zero
+        lift.magnificationFilter = .linear
+        lift.minificationFilter = .trilinear
+        lift.isHidden = true
+        page.addSublayer(lift)
 
         clip.addSublayer(page)
         // Below the canvas's own layer, which is what makes this the *sibling*
@@ -180,6 +220,72 @@ final class PageBackdrop {
         CATransaction.commit()
     }
 
+    // MARK: - The lifted layer
+
+    /// Puts a decoded source into the lift layer and places it.
+    ///
+    /// The layer's bounds are the source's **pixel** extent at
+    /// `contentsScale` 1, so contents and bounds agree exactly and nothing is
+    /// resampled by the layer tree; the pixel-to-unit-square scale is folded
+    /// into the transform instead. That composition — pixels, then the unit
+    /// square, then page space — is the durable model spelled out in three
+    /// steps (`Contract.proposed.md` A6: "the one invertible mapping from the
+    /// image's own extent, taken as the unit square with its origin at
+    /// top-left, into page space").
+    ///
+    /// No y-flip appears anywhere here, deliberately: a `CALayer`'s coordinates
+    /// are y-down from the top-left, which is page space's own convention, so
+    /// the two flips `StaticLayerRenderer` needs against CoreGraphics have no
+    /// counterpart on this path.
+    func showLift(_ image: CGImage, at transform: PageSpaceTransform) {
+        precondition(image.width > 0 && image.height > 0, "a lifted source has no extent")
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        lift.bounds = CGRect(x: 0, y: 0, width: image.width, height: image.height)
+        lift.contents = image
+        lift.isHidden = false
+        CATransaction.commit()
+        hasLift = true
+        moveLift(to: transform)
+    }
+
+    /// One frame of a transform in progress: a single transform assignment,
+    /// no allocation, no publication — the same shape of work the mirror does
+    /// per scroll tick.
+    func moveLift(to transform: PageSpaceTransform) {
+        guard hasLift else { return }
+        let pixels = lift.bounds.size
+        guard pixels.width > 0, pixels.height > 0 else { return }
+        let intoUnitSquare = PageSpaceTransform(
+            a: 1 / Double(pixels.width), b: 0,
+            c: 0, d: 1 / Double(pixels.height),
+            tx: 0, ty: 0
+        )
+        let placed = intoUnitSquare.concatenating(transform)
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        lift.transform = CATransform3DMakeAffineTransform(
+            CGAffineTransform(
+                a: placed.a, b: placed.b, c: placed.c, d: placed.d,
+                tx: placed.tx, ty: placed.ty
+            )
+        )
+        CATransaction.commit()
+    }
+
+    /// Folds the lifted layer back. Called only once the composite that
+    /// contains it again has landed, so there is no frame in which the layer is
+    /// in neither place.
+    func hideLift() {
+        guard hasLift else { return }
+        hasLift = false
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        lift.isHidden = true
+        lift.contents = nil
+        CATransaction.commit()
+    }
+
     // MARK: - Read only by tests
 
     /// The layer the mirror transforms, so a test can assert registration
@@ -189,4 +295,8 @@ final class PageBackdrop {
     /// The clipping container, so a test can assert it really is beneath the
     /// canvas in the host's sublayer order — the whole structural claim.
     var clipLayerForTesting: CALayer { clip }
+
+    /// The lifted layer, so a test can assert the pixel-to-page composition
+    /// lands where the durable transform says it does.
+    var liftLayerForTesting: CALayer { lift }
 }

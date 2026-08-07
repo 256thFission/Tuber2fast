@@ -78,6 +78,16 @@ final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
     /// nothing else travels with it (`Contract.md` — Saving).
     var onDrawingChanged: ((Int) -> Void)?
 
+    /// Reports one committed layer transform and takes back whether the session
+    /// accepted it.
+    ///
+    /// The page index is added here and nowhere else, because a
+    /// `PageCanvasController` is blind to which page it is
+    /// (`Contract.md` — Owners, golden rule 7). Nothing about the gesture that
+    /// produced the value travels with it — one immutable transform does, which
+    /// is the same shape as a retiring page's drawing snapshot.
+    var onLayerTransformed: ((Int, UUID, PageSpaceTransform) -> Bool)?
+
     /// Hands a retiring page's ink to the session before the controller is
     /// released. Without this a page's edits would die with its canvas when it
     /// left the window.
@@ -416,6 +426,15 @@ final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
         // reported as an edit").
         page.onDrawingChanged = { [weak self] in
             self?.onDrawingChanged?(index)
+        }
+
+        // A layer edit, not an ink edit: it carries the page's index and one
+        // committed value, and takes back whether the session wrote it. A page
+        // with no handler — a runtime built without a session, which is every
+        // test that hosts this directly — accepts by default, so the canvas
+        // keeps what the gesture produced.
+        page.onLayerTransformed = { [weak self] layerID, transform in
+            self?.onLayerTransformed?(index, layerID, transform) ?? true
         }
 
         // A page built while the shape tool is on draws shapes too. Applied

@@ -39,6 +39,101 @@ struct PageSpaceTransform: Codable, Sendable, Equatable {
         return determinant.isFinite && determinant != 0
     }
 
+    // MARK: - The algebra a transform gesture needs
+    //
+    // Phase 4 of `Docs/Forks/CanvasFeatureComplete.md`. All of it is pure
+    // arithmetic on six doubles, so it lives with the durable value rather
+    // than in the canvas runtime: the same mapping is what a hit test runs
+    // backwards, what a gesture composes, and what the compositor concatenates.
+    // `isInvertible` above already anticipated this in its own comment.
+    //
+    // The convention is `CGAffineTransform`'s, deliberately, because
+    // `StaticLayerRenderer` hands these coefficients straight to CoreGraphics:
+    // a point is a row vector, so `(x, y)` maps to
+    // `(a·x + c·y + tx, b·x + d·y + ty)`.
+
+    static func translation(x: Double, y: Double) -> PageSpaceTransform {
+        PageSpaceTransform(a: 1, b: 0, c: 0, d: 1, tx: x, ty: y)
+    }
+
+    /// A uniform scale about the origin.
+    static func scale(_ factor: Double) -> PageSpaceTransform {
+        PageSpaceTransform(a: factor, b: 0, c: 0, d: factor, tx: 0, ty: 0)
+    }
+
+    /// A rotation about the origin, in radians.
+    ///
+    /// Page space is y-down (`Contract.md` — Geometry and coordinates), so a
+    /// positive angle turns clockwise on screen. That is not a sign error: the
+    /// gesture measures its angles with `atan2` in the same y-down space, so
+    /// the two agree and the handle tracks the finger.
+    static func rotation(_ radians: Double) -> PageSpaceTransform {
+        let cosine = cos(radians)
+        let sine = sin(radians)
+        return PageSpaceTransform(a: cosine, b: sine, c: -sine, d: cosine, tx: 0, ty: 0)
+    }
+
+    /// The point `(x, y)` mapped through this transform.
+    func apply(x: Double, y: Double) -> (x: Double, y: Double) {
+        (x: a * x + c * y + tx, y: b * x + d * y + ty)
+    }
+
+    /// `self` applied first, then `later` — `CGAffineTransform.concatenating`'s
+    /// order, so that reading a composition left to right reads it in the order
+    /// the points travel.
+    func concatenating(_ later: PageSpaceTransform) -> PageSpaceTransform {
+        PageSpaceTransform(
+            a: a * later.a + b * later.c,
+            b: a * later.b + b * later.d,
+            c: c * later.a + d * later.c,
+            d: c * later.b + d * later.d,
+            tx: tx * later.a + ty * later.c + later.tx,
+            ty: tx * later.b + ty * later.d + later.ty
+        )
+    }
+
+    /// The mapping backwards, or `nil` when there is none.
+    ///
+    /// `nil` is unreachable for a layer that loaded: a singular transform is an
+    /// invalid state refused at load (`Contract.md` — Durable form). It is
+    /// returned rather than trapped because the *gesture* asks this question of
+    /// candidate transforms it has not committed to, and declining a frame is
+    /// not the same as accepting an invalid durable value.
+    var inverted: PageSpaceTransform? {
+        guard isInvertible else { return nil }
+        let determinant = self.determinant
+        return PageSpaceTransform(
+            a: d / determinant,
+            b: -b / determinant,
+            c: -c / determinant,
+            d: a / determinant,
+            tx: (c * ty - d * tx) / determinant,
+            ty: (b * tx - a * ty) / determinant
+        )
+    }
+
+    /// Whether a page point lands inside the source's unit square.
+    ///
+    /// **This is the whole hit test.** The payload of an asset-backed layer
+    /// deliberately carries no pixel size (`Contract.proposed.md` A6/A6b): the
+    /// transform maps the source's *unit square* into page space, so asking
+    /// "did the user touch this layer" is inverting the transform and testing
+    /// the point against `[0, 1] × [0, 1]`. No decode, no file, no knowledge of
+    /// the source at all — which is exactly the property A6b was argued for.
+    ///
+    /// Traps on a singular transform rather than answering `false`, because a
+    /// layer on a page has already been validated as invertible and a `false`
+    /// here would read as "the user missed it".
+    func containsUnitSquarePoint(x: Double, y: Double) -> Bool {
+        guard let inverse = inverted else {
+            preconditionFailure(
+                "a singular transform reached a hit test; a layer with one is refused at load"
+            )
+        }
+        let local = inverse.apply(x: x, y: y)
+        return local.x >= 0 && local.x <= 1 && local.y >= 0 && local.y <= 1
+    }
+
     /// The transform that places a source of the given extent inside the page,
     /// aspect preserved and centred.
     ///
@@ -104,50 +199,140 @@ struct LayerEnvelope: Codable, Sendable, Equatable {
     let payload: Data
     let pageSpaceTransform: PageSpaceTransform
 
+    /// Whether this layer refuses transforms.
+    ///
+    /// Phase 4 of `Docs/Forks/CanvasFeatureComplete.md`, and it is here only
+    /// because phase 4 **reads** it — twice, in two owners, which is the test
+    /// *Forbidden patterns* sets for a field that would otherwise be an
+    /// undefined placeholder. `LayerSelectionRuntime` refuses to begin a drag
+    /// on a locked layer, so a locked image pans the page like bare paper; and
+    /// `EditorSession.transformLayer` refuses the durable edit outright,
+    /// because the session is the layer list's one writer and must not take a
+    /// value merely because a caller asked.
+    ///
+    /// Locked is a bit on the envelope, not a property of the kind
+    /// (`Contract.proposed.md` A11): a locked layer stays *selectable*, because
+    /// selection is how a static layer has a UI path at all.
+    let locked: Bool
+
     /// The one initializer application code uses: a kind must be named in the
     /// closed set to be written.
     init(
         layerID: UUID,
         kind: LayerKind,
         payload: Data,
-        pageSpaceTransform: PageSpaceTransform
+        pageSpaceTransform: PageSpaceTransform,
+        locked: Bool = false
     ) {
         self.layerID = layerID
         self.kind = kind.rawValue
         self.payload = payload
         self.pageSpaceTransform = pageSpaceTransform
+        self.locked = locked
     }
 
     /// An envelope with an arbitrary kind string. Tests are its only caller —
-    /// decoding goes through the synthesized `init(from:)` — and it exists so
-    /// a test can put an unknown kind on disk, which the save path refuses.
+    /// decoding goes through `init(from:)` — and it exists so a test can put an
+    /// unknown kind on disk, which the save path refuses.
     init(
         layerID: UUID,
         rawKind: String,
         payload: Data,
-        pageSpaceTransform: PageSpaceTransform
+        pageSpaceTransform: PageSpaceTransform,
+        locked: Bool = false
     ) {
         self.layerID = layerID
         self.kind = rawKind
         self.payload = payload
         self.pageSpaceTransform = pageSpaceTransform
+        self.locked = locked
+    }
+
+    /// Decoding, with one hand-written case: **an envelope written before
+    /// `locked` existed decodes as unlocked.**
+    ///
+    /// This is the read-forward rule *Durable form* already states for the
+    /// pre-layer page form, one level down — "read as a one-ink-layer page and
+    /// written forward on the page's next save, never migrated eagerly" — and
+    /// not a defaulted invalid state. An absent `locked` is not ambiguous and
+    /// not corrupt: it is a layer nobody locked, in a file written by a build
+    /// that had no way to lock one. The alternative is that every page file on
+    /// disk becomes unreadable, which for a bit that changes no other rule is a
+    /// cost with nothing bought.
+    /// Spelled out rather than synthesized, because `init(from:)` below is
+    /// hand-written and a reader must be able to see the exact key set the two
+    /// halves agree on.
+    enum CodingKeys: String, CodingKey {
+        case layerID
+        case kind
+        case payload
+        case pageSpaceTransform
+        case locked
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        layerID = try container.decode(UUID.self, forKey: .layerID)
+        kind = try container.decode(String.self, forKey: .kind)
+        payload = try container.decode(Data.self, forKey: .payload)
+        pageSpaceTransform = try container.decode(
+            PageSpaceTransform.self, forKey: .pageSpaceTransform
+        )
+        locked = try container.decodeIfPresent(Bool.self, forKey: .locked) ?? false
     }
 
     /// The kind, if this build recognizes it; `nil` is a refusal, not a default.
     var recognizedKind: LayerKind? { LayerKind(rawValue: kind) }
+
+    /// Whether a tap may address this layer.
+    ///
+    /// `Contract.proposed.md` A11: "A `pdf` or `image` layer is selectable —
+    /// selection is how 'replace the worksheet' has a UI path at all. What a
+    /// static kind refuses is *drawing* input, not addressability." Ink is not
+    /// selectable: it is the drawing, and PencilKit's own lasso addresses it.
+    var isSelectable: Bool { recognizedKind == .image }
+
+    /// Whether a drag on this layer is a transform. Selectable and unlocked.
+    var isTransformable: Bool { isSelectable && !locked }
+
+    /// This layer, moved. The one mutation phase 4 makes to a committed value,
+    /// and it produces a new immutable value rather than editing one — the
+    /// handover the canvas runtime performs is one whole envelope.
+    func withPageSpaceTransform(_ transform: PageSpaceTransform) -> LayerEnvelope {
+        LayerEnvelope(
+            layerID: layerID,
+            rawKind: kind,
+            payload: payload,
+            pageSpaceTransform: transform,
+            locked: locked
+        )
+    }
+
+    /// This layer, locked or unlocked.
+    func withLocked(_ locked: Bool) -> LayerEnvelope {
+        LayerEnvelope(
+            layerID: layerID,
+            rawKind: kind,
+            payload: payload,
+            pageSpaceTransform: pageSpaceTransform,
+            locked: locked
+        )
+    }
 
     /// An `image` layer: the ref as its payload, and the transform that says
     /// where on the page the image's unit square lands.
     static func image(
         layerID: UUID,
         ref: ImageLayerRef,
-        pageSpaceTransform: PageSpaceTransform
+        pageSpaceTransform: PageSpaceTransform,
+        locked: Bool = false
     ) throws -> LayerEnvelope {
         LayerEnvelope(
             layerID: layerID,
             kind: .image,
             payload: try ref.encodedPayload(),
-            pageSpaceTransform: pageSpaceTransform
+            pageSpaceTransform: pageSpaceTransform,
+            locked: locked
         )
     }
 }
