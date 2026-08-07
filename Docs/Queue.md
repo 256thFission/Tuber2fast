@@ -34,27 +34,35 @@ Record the evidence, hand it over, leave the verdict alone.
 
 ---
 
-## contract-checker-is-blind — enforcement goes quiet exactly when it matters
+## contract-checker-is-blind — exit met; subdirectories are safe to create
 
-`ContractStructureTests.appSources()` lists sources with
-`contentsOfDirectory(atPath:)`, which does not recurse. The first `.swift` file
-placed in a subdirectory of `TuberNotesApp/` drops out of all three
-machine-checked rules — the single `PKCanvasView` construction site, the
-UIKit/PencilKit import allowlist, and file I/O confined to `DocumentStore` — and
-every test still passes. The `names.isEmpty` guard fires only if the top level is
-emptied entirely.
+The blindness is gone. `ContractStructureTests` no longer lists the source
+directory: `ContractChecker.swiftFileURLs(under:)` walks it, at any depth,
+skipping hidden entries, build products, and symbolic links. The rules became
+pure functions over a directory URL, which is what made them testable — the
+suite plants sources violating each of the three rules in a *new subdirectory*
+of a temp tree and asserts each is caught, hermetically, so a failing run never
+leaves the repository dirty. Reverting the recursion fails four of those tests.
 
-This is the real reason there are no directories today, and it is the wrong
-reason to have none. A checker that goes silent as the codebase grows is worse
-than no checker, because its green run is read as evidence.
+The `names.isEmpty` guard is replaced by two: a floor on the plausible source
+count, and a cross-check against a second, independent enumeration. The floor
+alone would not have caught the original bug, whose top level was full.
 
-[`Unproven.md`](Unproven.md) records that the forbidden-pattern list is held by
-code review alone. Two entries are now decidable rather than aesthetic: a durable
-derived artifact reaching disk, and a cache that states no bound.
+Also landed while the walk exposed them: the import rule now reads
+`@preconcurrency`, `@_exported`, `import struct UIKit.X`, `import UIKit.UIView`,
+and post-semicolon imports, all of which a `trimmed == "import UIKit"`
+comparison missed; the file-I/O rule reads `String(contentsOf:)`,
+`OutputStream`, `fopen`, `.write(toFile:)`, and `UserDefaults`; the
+`PKCanvasView` rule reads `.init(` and a space before the paren; and an
+allowlist entry naming a file that no longer exists is now a failure, so the
+throwaway spike's entry dies with its file rather than outliving it.
 
-**Exit:** a `.swift` file planted in a new subdirectory, violating each of the
-three rules, fails the suite. The recursion is covered by the checker's own
-tests, because an untested checker can go dead and keep passing.
+**Still review-only.** The forbidden-pattern list is untouched — see
+[`Unproven.md`](Unproven.md). Two of its entries are decidable rather than
+aesthetic, and neither is checked: a durable derived artifact reaching disk, and
+a cache that states no bound. That is a separate item whenever it is worth one.
+The token scan's own blind spots are recorded as `KNOWN DEFECT:` blocks beside
+the rules they limit.
 
 ## loud-by-default — the build five people hold emits nothing
 
