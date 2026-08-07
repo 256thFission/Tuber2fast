@@ -193,6 +193,217 @@ actor StaticLayerRenderer {
         return render
     }
 
+    // MARK: - The lens
+
+    /// The visible sub-rect of one page's static stack, rendered at the
+    /// settled zoom's own level of detail — the "lens" half of the fork doc's
+    /// base-and-lens design.
+    ///
+    /// Never called from a gesture frame: during a pinch the compositor
+    /// scales the base texture, and only at settle does
+    /// `PageCanvasController` ask for this. **Decode for the viewport, never
+    /// for the source**: `visibleRect` is viewport-sized at any zoom, so the
+    /// context this builds is bounded by the screen, and a pdf layer
+    /// rasterizes only the sub-rect of its source the viewport shows.
+    ///
+    /// **Deliberately uncached and never coalesced.** A lens is a render of
+    /// one settled viewport, keyed by a rect of floats that never repeats
+    /// exactly; caching it would put viewport-sized entries under a byte
+    /// bound whose arithmetic is stated in page-sized composites, and an
+    /// in-flight join keyed on anything less than the whole request is the
+    /// stale-picture bug the composite path just fixed. Each settle renders
+    /// once; staleness is the caller's generation guard, and the only lens
+    /// retained is the one texture `PageBackdrop` is showing.
+    ///
+    /// `visibleRect` must already be clamped to the page — the rasterizer
+    /// refuses out-of-page sub-rects, and this function additionally
+    /// intersects per layer, so a caller that clamps can never be refused for
+    /// geometry.
+    func lens(for request: StaticLayerRequest, visibleRect: CGRect) async -> StaticLayerRender {
+        precondition(
+            request.pixelsPerPagePoint.isFinite && request.pixelsPerPagePoint > 0,
+            "a lens at \(request.pixelsPerPagePoint) pixels per page point is not a level of detail"
+        )
+        let gate = renderGateForTesting
+        if let gate { await gate(request) }
+        return await Self.renderLens(request, visibleRect: visibleRect, store: store)
+    }
+
+    /// Images inside the lens decode no finer than this long edge — the same
+    /// texture-budget number the base composite's level-of-detail cap rests
+    /// on. The fork doc's "an image past a size threshold renders through the
+    /// same base-and-lens path" is deliberately **not** built: an image in
+    /// the lens is present and correctly placed, but no sharper than in the
+    /// base. `Docs/Forks/ImplementationStatus.md` records the gap.
+    private static let lensImageMaxPixelSize = 2800
+
+    /// `nonisolated` for the reason `render` is: the rasterization runs on
+    /// the global executor, never on this actor and never on main.
+    nonisolated static func renderLens(
+        _ request: StaticLayerRequest,
+        visibleRect: CGRect,
+        store: DocumentStore
+    ) async -> StaticLayerRender {
+        guard !request.layers.isEmpty else { return .empty }
+        let builtOffMain = pthread_main_np() == 0
+
+        let scale = request.pixelsPerPagePoint
+        let widthPixels = Int((visibleRect.width * scale).rounded())
+        let heightPixels = Int((visibleRect.height * scale).rounded())
+        guard widthPixels > 0, heightPixels > 0 else {
+            return .refused("a lens of \(widthPixels)x\(heightPixels) pixels is not a viewport")
+        }
+
+        guard let context = CGContext(
+            data: nil,
+            width: widthPixels,
+            height: heightPixels,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue
+                | CGBitmapInfo.byteOrder32Little.rawValue
+        ) else {
+            return .refused("a \(widthPixels)x\(heightPixels) lens context could not be created")
+        }
+
+        context.setFillColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: widthPixels, height: heightPixels))
+        context.interpolationQuality = .high
+
+        // Into page space, windowed to the visible rect: the one y-flip, then
+        // a translation so page-point coordinates draw directly.
+        context.translateBy(x: 0, y: CGFloat(heightPixels))
+        context.scaleBy(x: scale, y: -scale)
+        context.translateBy(x: -visibleRect.minX, y: -visibleRect.minY)
+
+        for layer in request.layers {
+            let transform = layer.pageSpaceTransform
+            guard transform.isInvertible else {
+                return .refused("layer \(layer.layerID) has a singular transform and is not placeable")
+            }
+
+            switch layer.recognizedKind {
+            case .image:
+                // Present and placed, bounded as the base bounds it: the
+                // sharp-at-depth path is pdf's. See `lensImageMaxPixelSize`.
+                guard let ref = try? ImageLayerRef(payload: layer.payload),
+                      let format = ref.recognizedFormat,
+                      let bytes = try? await store.loadAsset(assetID: ref.assetID, format: format),
+                      let image = downsample(
+                          bytes,
+                          maxPixelSize: min(
+                              maxPixelSize(of: transform, at: scale), lensImageMaxPixelSize
+                          )
+                      )
+                else {
+                    return .refused("layer \(layer.layerID) could not decode for the lens")
+                }
+                context.saveGState()
+                context.concatenate(
+                    CGAffineTransform(
+                        a: transform.a, b: transform.b, c: transform.c, d: transform.d,
+                        tx: transform.tx, ty: transform.ty
+                    )
+                )
+                context.translateBy(x: 0, y: 1)
+                context.scaleBy(x: 1, y: -1)
+                context.draw(image, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+                context.restoreGState()
+
+            case .pdf:
+                let ref: PDFLayerRef
+                do {
+                    ref = try PDFLayerRef(payload: layer.payload)
+                } catch {
+                    return .refused("layer \(layer.layerID) has a payload that will not decode: \(error)")
+                }
+                let bytes: Data
+                do {
+                    bytes = try await store.loadAsset(assetID: ref.assetID, format: .pdf)
+                } catch {
+                    return .refused("layer \(layer.layerID) could not read asset \(ref.assetID): \(error)")
+                }
+
+                // The sharp path needs the placed rectangle as a rectangle:
+                // pdf layers are not selectable, so every one this build can
+                // have written is an axis-aligned scale-and-translate. Any
+                // other transform is refused rather than approximated — a
+                // lens showing the worksheet somewhere it is not would be a
+                // wrong picture at the worst possible sharpness.
+                guard transform.b == 0, transform.c == 0, transform.a > 0, transform.d > 0 else {
+                    return .refused(
+                        "layer \(layer.layerID) carries a non-axis-aligned pdf transform, "
+                            + "which no lens this build renders"
+                    )
+                }
+                let placed = CGRect(x: transform.tx, y: transform.ty, width: transform.a, height: transform.d)
+                let target = placed.intersection(visibleRect)
+                if target.isEmpty { continue }
+
+                do {
+                    let display = try PDFPageRasterizer.displaySize(
+                        of: bytes, sourcePageIndex: ref.sourcePageIndex
+                    )
+                    // The visible part of the layer, mapped back into the
+                    // source's own display points — and intersected with the
+                    // source's page so float arithmetic can never hand the
+                    // rasterizer a rect it refuses.
+                    let source = CGRect(
+                        x: (target.minX - placed.minX) / placed.width * display.width,
+                        y: (target.minY - placed.minY) / placed.height * display.height,
+                        width: target.width / placed.width * display.width,
+                        height: target.height / placed.height * display.height
+                    ).intersection(CGRect(origin: .zero, size: display))
+                    if source.isEmpty { continue }
+
+                    let rasterScale = max(
+                        Double(placed.width) * scale / Double(display.width),
+                        Double(placed.height) * scale / Double(display.height)
+                    )
+                    let image = try await PDFPageRasterizer.rasterize(
+                        bytes,
+                        sourcePageIndex: ref.sourcePageIndex,
+                        pixelsPerPagePoint: rasterScale,
+                        subRect: source
+                    )
+                    // Draw the raster over exactly the page-space region it
+                    // shows. CGContext lays an image out bottom-up and page
+                    // space is y-down, so one local flip about the target.
+                    context.saveGState()
+                    context.translateBy(x: target.minX, y: target.maxY)
+                    context.scaleBy(x: 1, y: -1)
+                    context.draw(
+                        image, in: CGRect(x: 0, y: 0, width: target.width, height: target.height)
+                    )
+                    context.restoreGState()
+                } catch {
+                    return .refused(
+                        "layer \(layer.layerID): asset \(ref.assetID) page "
+                            + "\(ref.sourcePageIndex) will not rasterize for the lens: \(error)"
+                    )
+                }
+
+            case .ink, nil:
+                return .refused(
+                    "layer \(layer.layerID) is of kind \"\(layer.kind)\", which has no static rendering"
+                )
+            }
+        }
+
+        guard let image = context.makeImage() else {
+            return .refused("the lens context yielded no image")
+        }
+        return .composited(
+            StaticComposite(
+                image: image,
+                pixelsPerPagePoint: scale,
+                byteCount: context.bytesPerRow * heightPixels,
+                builtOffMain: builtOffMain
+            )
+        )
+    }
+
     // MARK: - One layer, on its own
 
     /// One layer's own source, decoded for where that layer lands.

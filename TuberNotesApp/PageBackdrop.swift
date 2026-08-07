@@ -62,6 +62,30 @@ final class PageBackdrop {
     /// released the moment the layer is deselected.
     private let lift = CALayer()
 
+    /// The sharp patch over the visible rect at a settled deep zoom — the
+    /// "lens" of the fork doc's base-and-lens design.
+    ///
+    /// A **sublayer of `page`**, for the reason `lift` is: `page` carries the
+    /// mirror transform, a sublayer inherits it, so the lens stays registered
+    /// with the base for free and needs only its page-space frame. It sits
+    /// above the base texture (`page.contents`) and below the lift — a layer
+    /// being dragged must draw over everything static — and, being inside the
+    /// backdrop, below the ink always.
+    ///
+    /// MEMORY: at most one of these exists per live page, and it is
+    /// viewport-sized at the settled zoom by construction — the lens is asked
+    /// for the visible rect, never the page. In memory only; nothing about it
+    /// ever touches disk (`Contract.proposed.md` A7 stays unneeded).
+    ///
+    /// A stale sharp patch at the wrong position is worse than soft, so the
+    /// controller hides this the moment the view transforms away from the
+    /// settled state; `hideLens` is one property write and a nil `contents`.
+    private let lens = CALayer()
+
+    /// Whether `lens` is carrying an image. Read by tests and by nothing else:
+    /// the controller does not branch on it, it just hides eagerly.
+    private(set) var hasLens = false
+
     /// Whether `lift` is carrying an image. The controller reads it to decide
     /// whether the composite may exclude that layer: **excluding a layer from
     /// the composite is only safe once something else is drawing it.**
@@ -123,6 +147,14 @@ final class PageBackdrop {
         // the instant of commit, which reads as the drag having moved something
         // it did not.
         page.masksToBounds = true
+
+        lens.anchorPoint = .zero
+        lens.magnificationFilter = .linear
+        lens.minificationFilter = .trilinear
+        lens.isHidden = true
+        // Before the lift, so the lift draws above it: a dragged layer must
+        // show over every static texture, sharp or soft.
+        page.addSublayer(lens)
 
         lift.anchorPoint = .zero
         lift.position = .zero
@@ -225,6 +257,41 @@ final class PageBackdrop {
         CATransaction.commit()
     }
 
+    // MARK: - The lens
+
+    /// Puts a settled-zoom render into the lens layer over exactly the
+    /// page-space rect it shows. One `contents` assignment with the pixels
+    /// already built — the same main-thread share `show(_:)` has.
+    ///
+    /// The layer's frame is the rect in page points; the image stretches to
+    /// fill it, and since the image was rendered at the settled zoom's own
+    /// pixels-per-page-point, "stretches" is pixel-exact at that zoom.
+    func showLens(_ image: CGImage, over pageRect: CGRect) {
+        precondition(!pageRect.isEmpty, "a lens over an empty rect shows nothing")
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        lens.bounds = CGRect(origin: .zero, size: pageRect.size)
+        lens.position = pageRect.origin
+        lens.contents = image
+        lens.isHidden = false
+        CATransaction.commit()
+        hasLens = true
+    }
+
+    /// Drops the lens. Called the moment the view transforms away from the
+    /// settled state it was rendered for — a stale sharp patch at the wrong
+    /// position is worse than the soft base. Cheap when there is none, which
+    /// is every scroll tick on a page that was never deep-zoomed.
+    func hideLens() {
+        guard hasLens else { return }
+        hasLens = false
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        lens.isHidden = true
+        lens.contents = nil
+        CATransaction.commit()
+    }
+
     // MARK: - The lifted layer
 
     /// Puts a decoded source into the lift layer and places it.
@@ -304,4 +371,8 @@ final class PageBackdrop {
     /// The lifted layer, so a test can assert the pixel-to-page composition
     /// lands where the durable transform says it does.
     var liftLayerForTesting: CALayer { lift }
+
+    /// The lens layer, so a test can assert where a settled-zoom render
+    /// landed and that invalidation genuinely emptied it.
+    var lensLayerForTesting: CALayer { lens }
 }

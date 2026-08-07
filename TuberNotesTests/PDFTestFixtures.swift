@@ -60,18 +60,18 @@ enum PDFFixture {
         )])
     }
 
-    /// A fixture whose sharpness is observable: one-point vertical black
-    /// stripes on white, across a square page. At one raster pixel per point
-    /// each pixel straddles a black and a white stripe and lands grey; at two
-    /// or more, pure black and pure white pixels exist side by side. That
-    /// difference is what "the lens is sharper than the scaled base" means in
-    /// a form a test can assert.
+    /// A fixture whose sharpness is observable: half-point vertical black
+    /// stripes on a one-point period, across a square page. At one raster
+    /// pixel per point every pixel is half black, half white — a uniform
+    /// grey; at two pixels per point, pure black and pure white columns
+    /// alternate. That difference is what "the lens is sharper than the
+    /// scaled-up base" means in a form a test can assert.
     static func stripePDF(side: Double = 100) -> Data {
         var ops = "0 0 0 rg\n"
         var x = 0.0
         while x < side {
-            ops += "\(x) 0 1 \(side) re f\n"
-            x += 2
+            ops += "\(x) 0 0.5 \(side) re f\n"
+            x += 1
         }
         return pdf(pages: [Page(
             mediaBox: CGRect(x: 0, y: 0, width: side, height: side), content: ops
