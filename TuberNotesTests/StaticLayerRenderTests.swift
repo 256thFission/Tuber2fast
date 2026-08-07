@@ -623,11 +623,15 @@ struct StaticLayerRenderTests {
         let page = try #require(controller.backdrop).pageLayerForTesting
         let canvas = controller.canvasView
 
-        // Page point p renders at p * zoom - contentOffset.
+        // Page point p renders at p * zoom - contentOffset. Every zoom sits at
+        // or above the fit-width floor: PKCanvasView clamps anything below
+        // `minimumZoomScale`, so a sub-floor case would assert against a zoom
+        // the canvas never adopted.
+        let floor = canvas.minimumZoomScale
         for (offset, zoom) in [
-            (CGPoint(x: 0, y: 0), CGFloat(1)),
+            (CGPoint(x: 0, y: 0), floor),
             (CGPoint(x: 40, y: 260), CGFloat(2.5)),
-            (CGPoint(x: -33, y: -12), CGFloat(0.75)),
+            (CGPoint(x: -33, y: -12), floor * 1.2),
         ] {
             canvas.zoomScale = zoom
             canvas.contentOffset = offset

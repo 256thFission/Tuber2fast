@@ -37,12 +37,10 @@ struct PageCanvasControllerTests {
         let fitWidth = root.frame.width / PageGeometry.canonical.width
         #expect(abs(canvas.zoomScale - fitWidth) < 0.001)
 
-        // You can zoom out past a whole page, so the floor is strictly below
-        // the scale at which one full page fits
-        // (`Contract.md` — Geometry and coordinates).
-        let fitPage = min(fitWidth, root.frame.height / PageGeometry.canonical.height)
-        #expect(canvas.minimumZoomScale < fitPage)
-        #expect(canvas.minimumZoomScale > 0)
+        // The floor is fit-width: you may never zoom out to where horizontal
+        // dead space appears beside the page (maintainer verdict, device
+        // session 2026-08-07).
+        #expect(abs(canvas.minimumZoomScale - fitWidth) < 0.001)
         #expect(canvas.maximumZoomScale > canvas.zoomScale)
 
         // A repeated layout pass must not reset the viewport.
@@ -60,19 +58,30 @@ struct PageCanvasControllerTests {
         #expect(canvas.drawing.strokes.isEmpty)
     }
 
-    @Test("A whole page fits on screen at minimum zoom")
-    func wholePageFitsAtMinimumZoom() {
+    /// The maintainer's verdict from the 2026-08-07 device session: the floor
+    /// is fit-width, never lower. A landscape viewport is where the old
+    /// fit-page floor diverged most — this test fails against that floor.
+    @Test("The zoom floor is fit-width: no horizontal dead space, and vertical pan room remains")
+    func zoomFloorIsFitWidth() {
         let controller = PageCanvasController(toolPicker: PKToolPicker(), projection: .canonical)
         let root = controller.view!
-        root.frame = CGRect(x: 0, y: 0, width: 820, height: 1180)
+        root.frame = CGRect(x: 0, y: 0, width: 1180, height: 820)
         root.layoutIfNeeded()
 
         let canvas = controller.canvasView
+        let fitWidth = root.frame.width / PageGeometry.canonical.width
         let floor = canvas.minimumZoomScale
+        #expect(abs(floor - fitWidth) < 0.001)
 
-        // The reported complaint: at the floor you could not see a whole page.
-        #expect(PageGeometry.canonical.width * floor <= root.frame.width)
-        #expect(PageGeometry.canonical.height * floor <= root.frame.height)
+        // At the floor the page exactly fills the viewport's width — no dead
+        // space beside the page — and a portrait page is taller than the
+        // viewport, so vertical panning within the page still has room.
+        canvas.zoomScale = floor
+        root.layoutIfNeeded()
+        #expect(abs(canvas.contentSize.width - root.frame.width) < 0.5)
+        #expect(canvas.contentSize.height > canvas.bounds.height)
+        #expect(canvas.contentInset.left == 0)
+        #expect(canvas.contentInset.right == 0)
 
         // A repeated layout pass must not move the floor.
         root.layoutIfNeeded()
@@ -104,11 +113,10 @@ struct PageCanvasControllerTests {
         #expect(abs(Double(unscaled.width) - landscape.width) < 0.5)
         #expect(abs(Double(unscaled.height) - landscape.height) < 0.5)
 
-        // It opens at *its own* fit-width, and the whole of it fits at the
-        // floor — the floor derives from the page it belongs to.
+        // It opens at *its own* fit-width, and that is also its floor — the
+        // floor derives from the page it belongs to.
         #expect(abs(Double(canvas.zoomScale) - 820 / landscape.width) < 0.001)
-        #expect(landscape.width * Double(canvas.minimumZoomScale) <= 820)
-        #expect(landscape.height * Double(canvas.minimumZoomScale) <= 1180)
+        #expect(abs(Double(canvas.minimumZoomScale) - 820 / landscape.width) < 0.001)
     }
 
     /// Two pages of different sizes, side by side in the same document, each
@@ -209,10 +217,9 @@ struct PageCanvasControllerTests {
         root.frame = CGRect(x: 0, y: 0, width: 1180, height: 820)
         root.layoutIfNeeded()
 
-        // The floor now describes the screen that exists, so a whole page still
-        // fits at minimum zoom.
-        #expect(PageGeometry.canonical.width * canvas.minimumZoomScale <= 1180)
-        #expect(PageGeometry.canonical.height * canvas.minimumZoomScale <= 820)
+        // The floor now describes the screen that exists: fit-width for the
+        // rotated viewport, so no dead space can appear beside the page.
+        #expect(abs(canvas.minimumZoomScale - 1180 / PageGeometry.canonical.width) < 0.001)
 
         // And the user's zoom survives as a ratio of fit-width rather than
         // snapping back to fit.
@@ -220,7 +227,7 @@ struct PageCanvasControllerTests {
         #expect(abs(canvas.zoomScale - landscapeFitWidth * 2) < 0.001)
     }
 
-    @Test("A page smaller than the viewport is centred in it")
+    @Test("A page shorter than the viewport is centred vertically; fit-width leaves no horizontal room")
     func pageIsCentredWhenSmallerThanViewport() {
         let controller = PageCanvasController(toolPicker: PKToolPicker(), projection: .canonical)
         let root = controller.view!
@@ -229,17 +236,19 @@ struct PageCanvasControllerTests {
 
         let canvas = controller.canvasView
 
-        // At the floor the whole page fits with room to spare in both axes, so
-        // the leftover room must fall evenly on both sides.
+        // At the fit-width floor the page exactly fills the width, so there is
+        // never horizontal room to give; in this viewport the canonical page is
+        // shorter than the screen at that scale, and the vertical leftover must
+        // fall evenly on both sides.
         canvas.zoomScale = canvas.minimumZoomScale
         root.layoutIfNeeded()
 
-        let expectedHorizontal = (canvas.bounds.width - canvas.contentSize.width) / 2
         let expectedVertical = (canvas.bounds.height - canvas.contentSize.height) / 2
-        #expect(expectedHorizontal > 0)
         #expect(expectedVertical > 0)
-        #expect(abs(canvas.contentInset.left - expectedHorizontal) < 0.5)
-        #expect(canvas.contentInset.left == canvas.contentInset.right)
+        // Fit-width fills the width to rounding error, so the horizontal
+        // inset is zero to the same rounding error, never a visible band.
+        #expect(abs(canvas.contentInset.left) < 0.01)
+        #expect(abs(canvas.contentInset.right) < 0.01)
         #expect(abs(canvas.contentInset.top - expectedVertical) < 0.5)
         #expect(canvas.contentInset.top == canvas.contentInset.bottom)
 
