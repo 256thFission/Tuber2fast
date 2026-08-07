@@ -207,14 +207,84 @@ struct StaticLayerRenderTests {
         let first = try await scratch.imageLayer(store: store, color: .red, transform: .fullPage)
         let second = try await scratch.imageLayer(store: store, color: .green, transform: .fullPage)
 
-        let a = try await composited(renderer, layers: [first])
+        // Different levels of detail, so the two composites have different
+        // byte counts: with equal sizes, evicting the *new* entry instead of
+        // the old would pass every counter assertion below identically.
+        let requestA = StaticLayerRequest(layers: [first], geometry: .canonical, pixelsPerPagePoint: 1)
+        let requestB = StaticLayerRequest(layers: [second], geometry: .canonical, pixelsPerPagePoint: 2)
+
+        let a = try await composited(renderer, request: requestA)
         #expect(await renderer.cachedCompositeCount == 1, "the entry just made is never the one evicted")
         #expect(await renderer.cachedByteCount == a.byteCount)
 
-        let b = try await composited(renderer, layers: [second])
+        let b = try await composited(renderer, request: requestB)
+        #expect(a.byteCount != b.byteCount, "distinct sizes, or the wrong eviction is invisible")
         #expect(await renderer.cachedCompositeCount == 1, "the older composite is gone at the bound")
         #expect(await renderer.cachedByteCount == b.byteCount)
         #expect(await renderer.cachedByteCount > 0, "the bound is stated in bytes and counted in bytes")
+
+        // Identity, not counters: the survivor is the entry just made.
+        let bAgain = try await composited(renderer, request: requestB)
+        #expect(bAgain.image === b.image, "the survivor must be served from the cache")
+        let aAgain = try await composited(renderer, request: requestA)
+        #expect(aAgain.image !== a.image, "the evicted composite must be a fresh render")
+    }
+
+    @Test("At a bound between two and three composites, exactly the least recently used entry goes")
+    func trimEvictsInLeastRecentlyUsedOrder() async throws {
+        let scratch = try Scratch()
+        let store = scratch.store
+        // Three composites of distinct sizes — roughly 1.94, 1.57, and 1.26 MB
+        // at these levels of detail on the canonical page — and a bound that
+        // holds the first and third but not all three.
+        let renderer = StaticLayerRenderer(store: store, byteBound: 3_700_000)
+
+        let layer = try await scratch.imageLayer(store: store, color: .red, transform: .fullPage)
+        let requestA = StaticLayerRequest(layers: [layer], geometry: .canonical, pixelsPerPagePoint: 1.0)
+        let requestB = StaticLayerRequest(layers: [layer], geometry: .canonical, pixelsPerPagePoint: 0.9)
+        let requestC = StaticLayerRequest(layers: [layer], geometry: .canonical, pixelsPerPagePoint: 0.8)
+
+        let a = try await composited(renderer, request: requestA)
+        let b = try await composited(renderer, request: requestB)
+        #expect(await renderer.cachedCompositeCount == 2, "the first two fit under the bound together")
+
+        // Touch A, so B is the least recently used when C overruns the bound.
+        _ = try await composited(renderer, request: requestA)
+
+        let c = try await composited(renderer, request: requestC)
+        #expect(await renderer.cachedCompositeCount == 2, "one eviction brings the total back under the bound")
+
+        let aAgain = try await composited(renderer, request: requestA)
+        #expect(aAgain.image === a.image, "A was used more recently than B and must survive")
+        let cAgain = try await composited(renderer, request: requestC)
+        #expect(cAgain.image === c.image, "the entry just made is never evicted")
+        let bAgain = try await composited(renderer, request: requestB)
+        #expect(bAgain.image !== b.image, "exactly the least recently used entry is evicted")
+    }
+
+    @Test("The trim loops until under the bound, protecting only the entry just made")
+    func trimLoopsUntilUnderTheBound() async throws {
+        let scratch = try Scratch()
+        let store = scratch.store
+        let renderer = StaticLayerRenderer(store: store, byteBound: 3_700_000)
+
+        let layer = try await scratch.imageLayer(store: store, color: .red, transform: .fullPage)
+        let requestA = StaticLayerRequest(layers: [layer], geometry: .canonical, pixelsPerPagePoint: 1.0)
+        let requestB = StaticLayerRequest(layers: [layer], geometry: .canonical, pixelsPerPagePoint: 0.9)
+        _ = try await composited(renderer, request: requestA)
+        _ = try await composited(renderer, request: requestB)
+        #expect(await renderer.cachedCompositeCount == 2)
+
+        // Bigger than the whole bound on its own (about 3.8 MB): both older
+        // entries must go — one eviction is not enough — and the entry just
+        // made survives even though the cache is still over its bound.
+        let big = StaticLayerRequest(layers: [layer], geometry: .canonical, pixelsPerPagePoint: 1.4)
+        let d = try await composited(renderer, request: big)
+        #expect(d.byteCount > 3_700_000, "the arithmetic this test rests on")
+        #expect(await renderer.cachedCompositeCount == 1, "the trim loops until under the bound")
+        #expect(await renderer.cachedByteCount == d.byteCount)
+        let dAgain = try await composited(renderer, request: big)
+        #expect(dAgain.image === d.image, "a composite bigger than the whole bound is kept, not thrashed")
     }
 
     @Test("Under its bound, the cache holds both composites and re-serves them")
@@ -263,9 +333,19 @@ struct StaticLayerRenderTests {
         _ = try await composited(renderer, layers: [gone])
         #expect(await renderer.cachedCompositeCount == 2)
 
+        let a = try await composited(renderer, layers: [kept])
+        let b = try await composited(renderer, layers: [gone])
+
         await renderer.retain(layerIDs: [kept.layerID])
         #expect(await renderer.cachedCompositeCount == 1)
         #expect(await renderer.cachedByteCount > 0)
+
+        // Identity, not counters: with the disjointness condition inverted,
+        // the count is 1 either way and only the *wrong* entry survives.
+        let keptAgain = try await composited(renderer, layers: [kept])
+        #expect(keptAgain.image === a.image, "the survivor must be the composite whose layer is still live")
+        let goneAgain = try await composited(renderer, layers: [gone])
+        #expect(goneAgain.image !== b.image, "the evicted composite must be a fresh render")
 
         // Nothing is retained because it might be wanted again.
         await renderer.retain(layerIDs: [])
