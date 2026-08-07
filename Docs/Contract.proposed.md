@@ -48,7 +48,7 @@ opaque drawing bytes". Phase 1's code implements exactly this text.
 
 ---
 
-## A3. *Owners* — the state table gains its layer rows — **FORCED (phase 1, phase 2)**
+## A3. *Owners* — the state table gains its layer rows — **FORCED (phase 1, phase 2; one row below still AHEAD, per-row status inline)**
 
 The table in *Owners* lists nine states and no layer state, so the layer list
 and layer values are governed only by prose. Add these rows, which restate
@@ -308,7 +308,7 @@ device — and lens rendering wants a bounded detail level anyway. Cheap to
 adopt, and it gates a flag that would otherwise destroy image data against a
 moving limit.
 
-## A10. *Undo* — one manager per page, two clients — **AHEAD (phase 4 code is written; the spike still has not run)**
+## A10. *Undo* — one manager per page, two clients — **FORCED (code landed; adoption gated on spike 3 — the undo premise is untested)**
 
 Replace:
 
@@ -665,9 +665,10 @@ Recorded so the absence is deliberate rather than forgotten:
    there. If you want deeper zoom than that, it is a different ink surface, not
    a different constant — worth knowing before any lens work is priced.
 7. **`CoreGraphics` joined the contract checker's banned-import list**, with
-   `PDFSource.swift` as its one allowlist entry. It is not a UI framework, so
-   it stretches the rule's name to serve the rule's purpose; deleting the entry
-   is one line, and doing so makes any file able to import it unnoticed.
+   two allowlist entries, `PDFSource.swift` and `StaticLayerRenderer.swift`.
+   It is not a UI framework, so it stretches the rule's name to serve the
+   rule's purpose; deleting the entries is one line each, and doing so makes
+   any file able to import it unnoticed.
 
 ---
 

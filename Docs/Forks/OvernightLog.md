@@ -83,7 +83,8 @@ appended at the bottom of each section. Branch: `canvas-feature-complete`
     navigation is the import UI's decision. Consequence: a first-launch
     document plus an import leaves one blank page in front of the worksheet.
 14. **`CoreGraphics` was added to the contract checker's banned-import set**,
-    with `PDFSource.swift` as its one allowlist entry. It is not a UI
+    with two allowlist entries, `PDFSource.swift` and
+    `StaticLayerRenderer.swift`. It is not a UI
     framework, so this stretches the rule's name to serve its purpose — the
     ban is on acquiring a graphics framework's whole vocabulary, and
     `CGPDFDocument` arrives with `CGContext` and `CGImage` attached. One line
@@ -92,31 +93,31 @@ appended at the bottom of each section. Branch: `canvas-feature-complete`
 
 ### Phase 2, rendering half — the decisions
 
-6. **A `CALayer`, not a sibling view.** The fork doc's presumed structure says
-   "sibling view under a transparent `PKCanvasView`". The stack is a `CALayer`
-   instead, for the reason `pageBoundary` and the shape tool's preview are:
-   layers never participate in touch handling. The sibling *view* would not
-   reproduce the recorded `_delayTouchesForEvent:` crash — it is a subview of
-   the controller's root, not of the canvas — but it buys nothing a layer does
-   not, and this project has one recorded crash caused by putting a view where
-   a layer would do.
-7. **Transparency is paid per page that has a stack, not once for the app.**
-   The fork doc says the ink surface goes transparent and "a full-screen blend
-   under the ink is the floor cost everywhere, forever". It does not have to
-   be: a page with no static layers installs no backdrop and keeps its opaque
-   white canvas, so every page in a blank notebook is untouched by this
-   feature. A **narrowing of the fork doc's own cost claim**, and worth an
-   amendment to that paragraph if Phillip agrees.
-8. **Level of detail is fit-width × display scale, not zoom.** Deriving detail
-   from `zoomScale` would put a decode behind every pinch. The composite is
-   re-asked for only at layout — a rotation or a Split View resize moves
-   fit-width — and never from a gesture callback. Capped at a 2,800 px long
-   edge, so a composite costs at most about 24 MB. Deep zoom shows this texture
-   scaled and soft; sharpening it is phase 3's lens and needs spike 2.
-9. **The render cache is in memory only, and the on-disk one is deferred.**
-   A7 (the derived-artifact narrowing) has not been adopted, and an image does
-   not need it to become visible. Nothing is written to disk by this lane.
-10. **The cache's bound is 96 MB and its eviction is the live window.** Bytes,
+15. **A `CALayer`, not a sibling view.** The fork doc's presumed structure says
+    "sibling view under a transparent `PKCanvasView`". The stack is a `CALayer`
+    instead, for the reason `pageBoundary` and the shape tool's preview are:
+    layers never participate in touch handling. The sibling *view* would not
+    reproduce the recorded `_delayTouchesForEvent:` crash — it is a subview of
+    the controller's root, not of the canvas — but it buys nothing a layer does
+    not, and this project has one recorded crash caused by putting a view where
+    a layer would do.
+16. **Transparency is paid per page that has a stack, not once for the app.**
+    The fork doc says the ink surface goes transparent and "a full-screen blend
+    under the ink is the floor cost everywhere, forever". It does not have to
+    be: a page with no static layers installs no backdrop and keeps its opaque
+    white canvas, so every page in a blank notebook is untouched by this
+    feature. A **narrowing of the fork doc's own cost claim**, and worth an
+    amendment to that paragraph if Phillip agrees.
+17. **Level of detail is fit-width × display scale, not zoom.** Deriving detail
+    from `zoomScale` would put a decode behind every pinch. The composite is
+    re-asked for only at layout — a rotation or a Split View resize moves
+    fit-width — and never from a gesture callback. Capped at a 2,800 px long
+    edge, so a composite costs at most about 24 MB. Deep zoom shows this texture
+    scaled and soft; sharpening it is phase 3's lens and needs spike 2.
+18. **The render cache is in memory only, and the on-disk one is deferred.**
+    A7 (the derived-artifact narrowing) has not been adopted, and an image does
+    not need it to become visible. Nothing is written to disk by this lane.
+19. **The cache's bound is 96 MB and its eviction is the live window.** Bytes,
     not pages, per the contract's *Performance* rule and the fork doc's
     explicit refusal of pages as a unit. `retain(layerIDs:)` — driven by
     `EditorSession` on every turn, beside `pruneDurableBytes` — is the policy;
@@ -124,13 +125,13 @@ appended at the bottom of each section. Branch: `canvas-feature-complete`
     renderer never learns a page ID, which is what lets `PageCanvasController`
     stay blind to which page it is (golden rule 7): the cache keys on layer
     IDs.
-11. **A refusal is total.** Every layer is decoded before anything is drawn,
+20. **A refusal is total.** Every layer is decoded before anything is drawn,
     and one failure refuses the whole composite. A partial composite is the
     failure the layer model exists to prevent: it looks correct and is not.
     Refusals are cached at zero bytes, which is safe only because assets are
     write-once — a render of an immutable source can be missing but never
     stale.
-12. **A tint carries the placeholder, and no sentence.** The page-level
+21. **A tint carries the placeholder, and no sentence.** The page-level
     placeholder (`PagedCanvasController.makePlaceholder`) is grey with a label
     because it *replaces* a page. The backdrop's is an opaque pale teal with no
     label, because it sits under live ink on an editable page — a label there
@@ -138,7 +139,7 @@ appended at the bottom of each section. Branch: `canvas-feature-complete`
     a different colour on purpose: a refusal that looks like a slow load is a
     refusal nobody acts on. Both colours are an agent's choice against
     "loudly distinguishable from blank" and are Phillip's to overrule.
-13. **Prefetching neighbour composites is deliberately not built.** The fork
+22. **Prefetching neighbour composites is deliberately not built.** The fork
     doc names `turn-settles-once` as a direct dependency: today a turn fires at
     the midpoint of a drag, so prefetching decodes would start work twice on an
     abandoned half-drag. The cache *permits* a neighbour's composite to
@@ -146,7 +147,7 @@ appended at the bottom of each section. Branch: `canvas-feature-complete`
 
 ### Phase 4, transformable `image` layers — the decisions
 
-14. **A recognizer, not the chrome view.** The fork doc names a selection chrome
+23. **A recognizer, not the chrome view.** The fork doc names a selection chrome
     view owning its own recognizers as the escape hatch if fall-through fights
     UIKit. It cannot be built: under the transparent `PKCanvasView` a chrome
     view gets no touches (the canvas is above it), and above the canvas it eats
@@ -156,12 +157,12 @@ appended at the bottom of each section. Branch: `canvas-feature-complete`
     *fails* rather than inside a view that must sit somewhere in the z-order.
     Recorded in A11, because if this fights UIKit on device the finding is that
     neither structure works.
-15. **The blank-page path grows nothing at all.** A page with no selectable
+24. **The blank-page path grows nothing at all.** A page with no selectable
     layer builds no `LayerSelectionRuntime`, so it has no tap recognizer and no
-    drag recognizer. The same narrowing decision 7 makes for transparency, and
+    drag recognizer. The same narrowing decision 16 makes for transparency, and
     it turns the fork doc's "zero new gesture cost" into a fact about the object
     graph. A11 wants one sentence amended to say so.
-16. **Scale and rotate are handle drags. There is no pinch recognizer.** A
+25. **Scale and rotate are handle drags. There is no pinch recognizer.** A
     `UIPinchGestureRecognizer` contends directly with `PKCanvasView`'s own
     pinch-zoom, which *Navigation* hands to the framework outright, and winning
     that fight means either stealing zoom while an image is selected or losing
@@ -170,20 +171,20 @@ appended at the bottom of each section. Branch: `canvas-feature-complete`
     (uniform in the layer's own frame, anchored at the opposite corner) and one
     handle above the top edge rotates about the centre. **This is a UX call an
     agent made and Phillip may hate it.**
-17. **Rotation is applied in page space, scale in the layer's own frame**, and
+26. **Rotation is applied in page space, scale in the layer's own frame**, and
     the asymmetry is load-bearing. `fittingSource` sets `a` and `d`
     independently, so a placed image is anisotropic in page space: rotating in
     unit space and then applying that mapping is a *shear*, and the handle would
     not track the finger. Scaling in the local frame is what preserves the
     placed aspect ratio, which a page-space uniform scale would silently
     destroy.
-18. **Excluding the selected layer needed no new mechanism.** `CompositeKey` is
+27. **Excluding the selected layer needed no new mechanism.** `CompositeKey` is
     already the list of layer IDs plus the scale, so the minus-one composite is
     an ordinary second cache entry. It is also *stable under the drag*: moving
     the selected layer changes nothing about the request that excludes it, so a
     whole gesture — and every commit inside it — causes exactly zero
     re-composites.
-19. **The fork doc's no-ghosting ordering is one step wrong, and the code does
+28. **The fork doc's no-ghosting ordering is one step wrong, and the code does
     the other order.** "Selection kicks off the minus-one recomposite; until it
     lands the moving layer renders live over the stale composite" assumes the
     live render is free. It is not — it needs a decode. So the code decodes the
@@ -193,7 +194,7 @@ appended at the bottom of each section. Branch: `canvas-feature-complete`
     it up, and in that window the layer **vanishes**. Deselection is the mirror:
     the full composite is asked for while the lift is still up and the lift is
     dropped only when it lands.
-20. **The lifted layer is a sublayer of `PageBackdrop.page`**, which already
+29. **The lifted layer is a sublayer of `PageBackdrop.page`**, which already
     carries the mirror transform, so pan and zoom come free and the lift needs
     only the layer's own page-space transform. Its bounds are the source's pixel
     extent at `contentsScale` 1 and the pixel→unit-square scale is folded into
@@ -201,25 +202,25 @@ appended at the bottom of each section. Branch: `canvas-feature-complete`
     `masksToBounds = true`, so a layer dragged past the page edge clips exactly
     where the committed composite will clip it — otherwise the picture changes
     at the instant of commit.
-21. **The lifted source is not cached.** One decode per selection, off-main,
+30. **The lifted source is not cached.** One decode per selection, off-main,
     never during a drag. Putting it in the composite cache would mean a second
     kind of entry under a byte bound whose whole arithmetic is stated in
     page-sized composites.
-22. **Undo registers *after* the session accepted, which is the opposite of the
+31. **Undo registers *after* the session accepted, which is the opposite of the
     shape tool's order**, deliberately. The shape tool registers first because
     it is about to mutate `canvasView.drawing` and PencilKit may register its
     own undo for that assignment. A layer transform touches no drawing, so there
     is nothing to interleave with, and the only real hazard is the other one: an
     undo entry restoring a value the session refused. Asking first means exactly
     one registration per committed edit and none per refusal.
-23. **The undo target is `self`, the page controller** — not a new object —
+32. **The undo target is `self`, the page controller** — not a new object —
     specifically so that `willRetire`'s existing `removeAllActions(withTarget:)`
     already covers it. `UndoManager` does not retain a target; a second target
     would need a second retirement hook and would be a second way to leave a
     dangling one, which is a crash. Same `KNOWN DEFECT:` as the shape tool:
     a transform committed on a page you turn away from and back is no longer
     undoable.
-24. **`locked` was added, because phase 4 genuinely reads it** — twice, in two
+33. **`locked` was added, because phase 4 genuinely reads it** — twice, in two
     owners — and it was given a *writer*, `EditorSession.setLayerLocked`, so
     that it is not a bit only a test can set. No UI calls it, exactly as no UI
     called `importImage` when phase 2 landed. **An envelope written before
@@ -227,7 +228,7 @@ appended at the bottom of each section. Branch: `canvas-feature-complete`
     *Durable form* already states for the pre-layer page form; the alternative
     is every page file on disk becoming unreadable for a bit that changes no
     other rule. One line to delete if Phillip would rather old files fail.
-25. **A refused commit is put back rather than papered over.** The commit
+34. **A refused commit is put back rather than papered over.** The commit
     closure returns whether the session wrote it; on a refusal the selection
     runtime restores the transform the drag began from. A picture that disagrees
     with the file is worse than a drag that visibly did not stick.
@@ -339,7 +340,7 @@ appended at the bottom of each section. Branch: `canvas-feature-complete`
     which is precisely what makes `kCGImageSourceThumbnailMaxPixelSize`
     computable without opening the file. `Unproven.md` asked whether the
     payload was what the compositor wanted. It is.
-14. **The split makes "a save landed" invisible to anything watching
+19. **The split makes "a save landed" invisible to anything watching
     `pages/`.** An ordinary ink save now writes *only* a layer file, so
     `EditorSessionTests`' `savedAt` probe — which polled page-file mtimes —
     waited forever and failed one adaptive-debounce test. It went unnoticed
@@ -347,7 +348,7 @@ appended at the bottom of each section. Branch: `canvas-feature-complete`
     writes both; only a test measuring a second save's timing could see it.
     **Anything future that watches page files to detect a save is wrong now**,
     and the same trap is waiting for a file-coordination or sync layer.
-15. **Two existing tests quietly stopped proving their point.**
+20. **Two existing tests quietly stopped proving their point.**
     `savingOnePageDoesNotRewriteTheOther` and
     `turningAwayAndBackDoesNotRewriteThePage` assert a page file's mtime is
     unchanged — which after the split is trivially true for *every* ink save,
@@ -355,35 +356,35 @@ appended at the bottom of each section. Branch: `canvas-feature-complete`
     assert the page's ink *layer* file, which is where its bytes actually are.
     The general lesson: a change of granularity can turn a real assertion into
     a tautology without failing, and only re-reading the tests finds it.
-16. **The dangling-layer-ref refusal cannot fire for a page with no file, and
+21. **The dangling-layer-ref refusal cannot fire for a page with no file, and
     that is correct rather than a gap.** A page whose file does not exist, and
     a page still in a pre-split form, both write every layer forward whatever
     the caller claims — none of their layers has a file to be unchanged. The
     first version of the exit-adjacent test asserted a refusal in exactly that
     case and failed, which is how the rule got stated precisely instead of
     approximately.
-17. **The split made orphan detection cheaper, not dearer.** "Does any page
+22. **The split made orphan detection cheaper, not dearer.** "Does any page
     still name this layer?" now reads page files that are lists of UUIDs,
     where before answering any structural question meant decoding every
     envelope on the page including its ink. Asset reclamation scans every
     layer file — a strictly larger set than the referenced ones, so strictly
     more conservative — plus any pre-split page file's inline envelopes, which
     is what makes a half-migrated document answer correctly.
-18. **The exit test was verified by sabotage.** Coarsening the save path to
+23. **The exit test was verified by sabotage.** Coarsening the save path to
     mark every static layer changed makes it fail naming the `pdf` envelope as
     a second rewrite. It compares the whole document package by both
     modification date *and* bytes: mtime alone would miss a rewrite inside the
     filesystem's timestamp resolution, and bytes alone would miss a rewrite of
     identical content — which is still the whole-file write the format exists
     to avoid.
-19. **`UIGraphicsPDFRenderer` makes multi-page, mixed-geometry PDFs testable in
+24. **`UIGraphicsPDFRenderer` makes multi-page, mixed-geometry PDFs testable in
     the simulator**, including per-page bounds via
     `beginPage(withBounds:pageInfo:)`. A 5-page, 794 KB fixture builds in
     ~150 ms, so the exit test's "large import" is real bytes rather than a
     stand-in — this is the second CI-testable thing in this project that was
     not obvious, after `PKDrawing.image(from:scale:)`.
 
-19. **An `unowned` canvas reference makes a bare-runtime test fixture crash, not
+25. **An `unowned` canvas reference makes a bare-runtime test fixture crash, not
     fail.** `LayerSelectionRuntime` holds its scroll view `unowned`, exactly as
     `ShapeToolRuntime` does, which is right in the app because
     `PageCanvasController` owns both. A test that wrote
@@ -394,7 +395,7 @@ appended at the bottom of each section. Branch: `canvas-feature-complete`
     destroyed", taking every later suite with it and printing "Executed 0 tests"
     over and over. It reads exactly like the shared-simulator wrong verdict
     (discovery 8) and is not one. The fixture must hold the view.
-20. **`StaticLayerRenderTests`' pixel helper labels its bytes `(r, g, b)` and
+26. **`StaticLayerRenderTests`' pixel helper labels its bytes `(r, g, b)` and
     the sampling context does not hand them over in that order.** A pure red
     fill (`CGColor(srgbRed: 1, green: 0, blue: 0, alpha: 1)`) sampled through
     that helper comes back as `(0, 0, 255)`, so index 2 is the red channel, not
@@ -537,11 +538,11 @@ design forks, not formalities:
 
 - `UserDefaults` added to the checker's file-I/O token list (defensible,
   one line to delete).
-- **Rendering-half judgment calls, all listed as decisions 6–13 above.** The
+- **Rendering-half judgment calls, all listed as decisions 15–22 above.** The
   two that are design forks rather than taste: transparency paid *per page
-  with a stack* rather than app-wide (decision 7 — it narrows a cost claim the
+  with a stack* rather than app-wide (decision 16 — it narrows a cost claim the
   fork doc makes in prose, so that paragraph wants amending), and the 96 MB /
-  2,800 px numbers (decisions 8 and 10 — arithmetic on the fork doc's own
+  2,800 px numbers (decisions 17 and 19 — arithmetic on the fork doc's own
   unmeasured 22 MB estimate; spike 2 is what corrects them).
 - **The backdrop's two tints.** Pale teal for loading, pale red for refused,
   no label on either. Written to "loudly distinguishable from blank" and
@@ -615,7 +616,7 @@ UI, so drive it from a test build or add a temporary call).
 **Taste calls that are yours alone:** the handle size and shape, the dot-on-a-
 stalk rotation affordance, the dashed handleless chrome for a locked layer, and
 whether handle-drags are the right answer at all versus a two-finger pinch on
-the layer. The reasoning for refusing the pinch is decision 16; the verdict is
+the layer. The reasoning for refusing the pinch is decision 25; the verdict is
 not an agent's.
 
 ### 4. Verdicts no agent may render

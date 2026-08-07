@@ -15,11 +15,11 @@ listed under *Owed evidence* rather than counted as done.
 | Phase | State | Commit | Evidence |
 |---|---|---|---|
 | 1. Ink becomes a layer | **landed, reviewed, green** | `3a1a627` + review fixes `dee6044` | Independent review returned approve-with-nits; all findings fixed, the boundary test verified by reverting the fix |
-| 2. One `image` layer under the ink | **both halves landed, green** | `8e79ad6` (durable) + `8254cf6` (rendering) | Composite order, orientation, placement, the decode bound, the cache's byte bound and window eviction, and total refusal are asserted. Registration with ink at 120 Hz, overdraw, and both placeholder tints are device-only. |
+| 2. One `image` layer under the ink | **both halves landed, green** | `8e79ad6` (durable) + `8254cf6` (rendering) | Composite order, composite y-orientation (EXIF orientations untested), placement, the decode bound, the cache's byte bound and window eviction, and total refusal are asserted. Registration with ink at 120 Hz, overdraw, and both placeholder tints are device-only. |
 | 3a. `pdf` kind + the `layers/` split | **landed, green** | `b52221f` | Exit test verified by sabotage: a 5-page, 794 KB import, ink on page 4, asserts exactly one layer file rewritten by mtime **and** bytes. Amendments A13, A14 staged. |
 | 3b. per-page geometry, zoom cap | **landed, green** | `f212587` | Mixed-geometry paging, per-page zoom floors, one shared ceiling, v2→v3 index read-forward. Found that `PKCanvasView` clamps `maximumZoomScale` to 10, which decided the cap's value. Contract half **reverted** — see below. |
 | 3c. base-and-lens, prefetch decode | **not started** | — | Wants spike 2 and `turn-settles-once`. Nothing rasterizes a PDF page anywhere in this build; the composite is fit-width detail and goes soft under deep zoom. |
-| 4. Transformable `image` layers | **landed, green** | `34acbe8` | Selection, handles, minus-one composite, `locked`, layer-edit undo. Arbitration, feel, and undo are device-only; spike 3 is owed. |
+| 4. Transformable `image` layers | **landed, green** | `34acbe8` | Selection, handles, minus-one composite, `locked`; layer-edit undo: inverse-commit path asserted, undo registration device-only. Arbitration, feel, and undo are device-only; spike 3 is owed. |
 | 5. The shape tool | **landed, green** | `6f72d18` | Synthesis and rasterized pixels asserted; everything between Pencil and stroke is device-only |
 
 ## Contract
@@ -55,6 +55,8 @@ tested.
 
 Recorded because they were judgment calls, not transcription. Each is
 reversible; none is load-bearing enough to be worth waking someone for.
+This list covers phase 1 only; the full register continues in
+[`OvernightLog.md`](OvernightLog.md)'s decisions sections.
 
 1. **The refused-save guard reads disk, not memory.** Phase 1 first recorded
    refused pages in per-instance memory; review found a second `DocumentStore`
