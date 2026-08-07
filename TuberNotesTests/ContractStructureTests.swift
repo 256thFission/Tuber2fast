@@ -533,12 +533,15 @@ struct ContractStructureTests {
         // Foundation. Manifestly not a durable value type, which is the rule
         // that list actually enforces.
         "TuberNotesApp/StaticLayerRenderer.swift",
-        // The one place a source PDF is opened. CoreGraphics only, and only
-        // `CGPDFDocument`: it is handed bytes and returns a page count and each
-        // page's box, so it renders nothing, touches no file, and holds no
-        // frame-frequency state. It is here because counting a PDF's pages
-        // cannot be done in Foundation, and `PDFKit` — the obvious alternative
-        // — would bring a whole document *view* stack for the same two answers.
+        // The one place a source PDF is opened. CoreGraphics only: it is
+        // handed bytes and returns values — a page count, each page's box,
+        // and (since phase 3's rendering half) a page's pixels via
+        // `PDFPageRasterizer`, which lives in this file so that "which
+        // rectangle a PDF page shows" is decided exactly once. It touches no
+        // file and holds no frame-frequency state; the rasterizer is
+        // off-main by construction, the way `StaticLayerRenderer.render` is.
+        // `PDFKit` — the obvious alternative — would bring a whole document
+        // *view* stack for the same answers.
         "TuberNotesApp/PDFSource.swift",
         // Selection and the transform gesture: two gesture recognizers on the
         // live canvas and a `CAShapeLayer` of chrome, both frame-frequency
@@ -552,6 +555,12 @@ struct ContractStructureTests {
         // only under TN_SPIKE_MIRROR and instruments the canvas runtime,
         // where UIKit is already allowed; the entry dies with the file.
         "TuberNotesApp/SpikeMirrorFidelity.swift",
+        // THROWAWAY SPIKE — CanvasFeatureComplete device spike 2, "Lens
+        // latency". Compiled only under TN_SPIKE_LENS; a self-contained
+        // UIKit scroll-view bench that replaces the editor scene while the
+        // flag is on, so its UIKit never touches the flag-off app. The
+        // entry dies with the file.
+        "TuberNotesApp/SpikeLensLatency.swift",
     ]
 
     /// `DocumentStore` is the only writer of durable state.
