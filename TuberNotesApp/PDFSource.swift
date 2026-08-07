@@ -180,6 +180,46 @@ enum PDFRasterizeError: Error, Equatable {
 /// sub-rect at the settled zoom. Neither integration exists yet — this type
 /// answers the question and stops.
 enum PDFPageRasterizer {
+    /// The displayed extent of one source page, in the source's own points —
+    /// CropBox falling back to MediaBox, `/Rotate` applied.
+    ///
+    /// The composite renderer needs this number *before* it can choose a
+    /// rasterization scale: a layer's decode is bounded by where the layer
+    /// lands on the page (`StaticLayerRenderer.maxPixelSize`), and turning
+    /// that pixel bound into pixels-per-source-point requires the source's
+    /// extent. It throws exactly the refusals `rasterize` would throw for the
+    /// same bytes and index, so a caller that survives this call cannot then
+    /// be surprised by the render.
+    static func displaySize(of bytes: Data, sourcePageIndex: Int) throws -> CGSize {
+        let geometry = try displayGeometry(of: bytes, sourcePageIndex: sourcePageIndex).geometry
+        return CGSize(width: geometry.displayWidth, height: geometry.displayHeight)
+    }
+
+    /// Opens the document, validates the page index, and derives the one
+    /// display geometry — shared by `displaySize` and `rasterize` so the two
+    /// cannot disagree about which rectangle a page shows.
+    private static func displayGeometry(
+        of bytes: Data,
+        sourcePageIndex: Int
+    ) throws -> (page: CGPDFPage, geometry: PDFSource.DisplayGeometry) {
+        guard let provider = CGDataProvider(data: bytes as CFData),
+              let document = CGPDFDocument(provider)
+        else {
+            throw PDFRasterizeError.notAPDF
+        }
+
+        let count = document.numberOfPages
+        guard (0..<count).contains(sourcePageIndex) else {
+            throw PDFRasterizeError.pageOutOfRange(index: sourcePageIndex, pageCount: count)
+        }
+        guard let page = document.page(at: sourcePageIndex + 1),
+              let geometry = PDFSource.displayGeometry(of: page)
+        else {
+            throw PDFRasterizeError.unreadableSourcePage(index: sourcePageIndex)
+        }
+        return (page, geometry)
+    }
+
     /// Pixels for one source page, or a sub-rect of it.
     ///
     /// `async` and `nonisolated` for the same load-bearing reason
@@ -216,21 +256,7 @@ enum PDFPageRasterizer {
             "a raster at \(pixelsPerPagePoint) pixels per page point is not a level of detail"
         )
 
-        guard let provider = CGDataProvider(data: bytes as CFData),
-              let document = CGPDFDocument(provider)
-        else {
-            throw PDFRasterizeError.notAPDF
-        }
-
-        let count = document.numberOfPages
-        guard (0..<count).contains(sourcePageIndex) else {
-            throw PDFRasterizeError.pageOutOfRange(index: sourcePageIndex, pageCount: count)
-        }
-        guard let page = document.page(at: sourcePageIndex + 1),
-              let geometry = PDFSource.displayGeometry(of: page)
-        else {
-            throw PDFRasterizeError.unreadableSourcePage(index: sourcePageIndex)
-        }
+        let (page, geometry) = try displayGeometry(of: bytes, sourcePageIndex: sourcePageIndex)
 
         let pageRect = CGRect(x: 0, y: 0, width: geometry.displayWidth, height: geometry.displayHeight)
         let rect = subRect ?? pageRect

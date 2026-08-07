@@ -91,6 +91,17 @@ Decision needed: may a valid-but-unrenderable kind be editable? (Options:
 lock pdf pages until 3c; composite per-layer instead of all-or-nothing;
 accept and write it down.)
 
+**Status: resolved by phase 3c.** `StaticLayerRenderer.render` now
+rasterizes `pdf` layers through `PDFPageRasterizer`, so both halves are
+gone: an imported PDF page composites its worksheet, and an image layer on
+a pdf-backed page composites over it. Pinned by `PDFLayerRenderTests`
+(pixel tests against byte-exact fixtures, plus both session-level cases),
+verified by reverting the renderer change. The refusal path remains for
+unknown kinds, unreadable payloads, missing/unreadable assets, and
+out-of-range source pages. The question "may a valid-but-unrenderable kind
+be editable" is thereby mooted for `pdf`; it returns only with the next
+kind.
+
 ### 5. The envelope's fifth field is in no amendment
 `LayerEnvelope.locked` (LayerEnvelope.swift:220) is durable, and absent
 decodes as `false` (LayerEnvelope.swift:285) — the exact

@@ -360,39 +360,99 @@ actor StaticLayerRenderer {
         placed.reserveCapacity(request.layers.count)
 
         for layer in request.layers {
-            guard layer.recognizedKind == .image else {
-                return .refused(
-                    "layer \(layer.layerID) is of kind \"\(layer.kind)\", which has no static rendering"
-                )
-            }
-
-            let ref: ImageLayerRef
-            do {
-                ref = try ImageLayerRef(payload: layer.payload)
-            } catch {
-                return .refused("layer \(layer.layerID) has a payload that will not decode: \(error)")
-            }
-            guard let format = ref.recognizedFormat else {
-                return .refused(
-                    "layer \(layer.layerID) names asset format \"\(ref.format)\", "
-                        + "which this build has no decoder for"
-                )
-            }
-
             let transform = layer.pageSpaceTransform
             guard transform.isInvertible else {
                 return .refused("layer \(layer.layerID) has a singular transform and is not placeable")
             }
 
-            let bytes: Data
-            do {
-                bytes = try await store.loadAsset(assetID: ref.assetID, format: format)
-            } catch {
-                return .refused("layer \(layer.layerID) could not read asset \(ref.assetID): \(error)")
-            }
+            let image: CGImage
+            switch layer.recognizedKind {
+            case .image:
+                let ref: ImageLayerRef
+                do {
+                    ref = try ImageLayerRef(payload: layer.payload)
+                } catch {
+                    return .refused("layer \(layer.layerID) has a payload that will not decode: \(error)")
+                }
+                guard let format = ref.recognizedFormat else {
+                    return .refused(
+                        "layer \(layer.layerID) names asset format \"\(ref.format)\", "
+                            + "which this build has no decoder for"
+                    )
+                }
 
-            guard let image = downsample(bytes, maxPixelSize: maxPixelSize(of: transform, at: scale)) else {
-                return .refused("layer \(layer.layerID): asset \(ref.assetID) is not a decodable \(ref.format)")
+                let bytes: Data
+                do {
+                    bytes = try await store.loadAsset(assetID: ref.assetID, format: format)
+                } catch {
+                    return .refused("layer \(layer.layerID) could not read asset \(ref.assetID): \(error)")
+                }
+
+                guard let decoded = downsample(bytes, maxPixelSize: maxPixelSize(of: transform, at: scale)) else {
+                    return .refused("layer \(layer.layerID): asset \(ref.assetID) is not a decodable \(ref.format)")
+                }
+                image = decoded
+
+            case .pdf:
+                // Phase 3c: a pdf layer rasterizes through the one place that
+                // opens a PDF. The decode is bounded exactly the way an image
+                // layer's is — by where the layer lands on the page at this
+                // level of detail, never by the source (`Docs/Forks/
+                // CanvasFeatureComplete.md` — "decode for the viewport, never
+                // for the source"). The raster is baked into this composite,
+                // so its pixels count against the same byte bound every
+                // composite does.
+                let ref: PDFLayerRef
+                do {
+                    ref = try PDFLayerRef(payload: layer.payload)
+                } catch {
+                    return .refused("layer \(layer.layerID) has a payload that will not decode: \(error)")
+                }
+
+                let bytes: Data
+                do {
+                    bytes = try await store.loadAsset(assetID: ref.assetID, format: .pdf)
+                } catch {
+                    return .refused("layer \(layer.layerID) could not read asset \(ref.assetID): \(error)")
+                }
+
+                do {
+                    // Pixels per *source* point: the placed extent in composite
+                    // pixels, divided by the source's own extent, per axis, and
+                    // the finer of the two so neither axis undersamples. For an
+                    // imported page — the unit square edge to edge — both
+                    // ratios equal the composite's own scale.
+                    let display = try PDFPageRasterizer.displaySize(
+                        of: bytes, sourcePageIndex: ref.sourcePageIndex
+                    )
+                    let widthPoints = (transform.a * transform.a + transform.b * transform.b).squareRoot()
+                    let heightPoints = (transform.c * transform.c + transform.d * transform.d).squareRoot()
+                    let rasterScale = max(
+                        widthPoints * scale / Double(display.width),
+                        heightPoints * scale / Double(display.height)
+                    )
+                    guard rasterScale.isFinite, rasterScale > 0 else {
+                        return .refused(
+                            "layer \(layer.layerID) rasterizes at scale \(rasterScale), "
+                                + "which is not a level of detail"
+                        )
+                    }
+                    image = try await PDFPageRasterizer.rasterize(
+                        bytes,
+                        sourcePageIndex: ref.sourcePageIndex,
+                        pixelsPerPagePoint: rasterScale
+                    )
+                } catch {
+                    return .refused(
+                        "layer \(layer.layerID): asset \(ref.assetID) page "
+                            + "\(ref.sourcePageIndex) will not rasterize: \(error)"
+                    )
+                }
+
+            case .ink, nil:
+                return .refused(
+                    "layer \(layer.layerID) is of kind \"\(layer.kind)\", which has no static rendering"
+                )
             }
 
             placed.append((
