@@ -140,9 +140,10 @@ appended at the bottom of each section. Branch: `canvas-feature-complete`
     refusal nobody acts on. Both colours are an agent's choice against
     "loudly distinguishable from blank" and are Phillip's to overrule.
 22. **Prefetching neighbour composites is deliberately not built.** The fork
-    doc names `turn-settles-once` as a direct dependency: today a turn fires at
-    the midpoint of a drag, so prefetching decodes would start work twice on an
-    abandoned half-drag. The cache *permits* a neighbour's composite to
+    doc names `turn-settles-once` as a direct dependency: at the time this was
+    written a turn fired at the midpoint of a drag, so prefetching decodes
+    would have started work twice on an abandoned half-drag. (Since met: turns
+    commit once, at rest.) The cache *permits* a neighbour's composite to
     survive; nothing creates one before its page is built.
 
 ### Phase 4, transformable `image` layers — the decisions

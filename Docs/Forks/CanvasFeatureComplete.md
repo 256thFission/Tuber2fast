@@ -393,10 +393,12 @@ costs land in three distinct moments:
 - **At turn: prefetch.** The prefetch radius that holds neighbor pages'
   ink bytes extends to their background decodes, so a swipe lands on a
   rendered worksheet, not a placeholder. **After `turn-settles-once`
-  lands, explicitly** — today "turn" fires at the midpoint of a drag,
-  and extending prefetch to decodes before that fix means decode work
-  triggered twice by an abandoned half-drag. That queue item is a direct
-  dependency of this bullet, not just of the milestone in general.
+  lands, explicitly** — that gate is now met: a turn commits once, at
+  rest, on the settle callbacks, so an abandoned half-drag fires no turn
+  and cannot trigger decode work twice. The pinning tests are
+  `PagedCanvasControllerTests.halfDragCommitsNothing`,
+  `pageChangeIsReportedOnceWhenSettled`, and
+  `flingAcrossPagesReportsOneTurn`.
 
 Memory rules: **decode for the viewport, never for the source** — an
 image past a size threshold renders through the same base-and-lens path
@@ -553,7 +555,8 @@ with the machine fresh. `failure-has-a-taxonomy` decides the words a
 refused layer and an unreadable asset say (their *scope* is decided
 here). `turn-settles-once` specifically gates the prefetch-decode bullet:
 extending prefetch to background decodes before turns settle once means
-paying the decode twice per abandoned half-drag.
+paying the decode twice per abandoned half-drag. That gate is met — turns
+commit only at rest, once per settle — so the bullet waits only on spike 2.
 
 ## What this milestone still refuses
 

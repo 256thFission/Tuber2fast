@@ -172,6 +172,31 @@ struct PagedCanvasControllerTests {
         #expect(controller.livePage(at: 0) === before)
     }
 
+    @Test("A fast fling across several pages fires one turn, for the landing page")
+    func flingAcrossPagesReportsOneTurn() {
+        var reported: [Int] = []
+        let controller = hosted { $0.onPageChanged = { reported.append($0) } }
+        controller.setPages(count: 6, currentPageIndex: 0)
+        let scroll = controller.scrollView
+
+        // The finger crosses the midpoints of pages 1 and 2 mid-gesture. No
+        // frame in that sweep is a turn: the consumers this signal feeds —
+        // prefetch, eviction, current-page bookkeeping, and soon background
+        // decodes — must pay once per landing, not once per midpoint crossed.
+        scroll.contentOffset = CGPoint(x: scroll.bounds.width * 1.6, y: 0)
+        scroll.contentOffset = CGPoint(x: scroll.bounds.width * 2.4, y: 0)
+        controller.scrollViewDidEndDragging(scroll, willDecelerate: true)
+        #expect(reported.isEmpty)
+
+        // Deceleration carries it to rest on page 3. That rest is the turn,
+        // exactly one, named for the landing page.
+        scroll.contentOffset = CGPoint(x: scroll.bounds.width * 3, y: 0)
+        controller.scrollViewDidEndDecelerating(scroll)
+
+        #expect(reported == [3])
+        #expect(controller.currentPageIndex == 3)
+    }
+
     @Test("Pulling past the last page asks for a new one, and never adds it")
     func endBoundaryIsReportedNotActedOn() {
         var asked = 0
