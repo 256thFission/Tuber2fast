@@ -68,11 +68,8 @@ build that ships.
 `devicectl --environment-variables` reaches an ad hoc build. Deleting the
 `#if DEBUG` turns five iPads into evidence sources for every item below this one.
 
-Two defects travel with it:
+One defect travels with it:
 
-- `CanvasLog.event(logger, category, message)` passes a `Logger` and its own
-  category name as separate arguments that must agree by hand at every call site.
-  One value owning both removes the class of mistake.
 - `Tools/device`'s `digest_trace` returns early unless the stream contains `TN[`,
   and counts fatals by grepping `TN[fatal]`. A Swift trap writes `Fatal error:`
   and neither. A crash during launch is therefore reported as
@@ -94,9 +91,12 @@ digest rather than read as silence.
 *Invalid states fail loud* is the contract's strongest rule and the only one with
 no mechanism. Today the same codebase answers a failure with
 `preconditionFailure` for an unreachable Application Support directory, a thrown
-error for a corrupt index, `try?` for a page that will not load, and a silent
-omission for a dirty page with no bytes. Nothing says which is right, so each new
-failure is classified by whoever happens to write it.
+error for a corrupt index, and `try?` inside dead code. Nothing says which is
+right, so each new failure is classified by whoever happens to write it. (The
+save path's former silent omission — a dirty page with no bytes — is now a trap,
+and an unloadable page now surfaces as a refusing placeholder; both were fixed
+by the Handovers rework, which chose their classifications case by case. The
+classifier that would have decided them is still what this item is.)
 
 The taxonomy is one ordered question set, first answer wins. Could correct code
 produce this? No — trap. Is ink unsaved, unreadable, or about to be overwritten?
@@ -118,9 +118,10 @@ Three consequences, all violated today:
   placeholder, and stalls neither its neighbours nor the launch. What remains
   for this item is the taxonomy itself and the typed error the placeholder
   message should carry.
-- `RootCanvasView` renders `String(describing: error)` into the UI. Carry a typed
-  value and render it with one exhaustive `switch` — the exhaustive switch is the
-  mechanism that forces a human sentence per case.
+- `EditorSession` produces `String(describing: error)` at three sites — session
+  start, page load, save failure — and `RootCanvasView` renders those strings
+  into the UI. Carry a typed value and render it with one exhaustive `switch` —
+  the exhaustive switch is the mechanism that forces a human sentence per case.
 
 There should be no divergence between the developer build and the shipping one.
 A loud path that only DEBUG exercises has never run in the build that ships. That
@@ -154,11 +155,14 @@ What no test can prove, and what this item now is:
   happens at rest, so a fast multi-page flick may briefly show a loading
   placeholder where the old runtime built canvases mid-drag.
 - **The placeholder itself** has never been seen on a device.
-- The *Owners* wording still names the old fields; the amendment is drafted
-  and awaits Phillip's authorship — no agent writes contract text.
+
+The contract amendments are done: Phillip approved and the `CONTRACT:` commit
+landed the per-page ink state in *Owners*, the synchronous handover in
+*Navigation*, capture-then-acknowledge in *Saving*, and the unreadable-page
+refusal in *Lifecycle*.
 
 **Exit:** Phillip accepts the settle feel and the placeholder on the iPad, or
-returns bounded findings; the contract amendment is authored or refused.
+returns bounded findings.
 
 ## turn-feel — Phillip's verdict on page turning
 
@@ -188,9 +192,9 @@ fail only for reasons that are about turn feel.
 
 ## prove-ci — prove the shared verdict actually runs
 
-`.github/workflows/ci.yml` is **written but has never run**. It is untracked,
-uncommitted, and no push has exercised it. An unrun workflow is not CI; it is a
-YAML file that has never been contradicted. The same is true of `device.yml`.
+`.github/workflows/ci.yml` is **written and committed but has never run** — no
+push has exercised it. An unrun workflow is not CI; it is a YAML file that has
+never been contradicted. The same is true of `device.yml`.
 
 One job on `macos-26`: generate, build, test, and upload the logs on success
 and failure. There is no separate Linux job: every check that decides runs on
@@ -283,7 +287,7 @@ knowingly rather than be handed a paste target.
 **Exit:** all six contributors install the same `main` build from TestFlight on
 their own iPad.
 
-*Blocked by:* `testflight-prereqs`, and an API key from outside the team.
+*Blocked by:* `device-branch-builds`, and an API key from outside the team.
 
 ---
 
