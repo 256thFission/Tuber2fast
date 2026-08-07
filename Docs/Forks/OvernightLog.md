@@ -39,6 +39,60 @@ appended at the bottom of each section. Branch: `canvas-feature-complete`
 5. **`Tools/device-tests` is not wired into CI**, because `CONTRIBUTING.md`
    states CI calls no script in `Tools/` deliberately. Left as Phillip's call.
 
+### Phase 2, rendering half — the decisions
+
+6. **A `CALayer`, not a sibling view.** The fork doc's presumed structure says
+   "sibling view under a transparent `PKCanvasView`". The stack is a `CALayer`
+   instead, for the reason `pageBoundary` and the shape tool's preview are:
+   layers never participate in touch handling. The sibling *view* would not
+   reproduce the recorded `_delayTouchesForEvent:` crash — it is a subview of
+   the controller's root, not of the canvas — but it buys nothing a layer does
+   not, and this project has one recorded crash caused by putting a view where
+   a layer would do.
+7. **Transparency is paid per page that has a stack, not once for the app.**
+   The fork doc says the ink surface goes transparent and "a full-screen blend
+   under the ink is the floor cost everywhere, forever". It does not have to
+   be: a page with no static layers installs no backdrop and keeps its opaque
+   white canvas, so every page in a blank notebook is untouched by this
+   feature. A **narrowing of the fork doc's own cost claim**, and worth an
+   amendment to that paragraph if Phillip agrees.
+8. **Level of detail is fit-width × display scale, not zoom.** Deriving detail
+   from `zoomScale` would put a decode behind every pinch. The composite is
+   re-asked for only at layout — a rotation or a Split View resize moves
+   fit-width — and never from a gesture callback. Capped at a 2,800 px long
+   edge, so a composite costs at most about 24 MB. Deep zoom shows this texture
+   scaled and soft; sharpening it is phase 3's lens and needs spike 2.
+9. **The render cache is in memory only, and the on-disk one is deferred.**
+   A7 (the derived-artifact narrowing) has not been adopted, and an image does
+   not need it to become visible. Nothing is written to disk by this lane.
+10. **The cache's bound is 96 MB and its eviction is the live window.** Bytes,
+    not pages, per the contract's *Performance* rule and the fork doc's
+    explicit refusal of pages as a unit. `retain(layerIDs:)` — driven by
+    `EditorSession` on every turn, beside `pruneDurableBytes` — is the policy;
+    the byte bound is the backstop that trims least-recently-used entries. The
+    renderer never learns a page ID, which is what lets `PageCanvasController`
+    stay blind to which page it is (golden rule 7): the cache keys on layer
+    IDs.
+11. **A refusal is total.** Every layer is decoded before anything is drawn,
+    and one failure refuses the whole composite. A partial composite is the
+    failure the layer model exists to prevent: it looks correct and is not.
+    Refusals are cached at zero bytes, which is safe only because assets are
+    write-once — a render of an immutable source can be missing but never
+    stale.
+12. **A tint carries the placeholder, and no sentence.** The page-level
+    placeholder (`PagedCanvasController.makePlaceholder`) is grey with a label
+    because it *replaces* a page. The backdrop's is an opaque pale teal with no
+    label, because it sits under live ink on an editable page — a label there
+    would be unreadable the moment anyone wrote on it. Refusal is a pale red,
+    a different colour on purpose: a refusal that looks like a slow load is a
+    refusal nobody acts on. Both colours are an agent's choice against
+    "loudly distinguishable from blank" and are Phillip's to overrule.
+13. **Prefetching neighbour composites is deliberately not built.** The fork
+    doc names `turn-settles-once` as a direct dependency: today a turn fires at
+    the midpoint of a drag, so prefetching decodes would start work twice on an
+    abandoned half-drag. The cache *permits* a neighbour's composite to
+    survive; nothing creates one before its page is built.
+
 ## Discoveries
 
 1. **Cross-lane semantic merge conflict, caught by the compiler, not by git.**
@@ -115,6 +169,38 @@ appended at the bottom of each section. Branch: `canvas-feature-complete`
     away from and back is no longer undoable. A dangling target is a crash;
     this takes the safe half.
 
+14. **`#expect(aCGFloat == aDouble)` fails on identical bit patterns.** Swift's
+    implicit CGFloat/Double conversion does not survive Swift Testing's macro
+    expansion. `#expect(layer.bounds.width == PageGeometry.width)` failed while
+    printing `(… → 612.0) == (… → 612.0)`; the two `bitPattern`s were compared
+    and are the same integer. Every mixed comparison in this repository needs
+    an explicit `Double(...)`. Recorded in `Unproven.md` — Environment traps,
+    because it will cost the next person an hour otherwise.
+15. **`Thread.isMainThread` is unavailable from an async context** in Swift 6.
+    `pthread_main_np() == 0` is the spelling that compiles, and it is how the
+    renderer checks the contract's own "never on main" rule from inside a
+    `nonisolated` function.
+16. **XcodeGen writes a static file list, so a new test file is silently not
+    run.** `xcodebuild test` reported `TEST SUCCEEDED`, 129 tests in 13 suites,
+    with a whole new 22-test suite on disk and absent from the project. The
+    build of the file that does not exist cannot fail. **Re-run `xcodegen
+    generate` after adding any file, and check the suite count moved** — a
+    green run that never compiled your tests is exactly the wrong verdict the
+    shared-simulator discovery was about, arriving by a different road.
+17. **`PKCanvasView` tolerates being made transparent after construction.**
+    `backgroundColor = .clear` and `isOpaque = false` set on a live canvas
+    behave; the ink still renders. Simulator evidence only — PencilKit's ink
+    surfaces are its own business and this is exactly the kind of thing that
+    differs on device.
+18. **The fork doc's payload choice survives contact with a compositor.** The
+    durable half stores an asset ref plus a transform of the image's *unit
+    square* and deliberately does not store the source's pixel size. That is
+    the right shape: the compositor needs the placed extent (the transform's
+    column lengths), not the source's, and it needs it *before* it decodes —
+    which is precisely what makes `kCGImageSourceThumbnailMaxPixelSize`
+    computable without opening the file. `Unproven.md` asked whether the
+    payload was what the compositor wanted. It is.
+
 ## Morning items — Phillip must address
 
 ### 1. The device session (do this first — three items resolve at once)
@@ -171,6 +257,16 @@ design forks, not formalities:
 
 - `UserDefaults` added to the checker's file-I/O token list (defensible,
   one line to delete).
+- **Rendering-half judgment calls, all listed as decisions 6–13 above.** The
+  two that are design forks rather than taste: transparency paid *per page
+  with a stack* rather than app-wide (decision 7 — it narrows a cost claim the
+  fork doc makes in prose, so that paragraph wants amending), and the 96 MB /
+  2,800 px numbers (decisions 8 and 10 — arithmetic on the fork doc's own
+  unmeasured 22 MB estimate; spike 2 is what corrects them).
+- **The backdrop's two tints.** Pale teal for loading, pale red for refused,
+  no label on either. Written to "loudly distinguishable from blank" and
+  nothing more; if they look wrong they are two constants in
+  `PageBackdrop.swift`.
 - `Tools/device-tests` deliberately not wired into CI, because
   `CONTRIBUTING.md` says CI calls no script in `Tools/`.
 - Whether phase 5's shape tool activation UI matches your taste at all —

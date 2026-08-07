@@ -71,13 +71,39 @@ Nothing here is a reason not to ship. It is a reason not to be surprised.
     to be correct either way. One Cmd-Z must remove a whole rectangle;
   - and whether a shape feels like the pen that drew it. That is a verdict,
     not a measurement.
-- **No `image` layer has ever been seen.** The kind is durable — it saves,
-  loads, round-trips a transform, and reclaims its asset — and nothing renders
-  it, so every claim here is about files. Whether the payload the durable half
-  chose (an asset ref plus a transform of the image's unit square, with the
-  source's pixel size deliberately not stored) is the shape the compositor
-  actually wants is unproven until phase 2's rendering half lands against it.
-  No image has been imported through any UI, because there is none.
+- **No `image` layer has ever been seen by an eye.** The durable half saves,
+  loads, round-trips a transform, and reclaims its asset; the rendering half
+  composites it, and the composite is asserted pixel by pixel — stacking order,
+  orientation, and placement all fail if they are wrong. What is unproven is
+  everything between that texture and a person:
+  - **the mirrored sibling has never registered against real ink.** The
+    transform is asserted arithmetically at three offsets and zooms, which
+    proves the formula and nothing about 120 Hz. Whether the stack holds
+    position with ink through pinch, fling, and rubber-band is device spike 1,
+    and it has not run. Every page carrying an image renders on the presumption
+    that it does.
+  - **the overdraw cost of a transparent `PKCanvasView` is an estimate nobody
+    has measured.** The fork doc prices it at "≥ 2×, routine for M-series
+    iPads"; that is arithmetic, not a frame capture. What the code does about
+    it is narrower than the fork doc proposed — the canvas goes transparent
+    only on a page that actually has static layers, so the blank-page path
+    keeps its opaque surface — but "one blended full-screen layer is free on
+    this hardware" remains unmeasured either way.
+  - **the placeholder tint and the refusal tint have never been seen.** Both
+    are colours chosen by an agent against a written requirement that they be
+    "loudly distinguishable from blank". Whether they read as chrome rather
+    than as content, and whether ink over them is comfortable to write, is
+    Phillip's verdict.
+  - **softness under zoom has never been looked at.** A pinch shows the
+    fit-width composite scaled, deliberately: no decode is triggered by a
+    gesture frame. Whether that softness is acceptable, or whether phase 3's
+    base-and-lens is needed sooner than planned, is a thing to see rather than
+    to reason about.
+  - No image has been imported through any UI, because there is none.
+- **The render cache's byte bound has never met a real photograph.** The 96 MB
+  bound is derived from the fork doc's estimate of 22 MB per fit-width
+  composite, which is itself unmeasured. The eviction *mechanism* is tested;
+  the *number* is arithmetic on an estimate.
 
 ## Nothing exercises a touch
 
@@ -183,6 +209,18 @@ Not gaps — properties of the tooling that read as project defects when hit.
   chain, so an unhosted controller always reports `nil`. It is device evidence.
 - **The simulator has no Apple Pencil.** Drawing, erasing, palm rejection, and
   pressure cannot be proven off-device at all.
+- **`#expect(aCGFloat == aDouble)` fails on identical bit patterns.** Swift's
+  implicit CGFloat/Double conversion does not survive Swift Testing's macro
+  expansion, so `#expect(layer.bounds.width == PageGeometry.width)` fails while
+  printing `(… → 612.0) == (… → 612.0)` — the two operands' `bitPattern`s were
+  compared and are the same. Convert explicitly (`Double(layer.bounds.width)`)
+  at every mixed comparison. Cost of not knowing this: an hour spent looking
+  for a bug in code that was correct.
+- **`Thread.isMainThread` is unavailable from an asynchronous context** under
+  Swift 6, which is reasonable for the question it usually answers and useless
+  when the thread genuinely is the question. `pthread_main_np() == 0` is the
+  spelling that compiles, and it is what `StaticLayerRenderer` uses to check
+  the contract's own "never on main" rule.
 - **`UIScrollView.contentSize` is already multiplied by `zoomScale`.** An
   assertion expecting the unzoomed page width sees `612 × 1.3399 = 819.99` and
   reads as PencilKit ignoring page space; the implementation is right and the

@@ -73,6 +73,44 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
     /// anything guarantees its view has loaded.
     private var shapeKind: ShapeKind?
 
+    // MARK: - Static layers, beneath the ink
+
+    /// Flattens this page's static layers into one texture, off-main. `nil` in
+    /// a runtime built without one — a test, or any host that has no document
+    /// behind it — in which case a page simply shows no backdrop.
+    private let staticRenderer: StaticLayerRenderer?
+
+    /// The mirrored sibling stack, built only once this page has something to
+    /// put in it. A page with no static layers has no backdrop object, no
+    /// layers, and no transparency — which is what keeps the blank-page path
+    /// exactly as cheap as it is today.
+    private(set) var backdrop: PageBackdrop?
+
+    /// This page's recognized layers below the ink, in order. Told by
+    /// `PagedCanvasController`, which is told by `EditorSession` — the one
+    /// writer of the list (`Contract.md` — Owners, golden rule 5). Held here
+    /// only to know what to render.
+    private var staticLayers: [LayerEnvelope] = []
+
+    /// The request currently rendering or rendered, so a repeated layout pass
+    /// at one size asks for nothing.
+    private var renderedRequest: StaticLayerRequest?
+
+    /// Increments on every composite request, so an answer that arrives after
+    /// the page's layers changed is dropped rather than shown. A late render
+    /// shows the placeholder or a scaled base — never a wrong picture.
+    private var compositeGeneration = 0
+
+    /// The composite's long edge, in pixels, at the level-of-detail cap.
+    ///
+    /// 2,800 px is a little over the long edge of the largest iPad's display,
+    /// so a page rendered at the cap is still pixel-exact at fit-width on every
+    /// device this ships to, and a composite costs at most about 24 MB. Deeper
+    /// zoom shows this texture scaled and slightly soft, exactly as every PDF
+    /// viewer on iOS does; the base-and-lens split that makes deep zoom sharp
+    /// is phase 3 and needs its own device spike.
+    private static let maximumCompositeLongEdge: Double = 2800
+
     #if TN_SPIKE_MIRROR
     /// THROWAWAY SPIKE — CanvasFeatureComplete device spike 1, "Mirror
     /// fidelity". Compiled only under TN_SPIKE_MIRROR; see
@@ -82,8 +120,9 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
     private var spikeMirror: SpikeMirror?
     #endif
 
-    init(toolPicker: PKToolPicker) {
+    init(toolPicker: PKToolPicker, staticRenderer: StaticLayerRenderer? = nil) {
         self.toolPicker = toolPicker
+        self.staticRenderer = staticRenderer
         super.init(nibName: nil, bundle: nil)
 
         // Page space and change reporting are established before the view
@@ -145,6 +184,13 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
 
         toolPicker.addObserver(canvasView)
 
+        // A page whose layer list was set before its view loaded — every page
+        // built by `PagedCanvasController`, which configures the controller and
+        // then lets layout force the view.
+        if !staticLayers.isEmpty {
+            installBackdropIfNeeded()
+        }
+
         #if TN_SPIKE_MIRROR
         // Installed after the canvas's own setup so the spike's transparency
         // override wins over the opaque-white assignment above.
@@ -205,6 +251,14 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
         super.viewDidLayoutSubviews()
         establishZoomIfNeeded()
         centerPageInViewport()
+        // Establishes initial registration and re-registers after a viewport
+        // change; not a frame-frequency path.
+        backdrop?.viewportChanged(to: view.bounds)
+        backdrop?.mirror(offset: canvasView.contentOffset, zoom: canvasView.zoomScale)
+        // A viewport change is a level-of-detail change — a rotation moves
+        // fit-width — so the composite is re-asked for here and nowhere near a
+        // gesture.
+        requestCompositeIfNeeded()
         #if TN_SPIKE_MIRROR
         // Establishes initial registration and re-registers after a viewport
         // change; not a frame-frequency path.
@@ -287,6 +341,115 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
         )
         guard canvasView.contentInset != inset else { return }
         canvasView.contentInset = inset
+    }
+
+    // MARK: - Static layers, beneath the ink
+
+    /// Sets what this page carries below its ink.
+    ///
+    /// Told, never asked (`Contract.md` — Owners, golden rule 7): the list
+    /// belongs to `EditorSession` and arrives by way of
+    /// `PagedCanvasController`, exactly as the drawing and the shape tool do.
+    /// The page's identity does not travel with it — the renderer keys on layer
+    /// IDs, so this controller stays blind to which page it is.
+    ///
+    /// An empty list is the case that must cost nothing, and it does: no
+    /// backdrop object exists, no layer is installed, and the canvas stays
+    /// opaque. **The transparency the stack needs is paid for per page that has
+    /// a stack**, not once and forever for the whole app — which is a real
+    /// narrowing of the fork doc's "the ink surface goes transparent, and a
+    /// full-screen blend under the ink is the floor cost everywhere, forever".
+    /// Every page in a blank notebook is untouched by this feature.
+    func setStaticLayers(_ layers: [LayerEnvelope]) {
+        guard layers != staticLayers else { return }
+        staticLayers = layers
+        renderedRequest = nil
+        compositeGeneration += 1
+
+        guard !layers.isEmpty else {
+            backdrop?.remove()
+            backdrop = nil
+            // Back to the cheap path: an opaque canvas is one fewer full-screen
+            // blend per frame.
+            if isViewLoaded {
+                canvasView.backgroundColor = .white
+                canvasView.isOpaque = true
+            }
+            return
+        }
+
+        guard isViewLoaded else { return }
+        installBackdropIfNeeded()
+        requestCompositeIfNeeded()
+    }
+
+    /// Builds the sibling stack and makes the ink surface transparent so it
+    /// shows through.
+    ///
+    /// The root view takes the page white the canvas used to paint, so the area
+    /// outside the page looks exactly as it does today and the boundary
+    /// hairline still has something to divide.
+    private func installBackdropIfNeeded() {
+        guard backdrop == nil else { return }
+        canvasView.backgroundColor = .clear
+        canvasView.isOpaque = false
+        view.backgroundColor = .white
+        let installed = PageBackdrop(under: canvasView, in: view)
+        installed.viewportChanged(to: view.bounds)
+        installed.mirror(offset: canvasView.contentOffset, zoom: canvasView.zoomScale)
+        backdrop = installed
+    }
+
+    /// Asks for this page's composite at the current level of detail, unless
+    /// that exact composite is already asked for.
+    ///
+    /// Reached from layout and from a layer edit — **never from a gesture
+    /// frame**. A pinch shows the texture this produced, scaled and slightly
+    /// soft; it triggers no decode, which is the rule the whole zoom story
+    /// rests on.
+    private func requestCompositeIfNeeded() {
+        guard let backdrop, let staticRenderer, !staticLayers.isEmpty else { return }
+        guard let scale = compositeScale() else { return }
+
+        let request = StaticLayerRequest(layers: staticLayers, pixelsPerPagePoint: scale)
+        guard request != renderedRequest else { return }
+        renderedRequest = request
+
+        compositeGeneration += 1
+        let generation = compositeGeneration
+        backdrop.compositeRequested()
+
+        // One task per composite, at page-build and viewport frequency — not
+        // per input sample, which is what `Contract.md` — Performance forbids.
+        // Nothing is decoded here; the main thread's whole share of this
+        // pipeline is the `contents` assignment inside `show`.
+        Task { [weak self] in
+            let render = await staticRenderer.composite(for: request)
+            guard let self, self.compositeGeneration == generation else { return }
+            self.backdrop?.show(render)
+        }
+    }
+
+    /// Composite pixels per page point: fit-width times the display scale,
+    /// capped.
+    ///
+    /// Fit-width and **not** the live zoom, deliberately. Deriving detail from
+    /// `zoomScale` would put a decode behind every pinch, which the contract's
+    /// interaction-path rule forbids and which no PDF viewer on iOS does
+    /// either. Rotation and Split View change this because they change
+    /// fit-width; a gesture does not.
+    ///
+    /// Quantized to a hundredth so that a sub-pixel layout difference is not a
+    /// whole new composite.
+    private func compositeScale() -> Double? {
+        let width = canvasView.bounds.width
+        guard width > 0 else { return nil }
+        let displayScale = max(traitCollection.displayScale, 1)
+        let fitWidth = width / PageGeometry.width
+        let cap = Self.maximumCompositeLongEdge / PageGeometry.height
+        let scale = min(max(Double(fitWidth * displayScale), 1), cap)
+        guard scale.isFinite, scale > 0 else { return nil }
+        return (scale * 100).rounded() / 100
     }
 
     // MARK: - The shape tool
@@ -466,22 +629,30 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
         // when no shape is being dragged — which is every zoom that is not also
         // a Pencil drag.
         shapeTool?.viewportChanged()
-        #if TN_SPIKE_MIRROR
         // After centering, so the mirror reads the settled offset for this
-        // tick. One transform assignment; see SpikeMirror.mirror.
+        // tick. One transform assignment, and nothing at all on a page with no
+        // static layers — no composite is asked for here, at any zoom.
+        backdrop?.mirror(offset: scrollView.contentOffset, zoom: scrollView.zoomScale)
+        #if TN_SPIKE_MIRROR
+        spikeMirror?.mirror(offset: scrollView.contentOffset, zoom: scrollView.zoomScale)
+        #endif
+    }
+
+    /// The pan half of the mirror. One transform assignment per tick, or one
+    /// nil check on a page with nothing beneath its ink.
+    ///
+    /// `PagedCanvasController` is the delegate of the *outer* paging scroll
+    /// view, so this observes only this page's own canvas.
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        backdrop?.mirror(offset: scrollView.contentOffset, zoom: scrollView.zoomScale)
+        #if TN_SPIKE_MIRROR
         spikeMirror?.mirror(offset: scrollView.contentOffset, zoom: scrollView.zoomScale)
         #endif
     }
 
     #if TN_SPIKE_MIRROR
-    // THROWAWAY SPIKE hooks — the mirror tick on every scroll callback, and
-    // one stats line at each gesture end. Nothing below exists with the flag
-    // off; `PagedCanvasController` is the delegate of the *outer* paging
-    // scroll view, so these observe only this page's own canvas.
-
-    func scrollViewDidScroll(_ scrollView: UIScrollView) {
-        spikeMirror?.mirror(offset: scrollView.contentOffset, zoom: scrollView.zoomScale)
-    }
+    // THROWAWAY SPIKE hooks — one stats line at each gesture end. Nothing below
+    // exists with the flag off.
 
     func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
         spikeMirror?.flushStats("fling settled;")

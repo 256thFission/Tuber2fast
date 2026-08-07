@@ -320,9 +320,12 @@ final class EditorSession {
     /// First access is from the view body or `start()`, both after launch.
     var pages: PagedCanvasController {
         if let liveRuntime { return liveRuntime }
-        let created = PagedCanvasController()
+        let created = PagedCanvasController(staticRenderer: staticRenderer)
         created.contentForPage = { [weak self] pageIndex in
             self?.content(forPageAt: pageIndex) ?? .blank
+        }
+        created.staticLayersForPage = { [weak self] pageIndex in
+            self?.staticLayers(forPageAt: pageIndex) ?? []
         }
         created.onDrawingChanged = { [weak self] pageIndex in
             self?.drawingChanged(atPageIndex: pageIndex)
@@ -356,6 +359,14 @@ final class EditorSession {
 
     private let store: DocumentStore
     private let debounce: Duration
+
+    /// Flattens a page's static layers into one texture, off-main. Built here
+    /// because it reads asset bytes through the store, and the store is the
+    /// session's; handed to the paging runtime, which is where it is used.
+    ///
+    /// Builds no UIKit object, so constructing it in `init` is safe where
+    /// building a canvas would not be — see `pages`.
+    @ObservationIgnored private let staticRenderer: StaticLayerRenderer
 
     /// The document index as last loaded or saved. `EditorSession` owns page
     /// identity and order (`Contract.md` — Owners); the canvas never sees it.
@@ -447,6 +458,7 @@ final class EditorSession {
     init(store: DocumentStore, debounce: Duration = .milliseconds(500)) {
         self.store = store
         self.debounce = debounce
+        self.staticRenderer = StaticLayerRenderer(store: store)
     }
 
     // MARK: - Launch
@@ -583,6 +595,46 @@ final class EditorSession {
                 return data.isEmpty ? .blank : .ink(data)
             }
         }
+    }
+
+    /// What sits beneath a page's ink: its recognized layers, in order.
+    ///
+    /// **A page carrying a refused layer answers empty.** Such a page is a
+    /// placeholder rather than a canvas, so nothing asks — but if anything ever
+    /// does, the answer must not be the layers it *could* read. A stack missing
+    /// the layer it refused would render as a picture that looks correct and is
+    /// not, which is the one failure the layer model exists to prevent.
+    private func staticLayers(forPageAt pageIndex: Int) -> [LayerEnvelope] {
+        guard pageStates.indices.contains(pageIndex) else { return [] }
+        guard pageStates[pageIndex].refusedLayers.isEmpty else { return [] }
+        return pageStates[pageIndex].staticLayers
+    }
+
+    /// Drops every cached composite whose page has left the live window plus
+    /// the prefetch radius — the render cache's eviction policy, driven from
+    /// the one place that knows page order.
+    ///
+    /// The same radius and the same moment as `pruneDurableBytes`, because it
+    /// is the same rule wearing a different hat: nothing is retained because it
+    /// might be wanted again (`Contract.md` — Performance).
+    ///
+    /// Warming those neighbours' composites *ahead* of a turn is deliberately
+    /// not done here. The fork doc names `turn-settles-once` as a direct
+    /// dependency of prefetching decodes: today a turn fires at the midpoint of
+    /// a drag, so an abandoned half-drag would start decode work twice. This
+    /// only permits a neighbour's composite to survive; nothing creates one
+    /// before its page is built.
+    private func retainRenderedLayers() {
+        let lower = max(0, index.currentPageIndex - Self.prefetchRadius)
+        let upper = min(pageStates.count - 1, index.currentPageIndex + Self.prefetchRadius)
+        guard lower <= upper else { return }
+
+        var live: Set<UUID> = []
+        for pageIndex in lower...upper {
+            for layer in pageStates[pageIndex].staticLayers { live.insert(layer.layerID) }
+        }
+        let renderer = staticRenderer
+        Task { await renderer.retain(layerIDs: live) }
     }
 
     /// What a page carrying a refused layer says instead of taking ink.
@@ -752,6 +804,7 @@ final class EditorSession {
         indexDirty = true
         alignedWithIndex()
         pruneDurableBytes()
+        retainRenderedLayers()
         Task { [weak self] in
             await self?.fetchPageData(forPagesAround: pageIndex)
         }
@@ -1108,6 +1161,15 @@ final class EditorSession {
             "imported asset \(assetID) as layer \(layerID) on page \(targetPageID)"
         )
 
+        // The page's ink is untouched, so its canvas is not rebuilt — only what
+        // sits beneath it changes. Before the save, deliberately: the composite
+        // renders from the asset, which is already durable, and making the user
+        // wait for a page write to see their own import would be a save on an
+        // interaction path in everything but name.
+        if let visible = index.pageIDs.firstIndex(of: targetPageID) {
+            liveRuntime?.reloadStaticLayers(at: visible)
+        }
+
         await saveIfNeeded()
         return layerID
     }
@@ -1151,6 +1213,14 @@ final class EditorSession {
             refusedLayers: pageStates[page].refusedLayers.filter { $0.layerID != layerID }
         )
         CanvasLog.event(.canvas, "deleted layer \(layerID) from page \(pageID)")
+
+        // Same as an import: the ink is untouched, so the canvas is told rather
+        // than rebuilt. A page that was refusing input has no canvas to tell —
+        // it becomes one below, through `reloadPage`, which asks for the layer
+        // list as it builds.
+        if let visible = index.pageIDs.firstIndex(of: pageID) {
+            liveRuntime?.reloadStaticLayers(at: visible)
+        }
 
         await saveIfNeeded()
 

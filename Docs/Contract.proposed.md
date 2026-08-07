@@ -185,7 +185,15 @@ the durable form cannot answer "where is this image on the page" without
 opening a possibly-50 MB file, which hurts phase 4 hit-testing. **This is the
 single most reversible-but-annoying-later call made overnight.**
 
-## A7. *Forbidden patterns* — the derived-artifact ban, narrowed — **AHEAD (phase 2 rendering / phase 3)**
+## A7. *Forbidden patterns* — the derived-artifact ban, narrowed — **AHEAD (phase 3)**
+
+**Not needed by phase 2's rendering half, which has landed without it.** The
+render cache built there is in memory only: it states its owner, a bound in
+bytes, and its eviction at its declaration, which the *Performance* section
+already permits, and it writes nothing to disk. This amendment is required only
+by the **on-disk** render cache, which is deliberately not built. Adopt it with
+phase 3 or not at all.
+
 
 Replace:
 

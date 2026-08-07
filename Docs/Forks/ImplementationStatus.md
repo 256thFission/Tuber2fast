@@ -15,7 +15,7 @@ listed under *Owed evidence* rather than counted as done.
 | Phase | State | Commit | Evidence |
 |---|---|---|---|
 | 1. Ink becomes a layer | **landed, reviewed, green** | `3a1a627` + review fixes `dee6044` | 77 tests; independent review returned approve-with-nits, all findings fixed |
-| 2. One `image` layer under the ink | in progress overnight | — | durable half and rendering half split across agents |
+| 2. One `image` layer under the ink | **both halves landed, green** | `8e79ad6` (durable) + the rendering half | 151 tests; composite order, orientation, placement, the decode bound, the cache's byte bound and window eviction, and total refusal are all asserted. Registration with ink at 120 Hz, overdraw, and both placeholder tints are device-only — see `Unproven.md`. |
 | 3. `pdf` layers, `layers/` split, per-page geometry | not started | — | — |
 | 4. Transformable `image` layers | not started | — | blocked on device spike 3 |
 | 5. The shape tool | in progress overnight | — | independent of 1–4 by design |
@@ -34,7 +34,7 @@ matter of editing and moving text.
 
 | Spike | State | Notes |
 |---|---|---|
-| 1. Mirror fidelity | **scaffolding landed** `f78a050`, verdict owed | Behind `TN_SPIKE_MIRROR`. Variant A: sibling view mirrored one transform per scroll tick. Variant B: inside-`PKCanvasView`, expected to crash. |
+| 1. Mirror fidelity | **scaffolding landed** `f78a050`, verdict owed — and phase 2's rendering half now ships on the presumption it holds | Behind `TN_SPIKE_MIRROR`. Variant A: sibling mirrored one transform per scroll tick. Variant B: inside-`PKCanvasView`, expected to crash. Production `PageBackdrop` uses variant A's technique with a `CALayer` rather than a view. |
 | 2. Lens latency | not built | Wants phase 3's PDF path to have something dense to render |
 | 3. Manipulation feel and undo | not built | Phase 4 |
 

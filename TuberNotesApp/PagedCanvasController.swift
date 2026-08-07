@@ -59,6 +59,21 @@ final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
         case unreadable(String)
     }
 
+    /// Supplies a page's recognized layers below its ink, in order.
+    ///
+    /// A second question rather than a case on `PageContent`, deliberately:
+    /// ink state and the layer list change on different occasions — an import
+    /// changes the list while the ink stays exactly as it was — so a page's
+    /// backdrop is refreshed without rebuilding its canvas, which would
+    /// destroy live ink.
+    ///
+    /// An empty list is the answer for a page with nothing beneath its ink and
+    /// for a page carrying a refused layer. The latter never reaches here at
+    /// all — it is a placeholder, not a canvas — and answering empty is the
+    /// belt to that braces: no partial composite exists to be mistaken for a
+    /// correct one.
+    var staticLayersForPage: ((Int) -> [LayerEnvelope])?
+
     /// Reports that a live page's drawing changed. The index is the page's, and
     /// nothing else travels with it (`Contract.md` — Saving).
     var onDrawingChanged: ((Int) -> Void)?
@@ -108,7 +123,16 @@ final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
     /// the page does not silently put the pen back in your hand.
     private(set) var shapeTool: ShapeKind?
 
-    init() {
+    /// Flattens a page's static layers off-main. Shared across every page the
+    /// way the tool picker is, so one cache serves the whole live window.
+    ///
+    /// `nil` in a runtime built without one — every test that hosts this
+    /// controller directly — in which case pages render exactly as they did
+    /// before this feature existed.
+    private let staticRenderer: StaticLayerRenderer?
+
+    init(staticRenderer: StaticLayerRenderer? = nil) {
+        self.staticRenderer = staticRenderer
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -219,6 +243,21 @@ final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
         slots[index] = makeSlot(at: index)
         layoutSlots()
         if index == currentPageIndex { livePage(at: index)?.becomeActivePage() }
+    }
+
+    /// Re-reads what sits beneath a live page's ink, after its layer list
+    /// changed — an import, a deletion.
+    ///
+    /// Deliberately not `reloadPage(at:)`: that rebuilds the slot from loaded
+    /// bytes, which for a canvas would destroy anything drawn since. A layer
+    /// edit changes what is under the ink and must not touch the ink, so this
+    /// tells the existing canvas and rebuilds nothing.
+    ///
+    /// A placeholder slot has no backdrop to refresh; a page whose refusal was
+    /// just repaired becomes a canvas through `reloadPage(at:)` instead, which
+    /// asks for the layer list as it builds.
+    func reloadStaticLayers(at index: Int) {
+        livePage(at: index)?.setStaticLayers(staticLayersForPage?(index) ?? [])
     }
 
     /// The live page controller for an index, if that slot is a canvas.
@@ -355,7 +394,7 @@ final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
     }
 
     private func makeCanvas(at index: Int, installing snapshot: DrawingSnapshot?) -> PageCanvasController {
-        let page = PageCanvasController(toolPicker: toolPicker)
+        let page = PageCanvasController(toolPicker: toolPicker, staticRenderer: staticRenderer)
 
         addChild(page)
         page.view.frame = slotFrame(for: index)
@@ -383,6 +422,12 @@ final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
         // after the install for the same reason the callback is: nothing about
         // the tool may participate in loading a page's ink.
         page.setShapeTool(shapeTool)
+
+        // What sits beneath the ink. After the install, for the same reason:
+        // nothing about rendering the backdrop may participate in loading a
+        // page's ink, and a composite arriving late must never be able to
+        // reach the drawing.
+        page.setStaticLayers(staticLayersForPage?(index) ?? [])
 
         if isEditable { page.markEditable() }
         return page

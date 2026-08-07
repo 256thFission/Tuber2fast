@@ -506,6 +506,16 @@ struct ContractStructureTests {
         // layer, split out for size rather than made a second owner.
         "TuberNotesApp/ShapeSynthesis.swift",
         "TuberNotesApp/ShapeToolRuntime.swift",
+        // The static-layer backdrop: `PageCanvasController`'s own sibling
+        // CALayer stack under the transparent PKCanvasView, mirrored by one
+        // transform per scroll tick. Frame-frequency work on a UIKit view
+        // hierarchy — the canvas runtime, split out for size exactly as the
+        // shape tool is, and not a second owner.
+        //
+        // `StaticLayerRenderer.swift` is deliberately *not* here: it decodes
+        // and composites off-main and imports CoreGraphics and ImageIO only,
+        // because nothing in it is a view, a layer, or frame-frequency work.
+        "TuberNotesApp/PageBackdrop.swift",
         // THROWAWAY SPIKE — CanvasFeatureComplete device spike 1. Compiled
         // only under TN_SPIKE_MIRROR and instruments the canvas runtime,
         // where UIKit is already allowed; the entry dies with the file.
