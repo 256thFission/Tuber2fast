@@ -610,8 +610,44 @@ final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
         if scrollView.contentOffset.x > lastPageOffset + Self.appendTriggerFraction
             * scrollView.bounds.width {
             // The session's append drives `setPages`, which settles the new
-            // page itself.
+            // page itself — synchronously, inside this call: the page count,
+            // contentSize, the blank slot, and the offset all describe the new
+            // page by the time the callback below returns.
+            let countBeforeAppend = pageCount
             onReachedEndBoundary?()
+            if pageCount > countBeforeAppend {
+                // UIKit computed this gesture's deceleration target *before*
+                // this delegate call, against the contentSize that still ended
+                // at the old last page, and it arms that animation after we
+                // return — overriding the offset `setPages` just wrote and
+                // rubber-banding back to the old page, with the overscroll's
+                // grey filling the screen while the two fight. An offset write
+                // inside this callback cannot cancel an animation that has not
+                // started yet, so the target is re-asserted on the next runloop
+                // turn, where a programmatic setContentOffset reliably kills
+                // the in-flight bounce. This re-asserts an offset for a page
+                // the session already created; the runtime still never grows
+                // the document, or the contentSize, by itself.
+                let target = currentPageIndex
+                // A task, not per-sample work: this runs once per append
+                // gesture, at drag end (`Contract.md` — Performance).
+                Task { [weak self] in
+                    guard let self, self.currentPageIndex == target else { return }
+                    // A programmatic non-animated set cancels the in-flight
+                    // bounce; one tick in it has barely moved, so the
+                    // correction is imperceptible next to the fight it
+                    // prevents. It fires no delegate callback, and none is
+                    // needed: setPages already committed this index, so no
+                    // second turn can exist.
+                    self.scrollView.setContentOffset(
+                        CGPoint(x: self.scrollView.bounds.width * CGFloat(target), y: 0),
+                        animated: false
+                    )
+                }
+            }
+            // The session refused the append (not ready): the ordinary
+            // rubber-band returns to the last real page, and the settle it
+            // fires there matches currentPageIndex — no turn.
             return
         }
         if !willDecelerate { settle() }

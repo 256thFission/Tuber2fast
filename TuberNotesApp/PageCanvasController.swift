@@ -343,16 +343,18 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
         #endif
     }
 
-    /// How far below a full page you may zoom out. Two full pages of overview.
-    private static let overviewFactor = 0.5
-
     /// Establishes the zoom range for the current viewport, and re-establishes
     /// it when the viewport itself changes size.
     ///
-    /// Two separate scales, and the distinction is the point
-    /// (`Contract.md` — Geometry and coordinates): the opening scale fits the page *width*,
-    /// which is the comfortable scale to write at, while the floor fits the
-    /// whole page with room to spare.
+    /// **The floor is fit-width** (`Contract.md` — Geometry and coordinates:
+    /// the floor derives from the fixed page). The page opens at fit-width and
+    /// may never zoom out below it: below fit-width the page is narrower than
+    /// the viewport and dead space appears beside it, which Phillip overruled
+    /// on hardware (device session, 2026-08-07). The earlier floor — fit the
+    /// whole page with overview room to spare — is gone with that verdict, not
+    /// merely lowered. At the floor a portrait page is *taller* than the
+    /// viewport, so vertical panning within the page still works there; only
+    /// horizontal room is forbidden.
     ///
     /// A repeated layout pass at one size does nothing, which is the invariant
     /// in `Contract.md` — Performance that rebuilding SwiftUI views rebuilds
@@ -368,9 +370,9 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
     /// first pass the ratio is 1, so opening at fit-width is the same code path.
     ///
     /// **The floor derives from this page**, not from a global — which is what
-    /// per-page geometry changes here. A landscape page fits its own width and
-    /// zooms out to its own whole page; a portrait neighbour does the same with
-    /// different numbers, and neither reads the other's.
+    /// per-page geometry changes here. A landscape page fits its own width; a
+    /// portrait neighbour does the same with different numbers, and neither
+    /// reads the other's.
     ///
     /// **The ceiling derives from the document's durable cap and nothing else.**
     /// It was `fitWidth × 8` — a function of the viewport, so it moved with the
@@ -393,10 +395,7 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
         guard bounds != zoomRangeBounds else { return }
 
         let fitWidth = bounds.width / geometry.width
-        let fitPage = min(fitWidth, bounds.height / geometry.height)
-        guard fitWidth > 0, fitWidth.isFinite, fitPage > 0, fitPage.isFinite else {
-            return
-        }
+        guard fitWidth > 0, fitWidth.isFinite else { return }
 
         let previousFitWidth = zoomRangeBounds.map { $0.width / geometry.width }
         let ratio = previousFitWidth.map { canvasView.zoomScale / $0 } ?? 1
@@ -432,23 +431,23 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
         } else {
             ceiling = required
         }
-        // A page so small that a whole one of it fits below the deepest zoom
-        // the document allows. It is an invalid state rather than a range to
-        // reorder: the page would open above its own ceiling, and both the
+        // A page so narrow that fitting its width already exceeds the deepest
+        // zoom the document allows. It is an invalid state rather than a range
+        // to reorder: the page would open above its own ceiling, and both the
         // floor and the cap would be describing something that is not a page.
         // Reachable only from a source whose box is a few dozen points across,
         // which is a page this build refuses rather than rounds.
         precondition(
-            CGFloat(ceiling) >= fitPage * Self.overviewFactor,
+            CGFloat(ceiling) >= fitWidth,
             "page \(geometry.width)x\(geometry.height) is smaller than the "
-                + "document's zoom cap allows: its overview scale "
-                + "\(fitPage * Self.overviewFactor) is past the ceiling \(ceiling)"
+                + "document's zoom cap allows: its fit-width scale "
+                + "\(fitWidth) is past the ceiling \(ceiling)"
         )
 
         // Order matters: the range must admit the new scale before it is set,
         // or UIScrollView clamps it to the range still describing the old
         // viewport.
-        canvasView.minimumZoomScale = fitPage * Self.overviewFactor
+        canvasView.minimumZoomScale = fitWidth
         canvasView.maximumZoomScale = CGFloat(ceiling)
         // `PKCanvasView` silently clamps `maximumZoomScale` to 10 — measured,
         // undocumented, and invisible unless something reads the value back.
@@ -473,9 +472,11 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
 
     /// Keeps the page centred once it is smaller than the viewport.
     ///
-    /// Below fit-width — and vertically at most scales, since the page is taller
-    /// than it is wide — the scaled page does not fill the canvas. Without this
-    /// it pins to the top-left and the empty room all falls to one side.
+    /// With the floor at fit-width no horizontal room can exist, so the
+    /// horizontal inset is always zero; the vertical term still earns its keep
+    /// on a page shorter than the viewport at fit-width — a landscape page in
+    /// a portrait slot. Without this it pins to the top and the empty room all
+    /// falls to one side.
     /// `contentInset` is the mechanism rather than a content transform, because
     /// it moves only where the scroll view may rest, leaving content
     /// coordinates — and therefore page space and the boundary layer — alone.

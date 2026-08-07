@@ -43,6 +43,35 @@ agent *widened a machine-checked rule* to ban `CoreGraphics`, and **A10**,
 whose premise (PencilKit tolerating foreign undo registrations) no spike has
 tested.
 
+## Device session findings, 2026-08-07
+
+Phillip hand-tested a Release build (`8ccc656`) on an iPad Air 5, iPadOS
+26.5.2. Three findings, in his words, each fixed on this branch:
+
+1. **Dead-space zoom** — the page could be zoomed out past fit-width, leaving
+   dead space at the borders. Verdict: must not happen; the floor is
+   fit-width. Fixed in `PageCanvasController.establishZoomIfNeeded` — the
+   overview floor is gone, `minimumZoomScale` is the page's own fit-width;
+   vertical panning within the page still works at the floor.
+2. **Grey flash on append** — turning to the appended blank page flashed the
+   whole area grey before the page popped in. Root cause shared with finding
+   3: the bookkeeping was already synchronous (a blank slot needs no load and
+   was never a placeholder — now pinned by test), so the grey beat was the
+   overscroll region held on screen while UIKit's pre-armed bounce fought the
+   offset `setPages` wrote.
+3. **Rubber-band on append** — the turn onto the appended page sometimes
+   failed and rubber-banded back. UIKit computes the deceleration target
+   before `scrollViewDidEndDragging`, against the contentSize that still ends
+   at the old last page, and arms that animation after the delegate returns —
+   overriding the in-callback offset. Fixed in
+   `PagedCanvasController.scrollViewDidEndDragging`: when the session's append
+   landed, the target is re-asserted one runloop turn later, which cancels the
+   bounce. The session still owns the page list; the runtime re-asserts only
+   an offset for a page that already exists.
+
+The bookkeeping is test-pinned; the feel re-verdict on all three is
+Phillip's, on hardware.
+
 ## Spikes
 
 | Spike | State | Notes |
