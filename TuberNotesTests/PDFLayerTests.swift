@@ -667,9 +667,7 @@ struct PDFLayerTests {
             ref: ImageLayerRef(assetID: assetID, format: .png),
             pageSpaceTransform: .identity
         )
-        await #expect(
-            throws: LayerError.danglingLayerRef(pageID: pageID, layerID: unwritten.layerID)
-        ) {
+        let refusal = await #expect(throws: DocumentStore.PageSaveRefusal.self) {
             try await scratch.store().save(
                 index: documentIndex,
                 pages: [
@@ -681,6 +679,8 @@ struct PDFLayerTests {
                 ]
             )
         }
+        #expect(refusal?.refusedPages.map(\.pageID) == [pageID])
+        #expect(refusal?.refusedPages.first?.reason.contains("danglingLayerRef") == true)
         #expect(try Data(contentsOf: scratch.pageURL(pageID)) == pageBytesBefore)
         #expect(!FileManager.default.fileExists(atPath: scratch.layerURL(unwritten.layerID).path))
     }

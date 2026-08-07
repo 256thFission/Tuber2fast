@@ -311,12 +311,14 @@ struct LayerEnvelopeTests {
         // A save of this page would silently drop the refused layer, so the
         // store refuses the save — the chosen preservation mechanism.
         let bytesBefore = try Data(contentsOf: scratch.pageURL(pageID))
-        await #expect(throws: LayerError.refusedLayerWouldBeLost(pageID: pageID)) {
+        let refusal = await #expect(throws: DocumentStore.PageSaveRefusal.self) {
             try await store.save(
                 index: documentIndex,
                 changedPages: [pageID: [inkEnvelope(layerID: inkID, payload: Data([0x09]))]]
             )
         }
+        #expect(refusal?.refusedPages.map(\.pageID) == [pageID])
+        #expect(refusal?.refusedPages.first?.reason.contains("refusedLayerWouldBeLost") == true)
         #expect(try Data(contentsOf: scratch.pageURL(pageID)) == bytesBefore)
     }
 
@@ -339,12 +341,14 @@ struct LayerEnvelopeTests {
 
         // A second store on the same directory, with no loadPage first.
         let freshStore = scratch.store()
-        await #expect(throws: LayerError.refusedLayerWouldBeLost(pageID: pageID)) {
+        let refusal = await #expect(throws: DocumentStore.PageSaveRefusal.self) {
             try await freshStore.save(
                 index: documentIndex,
                 changedPages: [pageID: inkLayer(Data([0x09]))]
             )
         }
+        #expect(refusal?.refusedPages.map(\.pageID) == [pageID])
+        #expect(refusal?.refusedPages.first?.reason.contains("refusedLayerWouldBeLost") == true)
         #expect(try Data(contentsOf: scratch.pageURL(pageID)) == bytesBefore)
     }
 

@@ -1140,6 +1140,29 @@ final class EditorSession {
             }
             lastSaveError = nil
             consecutiveSaveFailures = 0
+        } catch let refusal as DocumentStore.PageSaveRefusal {
+            // The store's refusal is per page, and so is the acknowledgement:
+            // every page the refusal does not name was written and is durable,
+            // so it becomes clean exactly as a fully successful pass would
+            // make it. Only the refused pages stay dirty, holding their
+            // already-serialized bytes, and the refusal is surfaced loudly —
+            // one poisoned page must never leave every other page's ink
+            // knowingly unsaved.
+            let refusedIDs = Set(refusal.refusedPages.map(\.pageID))
+            for capture in captures {
+                guard let data = changedPages[capture.pageID] else { continue }
+                if refusedIDs.contains(capture.pageID) {
+                    pageStates[stateIndex(of: capture.pageID)].saveFailed(restoring: data)
+                } else {
+                    pageStates[stateIndex(of: capture.pageID)].saveSucceeded(
+                        written: data,
+                        layersWritten: capture.staticLayers
+                    )
+                }
+            }
+            indexDirty = indexDirty || (capturedIndexWasDirty && !refusal.indexWritten)
+            lastSaveError = String(describing: refusal)
+            consecutiveSaveFailures += 1
         } catch {
             // The pages stay dirty and keep the bytes this pass already paid
             // to encode. The index returns to dirty only if it was dirty at
