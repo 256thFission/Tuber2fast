@@ -273,6 +273,94 @@ struct StaticLayerRenderTests {
         #expect(await renderer.cachedByteCount == 0)
     }
 
+    // MARK: - In flight
+
+    @Test("An in-flight composite is not served to a request for a moved layer")
+    func inFlightDedupIsTransformAware() async throws {
+        let scratch = try Scratch()
+        let store = scratch.store
+        let renderer = StaticLayerRenderer(store: store)
+        let gate = RenderGate()
+        await renderer.setRenderGateForTesting { await gate.wait($0) }
+
+        // The same layer — same ID, same asset — before and after a drag: the
+        // left half of the page, then the right half. The cache key is the
+        // layer ID list, so the two requests collide on the key and differ
+        // only in the transform, which is the exact interleaving of a commit
+        // landing while the pre-drag composite is still decoding.
+        let before = try await scratch.imageLayer(
+            store: store,
+            color: .red,
+            transform: PageSpaceTransform(a: 306, b: 0, c: 0, d: 792, tx: 0, ty: 0)
+        )
+        let after = LayerEnvelope(
+            layerID: before.layerID,
+            kind: .image,
+            payload: before.payload,
+            pageSpaceTransform: PageSpaceTransform(a: 306, b: 0, c: 0, d: 792, tx: 306, ty: 0)
+        )
+        let staleRequest = StaticLayerRequest(layers: [before], geometry: .canonical, pixelsPerPagePoint: 1)
+        let freshRequest = StaticLayerRequest(layers: [after], geometry: .canonical, pixelsPerPagePoint: 1)
+
+        let stale = Task { await renderer.composite(for: staleRequest) }
+        // Hold the first render in flight until the second request has asked.
+        while await gate.waiterCount == 0 { await Task.yield() }
+        let fresh = Task { await renderer.composite(for: freshRequest) }
+        try await Task.sleep(for: .milliseconds(50))
+
+        // The newer render completes first and the stale one last, so a
+        // `remember` that caches unconditionally would park the stale
+        // transform under the key the newer request uses.
+        await gate.release(freshRequest)
+        try await Task.sleep(for: .milliseconds(50))
+        await gate.release(staleRequest)
+
+        guard case .composited(let freshComposite) = await fresh.value else {
+            Issue.record("the second request did not composite")
+            return
+        }
+        #expect(
+            isRed(pixel(freshComposite.image, x: 450, y: 400)),
+            "the second request must reflect the moved transform, not the in-flight stale one"
+        )
+        #expect(isWhite(pixel(freshComposite.image, x: 150, y: 400)))
+
+        guard case .composited(let staleComposite) = await stale.value else {
+            Issue.record("the first request did not composite")
+            return
+        }
+        #expect(isRed(pixel(staleComposite.image, x: 150, y: 400)), "the first request still gets what it asked for")
+
+        // And the stale result was not remembered over the newer one: a
+        // repeat of the newer request is a cache hit on the newer composite.
+        let again = try await composited(renderer, request: freshRequest)
+        #expect(again.image === freshComposite.image, "the newer composite is the one remembered")
+    }
+
+    /// Holds render tasks at the renderer's test gate until released, keyed by
+    /// the whole request, so a test can order completions deterministically.
+    private actor RenderGate {
+        private var released: [StaticLayerRequest] = []
+        private var waiters: [(request: StaticLayerRequest, continuation: CheckedContinuation<Void, Never>)] = []
+
+        var waiterCount: Int { waiters.count }
+
+        func wait(_ request: StaticLayerRequest) async {
+            if released.contains(request) { return }
+            await withCheckedContinuation { continuation in
+                waiters.append((request, continuation))
+            }
+        }
+
+        func release(_ request: StaticLayerRequest) {
+            released.append(request)
+            for waiter in waiters where waiter.request == request {
+                waiter.continuation.resume()
+            }
+            waiters.removeAll { $0.request == request }
+        }
+    }
+
     // MARK: - A refused layer is never a wrong picture
 
     @Test("An asset that will not decode refuses the whole composite")
