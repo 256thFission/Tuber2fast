@@ -407,6 +407,34 @@ appended at the bottom of each section. Branch: `canvas-feature-complete`
     layer is gone and the one beneath shows through") is stated more directly
     that way.
 
+## A cross-lane warning I checked, and the answer
+
+The phase 4 agent reported that `StaticLayerRenderTests`' pixel helper "labels
+its bytes `(r,g,b)` and the sampling context doesn't deliver them in that
+order — a pure red fill comes back as `(0,0,255)`", and worked around it
+rather than trusting the helper. **I checked, and for that file the warning is
+a false alarm. No action needed.**
+
+The evidence, which is empirical rather than an argument from reading: the
+fixture at `StaticLayerRenderTests.swift:75` is
+`twoTonePNG(top: .blue, bottom: .yellow)`, and lines 82–83 assert `isBlue` on
+the top and `isYellow` on the bottom. Both pass. Blue is `(0,0,255)` and
+yellow is `(255,255,0)`, and **both are asymmetric under an R↔B swap** — a
+swapped helper would read blue as `(255,0,0)` and fail `isBlue`, and would
+read yellow as `(0,255,255)` and fail `isYellow`. Two independent asymmetric
+assertions passing is proof the channel order is right.
+
+Why the reader is correct by construction as well: it builds its own
+one-pixel context with `premultipliedLast` and no byte-order flag, so memory
+order is R,G,B,A; and the fixtures fill through `setFillColor(UIColor.cgColor)`,
+which converts through the colour space rather than writing raw bytes, so the
+fixture context's `byteOrder32Little` layout never reaches the test's
+arithmetic.
+
+The phase 4 agent was most likely observing its own helper in its own context,
+not this one. Its workaround (comparing two pixels of two composites rather
+than naming a colour) is harmless either way.
+
 ## Morning items — Phillip must address
 
 ### 1. The device session (do this first — three items resolve at once)
