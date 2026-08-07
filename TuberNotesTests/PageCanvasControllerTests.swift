@@ -318,6 +318,27 @@ struct PageCanvasControllerTests {
         #expect(controller.canvasView.drawing.strokes.isEmpty)
     }
 
+    /// The clamp for hardware outside the supported pixel grid, in the form a
+    /// test can fail on. At a display scale of 1 — a trait collection not yet
+    /// attached, or a 1x external screen — the canonical cap asks for a zoom
+    /// scale of 20, which PKCanvasView silently refuses; the runtime clamps to
+    /// what the canvas delivers instead of trapping, because the durable cap
+    /// is validated against 2x hardware and a coarser display is outside that
+    /// promise, not a violation of it.
+    @Test("A display below the supported scale clamps the zoom ceiling instead of trapping")
+    func subMinimumDisplayScaleClampsInsteadOfTrapping() {
+        let controller = PageCanvasController(toolPicker: PKToolPicker(), projection: .canonical)
+        controller.traitOverrides.displayScale = 1
+        let root = controller.view!
+        root.frame = CGRect(x: 0, y: 0, width: 820, height: 1180)
+        root.layoutIfNeeded()
+
+        let canvas = controller.canvasView
+        #expect(Double(canvas.maximumZoomScale) == PageProjection.runtimeMaximumZoomScale)
+        #expect(canvas.maximumZoomScale > canvas.minimumZoomScale)
+        #expect(canvas.zoomScale <= canvas.maximumZoomScale)
+    }
+
     // MARK: - Selection feeding the composite
 
     @Test("Selection feeds the composite request: minus the selected layer, back in on deselect")

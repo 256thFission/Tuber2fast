@@ -383,9 +383,37 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
         let previousFitWidth = zoomRangeBounds.map { $0.width / geometry.width }
         let ratio = previousFitWidth.map { canvasView.zoomScale / $0 } ?? 1
 
-        let ceiling = projection.maximumZoomScale(
-            displayScale: Double(max(traitCollection.displayScale, 1))
-        )
+        let displayScale = Double(max(traitCollection.displayScale, 1))
+        let required = projection.maximumZoomScale(displayScale: displayScale)
+
+        // The durable cap is validated against `minimumSupportedDisplayScale`
+        // (2x — every iPad), so on supported hardware `required` never exceeds
+        // what PKCanvasView delivers and the read-back precondition below
+        // still traps on any real violation of that promise. A coarser
+        // display — a trait collection not yet attached, or a 1x external
+        // screen — asks for a scale the canvas silently refuses, and that is
+        // not the document's promise breaking; it is hardware outside the
+        // promise. RULE: below the minimum supported display scale the
+        // ceiling clamps to `runtimeMaximumZoomScale`, loudly. Clamping is
+        // otherwise forbidden (`Contract.md` — Invalid states fail loud),
+        // which is why this clamp is confined to display scales no supported
+        // iPad has: the alternative is crashing the app for plugging in a
+        // monitor. The document's detail promise is unchanged and honored in
+        // full the moment the page is back on 2x glass.
+        let ceiling: Double
+        if displayScale < PageProjection.minimumSupportedDisplayScale,
+           required > PageProjection.runtimeMaximumZoomScale {
+            ceiling = PageProjection.runtimeMaximumZoomScale
+            CanvasLog.event(
+                .canvas,
+                "zoom ceiling clamped: display scale \(displayScale) is below the supported "
+                    + "minimum \(PageProjection.minimumSupportedDisplayScale); the cap of "
+                    + "\(projection.zoomCapPagePointsPerPixel) page points per pixel asks for "
+                    + "scale \(required) and the canvas delivers \(ceiling)"
+            )
+        } else {
+            ceiling = required
+        }
         // A page so small that a whole one of it fits below the deepest zoom
         // the document allows. It is an invalid state rather than a range to
         // reorder: the page would open above its own ceiling, and both the
