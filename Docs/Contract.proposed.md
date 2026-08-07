@@ -14,6 +14,19 @@ Status key: **LANDED** — already adopted by Phillip and in `Contract.md`.
 now lags the code, which is the state this file exists to fix. **AHEAD** — no
 code yet; adopt when its phase arrives.
 
+> **One thing was un-adopted overnight, deliberately.** The phase 3b agent
+> wrote A8 and A9 straight into `Contract.md` and tagged its commit
+> `CONTRACT:`. Its code is kept; **its contract edit was reverted** and its
+> text lives here with the rest. Two reasons: `Contract.md` says "no agent
+> authors a rule, and no agent's output becomes a rule by having been
+> committed," and the standing instruction for the night was to stage a
+> parallel contract to adopt on waking. Every other lane staged; that one
+> self-adopted, and consistency is worth more than one section being early.
+> The consequence to know: `Contract.md` currently still says
+> `pageWidth < pageHeight` while the code accepts landscape pages and has
+> tests for them. **The contract lags the code in exactly the places this
+> file lists**, which is the gap this file exists to close in one pass.
+
 ---
 
 ## A1. *Owners* — golden rule 5, generalized — **LANDED**
