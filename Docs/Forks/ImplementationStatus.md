@@ -14,14 +14,13 @@ listed under *Owed evidence* rather than counted as done.
 
 | Phase | State | Commit | Evidence |
 |---|---|---|---|
-| 1. Ink becomes a layer | **landed, reviewed, green** | `3a1a627` + review fixes `dee6044` | 77 tests; independent review returned approve-with-nits, all findings fixed |
-| 2. One `image` layer under the ink | **both halves landed, green** | `8e79ad6` (durable) + the rendering half | 151 tests; composite order, orientation, placement, the decode bound, the cache's byte bound and window eviction, and total refusal are all asserted. Registration with ink at 120 Hz, overdraw, and both placeholder tints are device-only — see `Unproven.md`. |
-| 3. `pdf` layers, `layers/` split, per-page geometry | not started | — | — |
-| 2. One `image` layer under the ink | in progress overnight | — | durable half and rendering half split across agents |
-| 3. `pdf` layers, `layers/` split | **durable half landed, green** | — | 151 tests in 14 suites, on a private simulator; exit test verified by sabotage. Amendments A13, A14 staged. |
-| 3. per-page geometry, zoom cap, base-and-lens, prefetch decode | not started | — | Separate lanes; A8 and A9 still AHEAD, so imported pages are letterboxed into the canonical page |
-| 4. Transformable `image` layers | not started | — | blocked on device spike 3 |
-| 5. The shape tool | in progress overnight | — | independent of 1–4 by design |
+| 1. Ink becomes a layer | **landed, reviewed, green** | `3a1a627` + review fixes `dee6044` | Independent review returned approve-with-nits; all findings fixed, the boundary test verified by reverting the fix |
+| 2. One `image` layer under the ink | **both halves landed, green** | `8e79ad6` (durable) + `8254cf6` (rendering) | Composite order, orientation, placement, the decode bound, the cache's byte bound and window eviction, and total refusal are asserted. Registration with ink at 120 Hz, overdraw, and both placeholder tints are device-only. |
+| 3a. `pdf` kind + the `layers/` split | **landed, green** | `b52221f` | Exit test verified by sabotage: a 5-page, 794 KB import, ink on page 4, asserts exactly one layer file rewritten by mtime **and** bytes. Amendments A13, A14 staged. |
+| 3b. per-page geometry, zoom cap | **not started** | — | A8/A9 still AHEAD. Consequence today: an imported landscape page is **letterboxed into the canonical portrait page**. |
+| 3c. base-and-lens, prefetch decode | **not started** | — | Wants spike 2 and `turn-settles-once`. Nothing rasterizes a PDF page anywhere in this build. |
+| 4. Transformable `image` layers | in progress overnight | — | Its arbitration and undo are device-only by nature; spike 3 is owed |
+| 5. The shape tool | **landed, green** | `6f72d18` | Synthesis and rasterized pixels asserted; everything between Pencil and stroke is device-only |
 
 ## Contract
 
@@ -37,10 +36,8 @@ matter of editing and moving text.
 
 | Spike | State | Notes |
 |---|---|---|
-| 1. Mirror fidelity | **scaffolding landed** `f78a050`, verdict owed — and phase 2's rendering half now ships on the presumption it holds | Behind `TN_SPIKE_MIRROR`. Variant A: sibling mirrored one transform per scroll tick. Variant B: inside-`PKCanvasView`, expected to crash. Production `PageBackdrop` uses variant A's technique with a `CALayer` rather than a view. |
-| 2. Lens latency | not built | Wants phase 3's PDF path to have something dense to render |
-| 1. Mirror fidelity | **scaffolding landed** `f78a050`, verdict owed | Behind `TN_SPIKE_MIRROR`. Variant A: sibling view mirrored one transform per scroll tick. Variant B: inside-`PKCanvasView`, expected to crash. |
-| 2. Lens latency | not built | Wants phase 3's PDF path to have something dense to render. The durable half now supplies the ref and the placement; **nothing rasterizes a PDF page anywhere in this build**, so the spike still has to bring its own renderer. |
+| 1. Mirror fidelity | **scaffolding landed** `f78a050`, **verdict owed** | Behind `TN_SPIKE_MIRROR`. Variant A: sibling mirrored by one transform per scroll tick. Variant B: inside-`PKCanvasView`, expected to trap. **Phase 2's rendering half ships on the presumption variant A holds**, using the same technique with a `CALayer` rather than a view. |
+| 2. Lens latency | not built | The durable half now supplies the ref and the placement, but **nothing rasterizes a PDF page anywhere in this build**, so the spike must bring its own renderer. |
 | 3. Manipulation feel and undo | not built | Phase 4 |
 
 ## Decisions taken without Phillip

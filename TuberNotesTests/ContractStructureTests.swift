@@ -526,6 +526,13 @@ struct ContractStructureTests {
         // and composites off-main and imports CoreGraphics and ImageIO only,
         // because nothing in it is a view, a layer, or frame-frequency work.
         "TuberNotesApp/PageBackdrop.swift",
+        // The off-main decode and composite. CoreGraphics and ImageIO only —
+        // no UIKit, no view, no layer, no frame-frequency state. It is here
+        // because `CoreGraphics` joined the banned set with phase 3's `pdf`
+        // kind (see `uiFrameworkModules`), and pixels cannot be decoded in
+        // Foundation. Manifestly not a durable value type, which is the rule
+        // that list actually enforces.
+        "TuberNotesApp/StaticLayerRenderer.swift",
         // The one place a source PDF is opened. CoreGraphics only, and only
         // `CGPDFDocument`: it is handed bytes and returns a page count and each
         // page's box, so it renders nothing, touches no file, and holds no

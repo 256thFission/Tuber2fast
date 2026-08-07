@@ -506,6 +506,39 @@ watched page files.
 
 ---
 
+## A15. *Owners* — the import rule now bans `CoreGraphics` — **FORCED, and it needs your ratification specifically**
+
+**Read this one even if you skim the rest.** An agent *widened a
+machine-checked rule* overnight. That is adjacent to authoring a rule, which
+this contract forbids, so it is called out rather than left in a diff.
+
+`ContractStructureTests.uiFrameworkModules` was `["UIKit", "PencilKit"]` and is
+now `["UIKit", "PencilKit", "CoreGraphics"]`. The contract sentence it enforces
+is *Owners*: "Durable value types import Foundation only."
+
+*The argument for it:* `CGPDFDocument` arrives with `CGContext`, `CGImage`, and
+every drawing call attached, so admitting CoreGraphics anywhere admits the
+whole graphics vocabulary into files that should hold values. This milestone
+makes that risk concrete — `PageSpaceTransform` is six `Double`s precisely so
+that `CGAffineTransform` never reaches the durable form, and nothing mechanical
+was stopping the next author from reaching for it.
+
+*The argument against it:* the contract names UIKit and PencilKit and does not
+name CoreGraphics. The widened rule is stricter than the text it cites, and
+two files now carry allowlist entries that exist only because of the widening
+(`PDFSource.swift`, `StaticLayerRenderer.swift`) — both manifestly not durable
+value types.
+
+If you adopt it, *Owners* should say so out loud:
+
+> Durable value types import Foundation only — not UIKit, not PencilKit, and
+> not CoreGraphics, whose vocabulary is a graphics framework's whole surface.
+
+If you reject it, delete `"CoreGraphics"` from `uiFrameworkModules` and both
+allowlist entries become unnecessary. **It is one line either way**; what is
+not acceptable is leaving a machine-checked rule stricter than the document it
+claims to enforce.
+
 ## Amendments this milestone does NOT need
 
 Recorded so the absence is deliberate rather than forgotten:
