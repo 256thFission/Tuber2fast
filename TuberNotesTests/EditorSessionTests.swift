@@ -208,6 +208,7 @@ struct EditorSessionTests {
         await session.saveIfNeeded()
 
         let firstPageWrittenAt = try #require(scratch.modificationDate(ofPage: firstPageID))
+        let firstInkWrittenAt = try #require(try scratch.inkWrittenAt(ofPage: firstPageID))
 
         // Far enough apart that an unwanted rewrite cannot hide inside the
         // filesystem's timestamp resolution.
@@ -215,8 +216,12 @@ struct EditorSessionTests {
         canvas(of: session).drawing = strokeAcrossPage()
         await session.saveIfNeeded()
 
-        // The whole point of the format: page one was not touched.
+        // The whole point of the format: page one was not touched. Since the
+        // layer split the page file alone proves less than it used to — an ink
+        // save never rewrites a page file — so the ink layer's own file is
+        // checked, which is where page one's bytes actually are.
         #expect(scratch.modificationDate(ofPage: firstPageID) == firstPageWrittenAt)
+        #expect(try scratch.inkWrittenAt(ofPage: firstPageID) == firstInkWrittenAt)
     }
 
     @Test("Turning away from a page and back does not rewrite its file")
@@ -235,6 +240,7 @@ struct EditorSessionTests {
         for _ in 0..<4 { pullPastTheEnd(session) }
         await session.saveIfNeeded()
         let firstPageWrittenAt = try #require(scratch.modificationDate(ofPage: firstPageID))
+        let firstInkWrittenAt = try #require(try scratch.inkWrittenAt(ofPage: firstPageID))
 
         // Far enough apart that an unwanted rewrite cannot hide inside the
         // filesystem's timestamp resolution.
@@ -252,8 +258,10 @@ struct EditorSessionTests {
         await session.saveIfNeeded()
 
         // Installing ink is never reported as an edit (`Contract.md` —
-        // Lifecycle): a turn that changed nothing writes nothing.
+        // Lifecycle): a turn that changed nothing writes nothing — neither the
+        // page file nor the layer file its ink actually lives in.
         #expect(scratch.modificationDate(ofPage: firstPageID) == firstPageWrittenAt)
+        #expect(try scratch.inkWrittenAt(ofPage: firstPageID) == firstInkWrittenAt)
     }
 
     @Test("Ink drawn on a page that then scrolls out of the window is still saved")
@@ -769,6 +777,7 @@ struct EditorSessionTests {
         var documentURL: URL { directory.appendingPathComponent("JustACanvas.tubernotes") }
         var indexURL: URL { documentURL.appendingPathComponent("document.plist") }
         var pagesURL: URL { documentURL.appendingPathComponent("pages") }
+        var layersURL: URL { documentURL.appendingPathComponent("layers") }
 
         func modificationDate(ofPage pageID: UUID) -> Date? {
             let url = pagesURL.appendingPathComponent("\(pageID.uuidString).plist")
@@ -776,17 +785,40 @@ struct EditorSessionTests {
                 .contentModificationDate
         }
 
-        /// When a page file was last written, or `nil` if none exists yet.
+        /// When a page's ink last reached disk. Since the split that is the ink
+        /// layer's file, not the page file — a page whose ink changes but whose
+        /// layer list does not never rewrites its page file at all.
+        func inkWrittenAt(ofPage pageID: UUID) throws -> Date? {
+            let page = try PropertyListDecoder().decode(
+                PageFile.self,
+                from: Data(contentsOf: pagesURL.appendingPathComponent("\(pageID.uuidString).plist"))
+            )
+            guard let inkLayerID = page.layerIDs.last else { return nil }
+            return try? layersURL.appendingPathComponent("\(inkLayerID.uuidString).plist")
+                .resourceValues(forKeys: [.contentModificationDateKey])
+                .contentModificationDate
+        }
+
+        /// When anything durable was last written, or `nil` if nothing has been
+        /// yet.
         ///
         /// Timing tests poll this rather than `store.load()`: decoding a megabyte
         /// of property list on every poll would cost more than the intervals
         /// being measured and would show up inside them.
+        ///
+        /// It watches `layers/` as well as `pages/`, and that is not belt and
+        /// braces — since the layer split an ordinary ink save writes **only** a
+        /// layer file, so a probe that watched page files alone would see
+        /// nothing land and wait forever. The first save of a page still writes
+        /// both, which is why this went unnoticed until a test measured a
+        /// *second* save's timing.
         var savedAt: Date? {
-            let urls = (try? FileManager.default.contentsOfDirectory(
-                at: pagesURL,
-                includingPropertiesForKeys: [.contentModificationDateKey]
-            )) ?? []
-            return urls.compactMap {
+            [pagesURL, layersURL].flatMap { directory in
+                (try? FileManager.default.contentsOfDirectory(
+                    at: directory,
+                    includingPropertiesForKeys: [.contentModificationDateKey]
+                )) ?? []
+            }.compactMap {
                 try? $0.resourceValues(forKeys: [.contentModificationDateKey])
                     .contentModificationDate
             }.max()

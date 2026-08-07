@@ -206,7 +206,17 @@ enum ContractChecker {
 
     /// The modules a durable value type may not import.
     /// `Docs/Contract.md`, *Owners*: "Durable value types import Foundation only."
-    static let uiFrameworkModules: Set<String> = ["UIKit", "PencilKit"]
+    ///
+    /// `CoreGraphics` joined the list with phase 3's `pdf` kind. It is not a UI
+    /// framework, and it is here for the rule behind the rule rather than the
+    /// name: "durable value types import Foundation only" is a ban on acquiring
+    /// a graphics framework's whole vocabulary, and `CGPDFDocument` arrives with
+    /// `CGContext`, `CGImage`, and every drawing call attached. Without the
+    /// entry, any file could import it and the checker would say nothing.
+    /// `SwiftUI` is deliberately absent: the SwiftUI root is a named owner in
+    /// *Owners*, and adding it would allowlist the two files that are supposed
+    /// to have it.
+    static let uiFrameworkModules: Set<String> = ["UIKit", "PencilKit", "CoreGraphics"]
 
     /// Declaration kinds Swift permits in a scoped import: `import struct UIKit.X`.
     private static let importKindSpecifiers: Set<String> = [
@@ -516,6 +526,13 @@ struct ContractStructureTests {
         // and composites off-main and imports CoreGraphics and ImageIO only,
         // because nothing in it is a view, a layer, or frame-frequency work.
         "TuberNotesApp/PageBackdrop.swift",
+        // The one place a source PDF is opened. CoreGraphics only, and only
+        // `CGPDFDocument`: it is handed bytes and returns a page count and each
+        // page's box, so it renders nothing, touches no file, and holds no
+        // frame-frequency state. It is here because counting a PDF's pages
+        // cannot be done in Foundation, and `PDFKit` — the obvious alternative
+        // — would bring a whole document *view* stack for the same two answers.
+        "TuberNotesApp/PDFSource.swift",
         // THROWAWAY SPIKE — CanvasFeatureComplete device spike 1. Compiled
         // only under TN_SPIKE_MIRROR and instruments the canvas runtime,
         // where UIKit is already allowed; the entry dies with the file.

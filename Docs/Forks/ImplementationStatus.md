@@ -17,6 +17,9 @@ listed under *Owed evidence* rather than counted as done.
 | 1. Ink becomes a layer | **landed, reviewed, green** | `3a1a627` + review fixes `dee6044` | 77 tests; independent review returned approve-with-nits, all findings fixed |
 | 2. One `image` layer under the ink | **both halves landed, green** | `8e79ad6` (durable) + the rendering half | 151 tests; composite order, orientation, placement, the decode bound, the cache's byte bound and window eviction, and total refusal are all asserted. Registration with ink at 120 Hz, overdraw, and both placeholder tints are device-only — see `Unproven.md`. |
 | 3. `pdf` layers, `layers/` split, per-page geometry | not started | — | — |
+| 2. One `image` layer under the ink | in progress overnight | — | durable half and rendering half split across agents |
+| 3. `pdf` layers, `layers/` split | **durable half landed, green** | — | 151 tests in 14 suites, on a private simulator; exit test verified by sabotage. Amendments A13, A14 staged. |
+| 3. per-page geometry, zoom cap, base-and-lens, prefetch decode | not started | — | Separate lanes; A8 and A9 still AHEAD, so imported pages are letterboxed into the canonical page |
 | 4. Transformable `image` layers | not started | — | blocked on device spike 3 |
 | 5. The shape tool | in progress overnight | — | independent of 1–4 by design |
 
@@ -36,6 +39,8 @@ matter of editing and moving text.
 |---|---|---|
 | 1. Mirror fidelity | **scaffolding landed** `f78a050`, verdict owed — and phase 2's rendering half now ships on the presumption it holds | Behind `TN_SPIKE_MIRROR`. Variant A: sibling mirrored one transform per scroll tick. Variant B: inside-`PKCanvasView`, expected to crash. Production `PageBackdrop` uses variant A's technique with a `CALayer` rather than a view. |
 | 2. Lens latency | not built | Wants phase 3's PDF path to have something dense to render |
+| 1. Mirror fidelity | **scaffolding landed** `f78a050`, verdict owed | Behind `TN_SPIKE_MIRROR`. Variant A: sibling view mirrored one transform per scroll tick. Variant B: inside-`PKCanvasView`, expected to crash. |
+| 2. Lens latency | not built | Wants phase 3's PDF path to have something dense to render. The durable half now supplies the ref and the placement; **nothing rasterizes a PDF page anywhere in this build**, so the spike still has to bring its own renderer. |
 | 3. Manipulation feel and undo | not built | Phase 4 |
 
 ## Decisions taken without Phillip

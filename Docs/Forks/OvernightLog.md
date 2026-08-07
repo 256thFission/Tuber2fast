@@ -38,6 +38,57 @@ appended at the bottom of each section. Branch: `canvas-feature-complete`
    delete if Phillip disagrees.
 5. **`Tools/device-tests` is not wired into CI**, because `CONTRIBUTING.md`
    states CI calls no script in `Tools/` deliberately. Left as Phillip's call.
+6. **A `pdf` layer's payload stores no source page size** — it follows the
+   same unit-square convention `image` does. This was phase 3's one genuinely
+   open call and the case against it is real: a PDF page has an intrinsic size
+   in points, which a bitmap does not, so "the source states its size" is a
+   fact rather than a convenience. Overruled on four counts, argued in full in
+   `Contract.proposed.md` A13; the shortest is that under A8 an imported
+   page's *geometry* is its source's size in points, so a durable size in the
+   payload would be the same number in a third place. **Reversible as one
+   field plus one migration, and easier to add later than to remove.**
+7. **A `pdf` layer carries no `format` field**, unlike an `image` layer. Its
+   asset is a PDF by definition of the kind, so a format field could only
+   repeat the kind and then disagree with it. Consequence accepted and
+   documented at the type: `pdf` has no unsupported-format refusal.
+8. **The source rectangle is the CropBox, falling back to MediaBox, with
+   `/Rotate` applied.** A PDF page has five boxes and a rotation, so "the
+   page's size" is a choice; it is made in `PDFSource` and nowhere else. This
+   is also the strongest argument against storing the size durably — freezing
+   the choice into every payload lets it drift from the renderer's silently.
+9. **An `image` layer may not name a `pdf` asset.** Adding `pdf` to
+   `AssetFormat` silently made `"pdf"` a valid *image* format, which would
+   have handed a PDF to a bitmap decoder. `ImageLayerRef.recognizedFormat` is
+   now an exhaustive switch that refuses it, so a future format cannot be
+   added without deciding this again.
+10. **The caller states what changed; the store checks rather than trusts.**
+    The alternative — the store comparing each envelope against disk — would
+    read the ink layer back on every save to discover it had not changed,
+    which is the read the format exists to avoid. So `EditorSession` supplies
+    the changed set, and before any write the store refuses a claim that would
+    leave a page file naming a layer with no file. What it cannot detect is a
+    caller understating a change to a layer that *does* have a file: those
+    bytes stay stale. That is the trust boundary, documented at `PageWrite`.
+11. **`DocumentStore.save` gained a second entry point, not a replacement.**
+    `save(index:pages:)` takes `PageWrite`s; `save(index:changedPages:)`
+    remains as a thin adapter meaning "every layer changed", used by the first
+    save of a document and by tests whose subject is validation rather than
+    granularity. One implementation, one adapter.
+12. **`PageFile` encodes only the current form.** Three forms are read
+    (pre-layer, phase 1–2 inline, phase 3 split) and exactly one is written,
+    so no code path can put a superseded form back on disk. Tests needing an
+    older form own the fixture, as phase 1's `LegacyPageFile` already did.
+13. **Importing a PDF does not turn to it.** The pages land at the end and the
+    visible page is unchanged, because turning on import is navigation and
+    navigation is the import UI's decision. Consequence: a first-launch
+    document plus an import leaves one blank page in front of the worksheet.
+14. **`CoreGraphics` was added to the contract checker's banned-import set**,
+    with `PDFSource.swift` as its one allowlist entry. It is not a UI
+    framework, so this stretches the rule's name to serve its purpose — the
+    ban is on acquiring a graphics framework's whole vocabulary, and
+    `CGPDFDocument` arrives with `CGContext` and `CGImage` attached. One line
+    to revert; reverting means any file can import it unnoticed. `PDFKit` was
+    rejected for the same job: a document *view* stack for two answers.
 
 ### Phase 2, rendering half — the decisions
 
@@ -200,6 +251,49 @@ appended at the bottom of each section. Branch: `canvas-feature-complete`
     which is precisely what makes `kCGImageSourceThumbnailMaxPixelSize`
     computable without opening the file. `Unproven.md` asked whether the
     payload was what the compositor wanted. It is.
+14. **The split makes "a save landed" invisible to anything watching
+    `pages/`.** An ordinary ink save now writes *only* a layer file, so
+    `EditorSessionTests`' `savedAt` probe — which polled page-file mtimes —
+    waited forever and failed one adaptive-debounce test. It went unnoticed
+    through the whole implementation because the *first* save of a page still
+    writes both; only a test measuring a second save's timing could see it.
+    **Anything future that watches page files to detect a save is wrong now**,
+    and the same trap is waiting for a file-coordination or sync layer.
+15. **Two existing tests quietly stopped proving their point.**
+    `savingOnePageDoesNotRewriteTheOther` and
+    `turningAwayAndBackDoesNotRewriteThePage` assert a page file's mtime is
+    unchanged — which after the split is trivially true for *every* ink save,
+    including a wrong one. They passed while proving nothing. Both now also
+    assert the page's ink *layer* file, which is where its bytes actually are.
+    The general lesson: a change of granularity can turn a real assertion into
+    a tautology without failing, and only re-reading the tests finds it.
+16. **The dangling-layer-ref refusal cannot fire for a page with no file, and
+    that is correct rather than a gap.** A page whose file does not exist, and
+    a page still in a pre-split form, both write every layer forward whatever
+    the caller claims — none of their layers has a file to be unchanged. The
+    first version of the exit-adjacent test asserted a refusal in exactly that
+    case and failed, which is how the rule got stated precisely instead of
+    approximately.
+17. **The split made orphan detection cheaper, not dearer.** "Does any page
+    still name this layer?" now reads page files that are lists of UUIDs,
+    where before answering any structural question meant decoding every
+    envelope on the page including its ink. Asset reclamation scans every
+    layer file — a strictly larger set than the referenced ones, so strictly
+    more conservative — plus any pre-split page file's inline envelopes, which
+    is what makes a half-migrated document answer correctly.
+18. **The exit test was verified by sabotage.** Coarsening the save path to
+    mark every static layer changed makes it fail naming the `pdf` envelope as
+    a second rewrite. It compares the whole document package by both
+    modification date *and* bytes: mtime alone would miss a rewrite inside the
+    filesystem's timestamp resolution, and bytes alone would miss a rewrite of
+    identical content — which is still the whole-file write the format exists
+    to avoid.
+19. **`UIGraphicsPDFRenderer` makes multi-page, mixed-geometry PDFs testable in
+    the simulator**, including per-page bounds via
+    `beginPage(withBounds:pageInfo:)`. A 5-page, 794 KB fixture builds in
+    ~150 ms, so the exit test's "large import" is real bytes rather than a
+    stand-in — this is the second CI-testable thing in this project that was
+    not obvious, after `PKDrawing.image(from:scale:)`.
 
 ## Morning items — Phillip must address
 

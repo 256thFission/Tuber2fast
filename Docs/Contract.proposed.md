@@ -352,6 +352,158 @@ Add to the hard invariants:
 rule, but its actual justification is a performance bound. Stating it in both
 places is intentional: someone lifting it will read one or the other.
 
+## A13. *Durable form* — the kind set opens to `pdf` — **FORCED (phase 3)**
+
+This is A5's mechanism being paid a second time, deliberately and separately,
+because paying once per kind is the entire point of a closed set. In the
+adopted block, replace:
+
+> - **The set of kinds is closed.** The kinds are `ink` and `image`.
+
+with:
+
+> - **The set of kinds is closed.** The kinds are `ink`, `image`, and `pdf`.
+
+Extend the directory diagram's asset line:
+
+```text
+  assets/<assetID>.<ext>  imported originals, byte for byte: .png, .jpeg, .pdf
+```
+
+After the `image`-payload bullets, insert:
+
+> - **A `pdf` layer's payload is a ref and a source page**: the `assetID` of a
+>   PDF in `assets/`, and the zero-based index of the source page this layer
+>   shows. One import is one asset however many pages it has, so a fifty-page
+>   worksheet costs one copy of the worksheet and fifty refs into it.
+> - **A `pdf` asset is never normalized and never rewritten.** The original
+>   bytes are the whole of the small-export story: what a later export hands
+>   back is the file the user imported. This is stronger than the write-once
+>   rule assets already carry, and it is stated separately because the
+>   import-time normalization flag that images may one day take is closed to
+>   `pdf` by this sentence.
+> - **A `pdf` layer's `pageSpaceTransform` follows the same unit-square
+>   convention an `image` layer's does**: it maps the source page's rectangle,
+>   taken as the unit square with its origin at top-left, into page space. The
+>   source page's size in points is **not** durable, for the reason the image's
+>   pixel size is not: the asset states it, nothing can use it without opening
+>   the asset anyway, and a second copy is a value that can disagree with
+>   itself. **The source rectangle is the page's CropBox, falling back to its
+>   MediaBox, with `/Rotate` applied** — a PDF page carries five boxes and a
+>   rotation, so "the page's size" is a choice, and the choice is made in one
+>   place rather than frozen into every layer that was ever written.
+> - A `pdf` layer carries **no format field**. An `image` layer needs one
+>   because `png` and `jpeg` are both images; a `pdf` layer's asset is a PDF by
+>   definition of the kind, so a stored format could only repeat the kind. The
+>   consequence, stated so it is not discovered later: a `pdf` layer has no
+>   unsupported-format refusal, because it has no format to be unsupported. Its
+>   refusals are an unreadable payload and a missing asset.
+> - A `pdf` layer's `sourcePageIndex` is a non-negative integer. That it is
+>   *within* the source is **not** checked on load: answering it means opening
+>   the asset, and opening every asset on load is the whole-document read this
+>   format exists to avoid. An out-of-range index is the render path's refusal.
+
+*Why the size decision went this way, since it is the one genuinely open call
+of the phase and the argument for the other side is real:* a PDF page has an
+intrinsic size in points, a resolution-independent physical fact, where a
+bitmap has only pixels — so "the source states its size, unlike an image"
+is true and is the strongest case for storing it. It still loses, on four
+counts. It restates the asset, which is the failure A6b refused. No consumer
+needs the number without also needing the bytes — every use is a render, and
+`CGPDFPage` states its own box when opened — whereas the question the durable
+form *must* answer without opening a 50 MB file is "where is this layer on the
+page", which the transform already answers. "The page's size" is a choice among
+five boxes plus a rotation, and freezing that choice into every payload lets it
+drift from the renderer's with no way to detect the drift. And under A8 an
+imported page's *geometry* is its source's size in points, so a durable size in
+the payload would be a third copy of one number. **The unit-square payload
+needs no reconciliation when A8 lands; a stored point size would.** If Phillip
+disagrees, the change is one field and one migration, and it is easier to add
+later than to remove.
+
+## A14. *Durable form* — `layers/` splits out of the page file — **FORCED (phase 3)**
+
+The adopted block says envelopes are inlined and that "per-layer files arrive
+with the first heavy kind, not before". `pdf` is that kind. Replace the
+directory diagram's page line, and add a layer line:
+
+```text
+  pages/<pageID>.plist    one file per page: its own pageID and its ordered layer IDs
+  layers/<layerID>.plist  one layer envelope per file
+```
+
+Replace:
+
+> Envelopes are inlined in the page file; per-layer files arrive with the first
+> heavy kind, not before.
+
+with:
+
+> A layer envelope is one file, named by its `layerID`, and a page file is the
+> ordered list of layer IDs that make up the page. Order is z-order. A layer
+> file carries its own `layerID` and is checked against the name it is filed
+> under, exactly as a page file's repeated `pageID` is.
+
+Replace the "save writes only what changed" bullet with:
+
+> - **A save writes only what changed, at the finest granularity the form
+>   has** — which is one layer. Ink on page 4 of a fifty-page import writes
+>   page 4's ink layer file and nothing else: not the `pdf` envelope beneath
+>   it, not page 4's own page file, whose layer list did not change, not the
+>   other pages, not the asset, not the index. Rewriting an unchanged file at
+>   any level is a defect rather than an inefficiency: it is the whole-document
+>   rewrite this format exists to prevent, one level down.
+
+Replace A6's write-order bullet with:
+
+> - **Write order is leaf-to-root: assets, then layer files, then page files,
+>   then the index**, so an interrupted save leaves an orphan at some level and
+>   never a dangling ref at any. A save that names an asset or a layer which is
+>   neither already durable nor being written now is refused before any write.
+>   **Deletion is the mirror, root-to-leaf**: the page file drops the ref
+>   first, the layer file dies second, the asset dies third.
+
+After the dangling-asset bullet, insert:
+
+> - **A dangling layer ref is fatal; an orphan layer file is inert.** The same
+>   rule as a dangling page ref, one level down, and *unlike* a dangling asset
+>   ref: a missing layer file may be the page's ink, and no other copy of it
+>   exists, so the page is refused rather than repaired. A layer file no page
+>   names is never read.
+> - **Layer reclamation is delete-inline, like assets**: when a page drops a
+>   layer, that layer's file is deleted once no page file names it, and only
+>   then is its asset considered. Both questions are answered from the files on
+>   disk one level up, so a page write that failed leaves the layer file alive
+>   and a layer file that outlives its deletion keeps its asset alive.
+
+Extend the migration sentence:
+
+> The pre-layer page form (bare drawing bytes) and the pre-split form
+> (envelopes inline in the page file) are both read, and written forward on the
+> page's next save, never migrated eagerly. **A page not yet in the split form
+> writes all of its layer files forward on that save**, because none of them
+> has a file to be unchanged. Three forms are read; exactly one is written.
+
+*Why here and not at phase 1:* the split's whole benefit is that annotating a
+page does not rewrite what is heavy on it, and before a heavy kind existed
+there was nothing heavy to not rewrite — a directory level proving nothing is
+a directory level that only costs. Phase 3 is where the claim becomes
+observable, and its exit test is exactly that observation: a five-page import
+with a 794 KB asset, one page's ink dirtied once, and the whole document
+package compared file by file, by modification date and by bytes. One file is
+rewritten. That test fails if the granularity regresses — verified by
+deliberately coarsening the save path and watching it name the `pdf` envelope
+as the second rewrite.
+
+*The cost, stated honestly:* a document now has one file per layer rather than
+one per page, roughly doubling the file count for blank pages, and reads on
+load go from one file per page to one plus one per layer. Load is unchanged in
+practice — a blank page is one page file plus one ink file where it used to be
+one page file carrying the same ink — and the save side is where the win is.
+The other cost is that "a save landed" is no longer observable by watching
+`pages/`, which broke a timing test and would break any future tooling that
+watched page files.
+
 ---
 
 ## Amendments this milestone does NOT need
@@ -374,11 +526,25 @@ Recorded so the absence is deliberate rather than forgotten:
 2. **A5 versus a general rule.** Paying one amendment per kind is the
    mechanism working as designed, but it means `pdf` costs another. Confirm
    you want that friction; the alternative — amending once to admit
-   `image` and `pdf` together — is cheaper and weaker.
+   `image` and `pdf` together — is cheaper and weaker. **A13 pays it**, as a
+   separate section in its own commit, on the assumption the friction is
+   wanted. Merging A5 and A13 into one bullet is a two-line edit if not.
 3. **A10 is written as if the spike passed.** It has not run. Adopt it only
    after phase 4's device spike confirms PencilKit tolerates foreign undo
    registrations.
 4. **A8 is the expensive one.** Its text is short and its implementation
    threads geometry through page construction and makes paging slots
    per-page. Worth confirming you want it in phase 3 rather than earlier or
-   later.
+   later. **It has not landed**, so today an imported PDF page is fitted into
+   the canonical portrait page and centred — a landscape source arrives
+   letterboxed rather than as a landscape page. A13's unit-square decision was
+   made so that adopting A8 later changes no durable payload.
+5. **A13's unit-square-versus-point-size call.** Recorded in full in A13
+   because the case for storing the source page's point size is genuinely
+   stronger for PDF than it was for images, and this is the call most worth
+   overruling if the reasoning does not convince. One field and one migration
+   either way.
+6. **`CoreGraphics` joined the contract checker's banned-import list**, with
+   `PDFSource.swift` as its one allowlist entry. It is not a UI framework, so
+   it stretches the rule's name to serve the rule's purpose; deleting the entry
+   is one line, and doing so makes any file able to import it unnoticed.

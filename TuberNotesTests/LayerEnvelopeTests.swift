@@ -28,7 +28,7 @@ struct LayerEnvelopeTests {
         #expect(decoded == envelope)
         #expect(decoded.recognizedKind == .ink)
 
-        let page = PageFile(pageID: UUID(), layers: [envelope])
+        let page = PageFile(pageID: UUID(), layerIDs: [envelope.layerID])
         let decodedPage = try PropertyListDecoder().decode(
             PageFile.self,
             from: Scratch.binaryEncoder().encode(page)
@@ -48,10 +48,64 @@ struct LayerEnvelopeTests {
         )
 
         #expect(decoded.pageID == legacy.pageID)
-        #expect(decoded.layers.count == 1)
-        #expect(decoded.layers[0].recognizedKind == .ink)
-        #expect(decoded.layers[0].payload == ink)
-        #expect(decoded.layers[0].pageSpaceTransform.isIdentity)
+        // A pre-split page file carries its envelopes itself, so they arrive
+        // inline rather than as names of files in `layers/`.
+        let inline = try #require(decoded.inlineLayers)
+        #expect(inline.count == 1)
+        #expect(inline[0].recognizedKind == .ink)
+        #expect(inline[0].payload == ink)
+        #expect(inline[0].pageSpaceTransform.isIdentity)
+        #expect(decoded.layerIDs == [inline[0].layerID])
+    }
+
+    @Test("A phase 1–2 page file decodes with its envelopes inline")
+    func inlinePageFileDecodesWithItsEnvelopesInline() throws {
+        let envelope = LayerEnvelope(
+            layerID: UUID(),
+            kind: .ink,
+            payload: Data([0x11, 0x22]),
+            pageSpaceTransform: .identity
+        )
+        let inlineForm = InlinePageFile(pageID: UUID(), layers: [envelope])
+        let decoded = try PropertyListDecoder().decode(
+            PageFile.self,
+            from: Scratch.binaryEncoder().encode(inlineForm)
+        )
+
+        #expect(decoded.pageID == inlineForm.pageID)
+        #expect(decoded.inlineLayers == [envelope])
+        #expect(decoded.layerIDs == [envelope.layerID])
+    }
+
+    /// Three forms are read; exactly one is written. Re-encoding anything the
+    /// decoder produced yields the current form, so no code path can put a
+    /// superseded form back on disk.
+    @Test("Re-encoding a page file read in any older form writes the current form")
+    func reEncodingAnyFormWritesTheCurrentForm() throws {
+        let pageID = UUID()
+        let envelope = LayerEnvelope(
+            layerID: UUID(),
+            kind: .ink,
+            payload: Data([0x33]),
+            pageSpaceTransform: .identity
+        )
+        let older: [Data] = [
+            try Scratch.binaryEncoder()
+                .encode(LegacyPageFile(pageID: pageID, drawingData: Data([0x33]))),
+            try Scratch.binaryEncoder()
+                .encode(InlinePageFile(pageID: pageID, layers: [envelope])),
+        ]
+
+        for bytes in older {
+            let decoded = try PropertyListDecoder().decode(PageFile.self, from: bytes)
+            let rewritten = try PropertyListSerialization.propertyList(
+                from: try Scratch.binaryEncoder().encode(decoded),
+                format: nil
+            ) as? [String: Any]
+            #expect(rewritten?["layerIDs"] != nil)
+            #expect(rewritten?["layers"] == nil)
+            #expect(rewritten?["drawingData"] == nil)
+        }
     }
 
     @Test("A pre-layer page file loads through the store")
@@ -88,14 +142,22 @@ struct LayerEnvelopeTests {
             changedPages: [changed: inkLayer(Data([0x03]))]
         )
 
-        // The changed page is now in the layered form on disk...
+        // The changed page is now in the split form on disk...
         let raw = try PropertyListSerialization.propertyList(
             from: Data(contentsOf: scratch.pageURL(changed)),
             format: nil
         ) as? [String: Any]
-        #expect(raw?["layers"] != nil, "the saved page was not written forward to the layered form")
+        #expect(raw?["layerIDs"] != nil, "the saved page was not written forward to the split form")
+        #expect(raw?["layers"] == nil, "the saved page still carries inline envelopes")
         #expect(raw?["drawingData"] == nil, "the saved page still carries the pre-layer field")
         #expect(try await store.loadPage(changed).inkData == Data([0x03]))
+
+        // ...with its ink in a layer file the page file names, which is what
+        // "written forward" now has to mean.
+        let writtenIDs = try #require(raw?["layerIDs"] as? [String])
+        let firstWritten = try #require(writtenIDs.first)
+        let inkLayerID = try #require(UUID(uuidString: firstWritten))
+        #expect(FileManager.default.fileExists(atPath: scratch.layerURL(inkLayerID).path))
 
         // ...and the unchanged page's bytes were not touched at all.
         #expect(try Data(contentsOf: scratch.pageURL(untouched)) == untouchedBytesBefore)
@@ -355,6 +417,14 @@ struct LayerEnvelopeTests {
         let drawingData: Data
     }
 
+    /// The phase 1–2 page form: `{ pageID, layers }`, envelopes inline. Owned
+    /// by the tests for the same reason `LegacyPageFile` is — a superseded form
+    /// that production code can read and must never write.
+    private struct InlinePageFile: Codable {
+        let pageID: UUID
+        let layers: [LayerEnvelope]
+    }
+
     /// A unique directory per test, removed afterwards. A class, not a
     /// noncopyable struct, because the assertion closures above capture it.
     private final class Scratch {
@@ -362,9 +432,14 @@ struct LayerEnvelopeTests {
 
         var documentURL: URL { root.appendingPathComponent("JustACanvas.tubernotes") }
         var pagesURL: URL { documentURL.appendingPathComponent("pages") }
+        var layersURL: URL { documentURL.appendingPathComponent("layers") }
 
         func pageURL(_ pageID: UUID) -> URL {
             pagesURL.appendingPathComponent("\(pageID.uuidString).plist")
+        }
+
+        func layerURL(_ layerID: UUID) -> URL {
+            layersURL.appendingPathComponent("\(layerID.uuidString).plist")
         }
 
         init() throws {
@@ -372,6 +447,10 @@ struct LayerEnvelopeTests {
                 .appendingPathComponent("tubernotes-layer-tests-\(UUID().uuidString)")
             try FileManager.default.createDirectory(
                 at: pagesURL,
+                withIntermediateDirectories: true
+            )
+            try FileManager.default.createDirectory(
+                at: layersURL,
                 withIntermediateDirectories: true
             )
         }
@@ -400,11 +479,28 @@ struct LayerEnvelopeTests {
             return encoder
         }
 
-        /// Writes a page file directly, bypassing the store — the only way to
-        /// put on disk what the store refuses to write.
+        /// Writes a page and its layers directly, bypassing the store — the
+        /// only way to put on disk what the store refuses to write. The current
+        /// form: the page file names its layers in order, each layer is a file.
         func writePageFile(_ pageID: UUID, layers: [LayerEnvelope]) throws {
-            let page = PageFile(pageID: pageID, layers: layers)
+            for layer in layers {
+                try Self.binaryEncoder().encode(layer).write(
+                    to: layerURL(layer.layerID),
+                    options: .atomic
+                )
+            }
+            let page = PageFile(pageID: pageID, layerIDs: layers.map(\.layerID))
             try Self.binaryEncoder().encode(page).write(to: pageURL(pageID), options: .atomic)
+        }
+
+        /// Writes the phase 1–2 form: envelopes inline in the page file, no
+        /// `layers/` directory involved. Production code cannot write this —
+        /// `PageFile.encode(to:)` only ever writes the current form — which is
+        /// exactly the property that makes write-forward a fact rather than a
+        /// discipline, and the reason this fixture has to exist here.
+        func writeInlinePageFile(_ pageID: UUID, layers: [LayerEnvelope]) throws {
+            let inline = InlinePageFile(pageID: pageID, layers: layers)
+            try Self.binaryEncoder().encode(inline).write(to: pageURL(pageID), options: .atomic)
         }
 
         func writeLegacyPageFile(_ pageID: UUID, drawingData: Data) throws {
