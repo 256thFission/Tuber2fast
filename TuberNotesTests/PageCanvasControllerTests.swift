@@ -320,6 +320,44 @@ struct PageCanvasControllerTests {
 
     // MARK: - Selection feeding the composite
 
+    @Test("Selection feeds the composite request: minus the selected layer, back in on deselect")
+    func selectionFeedsTheCompositeRequest() async throws {
+        let store = try scratchStore()
+        let first = try await imageLayer(
+            store: store, color: .red,
+            transform: PageSpaceTransform(a: 200, b: 0, c: 0, d: 100, tx: 50, ty: 50)
+        )
+        let second = try await imageLayer(
+            store: store, color: .green,
+            transform: PageSpaceTransform(a: 200, b: 0, c: 0, d: 100, tx: 50, ty: 400)
+        )
+
+        let controller = PageCanvasController(
+            toolPicker: PKToolPicker(), projection: .canonical,
+            staticRenderer: StaticLayerRenderer(store: store)
+        )
+        let root = controller.view!
+        root.frame = CGRect(x: 0, y: 0, width: 820, height: 1180)
+        controller.setStaticLayers([first, second])
+        root.layoutIfNeeded()
+
+        let full = try #require(controller.renderedRequestForTesting)
+        #expect(full.layers.map(\.layerID) == [first.layerID, second.layerID])
+
+        let selection = try #require(controller.selection)
+        selection.select(first)
+        // The exclusion may only follow the lift, so the request changes once
+        // the selected layer's source has decoded.
+        try await waitUntil("the composite request excludes the selected layer") {
+            controller.renderedRequestForTesting?.layers.map(\.layerID) == [second.layerID]
+        }
+
+        selection.select(nil)
+        try await waitUntil("deselection re-includes the layer") {
+            controller.renderedRequestForTesting?.layers.map(\.layerID) == [first.layerID, second.layerID]
+        }
+    }
+
     @Test("Switching selection A to B never leaves A unrepresented")
     func switchingSelectionHoldsTheHandover() async throws {
         let store = try scratchStore()
