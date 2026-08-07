@@ -70,7 +70,15 @@ Three structural rules are machine-checked as ordinary tests in
 site, the UIKit/PencilKit import allowlist, and file I/O confined to
 `DocumentStore`. Each is an allowlist, so a new file breaks the test without
 anyone remembering to update anything, and the checker has its own tests — an
-untested checker can go dead and keep passing.
+untested checker can go dead and keep passing. The enumeration is recursive, and
+its recursion is itself covered: sources planted in a subdirectory of a temp
+tree must trip each rule.
+
+**The rules are a token scan, not a type checker**, so three things pass it: a
+`PKCanvasView` subclass constructed by its own name, `let v: PKCanvasView =
+.init()`, and a forbidden token reached only through string interpolation. Each
+is recorded as a `KNOWN DEFECT:` block beside the rule it limits. All three
+under-report, which is the direction that goes quiet.
 
 **The forbidden-pattern list is not checked.** No test looks for placeholder
 fields for future features, or for a cache, thumbnail, checksum table, or asset
