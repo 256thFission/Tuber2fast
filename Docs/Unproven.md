@@ -263,7 +263,7 @@ correcting the sentences before the structure would only re-decorate it.
 
 ## CI has never run
 
-`.github/workflows/ci.yml` and `device.yml` are written but uncommitted, and no
+`.github/workflows/ci.yml` and `device.yml` are written and committed, but no
 push has exercised either. An unrun workflow is not CI; it is a YAML file that
 has never been contradicted. See `prove-ci` in [`Queue.md`](Queue.md).
 
