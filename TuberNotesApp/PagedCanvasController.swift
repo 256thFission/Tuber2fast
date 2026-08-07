@@ -302,6 +302,24 @@ final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
         }
     }
 
+    /// The base level of detail a canvas built for this page would ask its
+    /// composite at, or `nil` before layout has given the slots a width.
+    ///
+    /// Read by `EditorSession`'s prefetch warm (phase 3c): a warmed composite
+    /// only hits the cache if its request carries exactly the number the
+    /// page's own controller will derive, and this runtime is the one place
+    /// outside that controller that knows the slot width — a slot is one
+    /// viewport wide, and the canvas fills its slot, so the viewport width
+    /// *is* the future canvas's width.
+    func compositeDetail(forPageAt index: Int) -> Double? {
+        guard isViewLoaded, scrollView.bounds.width > 0 else { return nil }
+        return PageCanvasController.compositeDetail(
+            viewportWidth: scrollView.bounds.width,
+            displayScale: traitCollection.displayScale,
+            geometry: (projectionForPage?(index) ?? .canonical).geometry
+        )
+    }
+
     /// A snapshot of one live page, or `nil` when the page has no canvas —
     /// outside the window, or a placeholder. A placeholder accepts no input,
     /// so `nil` here never discards ink; it only ever means there is none.

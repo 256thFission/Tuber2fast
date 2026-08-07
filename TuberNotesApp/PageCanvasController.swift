@@ -153,6 +153,24 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
     /// shows the placeholder or a scaled base — never a wrong picture.
     private var compositeGeneration = 0
 
+    /// Increments whenever the settled state a lens was asked for stops being
+    /// the state on screen — a new gesture, a layer edit, a viewport change.
+    /// A lens that lands under a stale generation is dropped, never shown: a
+    /// sharp patch at the wrong position is worse than the soft base.
+    private var lensGeneration = 0
+
+    /// How many lens renders this controller has asked for, and the last ask.
+    /// Read only by tests: "the lens is requested at settle and never by a
+    /// gesture frame" and "the visible rect is clamped to the page" are
+    /// otherwise observable only on a device.
+    private(set) var lensRequestCountForTesting = 0
+    private(set) var lensRequestForTesting: (rect: CGRect, pixelsPerPagePoint: Double)?
+
+    /// A lens is only worth rendering meaningfully past the base's own
+    /// detail; below this ratio the base is already pixel-exact or close
+    /// enough that a second texture buys nothing.
+    private static let lensWorthwhileFactor = 1.25
+
     /// The composite's long edge, in pixels, at the level-of-detail cap.
     ///
     /// 2,800 px is a little over the long edge of the largest iPad's display,
@@ -495,6 +513,9 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
         staticLayers = layers
         renderedRequest = nil
         compositeGeneration += 1
+        // A lens rendered from the old list is a picture of a page that no
+        // longer exists.
+        invalidateLens()
 
         guard !layers.isEmpty else {
             backdrop?.remove()
@@ -566,6 +587,10 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
     ///   (`requestCompositeIfNeeded`'s completion). There is no frame in which
     ///   the layer is in neither place.
     private func selectionChanged() {
+        // The lift machinery owns the picture while a selection exists, and
+        // the minus-one composite it triggers would leave a lens showing the
+        // layer twice. `requestLensIfNeeded` also declines while selected.
+        invalidateLens()
         liftGeneration += 1
         let generation = liftGeneration
         // Whatever swap was queued is for a selection that no longer exists.
@@ -682,6 +707,10 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
         guard request != renderedRequest else { return }
         renderedRequest = request
 
+        // A new base request means the layers or the level of detail moved
+        // under the lens; whatever it shows describes the old picture.
+        invalidateLens()
+
         compositeGeneration += 1
         let generation = compositeGeneration
         backdrop.compositeRequested()
@@ -726,18 +755,118 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
     /// Quantized to a hundredth so that a sub-pixel layout difference is not a
     /// whole new composite.
     private func compositeScale() -> Double? {
-        let width = canvasView.bounds.width
-        guard width > 0 else { return nil }
-        let displayScale = max(traitCollection.displayScale, 1)
-        let fitWidth = width / geometry.width
+        Self.compositeDetail(
+            viewportWidth: canvasView.bounds.width,
+            displayScale: traitCollection.displayScale,
+            geometry: geometry
+        )
+    }
+
+    /// The one derivation of a page's base level of detail, `static` so the
+    /// prefetch warm can reproduce it exactly: a warmed composite is a cache
+    /// hit only if its request — including this number — is byte-for-byte the
+    /// request this controller will make when the page turns live. Two copies
+    /// of this arithmetic would be two numbers that drift, and a drifted warm
+    /// is a cache that never hits while looking like it works.
+    static func compositeDetail(
+        viewportWidth: CGFloat,
+        displayScale: CGFloat,
+        geometry: PageGeometry
+    ) -> Double? {
+        guard viewportWidth > 0 else { return nil }
+        let clampedDisplayScale = max(displayScale, 1)
+        let fitWidth = viewportWidth / geometry.width
         // The page's own long edge, so a landscape page is capped by its width
         // where a portrait one is capped by its height. Capping on a fixed axis
         // would let a wide page render past the texture budget the number
         // exists to state.
         let cap = Self.maximumCompositeLongEdge / max(geometry.width, geometry.height)
-        let scale = min(max(Double(fitWidth * displayScale), 1), cap)
+        let scale = min(max(Double(fitWidth * clampedDisplayScale), 1), cap)
         guard scale.isFinite, scale > 0 else { return nil }
         return (scale * 100).rounded() / 100
+    }
+
+    // MARK: - The lens: sharp content at zoom settle
+
+    /// Whatever lens is on screen or in flight no longer describes the view.
+    ///
+    /// One integer increment and, when a lens is actually showing, one hidden
+    /// flag — cheap enough for every scroll tick, which is where it runs: the
+    /// moment the view transforms away from the settled state, the sharp
+    /// patch must go, because a sharp patch at the wrong position is worse
+    /// than the soft base underneath it.
+    private func invalidateLens() {
+        lensGeneration += 1
+        backdrop?.hideLens()
+    }
+
+    /// Asks for the visible rect at the settled zoom, off-main, and swaps it
+    /// in above the base when it lands — the "at settle: background decode,
+    /// then swap" moment of the fork doc's zoom story.
+    ///
+    /// Reached only from the scroll view's settle callbacks, **never from a
+    /// gesture frame**: during the pinch the compositor scales the base,
+    /// slightly soft, and no decode runs anywhere. Skipped when the settled
+    /// zoom is not meaningfully past the base's own detail, when a selection
+    /// is in progress (the lift machinery owns that picture), and on pages
+    /// with nothing beneath their ink — the blank-page path pays one nil
+    /// check.
+    private func requestLensIfNeeded() {
+        guard backdrop != nil, let staticRenderer, !staticLayers.isEmpty else { return }
+        guard selection?.selectedLayerID == nil else { return }
+        guard let base = renderedRequest?.pixelsPerPagePoint ?? compositeScale() else { return }
+
+        let zoom = canvasView.zoomScale
+        let bounds = canvasView.bounds
+        guard zoom > 0, bounds.width > 0, bounds.height > 0 else { return }
+        let displayScale = Double(max(traitCollection.displayScale, 1))
+        // Quantized like the composite's own scale, so float dust in
+        // `zoomScale` is not a new level of detail.
+        let lensScale = (Double(zoom) * displayScale * 100).rounded() / 100
+        guard lensScale > base * Self.lensWorthwhileFactor else { return }
+
+        // The visible rect in page points, clamped to the page **before** the
+        // renderer sees it: the rasterizer refuses out-of-page sub-rects, and
+        // rightly — a rect past the edge is the caller's arithmetic to fix,
+        // and this is that arithmetic. Rubber-band overshoot and centering
+        // insets both put the raw rect outside the page routinely.
+        let visible = CGRect(
+            x: canvasView.contentOffset.x / zoom,
+            y: canvasView.contentOffset.y / zoom,
+            width: bounds.width / zoom,
+            height: bounds.height / zoom
+        )
+        let pageRect = CGRect(x: 0, y: 0, width: geometry.width, height: geometry.height)
+        let clamped = visible.intersection(pageRect)
+        guard !clamped.isEmpty else { return }
+
+        let request = StaticLayerRequest(
+            layers: layersToComposite,
+            geometry: geometry,
+            pixelsPerPagePoint: lensScale
+        )
+        lensGeneration += 1
+        let generation = lensGeneration
+        lensRequestCountForTesting += 1
+        lensRequestForTesting = (clamped, lensScale)
+
+        // One task per settle — settle frequency, never input frequency. The
+        // render runs on the global executor; the main thread's whole share
+        // is the `contents` assignment inside `showLens`.
+        Task { [weak self] in
+            let render = await staticRenderer.lens(for: request, visibleRect: clamped)
+            guard let self, self.lensGeneration == generation else { return }
+            guard case .composited(let sharp) = render else {
+                if case .refused(let why) = render {
+                    // The base is still on screen and still honest — soft is
+                    // an accepted state, so a lens refusal costs sharpness,
+                    // never correctness.
+                    CanvasLog.event(.canvas, "lens refused; the soft base stays: \(why)")
+                }
+                return
+            }
+            self.backdrop?.showLens(sharp.image, over: clamped)
+        }
     }
 
     // MARK: - The shape tool
@@ -1013,6 +1142,10 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
     /// Frame-frequency work, and it stays here inside the canvas runtime: a
     /// frame assignment on one view, no publication and no allocation.
     func scrollViewDidZoom(_ scrollView: UIScrollView) {
+        // The view is transforming away from whatever state a lens described:
+        // drop it before this frame renders. An integer bump and a nil check —
+        // no decode is ever triggered by a gesture frame.
+        invalidateLens()
         updatePageBoundary()
         centerPageInViewport()
         // Re-traces a shape preview at the new scale, and returns immediately
@@ -1038,26 +1171,40 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
     /// `PagedCanvasController` is the delegate of the *outer* paging scroll
     /// view, so this observes only this page's own canvas.
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        // Same rule as the zoom half: a pan moves the viewport off the rect
+        // the lens was rendered for.
+        invalidateLens()
         backdrop?.mirror(offset: scrollView.contentOffset, zoom: scrollView.zoomScale)
         #if TN_SPIKE_MIRROR
         spikeMirror?.mirror(offset: scrollView.contentOffset, zoom: scrollView.zoomScale)
         #endif
     }
 
-    #if TN_SPIKE_MIRROR
-    // THROWAWAY SPIKE hooks — one stats line at each gesture end. Nothing below
-    // exists with the flag off.
+    // MARK: The settle callbacks — where the lens is asked for
+
+    func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) {
+        requestLensIfNeeded()
+        #if TN_SPIKE_MIRROR
+        spikeMirror?.flushStats("pinch ended;")
+        #endif
+    }
 
     func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+        // A pan at depth settles too: without this, panning across a zoomed
+        // worksheet would lose sharpness at the first tick and never regain
+        // it until the next pinch.
+        requestLensIfNeeded()
+        #if TN_SPIKE_MIRROR
         spikeMirror?.flushStats("fling settled;")
+        #endif
     }
 
     func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate: Bool) {
-        if !willDecelerate { spikeMirror?.flushStats("drag ended at rest;") }
+        if !willDecelerate {
+            requestLensIfNeeded()
+            #if TN_SPIKE_MIRROR
+            spikeMirror?.flushStats("drag ended at rest;")
+            #endif
+        }
     }
-
-    func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) {
-        spikeMirror?.flushStats("pinch ended;")
-    }
-    #endif
 }
