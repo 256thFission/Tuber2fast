@@ -459,6 +459,88 @@ struct PDFLayerTests {
         #expect(!FileManager.default.fileExists(atPath: scratch.assetURL(assetID, "pdf").path))
     }
 
+    /// The reference scan reclamation relies on reads disk, and disk knows
+    /// nothing about layers whose save has not landed. Before the session
+    /// guarded this, a transiently failed import save plus one delete
+    /// destroyed the write-once asset all the surviving in-memory layers
+    /// referenced — and with it the only copy of the PDF bytes.
+    @Test("A failed save plus a delete never destroys a write-once asset")
+    @MainActor
+    func aFailedSavePlusADeleteDoesNotDestroyTheAsset() async throws {
+        let scratch = try Scratch()
+        let session = EditorSession(store: scratch.store(), debounce: .milliseconds(20))
+        await session.start()
+
+        // Layer writes fail while asset writes still succeed: the import's
+        // asset lands, but its layers and pages exist only in memory.
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o555], ofItemAtPath: scratch.layersURL.path
+        )
+        defer {
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: 0o755], ofItemAtPath: scratch.layersURL.path
+            )
+        }
+        let appended = try await session.importPDF(twoPageFixture())
+        #expect(session.lastSaveError != nil)
+
+        // The layer to delete exists only in the session; no file names it.
+        let firstLayer = try #require(
+            session.pages.staticLayersForPage?(session.pageCount - 2).first
+        )
+        let assetID = try PDFLayerRef(payload: firstLayer.payload).assetID
+        try await session.deleteLayer(firstLayer.layerID, fromPage: appended[0])
+
+        // The one copy of the PDF bytes survives the delete: the other page's
+        // layer references it from memory, where the disk scan is blind.
+        #expect(FileManager.default.fileExists(atPath: scratch.assetURL(assetID, "pdf").path))
+
+        // Once the store works again, one ordinary save recovers everything.
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755], ofItemAtPath: scratch.layersURL.path
+        )
+        await session.saveIfNeeded()
+        #expect(session.lastSaveError == nil)
+        let survivor = try await scratch.store().loadPage(appended[1])
+        #expect(survivor.refusedLayers.isEmpty)
+        #expect(survivor.staticLayers.count == 1)
+        #expect(try await scratch.store().loadPage(appended[0]).staticLayers.isEmpty)
+        #expect(FileManager.default.fileExists(atPath: scratch.assetURL(assetID, "pdf").path))
+    }
+
+    /// `evicted()` keeps a far page's layer list but drops its ink to
+    /// `.loading`, and a `.loading` page has no list to edit. That is a typed
+    /// refusal for the caller, never a trap: an evicted page is a state any
+    /// caller can reach by turning away.
+    @Test("Deleting a layer on an evicted page refuses with a typed error, never traps")
+    @MainActor
+    func deleteLayerOnAnEvictedPageRefusesLoudly() async throws {
+        let scratch = try Scratch()
+        let session = EditorSession(store: scratch.store(), debounce: .milliseconds(20))
+        await session.start()
+
+        // Four imported pages, so the last sits outside the prune radius of an
+        // early one.
+        let appended = try await session.importPDF(
+            pdf(
+                pageSizes: Array(repeating: CGSize(width: 612, height: 792), count: 4)
+            ) { _, _ in }
+        )
+        #expect(session.lastSaveError == nil)
+        let farPageID = appended[3]
+        let farLayerID = try #require(scratch.layersOnDisk(ofPage: farPageID).first).layerID
+
+        // Turning prunes: the last page is outside the new page ± 2 window, so
+        // its durable bytes drop and its ink becomes `.loading`.
+        turn(session, to: 1)
+
+        await #expect(throws: LayerEditError.pageNotReady(farPageID)) {
+            try await session.deleteLayer(farLayerID, fromPage: farPageID)
+        }
+        // And nothing was deleted: the page's layers survive untouched.
+        #expect(try scratch.layersOnDisk(ofPage: farPageID).count == 2)
+    }
+
     // MARK: - The layer split
 
     @Test("A page file is layer IDs, and each layer is its own file")
@@ -585,9 +667,7 @@ struct PDFLayerTests {
             ref: ImageLayerRef(assetID: assetID, format: .png),
             pageSpaceTransform: .identity
         )
-        await #expect(
-            throws: LayerError.danglingLayerRef(pageID: pageID, layerID: unwritten.layerID)
-        ) {
+        let refusal = await #expect(throws: DocumentStore.PageSaveRefusal.self) {
             try await scratch.store().save(
                 index: documentIndex,
                 pages: [
@@ -599,6 +679,8 @@ struct PDFLayerTests {
                 ]
             )
         }
+        #expect(refusal?.refusedPages.map(\.pageID) == [pageID])
+        #expect(refusal?.refusedPages.first?.reason.contains("danglingLayerRef") == true)
         #expect(try Data(contentsOf: scratch.pageURL(pageID)) == pageBytesBefore)
         #expect(!FileManager.default.fileExists(atPath: scratch.layerURL(unwritten.layerID).path))
     }

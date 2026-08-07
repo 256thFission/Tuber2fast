@@ -1140,6 +1140,29 @@ final class EditorSession {
             }
             lastSaveError = nil
             consecutiveSaveFailures = 0
+        } catch let refusal as DocumentStore.PageSaveRefusal {
+            // The store's refusal is per page, and so is the acknowledgement:
+            // every page the refusal does not name was written and is durable,
+            // so it becomes clean exactly as a fully successful pass would
+            // make it. Only the refused pages stay dirty, holding their
+            // already-serialized bytes, and the refusal is surfaced loudly —
+            // one poisoned page must never leave every other page's ink
+            // knowingly unsaved.
+            let refusedIDs = Set(refusal.refusedPages.map(\.pageID))
+            for capture in captures {
+                guard let data = changedPages[capture.pageID] else { continue }
+                if refusedIDs.contains(capture.pageID) {
+                    pageStates[stateIndex(of: capture.pageID)].saveFailed(restoring: data)
+                } else {
+                    pageStates[stateIndex(of: capture.pageID)].saveSucceeded(
+                        written: data,
+                        layersWritten: capture.staticLayers
+                    )
+                }
+            }
+            indexDirty = indexDirty || (capturedIndexWasDirty && !refusal.indexWritten)
+            lastSaveError = String(describing: refusal)
+            consecutiveSaveFailures += 1
         } catch {
             // The pages stay dirty and keep the bytes this pass already paid
             // to encode. The index returns to dirty only if it was dirty at
@@ -1504,11 +1527,13 @@ final class EditorSession {
     /// first, the layer file dies second, the asset dies third. An interruption
     /// between any two of them leaves an orphan, never a dangling ref.
     ///
-    /// Reclamation is safe whether or not that save succeeded, and not because
-    /// this checks: the store answers "does anything still reference this?"
-    /// from the files on disk at the level above, so a page write that failed
-    /// leaves the ref there and the layer file lives, and a layer file that
-    /// outlives its deletion keeps its asset alive in turn.
+    /// Reclamation's soundness is split between the store and this file. The
+    /// store answers "does anything still reference this?" from the files on
+    /// disk, so a page write that failed leaves the old ref there and the
+    /// layer file lives. What disk cannot answer for is a layer list that has
+    /// never landed at all — an import whose save failed references its asset
+    /// only in memory — so reclamation runs only while no page holds an
+    /// unsaved layer list; see the guard below.
     ///
     /// Crash orphans still accumulate — an import interrupted before its page
     /// write, a delete interrupted before its asset write — and that is
@@ -1522,6 +1547,19 @@ final class EditorSession {
             throw LayerEditError.pageNotFound(pageID)
         }
         let page = stateIndex(of: pageID)
+        // A page whose own bytes are not here has no layer list to edit —
+        // `layerListChanged` traps on it. An evicted far-away page is a state
+        // any caller can reach, not a session defect, so it is refused with a
+        // typed error rather than a trap; loading the page is the caller's
+        // repair. Deliberately checked without `requireLayerListIsEditable`,
+        // whose refusal guard would forbid the one deletion that repairs a
+        // refused page.
+        switch pageStates[page].ink {
+        case .clean, .live, .held, .saving:
+            break
+        case .loading, .unreadable:
+            throw LayerEditError.pageNotReady(pageID)
+        }
         guard let deleted = pageStates[page].staticLayers.first(
             where: { $0.layerID == layerID }
         ) else {
@@ -1560,6 +1598,23 @@ final class EditorSession {
             liveRuntime?.reloadPage(at: visible)
         }
 
+        // Reclamation asks the *disk* whether anything still references the
+        // layer and its asset, and disk can only answer for layer lists that
+        // have reached it. While any page holds an unsaved list — this delete's
+        // own save failed, or an import's save never landed — a reference can
+        // exist only in memory, where the scan is blind, and reclaiming would
+        // destroy a write-once asset the surviving layers still need. Skipping
+        // costs an orphan, which is inert and merely heavy; the files are
+        // reclaimable by a later delete once every list is durable.
+        guard !pageStates.contains(where: \.layersUnsaved) else {
+            CanvasLog.event(
+                .save,
+                "reclamation after deleting layer \(layerID) skipped: unsaved "
+                    + "layer lists exist, so the on-disk reference scan cannot "
+                    + "be trusted; its files stay as inert orphans"
+            )
+            return
+        }
         await reclaim(deleted)
     }
 

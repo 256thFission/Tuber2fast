@@ -132,9 +132,16 @@ actor DocumentStore {
     /// first, the asset dies second. Returns whether it deleted anything.
     ///
     /// The question "is anything still referencing this?" is answered from the
-    /// files on disk, not from memory, and that is what makes the ordering
-    /// sound rather than merely intended: a caller whose page write failed
-    /// still has the ref on disk, so the scan finds it and the asset lives.
+    /// files on disk, not from memory: a caller whose page write failed still
+    /// has the old ref on disk, so the scan finds it and the asset lives.
+    ///
+    /// **That soundness has a boundary: the scan is blind to layer lists that
+    /// exist only in memory.** A list a save has not yet landed — an import
+    /// whose save failed — references the asset in the session and nowhere
+    /// this scan looks, so deleting on its behalf would destroy a write-once
+    /// asset its surviving layers still need. The caller owns that guard:
+    /// `EditorSession.deleteLayer` reclaims only while no page holds an
+    /// unsaved layer list.
     ///
     /// **Since the split, it scans every layer file, not only the referenced
     /// ones** — a strictly larger set than "what the pages name", so it can
@@ -593,9 +600,8 @@ actor DocumentStore {
     /// this build cannot re-encode, and which this write would drop, is refused
     /// outright: that is the silent drop the layer model forbids. Refusing the
     /// save is the smaller mechanism than preserving the original envelope
-    /// bytes through a re-encode, and it is behavior-neutral, because a page
-    /// carrying a refused layer refuses input and therefore never has anything
-    /// to save.
+    /// bytes through a re-encode. The refusal's scope is the page — see the
+    /// per-page planning below and `PageSaveRefusal`.
     func save(index: DocumentIndex, pages: [PageWrite]) throws {
         let validated = try index.validated()
 
@@ -611,9 +617,30 @@ actor DocumentStore {
             )
         }
 
-        // Everything is decided before anything is written, so a batch that
+        // Everything is decided before anything is written, so a page that
         // would fail cannot leave half its files already replaced.
-        let plans = try pages.map { try plan(for: $0) }
+        //
+        // **A refusal is the page's, never the batch's.** A page that cannot
+        // be planned — a write that would drop a layer this build cannot
+        // rewrite, a dangling asset ref — refuses its own save and no other
+        // page's: every page that plans cleanly is written and durable first,
+        // and the refusal is thrown after them, carrying every refused page,
+        // so it is loud without punishing the pages that did nothing wrong.
+        // Refusing the whole batch left ink on every other page knowingly
+        // unsaved for as long as one poisoned page existed, which is a
+        // durability failure the contract does not ask for.
+        var plans: [PagePlan] = []
+        var refusals: [PageRefusal] = []
+        for write in pages {
+            do {
+                plans.append(try plan(for: write))
+            } catch {
+                CanvasLog.event(.save, "page \(write.pageID) refused its save: \(error)")
+                refusals.append(
+                    PageRefusal(pageID: write.pageID, reason: String(describing: error))
+                )
+            }
+        }
 
         let encoder = PropertyListEncoder()
         encoder.outputFormat = .binary
@@ -657,19 +684,59 @@ actor DocumentStore {
         let indexNeedsWriting = lastKnownIndex != validated
             || indexOnDiskIsSupersededForm
             || !FileManager.default.fileExists(atPath: indexURL.path)
-        if indexNeedsWriting {
+        // A refused page whose page file never landed must not be named by the
+        // index: the refusal would silently convert into a dangling page ref,
+        // which is an unopenable document. Withholding the index write keeps
+        // such a page an orphan-in-waiting instead, and the thrown refusal
+        // says the index was not written so the caller keeps it dirty.
+        let refusedPageIsMissingOnDisk = refusals.contains {
+            !FileManager.default.fileExists(atPath: pageURL($0.pageID).path)
+        }
+        var indexWritten = false
+        if indexNeedsWriting && !refusedPageIsMissingOnDisk {
             try createDirectoriesIfNeeded()
             try encoder.encode(validated).write(to: indexURL, options: .atomic)
             lastKnownIndex = validated
             indexOnDiskIsSupersededForm = false
+            indexWritten = true
         }
 
         CanvasLog.event(
             .save,
             "wrote \(layerFilesWritten) layer file(s) and \(pageFilesWritten) page "
                 + "file(s) across \(pages.count) changed page(s) of "
-                + "\(validated.pageIDs.count); index rewritten=\(indexNeedsWriting)"
+                + "\(validated.pageIDs.count); index rewritten=\(indexWritten); "
+                + "refused=\(refusals.count)"
         )
+
+        if !refusals.isEmpty {
+            throw PageSaveRefusal(refusedPages: refusals, indexWritten: indexWritten)
+        }
+    }
+
+    /// One page the store refused to save, and why — carried as text because
+    /// the caller's use is reporting, and the repair is a later edit, not a
+    /// branch on the cause.
+    struct PageRefusal: Sendable, Equatable {
+        let pageID: UUID
+        let reason: String
+    }
+
+    /// Thrown by `save` when at least one page refused its plan. **Every page
+    /// not named here was written and is durable** — the caller acknowledges
+    /// those pages and keeps only the refused ones dirty. `indexWritten` says
+    /// whether the index landed; it is withheld when a refused page has no
+    /// page file on disk yet.
+    struct PageSaveRefusal: Error, Sendable, Equatable, CustomStringConvertible {
+        let refusedPages: [PageRefusal]
+        let indexWritten: Bool
+
+        var description: String {
+            "save refused for \(refusedPages.count) page(s): "
+                + refusedPages
+                    .map { "\($0.pageID) (\($0.reason))" }
+                    .joined(separator: "; ")
+        }
     }
 
     /// Every page written whole: a convenience for the first save of a document

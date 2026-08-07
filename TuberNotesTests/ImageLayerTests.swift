@@ -145,14 +145,16 @@ struct ImageLayerTests {
             _ = try await scratch.store().loadPage(pageID)
         }
 
-        // ...and on the way out.
+        // ...and on the way out — page-scoped, so the refusal names the page.
         let documentIndex = scratch.index(pageIDs: [pageID])
-        await #expect(throws: LayerError.inkLayerNotLast(pageID: pageID)) {
+        let refusal = await #expect(throws: DocumentStore.PageSaveRefusal.self) {
             try await scratch.store().save(
                 index: documentIndex,
                 changedPages: [pageID: [ink, image]]
             )
         }
+        #expect(refusal?.refusedPages.map(\.pageID) == [pageID])
+        #expect(refusal?.refusedPages.first?.reason.contains("inkLayerNotLast") == true)
 
         // Ink last, image beneath it: accepted.
         try await scratch.store().save(
@@ -178,14 +180,14 @@ struct ImageLayerTests {
             ref: ImageLayerRef(assetID: assetID, format: .png),
             pageSpaceTransform: .identity
         )
-        await #expect(
-            throws: LayerError.danglingAssetRef(layerID: layerID, assetID: assetID)
-        ) {
+        let refusal = await #expect(throws: DocumentStore.PageSaveRefusal.self) {
             try await store.save(
                 index: documentIndex,
                 changedPages: [pageID: [envelope, inkEnvelope(payload: Data([0x01]))]]
             )
         }
+        #expect(refusal?.refusedPages.map(\.pageID) == [pageID])
+        #expect(refusal?.refusedPages.first?.reason.contains("danglingAssetRef") == true)
 
         // Validation happens before any write, so nothing at all landed.
         #expect(!FileManager.default.fileExists(atPath: scratch.pageURL(pageID).path))
@@ -546,13 +548,141 @@ struct ImageLayerTests {
 
         // This build cannot write the layer back, so it may not overwrite the
         // page at all — the same rule an unknown kind gets.
-        await #expect(throws: LayerError.refusedLayerWouldBeLost(pageID: pageID)) {
+        let refusal = await #expect(throws: DocumentStore.PageSaveRefusal.self) {
             try await scratch.store().save(
                 index: documentIndex,
                 changedPages: [pageID: [inkEnvelope(payload: Data([0x09]))]]
             )
         }
+        #expect(refusal?.refusedPages.map(\.pageID) == [pageID])
+        #expect(refusal?.refusedPages.first?.reason.contains("refusedLayerWouldBeLost") == true)
         #expect(try Data(contentsOf: scratch.pageURL(pageID)) == bytesBefore)
+    }
+
+    // MARK: - A refusal is the page's, never the batch's
+
+    /// The store's per-page refusal scope, exercised through the session: a
+    /// page that cannot save — its write would drop an unknown-kind layer this
+    /// build cannot rewrite — refuses loudly, and a clean page's ink in the
+    /// same batch still becomes durable. Before the per-page scope, one such
+    /// page made every save of the whole document throw, so no page's ink was
+    /// ever durable again.
+    @Test("A page that cannot drop an unknown-kind layer refuses only its own save")
+    @MainActor
+    func aPoisonedPageDoesNotHaltDurabilityDocumentWide() async throws {
+        let scratch = try Scratch()
+        let inkPageID = UUID()
+        let poisonedPageID = UUID()
+        let unknownLayerID = UUID()
+        let imageLayerID = UUID()
+
+        try scratch.writePageFile(inkPageID, layers: [inkEnvelope(payload: Data())])
+        try scratch.writePageFile(
+            poisonedPageID,
+            layers: [
+                LayerEnvelope(
+                    layerID: unknownLayerID,
+                    rawKind: "hologram",
+                    payload: Data([0xFF]),
+                    pageSpaceTransform: .identity
+                ),
+                try LayerEnvelope.image(
+                    layerID: imageLayerID,
+                    ref: ImageLayerRef(assetID: UUID(), format: .png),
+                    pageSpaceTransform: .identity
+                ),
+                inkEnvelope(payload: Data([0x01])),
+            ]
+        )
+        try scratch.writeIndexFile(scratch.index(pageIDs: [inkPageID, poisonedPageID]))
+
+        let session = EditorSession(store: scratch.store(), debounce: .milliseconds(20))
+        await session.start()
+        #expect(session.phase == .ready)
+
+        // Deleting the missing-asset layer dirties the poisoned page's list,
+        // but its save would still drop the unknown-kind layer, so the store
+        // refuses that page.
+        try await session.deleteLayer(imageLayerID, fromPage: poisonedPageID)
+        #expect(session.lastSaveError != nil)
+
+        // Ink on the clean page, captured in the same batch as the poisoned
+        // page's unsaved list.
+        let rootView = try #require(session.pages.view)
+        rootView.frame = CGRect(x: 0, y: 0, width: 820, height: 1180)
+        rootView.layoutIfNeeded()
+        try #require(session.currentCanvas).canvasView.drawing = strokeAcrossPage()
+        await session.saveIfNeeded()
+
+        // The refusal is loud and names its page...
+        let surfaced = try #require(session.lastSaveError)
+        #expect(surfaced.contains(poisonedPageID.uuidString))
+        // ...the unknown layer was never dropped from disk...
+        #expect(FileManager.default.fileExists(atPath: scratch.layerURL(unknownLayerID).path))
+        // ...and the clean page's ink is durable despite its neighbour.
+        let saved = try await scratch.store().loadPage(inkPageID)
+        #expect(try PKDrawing(data: saved.inkData).strokes.count == 1)
+    }
+
+    /// The other reachable poisoned state: two layers whose assets are
+    /// missing. Deleting one still writes the other — a dangling asset ref the
+    /// store refuses — so that page's save refuses while a clean page's ink
+    /// still lands, and deleting the second layer is the repair.
+    @Test("Two missing-asset layers refuse per page, and deleting both repairs the page")
+    @MainActor
+    func twoMissingAssetLayersRefusePerPageAndAreRepairable() async throws {
+        let scratch = try Scratch()
+        let inkPageID = UUID()
+        let poisonedPageID = UUID()
+        let firstImageID = UUID()
+        let secondImageID = UUID()
+
+        try scratch.writePageFile(inkPageID, layers: [inkEnvelope(payload: Data())])
+        try scratch.writePageFile(
+            poisonedPageID,
+            layers: [
+                try LayerEnvelope.image(
+                    layerID: firstImageID,
+                    ref: ImageLayerRef(assetID: UUID(), format: .png),
+                    pageSpaceTransform: .identity
+                ),
+                try LayerEnvelope.image(
+                    layerID: secondImageID,
+                    ref: ImageLayerRef(assetID: UUID(), format: .png),
+                    pageSpaceTransform: .identity
+                ),
+                inkEnvelope(payload: Data([0x01])),
+            ]
+        )
+        try scratch.writeIndexFile(scratch.index(pageIDs: [inkPageID, poisonedPageID]))
+
+        let session = EditorSession(store: scratch.store(), debounce: .milliseconds(20))
+        await session.start()
+
+        // Deleting one layer still writes the other, whose asset is missing:
+        // that page refuses its save, and says so.
+        try await session.deleteLayer(firstImageID, fromPage: poisonedPageID)
+        let surfaced = try #require(session.lastSaveError)
+        #expect(surfaced.contains(poisonedPageID.uuidString))
+
+        // A clean page's ink still becomes durable in the same batch.
+        let rootView = try #require(session.pages.view)
+        rootView.frame = CGRect(x: 0, y: 0, width: 820, height: 1180)
+        rootView.layoutIfNeeded()
+        try #require(session.currentCanvas).canvasView.drawing = strokeAcrossPage()
+        await session.saveIfNeeded()
+        #expect(session.lastSaveError != nil)
+        let saved = try await scratch.store().loadPage(inkPageID)
+        #expect(try PKDrawing(data: saved.inkData).strokes.count == 1)
+
+        // Deleting the second layer is the repair: dropping a missing-asset
+        // layer is reconstructable, so the page saves cleanly again.
+        try await session.deleteLayer(secondImageID, fromPage: poisonedPageID)
+        await session.saveIfNeeded()
+        #expect(session.lastSaveError == nil)
+        let repaired = try await scratch.store().loadPage(poisonedPageID)
+        #expect(repaired.staticLayers.isEmpty)
+        #expect(repaired.refusedLayers.isEmpty)
     }
 
     // MARK: - Fixtures
