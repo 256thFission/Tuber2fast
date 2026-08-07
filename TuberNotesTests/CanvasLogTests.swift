@@ -69,7 +69,7 @@ struct CanvasLogTests {
     ///
     /// A Debug test run cannot observe a Release binary, so this is checked
     /// structurally — the same technique, and the same comment-stripping
-    /// checker, `ContractStructureTests` uses. Reading the source is the only
+    /// checker, `ContractChecker` uses. Reading the source is the only
     /// way this specific mistake is catchable at all from CI.
     @Test("CanvasLog carries no build-configuration check")
     func theMirrorIsNotCompiledOutOfRelease() throws {
@@ -78,7 +78,7 @@ struct CanvasLogTests {
             .deletingLastPathComponent()
             .appendingPathComponent("TuberNotesApp/CanvasLog.swift")
 
-        let code = ContractStructureTests.codeOnly(try String(contentsOf: source, encoding: .utf8))
+        let code = ContractChecker.codeOnly(try String(contentsOf: source, encoding: .utf8))
 
         #expect(
             !code.contains("#if"),
