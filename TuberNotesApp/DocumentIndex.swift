@@ -57,6 +57,13 @@ struct PageFile: Codable, Sendable, Equatable {
             // identity is minted at read time and becomes durable only when
             // the page is next written in layered form; until then the file
             // on disk is untouched.
+            //
+            // Minted means per-decode: a legacy page's layerID differs across
+            // load, evict, and reload until its first layered save durably
+            // pins one. Benign today, because nothing references a layer by
+            // ID — load-bearing at phase 3, when `layers/<layerID>.plist`
+            // makes layer identity referenceable and this mint must have been
+            // pinned by a save before anything may point at it.
             let drawingData = try container.decode(Data.self, forKey: .drawingData)
             layers = [
                 LayerEnvelope(

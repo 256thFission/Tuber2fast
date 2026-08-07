@@ -84,8 +84,9 @@ actor DocumentStore {
     ///
     /// A layer whose kind this build does not recognize is refused at the
     /// layer's own scope: it comes back as a typed `RefusedLayer`, the rest of
-    /// the page loads, and the document opens. The store remembers the page so
-    /// that a later save cannot silently drop what it refused.
+    /// the page loads, and the document opens. What keeps a later save from
+    /// dropping the refusal lives in `save`, which re-reads the file it is
+    /// about to replace — never in memory here.
     func loadPage(_ pageID: UUID) throws -> LoadedPage {
         let data = try Data(contentsOf: pageURL(pageID))
         let page = try PropertyListDecoder().decode(PageFile.self, from: data)
@@ -93,7 +94,6 @@ actor DocumentStore {
             throw DocumentIndexError.pageIDMismatch(expected: pageID, found: page.pageID)
         }
         let (ink, refused) = try Self.validated(layers: page.layers, pageID: pageID)
-        if !refused.isEmpty { pagesRefusedOnLoad.insert(pageID) }
         return LoadedPage(
             inkLayerID: ink.layerID,
             inkData: ink.payload,
@@ -102,13 +102,21 @@ actor DocumentStore {
     }
 
     /// The layer invariants of phase 1, checked in one place for both
-    /// directions: a page has exactly one `ink` layer, that layer is last in
-    /// the list, and its transform is identity. An unrecognized kind is not a
-    /// violation — it is returned as a refusal for the caller to scope.
+    /// directions: layer IDs are unique within the page, a page has exactly
+    /// one `ink` layer, that layer is last in the list, and its transform is
+    /// identity. An unrecognized kind is not a violation — it is returned as
+    /// a refusal for the caller to scope.
     private static func validated(
         layers: [LayerEnvelope],
         pageID: UUID
     ) throws -> (ink: LayerEnvelope, refused: [RefusedLayer]) {
+        // Unique within the page, mirroring the document-level "Page IDs are
+        // unique and stable" rule one level down.
+        var seen = Set<UUID>()
+        for layer in layers where !seen.insert(layer.layerID).inserted {
+            throw LayerError.duplicateLayerID(pageID: pageID, layerID: layer.layerID)
+        }
+
         var refused: [RefusedLayer] = []
         var inkLayers: [LayerEnvelope] = []
         for layer in layers {
@@ -131,13 +139,6 @@ actor DocumentStore {
         return (ink, refused)
     }
 
-    /// Pages whose file, as read this session, carried a layer this build
-    /// refused. Like `lastKnownIndex` this is a record of the store's own
-    /// reads, not a second authority: it exists so `save` can fail loud
-    /// rather than silently drop a refused layer. The session never dirties
-    /// such a page — it refuses input — so this guard firing is a defect.
-    private var pagesRefusedOnLoad: Set<UUID> = []
-
     // MARK: - Save
 
     /// Writes the pages whose ink changed, then the index if it changed.
@@ -152,13 +153,13 @@ actor DocumentStore {
     ///
     /// The layer *list* is the caller's — `EditorSession` is its one writer,
     /// exactly as it is page order's — and the store only refuses lists that
-    /// violate the layer invariants. A page this store loaded with a refused
-    /// layer is refused outright: writing it would replace a list carrying a
-    /// layer this build cannot re-encode, which is the silent drop the layer
-    /// model forbids. Refusing the save is the smaller mechanism than
-    /// preserving the original envelope bytes through a re-encode, and it is
-    /// behavior-neutral, because a page carrying a refused layer refuses
-    /// input and therefore never has anything to save.
+    /// violate the layer invariants. A page whose file on disk carries a
+    /// refused layer is refused outright: writing it would replace a list
+    /// carrying a layer this build cannot re-encode, which is the silent drop
+    /// the layer model forbids. Refusing the save is the smaller mechanism
+    /// than preserving the original envelope bytes through a re-encode, and
+    /// it is behavior-neutral, because a page carrying a refused layer
+    /// refuses input and therefore never has anything to save.
     func save(index: DocumentIndex, changedPages: [UUID: [LayerEnvelope]]) throws {
         let validated = try index.validated()
 
@@ -169,13 +170,11 @@ actor DocumentStore {
         // Every page is validated before any page is written, so a batch that
         // would fail cannot leave half its pages already rewritten.
         for (pageID, layers) in changedPages {
-            guard !pagesRefusedOnLoad.contains(pageID) else {
-                throw LayerError.refusedLayerWouldBeLost(pageID: pageID)
-            }
             let (_, refused) = try Self.validated(layers: layers, pageID: pageID)
             if let first = refused.first {
                 throw LayerError.unknownKindOnSave(layerID: first.layerID, kind: first.kind)
             }
+            try refuseIfExistingFileCarriesRefusedLayer(pageID)
         }
 
         try createDirectoriesIfNeeded()
@@ -206,6 +205,35 @@ actor DocumentStore {
             "wrote \(changedPages.count) page file(s) of \(validated.pageIDs.count); "
                 + "index rewritten=\(indexNeedsWriting)"
         )
+    }
+
+    /// Refuses to overwrite a page file that carries a layer this build does
+    /// not recognize — the guarantee that a refused layer is never silently
+    /// dropped, sound by construction rather than by convention.
+    ///
+    /// The check reads the file `save` is about to replace, so it holds for
+    /// every store instance and every save entry point, not just one that
+    /// happened to `loadPage` first; an in-memory record of refused loads
+    /// would be blind to a page a second store never read. One small decode
+    /// per changed page, on the actor and off the main thread by
+    /// construction, on a path that already does file I/O by design — and it
+    /// runs before any write, preserving validation-before-any-write.
+    ///
+    /// An existing file that cannot be decoded at all refuses the save the
+    /// same way, by rethrowing: overwriting bytes this build cannot read is
+    /// the same blind drop with a different cause. Such a page is
+    /// `unreadable` in the session and never dirties, so a save reaching
+    /// this is already a defect surfacing, not a path to smooth over.
+    private func refuseIfExistingFileCarriesRefusedLayer(_ pageID: UUID) throws {
+        let url = pageURL(pageID)
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        let existing = try PropertyListDecoder().decode(
+            PageFile.self,
+            from: Data(contentsOf: url)
+        )
+        if existing.layers.contains(where: { $0.recognizedKind == nil }) {
+            throw LayerError.refusedLayerWouldBeLost(pageID: pageID)
+        }
     }
 
     /// Deletes page files no page ID references. Orphans are inert, so this is

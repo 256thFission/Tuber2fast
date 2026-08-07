@@ -65,8 +65,9 @@ struct LayerEnvelope: Codable, Sendable, Equatable {
         self.pageSpaceTransform = pageSpaceTransform
     }
 
-    /// An envelope with an arbitrary kind string. Only decoding and tests
-    /// construct these; the save path refuses any kind outside the closed set.
+    /// An envelope with an arbitrary kind string. Tests are its only caller —
+    /// decoding goes through the synthesized `init(from:)` — and it exists so
+    /// a test can put an unknown kind on disk, which the save path refuses.
     init(
         layerID: UUID,
         rawKind: String,
@@ -109,6 +110,9 @@ struct LoadedPage: Sendable, Equatable {
 /// nothing here is clamped or corrected (`Docs/Contract.md` — Invalid states
 /// fail loud).
 enum LayerError: Error, Equatable {
+    /// Layer IDs are unique within a page — the document-level "Page IDs are
+    /// unique and stable" rule, one level down.
+    case duplicateLayerID(pageID: UUID, layerID: UUID)
     /// A page has exactly one `ink` layer.
     case notExactlyOneInkLayer(pageID: UUID, count: Int)
     /// The page's single `ink` layer is always last: ink renders above every
