@@ -74,6 +74,20 @@ final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
     /// correct one.
     var staticLayersForPage: ((Int) -> [LayerEnvelope])?
 
+    /// Supplies the page-space facts a page's canvas is built with: that page's
+    /// own geometry, and the document's zoom cap.
+    ///
+    /// A third question rather than a field on `PageContent`, for the reason
+    /// `staticLayersForPage` is a second: it changes on a different occasion
+    /// from ink — never, in fact, after the page exists — and it is needed at
+    /// canvas construction, which is before any content decision has been
+    /// taken.
+    ///
+    /// `nil`, or an index the session does not know, answers
+    /// `PageProjection.canonical` — a runtime hosted without a document behind
+    /// it, which is every test that drives this controller directly.
+    var projectionForPage: ((Int) -> PageProjection)?
+
     /// Reports that a live page's drawing changed. The index is the page's, and
     /// nothing else travels with it (`Contract.md` — Saving).
     var onDrawingChanged: ((Int) -> Void)?
@@ -287,6 +301,53 @@ final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
 
     // MARK: - Windowing
 
+    /// ## Mixed geometry, and why a slot is still one viewport wide
+    ///
+    /// Geometry is per page since phase 3b, and mixed geometry is the normal
+    /// state of an annotated import rather than an edge case: swiping past the
+    /// last page of a landscape PDF appends a blank *canonical portrait* page.
+    /// So the arithmetic below has to be a decision rather than an assumption,
+    /// and the decision is: **a slot is one viewport wide, always, whatever the
+    /// page in it measures. The page varies inside its slot, not the slot.**
+    ///
+    /// A page canvas fills its slot and fits its own page inside itself — its
+    /// zoom floor and its opening fit-width scale come from its own geometry,
+    /// and `PageCanvasController.centerPageInViewport` centres what is left
+    /// over. A landscape page therefore opens at its own fit-width and leaves
+    /// room above and below; a portrait page beside it opens at a different
+    /// scale and fills more of the height. Neighbours never bleed into the
+    /// slot: nothing is ever partly visible, so nothing has to be decided about
+    /// how two differently sized pages sit against each other.
+    ///
+    /// The alternative — a slot as wide as its page, so the run of pages is a
+    /// filmstrip of true relative sizes — was rejected, and the price is worth
+    /// stating because it is not small:
+    ///
+    /// - `isPagingEnabled` snaps on multiples of the scroll view's *bounds*
+    ///   width. Variable slots mean turning that off and re-deriving the snap
+    ///   in `scrollViewWillEndDragging(targetContentOffset:)`. That is a
+    ///   hand-written gesture arbitration replacing one obtained from the
+    ///   framework — which is exactly what `Contract.md` — Navigation says it
+    ///   takes from `UIScrollView` "rather than from gesture recognizers of
+    ///   ours", and the rule that "there is no resting position between two
+    ///   pages" would become ours to keep rather than the framework's.
+    /// - Every offset here is `bounds.width × index`: `scrollTo`, `settle`'s
+    ///   rounding, and the append trigger's "past the last page's trailing
+    ///   edge". All three become prefix sums over page widths, and `settle`
+    ///   becomes a search rather than a rounding.
+    /// - It would also mean deciding a *scale*: a page's slot width in view
+    ///   points is a rendering choice, not a durable fact, so a filmstrip has
+    ///   to pick one points-per-page-point for the whole document and then
+    ///   answer what happens when a page is wider than the viewport at it.
+    ///
+    /// None of that is bought by anything this milestone needs, and all of it
+    /// is reversible: nothing durable and nothing in `PageCanvasController`
+    /// assumes a uniform slot — only these three lines do.
+    ///
+    /// What is genuinely undecidable here is whether it *feels* right to turn
+    /// from a portrait page to a landscape one and have the scale change under
+    /// you. That is a maintainer's verdict on a physical iPad; `Docs/Unproven.md`
+    /// carries it.
     private func updateContentSize() {
         scrollView.contentSize = CGSize(
             width: scrollView.bounds.width * CGFloat(pageCount),
@@ -394,7 +455,11 @@ final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
     }
 
     private func makeCanvas(at index: Int, installing snapshot: DrawingSnapshot?) -> PageCanvasController {
-        let page = PageCanvasController(toolPicker: toolPicker, staticRenderer: staticRenderer)
+        let page = PageCanvasController(
+            toolPicker: toolPicker,
+            projection: projectionForPage?(index) ?? .canonical,
+            staticRenderer: staticRenderer
+        )
 
         addChild(page)
         page.view.frame = slotFrame(for: index)

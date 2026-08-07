@@ -27,8 +27,9 @@ struct EditorSessionTests {
 
         let index = try #require(await scratch.store.load())
         #expect(index.formatVersion == DocumentIndex.currentFormatVersion)
-        #expect(index.pageWidth == PageGeometry.width)
-        #expect(index.pageHeight == PageGeometry.height)
+        #expect(index.pages.map(\.geometry) == [PageGeometry.canonical])
+        #expect(index.zoomCapPagePointsPerPixel
+            == DocumentIndex.canonicalZoomCapPagePointsPerPixel)
         #expect(index.pageIDs == [session.currentPageID])
         #expect(index.currentPageIndex == 0)
     }

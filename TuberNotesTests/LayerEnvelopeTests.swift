@@ -466,9 +466,7 @@ struct LayerEnvelopeTests {
             DocumentIndex(
                 formatVersion: DocumentIndex.currentFormatVersion,
                 documentID: UUID(),
-                pageWidth: PageGeometry.width,
-                pageHeight: PageGeometry.height,
-                pageIDs: pageIDs,
+                pages: pageIDs.map { PageRecord(id: $0, geometry: .canonical) },
                 currentPageIndex: 0
             )
         }

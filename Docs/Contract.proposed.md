@@ -225,7 +225,10 @@ loophole so that the next cache proposal has to meet the same test. **This is
 what kills the launch-snapshot idea**: a composite containing ink either
 restates the ink or omits it, and both are failures.
 
-## A8. *Geometry and coordinates* — per-page geometry — **AHEAD (phase 3)**
+## A8. *Geometry and coordinates* — per-page geometry — **FORCED (phase 3b, code is written and green)**
+
+*Adopt with the corrections at the end of this file: where geometry lives, and
+how mixed slots lay out.*
 
 Replace:
 
@@ -268,7 +271,10 @@ real cost: `PageGeometry` is a global static consumed at canvas construction,
 and paging arithmetic assumes uniform screen-width slots; this amendment is
 the expensive one to implement, not the expensive one to write.
 
-## A9. *Geometry and coordinates* — the absolute zoom cap — **AHEAD (phase 3)**
+## A9. *Geometry and coordinates* — the absolute zoom cap — **FORCED (phase 3b, code is written and green)**
+
+*Adopt with the corrections at the end of this file: the value is bounded by a
+measured `PKCanvasView` clamp, and an unhonourable cap is refused at load.*
 
 Add:
 
@@ -565,19 +571,170 @@ Recorded so the absence is deliberate rather than forgotten:
 3. **A10 is written as if the spike passed.** It has not run. Adopt it only
    after phase 4's device spike confirms PencilKit tolerates foreign undo
    registrations.
-4. **A8 is the expensive one.** Its text is short and its implementation
-   threads geometry through page construction and makes paging slots
-   per-page. Worth confirming you want it in phase 3 rather than earlier or
-   later. **It has not landed**, so today an imported PDF page is fitted into
-   the canonical portrait page and centred — a landscape source arrives
-   letterboxed rather than as a landscape page. A13's unit-square decision was
-   made so that adopting A8 later changes no durable payload.
+4. **A8 is the expensive one, and it has now landed.** The letterboxing is
+   gone: an imported PDF page carries its source's size in page points, and
+   A13's unit-square payload needed no reconciliation, as predicted. Two calls
+   inside it are worth your eye rather than your assent — geometry lives in
+   `document.plist` per page rather than in the page file, and a paging slot
+   stayed one viewport wide. Both are argued at the end of this file.
 5. **A13's unit-square-versus-point-size call.** Recorded in full in A13
    because the case for storing the source page's point size is genuinely
    stronger for PDF than it was for images, and this is the call most worth
    overruling if the reasoning does not convince. One field and one migration
    either way.
-6. **`CoreGraphics` joined the contract checker's banned-import list**, with
+6. **The zoom cap's value was decided by a framework limit, not by taste.**
+   `PKCanvasView` silently clamps `maximumZoomScale` to 10, so 20 device pixels
+   per page point is the deepest zoom that exists at all, and the cap is pinned
+   there. If you want deeper zoom than that, it is a different ink surface, not
+   a different constant — worth knowing before any lens work is priced.
+7. **`CoreGraphics` joined the contract checker's banned-import list**, with
    `PDFSource.swift` as its one allowlist entry. It is not a UI framework, so
    it stretches the rule's name to serve the rule's purpose; deleting the entry
    is one line, and doing so makes any file able to import it unnoticed.
+
+---
+
+# Corrections after phase 3b (per-page geometry and the durable zoom cap)
+
+A8 and A9 are now **FORCED**: the code implementing them is written and green.
+Both are adopted as drafted except where this section says otherwise. The
+corrections below are what the implementation forced, and each says which
+sentence of the draft it replaces.
+
+## A8 correction — the sentence about where geometry lives
+
+A8 says nothing about the durable home, and the fork doc says "the page file is
+the obvious home". **It went in the index instead**, one `{ id, geometry }`
+record per page in `document.plist`, and that is a decision worth ratifying
+rather than a detail.
+
+The reason is the paging arithmetic, not tidiness. `PagedCanvasController`
+sizes its scroll content and places every slot before any page outside the live
+window has been read, and page files are read lazily precisely because reading
+them all is the whole-document read *Durable form* exists to prevent. Geometry
+in the page file leaves two options and both are worse: read every page file at
+open, so opening a notebook scales with its total size; or lay pages out at a
+guessed size and re-lay them as their files arrive, which moves the content
+offset of every later page under the user's finger, mid-scroll.
+
+It costs nothing in writes — geometry is immutable after page creation, and
+creating a page already rewrites the index because page order changed — and it
+keeps the no-duplication rule true, because a page file still holds only its own
+ID and its layer list.
+
+Add to *Durable form*, replacing "`document.plist` holds the format version,
+`documentID`, page geometry, an ordered list of page IDs, and the current page
+index":
+
+> `document.plist` holds the format version, `documentID`, an ordered list of
+> pages — each its ID and **its own geometry** — the current page index, and the
+> document's absolute zoom cap. A page file holds no geometry: the index is the
+> one file read whole at open, and page files are read lazily, so geometry in a
+> page file would either make opening a notebook scale with its total size or
+> make a page's position depend on what had finished loading.
+
+## A8 correction — mixed slots, decided
+
+A8 and the fork doc both say paging "makes slot layout per-page" and leave the
+layout undecided. It is decided now, and in the other direction:
+
+> A slot in the paging scroll view is **one viewport wide, always, whatever the
+> page in it measures**. The page varies inside its slot, not the slot. A page
+> canvas fills its slot and fits its own page inside itself — its zoom floor and
+> its opening scale come from its own geometry — and the room left over is
+> centred.
+
+Priced, because the alternative is real: a filmstrip of true relative widths
+means turning off `isPagingEnabled` and re-deriving the snap in
+`scrollViewWillEndDragging(targetContentOffset:)`, which is a hand-written
+gesture arbitration replacing one *Navigation* deliberately takes from
+`UIScrollView`; it turns three offset computations into prefix sums and `settle`
+from a rounding into a search; and it forces a document-wide points-per-page-point
+choice that is a rendering decision, not a durable fact. Nothing durable and
+nothing in `PageCanvasController` assumes a uniform slot — three lines in
+`PagedCanvasController` do — so it is reversible when something needs it.
+
+## A8 correction — its third replacement conflicts with A6b, and A6b is right
+
+**Do not adopt A8's replacement for the "Rotation, crop, PDF source
+coordinates, normalized coordinates, and annotation anchors do not exist"
+sentence.** A8 proposes:
+
+> Crop, normalized coordinates, and annotation anchors do not exist. **PDF and
+> image source coordinates do exist**: each asset-backed layer owns exactly one
+> invertible mapping from its source space to page space.
+
+A6b proposes the opposite of both halves:
+
+> Crop, PDF source coordinates, and annotation anchors do not exist. An
+> asset-backed layer's transform maps its source's unit square into page space,
+> and may rotate; nothing else is authored in normalized coordinates, and no
+> other space is normalized.
+
+**The code does A6b.** An asset-backed layer's `pageSpaceTransform` maps the
+source's *unit square* — a normalized space — into page space; it does not map
+source points, and no durable value anywhere states a source's extent. A8 was
+drafted before A13 settled the unit-square payload and its sentence describes
+the design A13 rejected. Phase 3b therefore landed A8's geometry paragraphs and
+left that sentence alone, so `Contract.md` still carries the pre-A6b wording and
+still lags the code by exactly A6b's edit — which is A6b's to close, not this
+lane's.
+
+## A9 correction — the units stand, the value is not free
+
+A9's text stands as drafted. The value does not follow from taste:
+
+> **`PKCanvasView` silently refuses a `maximumZoomScale` above 10.** Measured,
+> undocumented, and invisible unless the value is read back — a plain
+> `UIScrollView` keeps whatever it is given. The cap is therefore pinned at **a
+> twentieth of a page point per pixel**: twenty device pixels per page point,
+> which is exactly what the framework will deliver at the 2× grid every iPad
+> has. A document may not pin a cap finer than the runtime can honour, and one
+> that does is refused at load rather than opened and quietly given less.
+
+Two consequences worth stating plainly, because both correct the draft's own
+reasoning:
+
+- The old cap was **less viewport-dependent than A9 claims**. `fitWidth × 8`
+  exceeds 10 whenever fit-width exceeds 1.25, which is every iPad in portrait,
+  so most devices were already sitting on the framework's clamp rather than on
+  the arithmetic. The complaint is still right — the smallest iPad in portrait
+  fell short of the clamp at ≈ 9.7, and Split View moved it further — but the
+  spread was narrower than "it changes with device, rotation, and Split View"
+  suggests.
+- **Nothing gains detail by pinning the cap**, because the clamp was already
+  the effective ceiling. What is gained is that the ceiling is now a *stated*
+  number a durable claim can rest on, which is exactly what A9 was for. Any
+  future design that wants deeper zoom than 20 px per page point needs a
+  different ink surface, not a different constant.
+
+## A9 correction — where an unhonourable cap is refused
+
+Add, after A9's paragraph:
+
+> A cap finer than the canvas runtime will deliver is an invalid durable state
+> and is refused when the index is validated, so it surfaces as a document that
+> will not open rather than as a canvas that quietly gives less. The canvas
+> reads its accepted `maximumZoomScale` back and fails loud if it was clamped,
+> which is the belt to that braces.
+
+## The index format version is bumped; the page file's was not
+
+Phase 3a split `layers/` out of the page file without bumping anything, because
+a page file carries no version field. The index does, and this is what it is
+for: a build predating per-page geometry must refuse a version 3 index saying
+"this document was written by a newer version", not fail to find a `pageIDs` key
+and report that the index will not decode. `DocumentIndex` reads version 2 and
+version 3, writes only version 3, and `DocumentStore` remembers that the index it
+loaded was superseded and writes it forward on the first save that follows —
+phase 1's precedent, unchanged, at one level up.
+
+## What A8 did *not* need
+
+- **No amendment for the appended page.** *Navigation* already says swiping past
+  the last page yields a blank writable page; that page takes the canonical
+  geometry, which is a consequence of A8 rather than a new rule.
+- **No amendment for `PageSpaceTransform`.** An imported page's `pdf` layer now
+  carries `{ a: pageWidth, d: pageHeight, tx: 0, ty: 0 }` — the unit square edge
+  to edge — where under one document-wide geometry it was a letterbox. A13's
+  unit-square decision needed no reconciliation, exactly as A13 predicted.

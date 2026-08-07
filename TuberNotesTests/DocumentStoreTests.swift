@@ -96,7 +96,10 @@ struct DocumentStoreTests {
 
         try await Task.sleep(for: .milliseconds(1100))
         let appended = UUID()
-        let grown = first.withPages(first.pageIDs + [appended], currentPageIndex: 1)
+        let grown = first.withPages(
+            first.pages + [PageRecord(id: appended, geometry: .canonical)],
+            currentPageIndex: 1
+        )
         try await store.save(index: grown, changedPages: [appended: inkLayer(Data([0x03]))])
 
         #expect(try scratch.modificationDateOfIndex() != before)
@@ -150,16 +153,110 @@ struct DocumentStoreTests {
         #expect(try await scratch.store().load() == index)
     }
 
-    @Test("A grown page height is refused rather than written")
-    func grownHeightIsRefused() async throws {
-        let scratch = try Scratch()
-        let store = scratch.store()
-        let tall = scratch.index(pageHeight: PageGeometry.height * 3)
+    /// Phase 3b deletes the rule this test used to assert — "geometry equals
+    /// the application's canonical page, with `pageWidth < pageHeight`". A page
+    /// three times as tall as the canonical one is now a page, as is a
+    /// landscape one, because an imported page's geometry is its source's. What
+    /// is still refused is a geometry that is not a rectangle of finite points.
+    @Test("A geometry that is not a page is refused rather than written")
+    func invalidGeometryIsRefused() async throws {
+        for geometry in [
+            PageGeometry(width: PageGeometry.canonical.width, height: 0),
+            PageGeometry(width: 0, height: PageGeometry.canonical.height),
+            PageGeometry(width: .nan, height: PageGeometry.canonical.height),
+            PageGeometry(width: PageGeometry.canonical.width, height: .infinity),
+        ] {
+            let scratch = try Scratch()
+            let store = scratch.store()
+            let bad = scratch.index(geometry: geometry)
 
-        await #expect(throws: (any Error).self) {
-            try await store.save(index: tall, changedPages: [tall.pageIDs[0]: inkLayer(Data([0x01]))])
+            await #expect(throws: (any Error).self) {
+                try await store.save(
+                    index: bad,
+                    changedPages: [bad.pageIDs[0]: inkLayer(Data([0x01]))]
+                )
+            }
+            #expect(try await scratch.store().load() == nil)
         }
-        #expect(try await scratch.store().load() == nil)
+    }
+
+    @Test("A page taller, wider, or landscape relative to the canonical page is written")
+    func unconventionalGeometryIsWritten() async throws {
+        for geometry in [
+            PageGeometry(width: PageGeometry.canonical.width, height: PageGeometry.canonical.height * 3),
+            PageGeometry(width: 842, height: 595),
+            PageGeometry(width: 595.276, height: 841.89),
+        ] {
+            let scratch = try Scratch()
+            let store = scratch.store()
+            let index = scratch.index(geometry: geometry)
+
+            try await store.save(
+                index: index,
+                changedPages: [index.pageIDs[0]: inkLayer(Data([0x01]))]
+            )
+
+            #expect(try await scratch.store().load()?.pages.first?.geometry == geometry)
+        }
+    }
+
+    /// Read both forms, write forward on the next save, never migrate eagerly —
+    /// phase 1's precedent, now at the index. Opening a pre-per-page-geometry
+    /// document must not touch it; the first save that follows must write it
+    /// forward, whether or not anything about the document changed.
+    @Test("A superseded index is read untouched and written forward by the next save")
+    func supersededIndexIsWrittenForwardOnNextSave() async throws {
+        let scratch = try Scratch()
+        let pageID = UUID()
+        try scratch.createDirectories()
+        try scratch.writeRawPage(pageID, drawingData: Data([0x07]))
+        try scratch.writeLegacyIndex(
+            pageIDs: [pageID],
+            geometry: PageGeometry(width: 595, height: 842)
+        )
+        let before = try scratch.modificationDateOfIndex()
+
+        let store = scratch.store()
+        let loaded = try #require(try await store.load())
+        #expect(loaded.pages.map(\.geometry) == [PageGeometry(width: 595, height: 842)])
+        // Opening migrates nothing: the file on disk is byte-for-byte what it
+        // was.
+        #expect(try scratch.modificationDateOfIndex() == before)
+        #expect(try scratch.rawIndexKeys().contains("pageIDs"))
+
+        try await Task.sleep(for: .milliseconds(1100))
+        try await store.save(index: loaded, changedPages: [pageID: inkLayer(Data([0x08]))])
+
+        #expect(try scratch.modificationDateOfIndex() != before)
+        let keys = try scratch.rawIndexKeys()
+        #expect(keys.contains("pages"))
+        #expect(!keys.contains("pageIDs"))
+        // And the geometry survived the migration rather than being replaced
+        // with the canonical page.
+        let reloaded = try #require(try await scratch.store().load())
+        #expect(reloaded.pages.map(\.geometry) == [PageGeometry(width: 595, height: 842)])
+        #expect(!reloaded.wasReadInSupersededForm)
+    }
+
+    /// The other half of write-forward: once migrated, the index is not
+    /// rewritten again by a save that changes nothing about it.
+    @Test("A migrated index is not rewritten by the save after it")
+    func migratedIndexIsNotRewrittenAgain() async throws {
+        let scratch = try Scratch()
+        let pageID = UUID()
+        try scratch.createDirectories()
+        try scratch.writeRawPage(pageID, drawingData: Data([0x07]))
+        try scratch.writeLegacyIndex(pageIDs: [pageID], geometry: .canonical)
+
+        let store = scratch.store()
+        let loaded = try #require(try await store.load())
+        try await store.save(index: loaded, changedPages: [pageID: inkLayer(Data([0x08]))])
+        let afterMigration = try scratch.modificationDateOfIndex()
+
+        try await Task.sleep(for: .milliseconds(1100))
+        try await store.save(index: loaded, changedPages: [pageID: inkLayer(Data([0x09]))])
+
+        #expect(try scratch.modificationDateOfIndex() == afterMigration)
     }
 
     @Test("An out-of-range current page index is rejected rather than clamped")
@@ -247,14 +344,14 @@ struct DocumentStoreTests {
         func index(
             pageIDs: [UUID]? = nil,
             currentPageIndex: Int = 0,
-            pageHeight: Double = PageGeometry.height
+            geometry: PageGeometry = .canonical
         ) -> DocumentIndex {
             DocumentIndex(
                 formatVersion: DocumentIndex.currentFormatVersion,
                 documentID: documentID,
-                pageWidth: PageGeometry.width,
-                pageHeight: pageHeight,
-                pageIDs: pageIDs ?? [defaultPageID],
+                pages: (pageIDs ?? [defaultPageID]).map {
+                    PageRecord(id: $0, geometry: geometry)
+                },
                 currentPageIndex: currentPageIndex
             )
         }
@@ -281,6 +378,39 @@ struct DocumentStoreTests {
             try encoder.encode(ink).write(to: layerURL(ink.layerID), options: .atomic)
             let page = PageFile(pageID: pageID ?? fileName, layerIDs: [ink.layerID])
             try encoder.encode(page).write(to: pageURL(fileName), options: .atomic)
+        }
+
+        /// A pre-per-page-geometry index: page order and one document-wide
+        /// geometry, under format version 2. The test owns the fixture type for
+        /// a superseded form, exactly as `LegacyPageFile` does — `DocumentIndex`
+        /// itself can only ever write the current one.
+        func writeLegacyIndex(pageIDs: [UUID], geometry: PageGeometry) throws {
+            try FileManager.default.createDirectory(
+                at: documentURL,
+                withIntermediateDirectories: true
+            )
+            let legacy: [String: Any] = [
+                "formatVersion": 2,
+                "documentID": documentID.uuidString,
+                "pageWidth": geometry.width,
+                "pageHeight": geometry.height,
+                "pageIDs": pageIDs.map(\.uuidString),
+                "currentPageIndex": 0,
+            ]
+            try PropertyListSerialization
+                .data(fromPropertyList: legacy, format: .binary, options: 0)
+                .write(to: indexURL, options: .atomic)
+        }
+
+        /// What the index file actually says, so "written forward" is an
+        /// assertion about bytes rather than about a decoded value.
+        func rawIndexKeys() throws -> Set<String> {
+            let raw = try PropertyListSerialization.propertyList(
+                from: Data(contentsOf: indexURL),
+                options: [],
+                format: nil
+            ) as? [String: Any]
+            return Set((raw ?? [:]).keys)
         }
 
         func modificationDate(ofPage pageID: UUID) throws -> Date {

@@ -76,7 +76,9 @@ JustACanvas.tubernotes/
   pages/<pageID>.plist    one file per page: its own pageID and its ordered layer envelopes, inline
 ```
 
-`document.plist` holds the format version, `documentID`, page geometry, an ordered list of page IDs, and the current page index.
+`document.plist` holds the format version, `documentID`, an ordered list of pages — each its ID and **its own geometry** — the current page index, and the document's absolute zoom cap. A page file holds no geometry: the index is the one file read whole at open and page files are read lazily, so geometry in a page file would either make opening a notebook scale with its total size or make a page's position in the paging run depend on what had finished loading.
+
+The index is read in two forms and written in one: a pre-per-page-geometry index carries one document-wide geometry and is read as that geometry on every page, and the next save writes it forward. It is never migrated eagerly.
 
 A page is an ordered list of layers. A layer is one durable envelope, uniform across kinds: `{ layerID, kind, payload, pageSpaceTransform }`. Envelopes are inlined in the page file; per-layer files arrive with the first heavy kind, not before.
 
@@ -95,7 +97,7 @@ A page is an ordered list of layers. A layer is one durable envelope, uniform ac
 - **Page IDs are unique and stable within a document** 
 - **The current page index must address an existing page.**
 
-Geometry fields are finite page points greater than zero, with `pageWidth < pageHeight`, and equal the application's canonical geometry. 
+Geometry fields are finite page points greater than zero. `pageWidth < pageHeight` is not a rule: landscape sources exist, and neither is equality with the application's canonical geometry, which only a page this application created itself has.
 
 `nil` from `load` means no document exists; an invalid file is a failure, never `nil`. 
 
@@ -141,13 +143,17 @@ Durability is strict:
 
 ## Geometry and coordinates
 
-The page does not grow. `pageWidth` and `pageHeight` are fixed at creation. No existing owner mutates geometry: `EditorSession` holds no height state, and `PageCanvasController` writes `contentSize` exactly once, at construction. The zoom floor derives from the fixed page, so the viewport cannot drift.
+The page does not grow. **Geometry is per page**, set at page creation and immutable afterward: a blank page gets the canonical size, an imported page gets its source's size in page points. No owner mutates geometry after creation: `EditorSession` holds no height state, and `PageCanvasController` is told its page's geometry at construction, writes `contentSize` exactly once from it, and has no setter for it. The zoom floor derives from the page it belongs to, so the viewport cannot drift.
 
-More writing surface comes from turning to the next page. Supporting flexible geometry (landscape, A4, an imported source) requires a `CONTRACT:` amendment defining per-document geometry.
+More writing surface comes from turning to the next page.
+
+Mixed geometry is the ordinary case, not an edge case: swiping past the last page of an imported PDF appends a blank canonical page, so a portrait page after a landscape worksheet is the normal state of any annotated import. A slot in the paging scroll view is one viewport wide, always, whatever the page in it measures; the page varies inside its slot, not the slot. A page canvas fills its slot, fits its own page inside itself, and centres the room left over. Reimplementing the snap for variable-width slots would take back from `UIScrollView` the gesture arbitration *Navigation* deliberately obtains from it.
+
+**The absolute zoom cap is a durable document constant**, in page points per pixel. It was `fitWidth × 8`, a function of the viewport — it changed with device, rotation, and Split View — so nothing durable could be derived from it. Anything that must reason about a maximum reachable detail level reads the durable cap, never a viewport-derived one. A document may not pin a cap finer than the canvas runtime will deliver: `PKCanvasView` silently refuses a `maximumZoomScale` above 10, so twenty device pixels per page point is the deepest zoom that exists at the display scale every iPad has. A finer cap is an invalid durable state — the document promises detail the canvas quietly does not give — and is refused when the index is validated.
 
 | Space | Owner | Durable |
 |---|---|---:|
-| Page space | the document's width and height | yes |
+| Page space | the page's own width and height | yes |
 | Canvas space | `PageCanvasController` | no |
 | View space | UIKit view hierarchy | no |
 

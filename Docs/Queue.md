@@ -191,7 +191,15 @@ Hand-exercise on the named iPad and record, before asking for a verdict:
 - at fit-width a horizontal swipe turns the page; zoomed in and away from an
   edge it pans instead;
 - turning continuously for a few minutes does not grow memory without bound,
-  and the save trace names only changed pages.
+  and the save trace names only changed pages;
+- **mixed geometry**, since phase 3b: import a landscape PDF, swipe past its
+  last page to append a blank canonical portrait one, and turn back and forth
+  across the seam. A slot stayed one viewport wide and the page varies inside
+  it, so the *scale* changes at the seam. Whether that reads as correct or as a
+  glitch, and whether the grey either side of a narrower page is comfortable,
+  is the part no simulator can answer;
+- the zoom ceiling — now twenty device pixels per page point on every device
+  rather than fit-width × 8 — is deep enough to write small at.
 
 **Exit:** Phillip accepts the turn feel, or returns bounded findings.
 
