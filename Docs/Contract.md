@@ -55,7 +55,7 @@ Golden rules:
 2. SwiftUI never mirrors `PKDrawing`, pan, zoom, or Pencil samples.
 3. `DocumentStore` receives immutable values and never reaches into a canvas.
 4. `PageCanvasController` never reads or writes files.
-5. `EditorSession` coordinates owners and keeps no second mutable drawing. A page with a live canvas has exactly one authority, that canvas. A page without one — retired from the live window, not yet saved — may be held as an immutable value, which is custody rather than a second copy.
+5. A value's content has exactly one authority: its live controller, if one exists; otherwise the immutable value in the session's custody, which is custody rather than a second copy. A page with a live canvas has exactly one authority, that canvas. A page's layer *list* — order, membership — has one writer, `EditorSession`, exactly as page order does.
 6. Recreating a SwiftUI view never recreates a live canvas controller or its undo manager.
 7. A `PageCanvasController` owns exactly one page's live drawing and renders the geometry it is given. It is blind to page numbers and turns: it is told, and never asks.
 8. `EditorLifecycle` owns the UIKit background-execution lease and nothing else.
@@ -73,12 +73,19 @@ A document is a directory:
 ```text
 JustACanvas.tubernotes/
   document.plist          the index
-  pages/<pageID>.plist    one file per page
+  pages/<pageID>.plist    one file per page: its own pageID and its ordered layer envelopes, inline
 ```
 
 `document.plist` holds the format version, `documentID`, page geometry, an ordered list of page IDs, and the current page index.
 
-A page file holds its own `pageID` and its opaque drawing bytes
+A page is an ordered list of layers. A layer is one durable envelope, uniform across kinds: `{ layerID, kind, payload, pageSpaceTransform }`. Envelopes are inlined in the page file; per-layer files arrive with the first heavy kind, not before.
+
+- **The set of kinds is closed.** The only kind is `ink`. Adding a kind is a new case plus a `CONTRACT:` amendment — there is no metadata bag, no extension payload, and no field a shipped kind does not read.
+- **An unknown kind on load refuses the layer, not the document.** The layer is a typed refused state, the page refuses input while it carries one, and every other page opens normally. A refused layer is never silently dropped, rewritten, or carried blind through a save: a save of a page carrying one is refused.
+- **A page has exactly one `ink` layer, and it is last in the list.**
+- **The `ink` layer's `pageSpaceTransform` is identity, always.** Ink is authored in page space; a non-identity ink transform is an invalid state and fails loud.
+- **A page is editable exactly when its ink layer is editable and no layer is refused or unreadable.**
+- The pre-layer page form (bare drawing bytes) is read as a one-ink-layer page and written forward on the page's next save, never migrated eagerly.
 
 - **A save writes only what changed.** One changed page writes one page file, and the index is rewritten only if page order or the current index changed. Rewriting an unchanged page file is a defect rather than an inefficiency: it is the whole-document rewrite this format exists to prevent.
 - **Every individual write is atomic**, by temporary file and rename. There is no atomicity across files, and the format is built so none is needed.
