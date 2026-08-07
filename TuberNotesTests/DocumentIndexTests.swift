@@ -20,16 +20,12 @@ struct DocumentIndexTests {
 
     @Test("A page file round trips unchanged")
     func pageRoundTrip() throws {
+        // Since phase 3 a page file is its own ID and an ordered list of layer
+        // IDs; the envelopes are one file each under `layers/`. Order is part
+        // of the value — it is z-order — so the round trip has to keep it.
         let original = PageFile(
             pageID: UUID(),
-            layers: [
-                LayerEnvelope(
-                    layerID: UUID(),
-                    kind: .ink,
-                    payload: Data((0..<1024).map { UInt8($0 % 251) }),
-                    pageSpaceTransform: .identity
-                )
-            ]
+            layerIDs: (0..<4).map { _ in UUID() }
         )
 
         let encoder = PropertyListEncoder()
@@ -38,6 +34,8 @@ struct DocumentIndexTests {
             .decode(PageFile.self, from: encoder.encode(original))
 
         #expect(decoded == original)
+        #expect(decoded.layerIDs == original.layerIDs)
+        #expect(decoded.inlineLayers == nil)
     }
 
     @Test("Only format version 2 is supported")

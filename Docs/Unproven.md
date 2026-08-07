@@ -78,6 +78,29 @@ Nothing here is a reason not to ship. It is a reason not to be surprised.
   source's pixel size deliberately not stored) is the shape the compositor
   actually wants is unproven until phase 2's rendering half lands against it.
   No image has been imported through any UI, because there is none.
+- **No `pdf` layer has ever been seen either, and the same doubt is larger.**
+  The kind is durable — one import becomes one page per source page, the asset
+  is written once and never rewritten, refs round-trip with their source page
+  index and their placement — and **nothing rasterizes a PDF page anywhere in
+  this build**. `PDFSource` counts pages and measures boxes; that is all. The
+  decision most exposed by the absence is the unit-square payload: whether a
+  renderer, a lens, and hit-testing want the source page's point size durably
+  is exactly what phase 3's rendering half will find out, and the argument for
+  storing it is stronger for PDF than it was for images (a PDF page has an
+  intrinsic size; a bitmap does not). It is one field and one migration to
+  reverse. **Also unproven: that CropBox-with-`/Rotate` is the rectangle users
+  mean** — no PDF with a CropBox smaller than its MediaBox, and no rotated
+  page, has been imported from the wild; both are simulator fixtures.
+- **Imported pages are letterboxed into the canonical portrait page**, because
+  per-page geometry (A8) has not landed. A landscape worksheet imports as a
+  landscape rectangle centred in a portrait page rather than as a landscape
+  page. This is a known missing amendment, not a defect in the import path,
+  and the payload was chosen so that adopting A8 changes nothing durable.
+- **The exit test proves which bytes moved, and nothing about time.** "Ink on
+  page 4 of a large import writes one small file" is asserted as a set of
+  files; that the resulting save is *fast*, on a device, with a 50 MB import
+  and a real Pencil, is unmeasured — as is everything else in *No numbers
+  exist*.
 
 ## Nothing exercises a touch
 

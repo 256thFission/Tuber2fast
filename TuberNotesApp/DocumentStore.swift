@@ -9,11 +9,14 @@ import Foundation
 /// The store never reaches into the canvas. It receives complete immutable
 /// values and returns only after they are durable.
 ///
-/// A document is a directory: one index file, one file per page under
-/// `pages/`, and the imported originals under `assets/`. Every individual write
-/// is atomic; there is no atomicity across files, and none is needed because
-/// writes go leaf to root — assets, then page files, then the index — so an
-/// interrupted save leaves an orphan at some level and a dangling ref at none.
+/// A document is a directory: one index file, one file per page under `pages/`,
+/// one file per layer under `layers/`, and the imported originals under
+/// `assets/`. Every individual write is atomic; there is no atomicity across
+/// files, and none is needed because writes go leaf to root — assets, then
+/// layer files, then page files, then the index — so an interrupted save leaves
+/// an orphan at some level and a dangling ref at none. Deletion is the mirror,
+/// root to leaf: the page file drops the ref, the layer file dies, the asset
+/// dies last.
 actor DocumentStore {
     private let directoryURL: URL
 
@@ -31,10 +34,15 @@ actor DocumentStore {
 
     private var indexURL: URL { directoryURL.appendingPathComponent("document.plist") }
     private var pagesDirectoryURL: URL { directoryURL.appendingPathComponent("pages") }
+    private var layersDirectoryURL: URL { directoryURL.appendingPathComponent("layers") }
     private var assetsDirectoryURL: URL { directoryURL.appendingPathComponent("assets") }
 
     private func pageURL(_ pageID: UUID) -> URL {
         pagesDirectoryURL.appendingPathComponent("\(pageID.uuidString).plist")
+    }
+
+    private func layerURL(_ layerID: UUID) -> URL {
+        layersDirectoryURL.appendingPathComponent("\(layerID.uuidString).plist")
     }
 
     private func assetURL(_ assetID: UUID, _ format: AssetFormat) -> URL {
@@ -96,14 +104,32 @@ actor DocumentStore {
         return FileManager.default.fileExists(atPath: url.path)
     }
 
+    /// A `pdf` ref always names a file, unlike an image ref: the kind names the
+    /// encoding, so there is no unrecognized format to refuse.
+    private func assetURL(_ ref: PDFLayerRef) -> URL {
+        assetsDirectoryURL.appendingPathComponent(ref.fileName)
+    }
+
+    private func assetExists(_ ref: PDFLayerRef) -> Bool {
+        FileManager.default.fileExists(atPath: assetURL(ref).path)
+    }
+
     /// Deletes an asset no layer references any more — delete-inline
     /// reclamation, the mirror of the write order: the page file drops the ref
     /// first, the asset dies second. Returns whether it deleted anything.
     ///
     /// The question "is anything still referencing this?" is answered from the
-    /// page files on disk, not from memory, and that is what makes the ordering
+    /// files on disk, not from memory, and that is what makes the ordering
     /// sound rather than merely intended: a caller whose page write failed
     /// still has the ref on disk, so the scan finds it and the asset lives.
+    ///
+    /// **Since the split, it scans every layer file, not only the referenced
+    /// ones** — a strictly larger set than "what the pages name", so it can
+    /// only ever be more conservative. That is deliberate. An orphan layer file
+    /// pinning an asset costs bytes; a live layer whose asset was reclaimed
+    /// underneath it costs the document. Pre-split page files still carry their
+    /// envelopes inline, so those are scanned too and a document part-way
+    /// through migration is answered correctly.
     ///
     /// **When it cannot tell, it deletes nothing.** A layer whose kind or
     /// payload this build cannot open might reference any asset, so one
@@ -112,30 +138,76 @@ actor DocumentStore {
     /// gates: deleting the wrong file is a durability failure, and an
     /// unreclaimed asset is merely heavy.
     ///
-    /// Cost: one small decode per page file, at the frequency a user deletes a
-    /// layer. It is not on an interaction path and not on the save path.
+    /// Cost: one small decode per layer file, at the frequency a user deletes a
+    /// layer. It is not on an interaction path and not on the save path. The
+    /// split made this cheaper per file, not dearer: a layer file is one
+    /// envelope, where a page file used to be every envelope on the page
+    /// including its ink.
     @discardableResult
     func deleteAssetIfUnreferenced(assetID: UUID, format: AssetFormat) throws -> Bool {
         let url = assetURL(assetID, format)
         guard FileManager.default.fileExists(atPath: url.path) else { return false }
 
-        if FileManager.default.fileExists(atPath: pagesDirectoryURL.path) {
-            let pageFiles = try FileManager.default.contentsOfDirectory(
-                at: pagesDirectoryURL,
-                includingPropertiesForKeys: nil
+        // Pre-split page files, whose envelopes are still inline.
+        for pageFile in try plistFiles(in: pagesDirectoryURL) {
+            let page = try PropertyListDecoder().decode(
+                PageFile.self,
+                from: Data(contentsOf: pageFile)
             )
-            for pageFile in pageFiles where pageFile.pathExtension == "plist" {
-                let page = try PropertyListDecoder().decode(
-                    PageFile.self,
-                    from: Data(contentsOf: pageFile)
-                )
-                if Self.references(assetID, in: page.layers) { return false }
-            }
+            guard let inline = page.inlineLayers else { continue }
+            if Self.references(assetID, in: inline) { return false }
+        }
+
+        for layerFile in try plistFiles(in: layersDirectoryURL) {
+            let layer = try PropertyListDecoder().decode(
+                LayerEnvelope.self,
+                from: Data(contentsOf: layerFile)
+            )
+            if Self.references(assetID, in: [layer]) { return false }
         }
 
         try FileManager.default.removeItem(at: url)
         CanvasLog.event(.save, "reclaimed asset \(assetID); its last layer was deleted")
         return true
+    }
+
+    /// Deletes one layer's file, if no page still names it — the middle step of
+    /// the root-to-leaf deletion order, between the page file dropping the ref
+    /// and the asset dying.
+    ///
+    /// Referenced-ness is answered from the page files on disk for the same
+    /// reason asset reclamation is: a delete whose page write failed still has
+    /// the layer named on disk, so the scan finds it and the layer file lives.
+    /// The scan is cheap in a way it could not have been before the split — a
+    /// page file is now a list of IDs, so nothing has to decode an envelope to
+    /// answer it.
+    @discardableResult
+    func deleteLayerFileIfUnreferenced(layerID: UUID) throws -> Bool {
+        let url = layerURL(layerID)
+        guard FileManager.default.fileExists(atPath: url.path) else { return false }
+
+        for pageFile in try plistFiles(in: pagesDirectoryURL) {
+            let page = try PropertyListDecoder().decode(
+                PageFile.self,
+                from: Data(contentsOf: pageFile)
+            )
+            if page.layerIDs.contains(layerID) { return false }
+        }
+
+        try FileManager.default.removeItem(at: url)
+        CanvasLog.event(.save, "deleted layer file \(layerID); no page names it")
+        return true
+    }
+
+    /// Every property list directly inside a directory, or nothing at all when
+    /// the directory does not exist — `assets/` and `layers/` are created by
+    /// their first write, so absence is a document that has none, not a fault.
+    private func plistFiles(in directory: URL) throws -> [URL] {
+        guard FileManager.default.fileExists(atPath: directory.path) else { return [] }
+        return try FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: nil
+        ).filter { $0.pathExtension == "plist" }
     }
 
     /// Whether these layers may reference `assetID` — deliberately "may": a
@@ -147,6 +219,12 @@ actor DocumentStore {
             case .ink:
                 continue
             case .image(_, let ref):
+                if ref.assetID == assetID { return true }
+            case .pdf(_, let ref):
+                // One import is one asset and one layer per source page, so an
+                // asset is normally referenced by as many layers as the PDF has
+                // pages. Deleting one of them must not take the file the other
+                // forty-nine are still showing.
                 if ref.assetID == assetID { return true }
             case .refused(let refusal):
                 switch refusal.reason {
@@ -232,22 +310,25 @@ actor DocumentStore {
         guard page.pageID == pageID else {
             throw DocumentIndexError.pageIDMismatch(expected: pageID, found: page.pageID)
         }
-        let validated = try Self.validated(layers: page.layers, pageID: pageID)
+        let validated = try Self.validated(
+            layers: try layers(of: page),
+            pageID: pageID
+        )
 
         // The one check that needs the file system, so it lives here rather
         // than in the pure validation above.
         var refused = validated.refused
-        for image in validated.images where !assetExists(image.ref) {
+        for backed in validated.assetBacked where !assetExists(backed.ref) {
             CanvasLog.event(
                 .lifecycle,
-                "page \(pageID): layer \(image.layer.layerID) references missing "
-                    + "asset \(image.ref.assetID)"
+                "page \(pageID): layer \(backed.layer.layerID) references missing "
+                    + "asset \(backed.ref.assetID)"
             )
             refused.append(
                 RefusedLayer(
-                    layerID: image.layer.layerID,
-                    kind: image.layer.kind,
-                    reason: .missingAsset(image.ref.assetID)
+                    layerID: backed.layer.layerID,
+                    kind: backed.layer.kind,
+                    reason: .missingAsset(backed.ref.assetID)
                 )
             )
         }
@@ -260,12 +341,59 @@ actor DocumentStore {
         )
     }
 
+    /// One page's layer envelopes, wherever they live.
+    ///
+    /// A page file in the current form names its layers and they are one file
+    /// each; a page file written before phase 3 carries them inline and is read
+    /// exactly as written until its next save moves it forward. Both produce
+    /// the same list, so everything downstream of here — validation, refusal
+    /// scoping, the save path's checks — is blind to which form it came from.
+    ///
+    /// **A dangling layer ref is fatal, an orphan layer file is inert.** The
+    /// same rule as page files, one level down: a named layer that is not there
+    /// throws, and a layer file nothing names is simply never read.
+    private func layers(of page: PageFile) throws -> [LayerEnvelope] {
+        if let inline = page.inlineLayers { return inline }
+        return try page.layerIDs.map { layerID in
+            let url = layerURL(layerID)
+            guard FileManager.default.fileExists(atPath: url.path) else {
+                throw LayerError.missingLayerFile(pageID: page.pageID, layerID: layerID)
+            }
+            let envelope = try PropertyListDecoder().decode(
+                LayerEnvelope.self,
+                from: Data(contentsOf: url)
+            )
+            guard envelope.layerID == layerID else {
+                throw LayerError.layerFileIDMismatch(
+                    expected: layerID,
+                    found: envelope.layerID
+                )
+            }
+            return envelope
+        }
+    }
+
+    /// An asset-backed layer's file, resolved. The two questions the store asks
+    /// of every such layer — does the asset exist, and which asset is it — have
+    /// the same answer whatever the kind, so they are asked in one place and
+    /// the kinds converge here.
+    private struct ResolvedAsset: Equatable {
+        let assetID: UUID
+        let fileName: String
+    }
+
+    private func assetExists(_ resolved: ResolvedAsset) -> Bool {
+        FileManager.default.fileExists(
+            atPath: assetsDirectoryURL.appendingPathComponent(resolved.fileName).path
+        )
+    }
+
     /// One page's layers, sorted into what this build can act on.
     private struct ValidatedLayers {
         let ink: LayerEnvelope
         /// Every recognized layer below the ink, in order.
         let staticLayers: [LayerEnvelope]
-        let images: [(layer: LayerEnvelope, ref: ImageLayerRef)]
+        let assetBacked: [(layer: LayerEnvelope, ref: ResolvedAsset)]
         let refused: [RefusedLayer]
     }
 
@@ -292,7 +420,7 @@ actor DocumentStore {
         var refused: [RefusedLayer] = []
         var inkLayers: [LayerEnvelope] = []
         var staticLayers: [LayerEnvelope] = []
-        var images: [(layer: LayerEnvelope, ref: ImageLayerRef)] = []
+        var assetBacked: [(layer: LayerEnvelope, ref: ResolvedAsset)] = []
         for layer in layers {
             switch classify(layer) {
             case .ink(let ink):
@@ -301,8 +429,32 @@ actor DocumentStore {
                 guard envelope.pageSpaceTransform.isInvertible else {
                     throw LayerError.nonInvertibleLayerTransform(layerID: envelope.layerID)
                 }
+                guard let fileName = ref.fileName else {
+                    // `classify` refuses an unrecognized format before it can
+                    // reach here, so this is a defect in this file rather than
+                    // a condition data can produce.
+                    preconditionFailure(
+                        "layer \(envelope.layerID) classified as an image but names no file"
+                    )
+                }
                 staticLayers.append(envelope)
-                images.append((envelope, ref))
+                assetBacked.append(
+                    (envelope, ResolvedAsset(assetID: ref.assetID, fileName: fileName))
+                )
+            case .pdf(let envelope, let ref):
+                guard envelope.pageSpaceTransform.isInvertible else {
+                    throw LayerError.nonInvertibleLayerTransform(layerID: envelope.layerID)
+                }
+                guard ref.sourcePageIndex >= 0 else {
+                    throw LayerError.negativeSourcePageIndex(
+                        layerID: envelope.layerID,
+                        index: ref.sourcePageIndex
+                    )
+                }
+                staticLayers.append(envelope)
+                assetBacked.append(
+                    (envelope, ResolvedAsset(assetID: ref.assetID, fileName: ref.fileName))
+                )
             case .refused(let refusal):
                 refused.append(refusal)
             }
@@ -319,7 +471,7 @@ actor DocumentStore {
         return ValidatedLayers(
             ink: ink,
             staticLayers: staticLayers,
-            images: images,
+            assetBacked: assetBacked,
             refused: refused
         )
     }
@@ -329,6 +481,7 @@ actor DocumentStore {
     private enum LayerClassification {
         case ink(LayerEnvelope)
         case image(LayerEnvelope, ImageLayerRef)
+        case pdf(LayerEnvelope, PDFLayerRef)
         case refused(RefusedLayer)
     }
 
@@ -362,6 +515,22 @@ actor DocumentStore {
                 )
             }
             return .image(layer, ref)
+        case .pdf:
+            let ref: PDFLayerRef
+            do {
+                ref = try PDFLayerRef(payload: layer.payload)
+            } catch {
+                return .refused(
+                    RefusedLayer(
+                        layerID: layer.layerID,
+                        kind: layer.kind,
+                        reason: .unreadablePayload
+                    )
+                )
+            }
+            // No format check, and no format field to check: a `pdf` layer's
+            // asset is a PDF by definition of the kind. See `PDFLayerRef`.
+            return .pdf(layer, ref)
         case nil:
             return .refused(
                 RefusedLayer(layerID: layer.layerID, kind: layer.kind, reason: .unknownKind)
@@ -371,60 +540,84 @@ actor DocumentStore {
 
     // MARK: - Save
 
-    /// Writes the pages whose ink changed, then the index if it changed.
+    /// Writes the layer files that changed, then the page files whose layer
+    /// lists changed, then the index if it changed.
     ///
-    /// The ordering is the contract's, not an optimization: a crash after the
-    /// page writes and before the index write leaves an unreferenced page file,
-    /// which `load` ignores. The reverse order would leave the index naming a
-    /// file that does not exist, which is a document that cannot be opened.
+    /// The ordering is the contract's, not an optimization: leaf to root, so an
+    /// interruption leaves an orphan at some level and a dangling ref at none.
+    /// A crash after the layer writes and before the page write leaves layer
+    /// files nothing names; after the page writes and before the index write,
+    /// a page file nothing names. Both are ignored on load. Every reverse
+    /// order names a file that does not exist, which is a document that cannot
+    /// be opened.
+    ///
+    /// **A save writes only what changed, at the finest granularity the form
+    /// has** — which since the split is one layer. Ink on page 4 of a fifty-page
+    /// import writes page 4's ink layer file and nothing else: not the `pdf`
+    /// envelope beneath it, not page 4's own page file, whose layer list did
+    /// not change, not the other pages, not the asset, not the index. That
+    /// sentence is the whole reason this level exists, and
+    /// `PDFLayerTests.inkOnOnePageWritesOnlyThatPagesInkLayer` is it as an
+    /// assertion.
     ///
     /// Passing a page that did not change is a defect rather than a waste: it is
-    /// the whole-document rewrite this format exists to prevent.
+    /// the whole-document rewrite this format exists to prevent. Passing a page
+    /// whose layers all turn out to be unchanged is not — that is what an
+    /// index-only save looks like from here, and it writes nothing.
     ///
     /// The layer *list* is the caller's — `EditorSession` is its one writer,
     /// exactly as it is page order's — and the store only refuses lists that
-    /// violate the layer invariants. A page whose file on disk carries a
-    /// refused layer is refused outright: writing it would replace a list
-    /// carrying a layer this build cannot re-encode, which is the silent drop
-    /// the layer model forbids. Refusing the save is the smaller mechanism
-    /// than preserving the original envelope bytes through a re-encode, and
-    /// it is behavior-neutral, because a page carrying a refused layer
-    /// refuses input and therefore never has anything to save.
-    func save(index: DocumentIndex, changedPages: [UUID: [LayerEnvelope]]) throws {
+    /// violate the layer invariants. A page whose file on disk names a layer
+    /// this build cannot re-encode, and which this write would drop, is refused
+    /// outright: that is the silent drop the layer model forbids. Refusing the
+    /// save is the smaller mechanism than preserving the original envelope
+    /// bytes through a re-encode, and it is behavior-neutral, because a page
+    /// carrying a refused layer refuses input and therefore never has anything
+    /// to save.
+    func save(index: DocumentIndex, pages: [PageWrite]) throws {
         let validated = try index.validated()
 
-        for pageID in changedPages.keys where !validated.pageIDs.contains(pageID) {
-            throw DocumentIndexError.missingPageFile(pageID)
+        var seenPages = Set<UUID>()
+        for write in pages {
+            guard validated.pageIDs.contains(write.pageID) else {
+                throw DocumentIndexError.missingPageFile(write.pageID)
+            }
+            precondition(
+                seenPages.insert(write.pageID).inserted,
+                "page \(write.pageID) appears twice in one save; a page has one "
+                    + "generation per pass and there is never more than one pass"
+            )
         }
 
-        // Every page is validated before any page is written, so a batch that
-        // would fail cannot leave half its pages already rewritten.
-        for (pageID, layers) in changedPages {
-            let validatedLayers = try Self.validated(layers: layers, pageID: pageID)
-            if let first = validatedLayers.refused.first {
-                throw LayerError.refusedLayerOnSave(layerID: first.layerID, kind: first.kind)
-            }
-            // Leaf-to-root, enforced rather than described: a page file may
-            // not name an asset that is not already durable. With this check,
-            // an interruption anywhere in an import leaves an orphan asset —
-            // inert — and no page file can ever name one that is missing.
-            for image in validatedLayers.images where !assetExists(image.ref) {
-                throw LayerError.danglingAssetRef(
-                    layerID: image.layer.layerID,
-                    assetID: image.ref.assetID
-                )
-            }
-            try refuseIfExistingFileCarriesAnUnrewritableLayer(pageID)
-        }
-
-        try createDirectoriesIfNeeded()
+        // Everything is decided before anything is written, so a batch that
+        // would fail cannot leave half its files already replaced.
+        let plans = try pages.map { try plan(for: $0) }
 
         let encoder = PropertyListEncoder()
         encoder.outputFormat = .binary
 
-        for (pageID, layers) in changedPages {
-            let page = PageFile(pageID: pageID, layers: layers)
-            try encoder.encode(page).write(to: pageURL(pageID), options: .atomic)
+        if plans.contains(where: { !$0.layersToWrite.isEmpty }) {
+            try createDirectoryIfNeeded(layersDirectoryURL)
+        }
+        var layerFilesWritten = 0
+        for plan in plans {
+            for layer in plan.layersToWrite {
+                try encoder.encode(layer).write(
+                    to: layerURL(layer.layerID),
+                    options: .atomic
+                )
+                layerFilesWritten += 1
+            }
+        }
+
+        if plans.contains(where: \.pageFileNeedsWriting) {
+            try createDirectoriesIfNeeded()
+        }
+        var pageFilesWritten = 0
+        for plan in plans where plan.pageFileNeedsWriting {
+            let page = PageFile(pageID: plan.pageID, layerIDs: plan.layerIDs)
+            try encoder.encode(page).write(to: pageURL(plan.pageID), options: .atomic)
+            pageFilesWritten += 1
         }
 
         // The cached index is a hint about disk, never an authority on it. If
@@ -436,52 +629,167 @@ actor DocumentStore {
         let indexNeedsWriting = lastKnownIndex != validated
             || !FileManager.default.fileExists(atPath: indexURL.path)
         if indexNeedsWriting {
+            try createDirectoriesIfNeeded()
             try encoder.encode(validated).write(to: indexURL, options: .atomic)
             lastKnownIndex = validated
         }
 
         CanvasLog.event(
             .save,
-            "wrote \(changedPages.count) page file(s) of \(validated.pageIDs.count); "
-                + "index rewritten=\(indexNeedsWriting)"
+            "wrote \(layerFilesWritten) layer file(s) and \(pageFilesWritten) page "
+                + "file(s) across \(pages.count) changed page(s) of "
+                + "\(validated.pageIDs.count); index rewritten=\(indexNeedsWriting)"
         )
     }
 
-    /// Refuses to overwrite a page file that carries a layer this build could
-    /// not write back — the guarantee that a refused layer is never silently
-    /// dropped, sound by construction rather than by convention.
+    /// Every page written whole: a convenience for the first save of a document
+    /// and for tests, whose subject is validation rather than granularity. It
+    /// is the ordinary path's opposite — "every layer changed" is exactly what
+    /// an ink edit is not — so the autosave path does not use it.
+    func save(index: DocumentIndex, changedPages: [UUID: [LayerEnvelope]]) throws {
+        try save(
+            index: index,
+            pages: changedPages.map { PageWrite(pageID: $0.key, layers: $0.value) }
+        )
+    }
+
+    /// What one page's write will actually touch, decided before anything is
+    /// written.
+    private struct PagePlan {
+        let pageID: UUID
+        let layerIDs: [UUID]
+        let layersToWrite: [LayerEnvelope]
+        let pageFileNeedsWriting: Bool
+    }
+
+    private func plan(for write: PageWrite) throws -> PagePlan {
+        let validatedLayers = try Self.validated(layers: write.layers, pageID: write.pageID)
+        if let first = validatedLayers.refused.first {
+            throw LayerError.refusedLayerOnSave(layerID: first.layerID, kind: first.kind)
+        }
+        // Leaf-to-root, enforced rather than described: no file may name an
+        // asset that is not already durable. With this check, an interruption
+        // anywhere in an import leaves an orphan asset — inert — and no layer
+        // file can ever name one that is missing.
+        for backed in validatedLayers.assetBacked where !assetExists(backed.ref) {
+            throw LayerError.danglingAssetRef(
+                layerID: backed.layer.layerID,
+                assetID: backed.ref.assetID
+            )
+        }
+
+        let existing = try existingPageFile(write.pageID)
+        let layerIDs = write.layers.map(\.layerID)
+
+        // A page file this build has not split yet writes all of its layers
+        // forward, whatever the caller claims changed — the caller is talking
+        // about envelope *values*, and none of these layers has a file yet.
+        // Phase 1's write-forward precedent, one level down: read the old form,
+        // write the new one on the page's next save, never migrate eagerly.
+        let isAlreadySplit = existing.map { $0.inlineLayers == nil } ?? false
+        let layersToWrite = isAlreadySplit
+            ? write.layers.filter { write.changedLayerIDs.contains($0.layerID) }
+            : write.layers
+
+        // The caller's claim about what changed, checked rather than trusted: a
+        // layer this write neither carries nor finds on disk would become a
+        // dangling ref the moment the page file lands.
+        let willBeWritten = Set(layersToWrite.map(\.layerID))
+        for layerID in layerIDs where !willBeWritten.contains(layerID) {
+            guard FileManager.default.fileExists(atPath: layerURL(layerID).path) else {
+                throw LayerError.danglingLayerRef(pageID: write.pageID, layerID: layerID)
+            }
+        }
+
+        try refuseIfThisWriteWouldDropAnUnrewritableLayer(write.pageID, existing, keeping: layerIDs)
+
+        // The page file is bytes about identity and order alone, so it is
+        // rewritten exactly when identity or order changed — or when the file
+        // is in a superseded form, or absent.
+        let pageFileNeedsWriting = existing.map {
+            $0.inlineLayers != nil || $0.layerIDs != layerIDs || $0.pageID != write.pageID
+        } ?? true
+
+        return PagePlan(
+            pageID: write.pageID,
+            layerIDs: layerIDs,
+            layersToWrite: layersToWrite,
+            pageFileNeedsWriting: pageFileNeedsWriting
+        )
+    }
+
+    /// The page file `save` is about to replace, or `nil` if there is none.
+    ///
+    /// A file that cannot be decoded at all rethrows, refusing the save:
+    /// overwriting bytes this build cannot read is a blind drop with a
+    /// different cause. Such a page is `unreadable` in the session and never
+    /// dirties, so a save reaching this is a defect surfacing rather than a
+    /// path to smooth over.
+    private func existingPageFile(_ pageID: UUID) throws -> PageFile? {
+        let url = pageURL(pageID)
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        return try PropertyListDecoder().decode(PageFile.self, from: Data(contentsOf: url))
+    }
+
+    /// Refuses a write that would drop a layer this build could not write back
+    /// — the guarantee that a refused layer is never silently dropped, sound by
+    /// construction rather than by convention.
     ///
     /// "Could not write back", not "refused": a layer refused only because its
     /// **asset** is missing is fully understood as an envelope, and refusing to
     /// rewrite its page would make the page unrepairable, because deleting the
     /// broken layer is the repair and deleting it is a save.
     ///
-    /// The check reads the file `save` is about to replace, so it holds for
-    /// every store instance and every save entry point, not just one that
-    /// happened to `loadPage` first; an in-memory record of refused loads
-    /// would be blind to a page a second store never read. One small decode
-    /// per changed page, on the actor and off the main thread by
-    /// construction, on a path that already does file I/O by design — and it
+    /// Since the split it reads only the layers this write **drops**, which is
+    /// both cheaper and more precise than reading the whole page was: a layer
+    /// the write keeps keeps its own file untouched and cannot be lost by
+    /// anything happening here. It reads the file `save` is about to replace,
+    /// so it holds for every store instance and every save entry point, not
+    /// just one that happened to `loadPage` first; an in-memory record of
+    /// refused loads would be blind to a page a second store never read. It
     /// runs before any write, preserving validation-before-any-write.
     ///
-    /// An existing file that cannot be decoded at all refuses the save the
-    /// same way, by rethrowing: overwriting bytes this build cannot read is
-    /// the same blind drop with a different cause. Such a page is
-    /// `unreadable` in the session and never dirties, so a save reaching
-    /// this is already a defect surfacing, not a path to smooth over.
-    private func refuseIfExistingFileCarriesAnUnrewritableLayer(_ pageID: UUID) throws {
-        let url = pageURL(pageID)
-        guard FileManager.default.fileExists(atPath: url.path) else { return }
-        let existing = try PropertyListDecoder().decode(
-            PageFile.self,
-            from: Data(contentsOf: url)
-        )
-        for layer in existing.layers {
-            guard case .refused(let refusal) = Self.classify(layer),
-                  !refusal.isReconstructable
-            else { continue }
-            throw LayerError.refusedLayerWouldBeLost(pageID: pageID)
+    /// A dropped layer whose *file* is already gone is let through: there is
+    /// nothing left to lose, and the write is the repair for a page whose ref
+    /// was dangling.
+    private func refuseIfThisWriteWouldDropAnUnrewritableLayer(
+        _ pageID: UUID,
+        _ existing: PageFile?,
+        keeping layerIDs: [UUID]
+    ) throws {
+        guard let existing else { return }
+        let kept = Set(layerIDs)
+
+        if let inline = existing.inlineLayers {
+            for layer in inline where !kept.contains(layer.layerID) {
+                try refuseIfUnrewritable(layer, pageID: pageID)
+            }
+            return
         }
+
+        for layerID in existing.layerIDs where !kept.contains(layerID) {
+            let url = layerURL(layerID)
+            guard FileManager.default.fileExists(atPath: url.path) else {
+                CanvasLog.event(
+                    .save,
+                    "page \(pageID) drops layer \(layerID), whose file was already "
+                        + "gone; the write repairs a dangling ref"
+                )
+                continue
+            }
+            let envelope = try PropertyListDecoder().decode(
+                LayerEnvelope.self,
+                from: Data(contentsOf: url)
+            )
+            try refuseIfUnrewritable(envelope, pageID: pageID)
+        }
+    }
+
+    private func refuseIfUnrewritable(_ layer: LayerEnvelope, pageID: UUID) throws {
+        guard case .refused(let refusal) = Self.classify(layer),
+              !refusal.isReconstructable
+        else { return }
+        throw LayerError.refusedLayerWouldBeLost(pageID: pageID)
     }
 
     /// Deletes page files no page ID references. Orphans are inert, so this is

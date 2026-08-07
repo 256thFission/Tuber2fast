@@ -380,18 +380,15 @@ struct ImageLayerTests {
         )
         #expect(session.lastSaveError == nil)
 
-        let page = try PropertyListDecoder().decode(
-            PageFile.self,
-            from: Data(contentsOf: scratch.pageURL(pageID))
-        )
-        #expect(page.layers.count == 2)
-        #expect(page.layers[0].layerID == layerID)
-        #expect(page.layers[0].recognizedKind == .image)
-        #expect(page.layers[1].recognizedKind == .ink, "the ink layer is still last")
+        let layers = try scratch.layersOnDisk(ofPage: pageID)
+        #expect(layers.count == 2)
+        #expect(layers[0].layerID == layerID)
+        #expect(layers[0].recognizedKind == .image)
+        #expect(layers[1].recognizedKind == .ink, "the ink layer is still last")
 
         // The transform is the placement, and it is not identity: a 2:1 source
         // fits the page's width and is centred vertically.
-        let placed = page.layers[0].pageSpaceTransform
+        let placed = layers[0].pageSpaceTransform
         #expect(!placed.isIdentity)
         #expect(placed.isInvertible)
         #expect(placed.a == PageGeometry.width)
@@ -400,7 +397,7 @@ struct ImageLayerTests {
         #expect(placed.ty == (PageGeometry.height - PageGeometry.width / 2) / 2)
 
         // The asset is where the ref says, byte for byte.
-        let ref = try ImageLayerRef(payload: page.layers[0].payload)
+        let ref = try ImageLayerRef(payload: layers[0].payload)
         #expect(try Data(contentsOf: scratch.assetURL(ref.assetID, "png")) == bytes)
     }
 
@@ -443,18 +440,19 @@ struct ImageLayerTests {
             Data([0x01]), format: .png, sourceWidth: 200, sourceHeight: 100
         )
 
-        let page = try PropertyListDecoder().decode(
-            PageFile.self,
-            from: Data(contentsOf: scratch.pageURL(pageID))
+        let ref = try ImageLayerRef(
+            payload: try #require(scratch.layersOnDisk(ofPage: pageID).first).payload
         )
-        let ref = try ImageLayerRef(payload: page.layers[0].payload)
         #expect(FileManager.default.fileExists(atPath: scratch.assetURL(ref.assetID, "png").path))
 
         try await session.deleteLayer(layerID, fromPage: pageID)
 
-        // Root to leaf: the page file dropped the ref first...
+        // Root to leaf, now at three levels: the page file dropped the ref
+        // first...
         #expect(try await scratch.store().loadPage(pageID).staticLayers.isEmpty)
-        // ...and the asset died second.
+        // ...the layer file died second...
+        #expect(!FileManager.default.fileExists(atPath: scratch.layerURL(layerID).path))
+        // ...and the asset died third.
         #expect(!FileManager.default.fileExists(atPath: scratch.assetURL(ref.assetID, "png").path))
     }
 
@@ -597,10 +595,33 @@ struct ImageLayerTests {
 
         var documentURL: URL { root.appendingPathComponent("JustACanvas.tubernotes") }
         var pagesURL: URL { documentURL.appendingPathComponent("pages") }
+        var layersURL: URL { documentURL.appendingPathComponent("layers") }
         var assetsURL: URL { documentURL.appendingPathComponent("assets") }
 
         func pageURL(_ pageID: UUID) -> URL {
             pagesURL.appendingPathComponent("\(pageID.uuidString).plist")
+        }
+
+        func layerURL(_ layerID: UUID) -> URL {
+            layersURL.appendingPathComponent("\(layerID.uuidString).plist")
+        }
+
+        /// One page's layer envelopes as they are on disk, read the way the
+        /// store reads them: the page file names the layers, each layer is its
+        /// own file. Tests that want to assert about durable bytes rather than
+        /// about `loadPage`'s interpretation of them go through here.
+        func layersOnDisk(ofPage pageID: UUID) throws -> [LayerEnvelope] {
+            let page = try PropertyListDecoder().decode(
+                PageFile.self,
+                from: Data(contentsOf: pageURL(pageID))
+            )
+            if let inline = page.inlineLayers { return inline }
+            return try page.layerIDs.map { layerID in
+                try PropertyListDecoder().decode(
+                    LayerEnvelope.self,
+                    from: Data(contentsOf: layerURL(layerID))
+                )
+            }
         }
 
         func assetURL(_ assetID: UUID, _ ext: String) -> URL {
@@ -612,6 +633,10 @@ struct ImageLayerTests {
                 .appendingPathComponent("tubernotes-image-tests-\(UUID().uuidString)")
             try FileManager.default.createDirectory(
                 at: pagesURL,
+                withIntermediateDirectories: true
+            )
+            try FileManager.default.createDirectory(
+                at: layersURL,
                 withIntermediateDirectories: true
             )
         }
@@ -640,11 +665,17 @@ struct ImageLayerTests {
             return encoder
         }
 
-        /// Writes a page file directly, bypassing the store — the only way to
-        /// put on disk what the store refuses to write, including a page whose
-        /// asset was never imported.
+        /// Writes a page and its layers directly, bypassing the store — the only
+        /// way to put on disk what the store refuses to write, including a page
+        /// whose asset was never imported.
         func writePageFile(_ pageID: UUID, layers: [LayerEnvelope]) throws {
-            let page = PageFile(pageID: pageID, layers: layers)
+            for layer in layers {
+                try Self.binaryEncoder().encode(layer).write(
+                    to: layerURL(layer.layerID),
+                    options: .atomic
+                )
+            }
+            let page = PageFile(pageID: pageID, layerIDs: layers.map(\.layerID))
             try Self.binaryEncoder().encode(page).write(to: pageURL(pageID), options: .atomic)
         }
 

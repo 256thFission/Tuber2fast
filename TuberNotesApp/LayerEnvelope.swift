@@ -1,8 +1,8 @@
 import Foundation
 
-/// The durable layer model, phases 1 and 2 of
+/// The durable layer model, phases 1 to 3 of
 /// `Docs/Forks/CanvasFeatureComplete.md`: a page is an ordered list of layers,
-/// and the kinds are `ink` and `image`. The envelope is uniform across kinds;
+/// and the kinds are `ink`, `image`, and `pdf`. The envelope is uniform across kinds;
 /// the set of kinds is closed. Adding a kind is a new case plus a `CONTRACT:`
 /// amendment — there is no metadata bag, no extension payload, and no field a
 /// shipped kind does not read (`Docs/Contract.md` — Forbidden patterns).
@@ -81,6 +81,10 @@ struct PageSpaceTransform: Codable, Sendable, Equatable {
 enum LayerKind: String, Sendable {
     case ink
     case image
+    /// One page of a source PDF, shown beneath the ink. Its asset is never
+    /// normalized and never rewritten, so what a later export hands back is the
+    /// file the user imported.
+    case pdf
 }
 
 /// One durable layer: `{ layerID, kind, payload, pageSpaceTransform }`,
@@ -146,6 +150,23 @@ struct LayerEnvelope: Codable, Sendable, Equatable {
         LayerEnvelope(
             layerID: layerID,
             kind: .image,
+            payload: try ref.encodedPayload(),
+            pageSpaceTransform: pageSpaceTransform
+        )
+    }
+
+    /// A `pdf` layer: which asset and which of its source pages as the payload,
+    /// and the transform that says where on the page that source page's unit
+    /// square lands. See `PDFLayerRef` for why the source page's size in points
+    /// is not durable.
+    static func pdf(
+        layerID: UUID,
+        ref: PDFLayerRef,
+        pageSpaceTransform: PageSpaceTransform
+    ) throws -> LayerEnvelope {
+        LayerEnvelope(
+            layerID: layerID,
+            kind: .pdf,
             payload: try ref.encodedPayload(),
             pageSpaceTransform: pageSpaceTransform
         )
@@ -244,4 +265,24 @@ enum LayerError: Error, Equatable {
     /// re-encode. Writing it would silently drop that layer; the save is
     /// refused instead.
     case refusedLayerWouldBeLost(pageID: UUID)
+    /// A page file names a layer whose file is not in `layers/`. **A dangling
+    /// layer ref is fatal** — the same rule as a dangling page ref, one level
+    /// down — because the missing file may be the page's ink and no other copy
+    /// of it exists. The page is refused; the document opens.
+    case missingLayerFile(pageID: UUID, layerID: UUID)
+    /// A layer file's own `layerID` is not the one it is filed under. It
+    /// catches a mixed-up or truncated directory, exactly as the page file's
+    /// repeated `pageID` does.
+    case layerFileIDMismatch(expected: UUID, found: UUID)
+    /// A save would write a page file naming a layer with no file and none
+    /// being written. Write order is leaf-to-root — layer files before page
+    /// files — and this is that order enforced rather than described.
+    case danglingLayerRef(pageID: UUID, layerID: UUID)
+    /// A `pdf` layer named a negative source page. Page indices are zero-based
+    /// counts into the source document; a negative one is structurally
+    /// impossible from any correct writer. Whether the index is *within* the
+    /// source is not checked here and deliberately so: answering it means
+    /// opening the asset, and opening every asset on load is the
+    /// whole-document read this format exists to avoid.
+    case negativeSourcePageIndex(layerID: UUID, index: Int)
 }

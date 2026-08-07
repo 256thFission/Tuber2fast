@@ -221,9 +221,14 @@ struct DocumentStoreTests {
         var documentURL: URL { root.appendingPathComponent("JustACanvas.tubernotes") }
         var indexURL: URL { documentURL.appendingPathComponent("document.plist") }
         var pagesURL: URL { documentURL.appendingPathComponent("pages") }
+        var layersURL: URL { documentURL.appendingPathComponent("layers") }
 
         func pageURL(_ pageID: UUID) -> URL {
             pagesURL.appendingPathComponent("\(pageID.uuidString).plist")
+        }
+
+        func layerURL(_ layerID: UUID) -> URL {
+            layersURL.appendingPathComponent("\(layerID.uuidString).plist")
         }
 
         init() throws {
@@ -256,25 +261,25 @@ struct DocumentStoreTests {
 
         func createDirectories() throws {
             try FileManager.default.createDirectory(at: pagesURL, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(at: layersURL, withIntermediateDirectories: true)
         }
 
-        /// Writes a page file directly, bypassing the store — the only way to
-        /// produce an orphan or a mis-filed page.
+        /// Writes a page and its one ink layer directly, bypassing the store —
+        /// the only way to produce an orphan or a mis-filed page. In the
+        /// current form: the page file names the layer, the layer file holds
+        /// the envelope.
         func writeRawPage(_ fileName: UUID, pageID: UUID? = nil, drawingData: Data) throws {
             try createDirectories()
             let encoder = PropertyListEncoder()
             encoder.outputFormat = .binary
-            let page = PageFile(
-                pageID: pageID ?? fileName,
-                layers: [
-                    LayerEnvelope(
-                        layerID: UUID(),
-                        kind: .ink,
-                        payload: drawingData,
-                        pageSpaceTransform: .identity
-                    )
-                ]
+            let ink = LayerEnvelope(
+                layerID: UUID(),
+                kind: .ink,
+                payload: drawingData,
+                pageSpaceTransform: .identity
             )
+            try encoder.encode(ink).write(to: layerURL(ink.layerID), options: .atomic)
+            let page = PageFile(pageID: pageID ?? fileName, layerIDs: [ink.layerID])
             try encoder.encode(page).write(to: pageURL(fileName), options: .atomic)
         }
 
