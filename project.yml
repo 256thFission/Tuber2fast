@@ -44,15 +44,23 @@ targets:
         ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS: NO
       configs:
         # THROWAWAY SPIKE wiring — CanvasFeatureComplete device spike 1.
-        # TN_SPIKE_CONDITIONS is empty by default, so this line is inert and
+        # TN_SPIKE_CONDITIONS is empty by default, so both lines are inert and
         # the flag-off app compiles with exactly the conditions it always had
-        # (DEBUG). To build the spike in, pass the setting on the command line
+        # (DEBUG in Debug, none in Release). To build the spike in, pass the
+        # setting on the command line
         #   xcodebuild build ... TN_SPIKE_CONDITIONS=TN_SPIKE_MIRROR
         # or add `TN_SPIKE_CONDITIONS = TN_SPIKE_MIRROR` to Local.xcconfig for
-        # Tools/device runs (and remove it after). Debug only: the spike's
-        # trace depends on CanvasLog's stderr mirror, which is DEBUG-only.
+        # Tools/device runs (and remove it after).
+        #
+        # Release carries the same hook as Debug. It used to be Debug-only
+        # because the spike's trace depended on CanvasLog's stderr mirror and
+        # that mirror was `#if DEBUG`; the mirror now ships in every
+        # configuration, gated on TN_TRACE alone, so a Release spike build is
+        # readable — and Release is what device.yml distributes.
         Debug:
           SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG $(TN_SPIKE_CONDITIONS)
+        Release:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(TN_SPIKE_CONDITIONS)
 
   TuberNotesTests:
     type: bundle.unit-test

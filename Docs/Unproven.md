@@ -42,6 +42,15 @@ Nothing here is a reason not to ship. It is a reason not to be surprised.
 - **Pencil feel, stroke fidelity, palm rejection, and Pencil/touch separation
   are unrendered.** They are Phillip's verdict alone, and no mechanical evidence
   substitutes.
+- **No Release build has ever been seen to emit a trace.** `CanvasLog`'s stderr
+  mirror now ships in every configuration, gated on `TN_TRACE` alone, and a
+  Release build compiles — but no iPad has been watched printing through it, and
+  Release is the configuration `device.yml` distributes. Until then "the build
+  five people hold is loud" is a claim about a compiler flag, not an observation.
+- **The fixed crash digest has never read a real crash.** `Tools/device-tests`
+  proves the digest calls a trap a crash across seven hand-written consoles. No
+  console in that set came off an iPad, and a device console can carry
+  interleaving and framing those fixtures do not reproduce.
 
 ## Nothing exercises a touch
 

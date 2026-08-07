@@ -110,10 +110,16 @@ canvas runtime or the editor session:
 | `PagedCanvasController.swift` | paging, the live window, gesture arbitration |
 | `EditorSession.swift` | page turns, autosave timing, dirty tracking |
 | `EditorLifecycle.swift` | the background-execution lease and flush |
+| `CanvasLog.swift` | the stderr mirror ships in Release and is the only sink a person can read without a Mac |
 
-It is **not** required for `DocumentStore`, `DocumentIndex`,
-`PageGeometry`, `CanvasLog`, tests, docs, or tooling. Correctness there is
-settled by a test.
+`CanvasLog` is on that list for one reason: its stderr mirror is no longer
+compiled out of Release, and a diagnostic path is worth nothing until the build
+that ships has been seen to emit through it. A change there is finished when a
+Release build on an iPad, launched with `TN_TRACE`, produced a readable capture
+— not when the simulator suite passed.
+
+Device evidence is **not** required for `DocumentStore`, `DocumentIndex`,
+`PageGeometry`, tests, docs, or tooling. Correctness there is settled by a test.
 
 The pull request template asks which case you are in. Answering "required but
 not done" is a legitimate answer; add it to `Docs/Unproven.md` and say so.
@@ -129,6 +135,7 @@ verdict alone.
 Tools/device --check      # every precondition, then stop
 Tools/device --install    # ...then build and install, but no capture session
 Tools/device              # ...then build, install, launch, and capture
+Tools/device --release    # any of the above, built -configuration Release
 ```
 
 One command, every precondition: toolchain, signing, and the iPad itself. It
@@ -175,9 +182,25 @@ that scored it would be usurping one. And it is **never consumed by CI**:
 everything it writes comes from an untrusted machine and is trivially forgeable,
 so a human cites it and nothing verifies it.
 
-If the capture says `NO TRACE CAPTURED`, believe it. `CanvasLog`'s stderr mirror
-is DEBUG-only and gated on `TN_TRACE`, so a Release build emits nothing — and a
-summary of an empty stream would otherwise read as "nothing went wrong."
+`CanvasLog`'s stderr mirror is present in **every** configuration, Release
+included, and is gated on `TN_TRACE` alone. That is deliberate: `device.yml`
+archives `-configuration Release` and distributes that build to every registered
+iPad, so a mirror only Debug carried would be compiled out of the one build most
+contributors ever hold. `Tools/device --release` builds and captures that
+configuration on your own iPad.
+
+If the capture says `NO TRACE CAPTURED`, believe it, and look for a launch that
+did not set `TN_TRACE` or an attach to an already-running process — a summary of
+an empty stream would otherwise read as "nothing went wrong."
+
+A crash is reported as a crash. A Swift trap writes `Fatal error:` and raises no
+NSException, so it prints no `TN[fatal]` and can happen before the app logs
+anything at all; the digest looks for a trap **before** it decides a stream is
+empty, because the alternative is the most alarming outcome wearing the words of
+the most boring one. `Tools/device-tests` holds the digest against a fixture per
+outcome — crash with no trace, crash after a trace, native crash, uncaught
+exception, empty, no-trace, and clean. Run it when you touch the digest; CI does
+not, per the rule above.
 
 ## Rules for any check you add
 
@@ -256,9 +279,11 @@ and record the gap explicitly in `Docs/Unproven.md` as outstanding device eviden
   on the iPad. Change the prefix if two people share one iPad.
 - `Artifacts/` holds build and test logs and captured device sessions. It is
   regenerated and gitignored — cite paths from it as evidence, never commit it.
-- **`Tools/` is three files and no shared library.** `pinned-simulator` is one
+- **`Tools/` is five files and no shared library.** `pinned-simulator` is one
   line of data; `setup` gets a clone to an Xcode window; `device` runs the iPad
-  loop. There is deliberately no shared library: a library that does work at
+  loop; `device-tests` holds `device`'s digest against fixtures; `machines`
+  answers what a given Mac can do. There is deliberately no shared library: a
+  library that does work at
   *source* time hands its caller values cached before the caller's world
   exists. Two scripts sharing a few lines of `sed` should duplicate them.
   Nothing in `Tools/` decides whether work is done.
