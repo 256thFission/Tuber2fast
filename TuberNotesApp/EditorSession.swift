@@ -655,11 +655,11 @@ final class EditorSession {
     /// might be wanted again (`Contract.md` — Performance).
     ///
     /// Warming those neighbours' composites *ahead* of a turn is deliberately
-    /// not done here. The fork doc names `turn-settles-once` as a direct
-    /// dependency of prefetching decodes: today a turn fires at the midpoint of
-    /// a drag, so an abandoned half-drag would start decode work twice. This
-    /// only permits a neighbour's composite to survive; nothing creates one
-    /// before its page is built.
+    /// not done here — that is the fork doc's phase 3c, not this method. Its
+    /// gate, `turn-settles-once`, is met: a turn commits once, at rest, on the
+    /// settle callbacks, so an abandoned half-drag reaches here zero times and
+    /// a completed turn exactly once. This only permits a neighbour's
+    /// composite to survive; nothing creates one before its page is built.
     private func retainRenderedLayers() {
         let lower = max(0, index.currentPageIndex - Self.prefetchRadius)
         let upper = min(pageStates.count - 1, index.currentPageIndex + Self.prefetchRadius)
