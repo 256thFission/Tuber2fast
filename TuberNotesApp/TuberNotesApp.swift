@@ -9,7 +9,15 @@ struct TuberNotesApp: App {
 
     var body: some Scene {
         WindowGroup {
+            #if TN_SPIKE_LENS
+            // THROWAWAY SPIKE — device spike 2, "Lens latency". The spike
+            // replaces the editor scene entirely rather than instrumenting the
+            // live canvas: base-and-lens integration is phase 3c proper, and
+            // this measures the loop in isolation. See SpikeLensLatency.swift.
+            SpikeLensSceneView()
+            #else
             EditorSceneView()
+            #endif
         }
     }
 }

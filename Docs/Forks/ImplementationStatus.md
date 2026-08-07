@@ -18,7 +18,7 @@ listed under *Owed evidence* rather than counted as done.
 | 2. One `image` layer under the ink | **both halves landed, green** | `8e79ad6` (durable) + `8254cf6` (rendering) | Composite order, composite y-orientation (EXIF orientations untested), placement, the decode bound, the cache's byte bound and window eviction, and total refusal are asserted. Registration with ink at 120 Hz, overdraw, and both placeholder tints are device-only. |
 | 3a. `pdf` kind + the `layers/` split | **landed, green** | `b52221f` | Exit test verified by sabotage: a 5-page, 794 KB import, ink on page 4, asserts exactly one layer file rewritten by mtime **and** bytes. Amendments A13, A14 staged. |
 | 3b. per-page geometry, zoom cap | **landed, green** | `f212587` | Mixed-geometry paging, per-page zoom floors, one shared ceiling, v2→v3 index read-forward. Found that `PKCanvasView` clamps `maximumZoomScale` to 10, which decided the cap's value. Contract half **reverted** — see below. |
-| 3c. base-and-lens, prefetch decode | **not started** | — | Wants spike 2 and `turn-settles-once`. Nothing rasterizes a PDF page anywhere in this build; the composite is fit-width detail and goes soft under deep zoom. |
+| 3c. base-and-lens, prefetch decode | **renderer landed; integration not started** | rasterizer + spike-2 scaffolding, this branch | `PDFPageRasterizer` renders a page or a sub-rect (the lens shape) off-main, with `/Rotate`, CropBox origin, and the y-flip pixel-tested. Nothing in the real page path calls it yet — the composite is still fit-width detail and goes soft under deep zoom. Integration wants spike 2's verdict and `turn-settles-once`. |
 | 4. Transformable `image` layers | **landed, green** | `34acbe8` | Selection, handles, minus-one composite, `locked`; layer-edit undo: inverse-commit path asserted, undo registration device-only. Arbitration, feel, and undo are device-only; spike 3 is owed. |
 | 5. The shape tool | **landed, green** | `6f72d18` | Synthesis and rasterized pixels asserted; everything between Pencil and stroke is device-only |
 
@@ -48,7 +48,7 @@ tested.
 | Spike | State | Notes |
 |---|---|---|
 | 1. Mirror fidelity | **scaffolding landed** `f78a050`, **verdict owed** | Behind `TN_SPIKE_MIRROR`. Variant A: sibling mirrored by one transform per scroll tick. Variant B: inside-`PKCanvasView`, expected to trap. **Phase 2's rendering half ships on the presumption variant A holds**, using the same technique with a `CALayer` rather than a view. |
-| 2. Lens latency | not built | The durable half now supplies the ref and the placement, but **nothing rasterizes a PDF page anywhere in this build**, so the spike must bring its own renderer. |
+| 2. Lens latency | **scaffolding landed, verdict owed** | Behind `TN_SPIKE_LENS`. The renderer exists now — `PDFPageRasterizer` in `PDFSource.swift`, rotation/CropBox-origin/y-flip pinned by pixel tests against byte-exact fixtures. The spike replaces the editor scene with a self-contained scroll-view bench over a dense synthetic worksheet: pinch-settle → visible-rect raster off-main → contents swap on main, one `SPIKE lens settled` line per settle with settle→decode→swap timestamps; `Tools/device`'s digest reprints them. Built and launched in the simulator only — **no latency number exists**, the fixture is synthetic rather than a textbook, and the verdict is Phillip's on hardware. |
 | 3. Manipulation feel and undo | not built | Phase 4 |
 
 ## Decisions taken without Phillip

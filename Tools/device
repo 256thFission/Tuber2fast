@@ -229,6 +229,15 @@ digest_trace() {
     grep -oE 'mainThread=(true|false)' "$CONSOLE" | sort | uniq -c | sed 's|^|      |'
   fi
 
+  # Device spike 2 ("Lens latency", TN_SPIKE_LENS): one line per pinch
+  # settle, carrying settle→decode→swap timestamps. Reprinted verbatim —
+  # these are the numbers the spike exists to produce, and whether they are
+  # fast enough is a maintainer's verdict, not this script's.
+  if grep -q 'SPIKE lens settled' "$CONSOLE"; then
+    printf '  lens latency (spike 2), one line per settle:\n'
+    grep -oE 'SPIKE lens settled .*' "$CONSOLE" | sed 's|^|      |'
+  fi
+
   if [ "$fatals" -gt 0 ]; then
     printf '\n  TN[fatal] PRESENT (%s) — an uncaught NSException:\n' "$fatals"
     grep -m1 -A3 'TN\[fatal\]' "$CONSOLE" | sed 's|^|      |'

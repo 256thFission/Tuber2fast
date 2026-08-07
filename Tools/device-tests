@@ -168,6 +168,26 @@ must "trap:               none"
 must "No verdict was rendered here"
 must_not "THE PROCESS CRASHED"
 must_not "NO TRACE CAPTURED"
+must_not "lens latency"
+
+# ---------------------------------------------------------------------------
+# A lens-spike session (CanvasFeatureComplete device spike 2, TN_SPIKE_LENS).
+# The settle lines carry the latency numbers the spike exists to produce; the
+# digest must reprint them verbatim and still render no verdict about them.
+begin "lens spike session" "$(cat <<'EOF'
+TN[lifecycle] app launched
+TN[canvas] SPIKE lens installing: dense fixture pdf=812345 bytes, page=612x792 pt; pinch and release — every settle logs one 'SPIKE lens settled' line
+TN[canvas] SPIKE lens base rendered at 2.68 px/pt (1640x2122)
+TN[canvas] SPIKE lens settled reason=pinch zoom=4.12 level=8.24px/pt rect=199x257@(101,204) pixels=1640x2122 settleToDecodeMs=41.3 decodeToSwapMs=1.7 totalMs=43.0 stale=false
+TN[canvas] SPIKE lens settled reason=pan zoom=4.12 level=8.24px/pt rect=199x257@(150,300) pixels=1640x2122 settleToDecodeMs=38.9 decodeToSwapMs=1.2 totalMs=40.1 stale=true
+EOF
+)"
+must "lens latency (spike 2), one line per settle:"
+must "settleToDecodeMs=41.3"
+must "stale=true"
+must "No verdict was rendered here"
+must_not "THE PROCESS CRASHED"
+must_not "NO TRACE CAPTURED"
 
 # ---------------------------------------------------------------------------
 printf '\n── result ──\n'

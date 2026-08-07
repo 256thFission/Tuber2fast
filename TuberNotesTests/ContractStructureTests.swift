@@ -555,6 +555,12 @@ struct ContractStructureTests {
         // only under TN_SPIKE_MIRROR and instruments the canvas runtime,
         // where UIKit is already allowed; the entry dies with the file.
         "TuberNotesApp/SpikeMirrorFidelity.swift",
+        // THROWAWAY SPIKE — CanvasFeatureComplete device spike 2, "Lens
+        // latency". Compiled only under TN_SPIKE_LENS; a self-contained
+        // UIKit scroll-view bench that replaces the editor scene while the
+        // flag is on, so its UIKit never touches the flag-off app. The
+        // entry dies with the file.
+        "TuberNotesApp/SpikeLensLatency.swift",
     ]
 
     /// `DocumentStore` is the only writer of durable state.

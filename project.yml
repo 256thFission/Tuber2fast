@@ -43,14 +43,17 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS: NO
       configs:
-        # THROWAWAY SPIKE wiring — CanvasFeatureComplete device spike 1.
+        # THROWAWAY SPIKE wiring — CanvasFeatureComplete device spikes 1 and 2.
         # TN_SPIKE_CONDITIONS is empty by default, so both lines are inert and
         # the flag-off app compiles with exactly the conditions it always had
-        # (DEBUG in Debug, none in Release). To build the spike in, pass the
+        # (DEBUG in Debug, none in Release). To build a spike in, pass the
         # setting on the command line
         #   xcodebuild build ... TN_SPIKE_CONDITIONS=TN_SPIKE_MIRROR
-        # or add `TN_SPIKE_CONDITIONS = TN_SPIKE_MIRROR` to Local.xcconfig for
-        # Tools/device runs (and remove it after).
+        #   xcodebuild build ... TN_SPIKE_CONDITIONS=TN_SPIKE_LENS
+        # or add `TN_SPIKE_CONDITIONS = TN_SPIKE_MIRROR` (or TN_SPIKE_LENS) to
+        # Local.xcconfig for Tools/device runs (and remove it after). Not
+        # both at once: TN_SPIKE_LENS replaces the editor scene that
+        # TN_SPIKE_MIRROR instruments.
         #
         # Release carries the same hook as Debug. It used to be Debug-only
         # because the spike's trace depended on CanvasLog's stderr mirror and
