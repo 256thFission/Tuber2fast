@@ -74,6 +74,46 @@ appended at the bottom of each section. Branch: `canvas-feature-complete`
 7. **A C function pointer trap:** inside `NSSetUncaughtExceptionHandler`'s
    closure, every static must be spelled `CanvasLog.…` — an unqualified
    reference reads as captured context and fails to compile.
+8. **THE IMPORTANT ONE — parallel agents silently corrupt each other's test
+   verdicts.** The pinned simulator is a single shared instance and every
+   build carries the same bundle identifier, so one agent's `xcodebuild test`
+   can execute *another agent's* installed bundle. The phase 2 agent caught
+   this: its run reported suites that do not exist in its tree (`Shape
+   synthesis`, `Contract structure — the checker`), its own new suite never
+   appeared, and an untouched test failed. **This is not a flake; it is a
+   wrong verdict, in both directions.** I saw the same thing from the
+   integration side — one run reported "21 tests in 3 suites failed with 1822
+   issues" and the identical tree passed 94 seconds later.
+   *Mitigation used:* the phase 2 agent finished on a private simulator cloned
+   from the same device type, then deleted it; and every integration verdict
+   in this log was re-run with no agents active. *Standing rule adopted for
+   the rest of the grind:* each parallel agent creates and destroys its own
+   simulator, and no green is trusted that was recorded while another agent
+   was running. **Worth a queue item** — per-agent bundle IDs or per-agent
+   simulators, because this will bite any future parallel work.
+9. **`PKStrokePath` is a B-spline**, which makes four strokes for a rectangle
+   *mandatory* rather than merely preferable: measured, a one-path rectangle
+   cuts every corner by a third of its depth (control points evaluate as
+   `(P0+4P1+P2)/6`). The fork doc guessed right for the wrong reason.
+10. **PencilKit end-clamps the spline itself**, so the endpoint-triplication
+    workaround the shape agent built was measured as dead weight and removed.
+    Storage is also reduced-precision — a location round-trips within
+    ~1.5e-5 pt, `opacity 1 → 0.99998` — so "endpoints exactly the corners" is
+    not achievable and the tests assert what PencilKit actually keeps.
+11. **`PKDrawing.image(from:scale:)` rasterizes in the simulator**, so "the
+    ink actually lands on the shape" *is* CI-testable. That was not obvious
+    and it is the only pixel-level guarantee this project has.
+12. **The save path derived "which pages changed" from ink state alone**, so
+    an import onto a page with clean ink produced no write at all. Found and
+    fixed during phase 2. The same gap would have let the first ink save
+    after an import silently delete the image, because the session had
+    nowhere to keep the page's layer list — the contract already named
+    `EditorSession` its one writer; it simply had nothing to write.
+13. **`UndoManager` does not retain an action's target**, so a page leaving
+    the live window must call `removeAllActions(withTarget:)`. Consequence,
+    now a `KNOWN DEFECT:` at the site: a shape committed on a page you turn
+    away from and back is no longer undoable. A dangling target is a crash;
+    this takes the safe half.
 
 ## Morning items — Phillip must address
 

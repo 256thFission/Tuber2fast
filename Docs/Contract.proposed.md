@@ -95,44 +95,95 @@ explicit amendment. This is that amendment being paid. `pdf` is **AHEAD** —
 phase 3 pays for it separately, in its own commit, or the mechanism is a
 formality.
 
-## A6. *Durable form* — assets — **FORCED (phase 2)**
+## A6. *Durable form* — assets — **FORCED (phase 2, code is written and green)**
+
+This is the implementing agent's exact text, not my earlier paraphrase — the
+code implements *this*, so adopting anything else leaves the contract lying.
 
 Extend the directory diagram:
 
 ```text
-Notebook.tubernotes/
-  document.plist                    the index
-  pages/<pageID>.plist              one file per page: its ordered layer envelopes, inline
-  assets/<assetID>.<ext>            original imported bytes: .png, .jpeg
+JustACanvas.tubernotes/
+  document.plist          the index
+  pages/<pageID>.plist    one file per page: its own pageID and its ordered layer envelopes, inline
+  assets/<assetID>.<ext>  imported originals, byte for byte: .png, .jpeg
 ```
 
-And add to the durable-form rules:
+After the ink-transform bullet, insert:
 
-> - **Assets are sources: write-once, immutable, byte-for-byte.** An import
->   writes a new asset; nothing ever mutates one. "Replace the image" is a new
->   asset and a layer edit, never a rewrite.
-> - **Heavy bytes live behind refs.** An `image` layer's payload is an
->   `assetID` plus the invertible source-to-page mapping. `ink` payloads stay
->   inline, as ink is today.
-> - **A dangling asset ref refuses the layer; an orphan asset is inert** —
->   layer→asset, exactly as document→page. A layer whose asset is missing is
->   refused with a reason, the page refuses input, and the rest of the
->   document opens.
-> - **Write order is leaf-to-root: assets, then page files, then the index.**
->   An interrupted save leaves orphans at some level and never a dangling ref
->   at any. **Deletion is the mirror, root-to-leaf**: the page file drops the
->   ref first, the asset dies second, so an interruption leaves an inert
->   orphan, never a dangling ref.
+> - **An `image` layer's payload is a ref, never bytes**: the `assetID` of an
+>   asset in `assets/`, and that asset's format, which completes its file
+>   name. Heavy bytes live behind refs; `ink` payloads stay inline. A format
+>   outside the closed set refuses the layer, exactly as an unknown kind does.
+> - **An `image` layer's `pageSpaceTransform` is a real durable value**: the
+>   one invertible mapping from the image's own extent, taken as the unit
+>   square with its origin at top-left, into page space. It is where the layer
+>   is. The image's pixel size is **not** durable — the asset's own bytes state
+>   it, and a second copy in the page file is a value that can disagree with
+>   itself. A singular transform is an invalid state and fails loud.
+> - **Assets are sources: write-once and immutable.** There is no update and
+>   no overwrite. "Replace the worksheet" is a new asset and a layer edit,
+>   never a mutation. Writing an `assetID` that exists is refused rather than
+>   verified: verifying identity means reading the whole asset back to
+>   authorize a write no correct caller makes, and write-once is what makes an
+>   asset-derived render impossible to be stale rather than merely unlikely.
+
+Replace the write-order bullet with:
+
+> - **Write order is leaf-to-root: assets, then page files, then the index**,
+>   so an interrupted save leaves an orphan at some level and never a dangling
+>   ref at any. A save that names an asset which is not already durable is
+>   refused before any write. **Deletion is the mirror, root-to-leaf**: the
+>   page file drops the ref first, the asset dies second.
+
+After "A dangling page ref is fatal; an orphan is not", insert:
+
+> - **A dangling asset ref is fatal; an orphan asset is inert.** The failure is
+>   the *layer's*: it is a typed refused state, the page refuses input while
+>   carrying it, and every other page opens normally. Unlike a layer this build
+>   cannot re-encode, such a page may still be written — deleting the broken
+>   layer is the one repair, and deleting it is a save.
 > - **Asset reclamation is delete-inline**: when the last layer referencing an
 >   asset is deleted, the asset is deleted with it, at the one site that
->   deletes layers. Crash orphans — an import whose page file never landed —
->   accumulate until a sweep-on-open lands, which waits on the failure
->   taxonomy, because a sweep that deletes the wrong file is a durability
->   failure. Until then an orphan is inert and merely heavy.
+>   deletes layers. Whether anything still references it is answered from the
+>   page files on disk, so a failed page write cannot orphan a live asset. When
+>   it cannot tell — a layer whose kind or payload this build cannot open might
+>   reference anything — it reclaims nothing. Crash orphans accumulate until a
+>   sweep-on-open lands; an orphan is inert and merely heavy.
 
-*Why:* every clause restates a rule the document→page level already carries.
-The write-order clause is the one that is load-bearing rather than tidy: it is
-what makes an interrupted import recoverable.
+*Why the two refusal classes differ, since this is the subtle part:* an
+unknown **kind** blocks overwriting its page, because this build cannot
+re-encode what it cannot read. A missing **asset** does not, because the
+envelope is fully understood and only the file is gone — and deleting the
+broken layer is the one available repair, which is itself a save. Refusing
+that write would make such a page permanently unrepairable.
+
+## A6b. *Geometry and coordinates* — the unit-square consequence — **FORCED (phase 2)**
+
+**The fork doc's own amendment list misses this**, and the code needs it.
+Replace:
+
+> Rotation, crop, PDF source coordinates, normalized coordinates, and
+> annotation anchors do not exist.
+
+with:
+
+> Crop, PDF source coordinates, and annotation anchors do not exist. An
+> asset-backed layer's transform maps its source's unit square into page
+> space, and may rotate; nothing else is authored in normalized coordinates,
+> and no other space is normalized.
+
+*Why, and the decision to overrule if you disagree:* the implementing agent
+chose **not** to store the source's pixel size in the payload, mapping the
+image's extent-as-unit-square into page space instead. Its reasoning: a
+durable pixel size restates what the asset's bytes already say, would be
+invalidated by the milestone's own downsample flag, and makes placement
+resolution-dependent. The cost is precisely this sentence — it *is* a
+normalized coordinate space, which the contract currently says does not exist.
+The alternative (transform from source pixel space, size in the payload) means
+the durable form cannot answer "where is this image on the page" without
+opening a possibly-50 MB file, which hurts phase 4 hit-testing. **This is the
+single most reversible-but-annoying-later call made overnight.**
 
 ## A7. *Forbidden patterns* — the derived-artifact ban, narrowed — **AHEAD (phase 2 rendering / phase 3)**
 
