@@ -21,21 +21,122 @@ appended at the bottom of each section. Branch: `canvas-feature-complete`
 
 ## Decisions taken overnight
 
-(Each entry: what was decided, why, and where it landed.)
+1. **`loud-by-default` and phase 5 were pulled forward** out of queue/proposal
+   order. `loud-by-default` because the morning's device session is worthless
+   if the Release build emits nothing and a Swift trap reads as "NO TRACE
+   CAPTURED" — and spike 1 variant B is *expected* to trap. Phase 5 because it
+   depends on nothing in phases 1–4; its late position in the proposal was
+   presentation, not dependency.
+2. **The parallel contract is a separate file** (`Contract.proposed.md`), not
+   edits to `Contract.md` — the contract says no agent's output becomes a rule
+   by having been committed, so staging respects that literally.
+3. **The refused-save guard reads disk, not memory** (phase 1 review fix), and
+   the weaker in-memory mechanism was deleted rather than kept beside it.
+4. **`UserDefaults` was added to the file-I/O token list** by the checker lane
+   — a judgment call flagged for reversal: not file I/O by name, but durable
+   state reaching disk without passing through `DocumentStore`. One line to
+   delete if Phillip disagrees.
+5. **`Tools/device-tests` is not wired into CI**, because `CONTRIBUTING.md`
+   states CI calls no script in `Tools/` deliberately. Left as Phillip's call.
 
 ## Discoveries
 
-(Anything learned that the docs didn't predict.)
+1. **Cross-lane semantic merge conflict, caught by the compiler, not by git.**
+   The `loud-by-default` lane called `ContractStructureTests.codeOnly`; the
+   checker lane had moved that helper into a new `ContractChecker` enum. Both
+   were correct against their own base, git merged the text cleanly, and the
+   build failed. Fixed in `71c6099`. **The lesson for the rest of the grind:
+   a clean text merge proves nothing; every merge gets a full build.**
+2. **Undo is unprovable off-device in this project.** `undoManager` walks the
+   responder chain, so an unhosted controller always reports `nil`
+   (`Unproven.md`, "Environment traps"). This makes proposed amendment A10
+   (one manager, two clients) genuinely unverified — phase 4's whole undo
+   design rests on PencilKit tolerating foreign registrations, which nothing
+   has checked.
+3. **The old contract checker was blind in more ways than the queue item
+   claimed.** Beyond non-recursion: the import rule matched exactly one
+   spelling (`@preconcurrency import UIKit`, `import struct UIKit.X`, and
+   doubled whitespace all passed); `PKCanvasView.init(` was missed; and the
+   rules were counted over all sources *joined without a separator*, so a file
+   ending in `PKCanvasView` next to one starting with `(` would have formed a
+   phantom construction site.
+4. **Two blind spots remain in the checker and are now recorded as
+   `KNOWN DEFECT:`** — string interpolation is discarded with its enclosing
+   string (so `"\(FileManager.default)"` is invisible to every rule), and
+   `"""` literals scan as a pair of empty strings. Both under-report; the fix
+   is a real Swift lexer.
+5. **Warnings-as-errors is doing real work.** A deliberate sabotage of the
+   canvas-construction rule failed to *build* rather than failing the test,
+   because an unmutated `var` is an error here.
+6. **`CanvasLog`'s cost per event was already correct** — the gate is a
+   `static let`, so the environment is read at most once per process, and no
+   call site is on the frame path. Nothing needed fixing there.
+7. **A C function pointer trap:** inside `NSSetUncaughtExceptionHandler`'s
+   closure, every static must be spelled `CanvasLog.…` — an unqualified
+   reference reads as captured context and fails to compile.
 
 ## Morning items — Phillip must address
 
-1. **Device spike 1 protocol** — run the mirror-fidelity checklist on the
-   iPad (see the spike agent's protocol: pinch/fling/rubber-band against
-   the fiducials with variant A; one stroke with variant B). Phases 2+
-   rendering built on the presumed sibling answer; if the device
-   contradicts it, the rendering scaffold needs revisiting.
-2. **Device evidence for phase 1** — touches editor session + durable
-   form; PR-template device pass still owed.
-3. **`Docs/Contract.proposed.md`** — the parallel contract. Review, edit,
-   adopt what you accept (each section notes which phase required it).
-4. (appended as they arise)
+### 1. The device session (do this first — three items resolve at once)
+
+`Tools/device` now has a `--release` flag and forwards the spike variable,
+so one session answers spike 1, proves `loud-by-default`, and gives phase 1
+its device pass.
+
+```bash
+Tools/device --check              # unlock the iPad first — DDI mounts on unlock
+```
+
+Put `TN_SPIKE_CONDITIONS = TN_SPIKE_MIRROR` in `Local.xcconfig` (remove it
+after), then:
+
+```bash
+Tools/device --release                                   # variant A, the sibling mirror
+TN_SPIKE_MIRROR_VARIANT=inside Tools/device --release    # variant B, the crash test
+```
+
+Ctrl-C ends the session and prints the digest. Console lands in
+`Artifacts/device/<utc>-<sha>/console.log`; re-read any past one with
+`Tools/device --digest <path>`, no iPad needed.
+
+**Variant A — what to look for.** Ink a line along a 100 pt grid line and a
+circle around the centre fiducial. Then pinch fast with mid-gesture
+reversals; fling vertically at high zoom through deceleration; rubber-band
+past the page edge and past fit-width. The observable is *line position*
+during motion — ink peeling away from the pattern is the failure. Softness
+at deep zoom is expected and is not the failure.
+
+**Variant B — one Pencil stroke.** Survive or trap is the entire result. A
+trap now prints a crash banner rather than `NO TRACE CAPTURED`; that fix is
+what makes this result visible at all. Per the fork doc, even survival does
+not let this branch win until it explains the recorded
+`_delayTouchesForEvent:` crash.
+
+**This is the verdict everything downstream waits on.** Phases 2–4 render
+through the sibling mirror on the presumption that variant A holds.
+
+### 2. The contract lags the code — close it
+
+`Docs/Contract.proposed.md` stages every amendment, marked LANDED / FORCED
+(code is written and green; the contract has not caught up) / AHEAD (adopt
+with its phase). Read the four open questions at the bottom; two are real
+design forks, not formalities:
+
+- **A10 (undo: one manager, two clients) is written as if the spike passed,
+  and it has not run.** Undo cannot be tested off-device here at all.
+- **A5** pays one amendment per kind by design. Confirm you want that
+  friction, or amend once for `image` and `pdf` together — cheaper, weaker.
+
+### 3. Judgment calls to confirm or reverse
+
+- `UserDefaults` added to the checker's file-I/O token list (defensible,
+  one line to delete).
+- `Tools/device-tests` deliberately not wired into CI, because
+  `CONTRIBUTING.md` says CI calls no script in `Tools/`.
+- Whether phase 5's shape tool activation UI matches your taste at all —
+  it was built to the smallest honest affordance, not to a design.
+
+### 4. Verdicts no agent may render
+
+Pencil feel, stroke fidelity, turn feel after settling, and whether a
+synthesized shape *looks like ink*. Recorded as evidence, left to you.
