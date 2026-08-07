@@ -132,9 +132,16 @@ actor DocumentStore {
     /// first, the asset dies second. Returns whether it deleted anything.
     ///
     /// The question "is anything still referencing this?" is answered from the
-    /// files on disk, not from memory, and that is what makes the ordering
-    /// sound rather than merely intended: a caller whose page write failed
-    /// still has the ref on disk, so the scan finds it and the asset lives.
+    /// files on disk, not from memory: a caller whose page write failed still
+    /// has the old ref on disk, so the scan finds it and the asset lives.
+    ///
+    /// **That soundness has a boundary: the scan is blind to layer lists that
+    /// exist only in memory.** A list a save has not yet landed — an import
+    /// whose save failed — references the asset in the session and nowhere
+    /// this scan looks, so deleting on its behalf would destroy a write-once
+    /// asset its surviving layers still need. The caller owns that guard:
+    /// `EditorSession.deleteLayer` reclaims only while no page holds an
+    /// unsaved layer list.
     ///
     /// **Since the split, it scans every layer file, not only the referenced
     /// ones** — a strictly larger set than "what the pages name", so it can

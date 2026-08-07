@@ -1504,11 +1504,13 @@ final class EditorSession {
     /// first, the layer file dies second, the asset dies third. An interruption
     /// between any two of them leaves an orphan, never a dangling ref.
     ///
-    /// Reclamation is safe whether or not that save succeeded, and not because
-    /// this checks: the store answers "does anything still reference this?"
-    /// from the files on disk at the level above, so a page write that failed
-    /// leaves the ref there and the layer file lives, and a layer file that
-    /// outlives its deletion keeps its asset alive in turn.
+    /// Reclamation's soundness is split between the store and this file. The
+    /// store answers "does anything still reference this?" from the files on
+    /// disk, so a page write that failed leaves the old ref there and the
+    /// layer file lives. What disk cannot answer for is a layer list that has
+    /// never landed at all — an import whose save failed references its asset
+    /// only in memory — so reclamation runs only while no page holds an
+    /// unsaved layer list; see the guard below.
     ///
     /// Crash orphans still accumulate — an import interrupted before its page
     /// write, a delete interrupted before its asset write — and that is
@@ -1573,6 +1575,23 @@ final class EditorSession {
             liveRuntime?.reloadPage(at: visible)
         }
 
+        // Reclamation asks the *disk* whether anything still references the
+        // layer and its asset, and disk can only answer for layer lists that
+        // have reached it. While any page holds an unsaved list — this delete's
+        // own save failed, or an import's save never landed — a reference can
+        // exist only in memory, where the scan is blind, and reclaiming would
+        // destroy a write-once asset the surviving layers still need. Skipping
+        // costs an orphan, which is inert and merely heavy; the files are
+        // reclaimable by a later delete once every list is durable.
+        guard !pageStates.contains(where: \.layersUnsaved) else {
+            CanvasLog.event(
+                .save,
+                "reclamation after deleting layer \(layerID) skipped: unsaved "
+                    + "layer lists exist, so the on-disk reference scan cannot "
+                    + "be trusted; its files stay as inert orphans"
+            )
+            return
+        }
         await reclaim(deleted)
     }
 
