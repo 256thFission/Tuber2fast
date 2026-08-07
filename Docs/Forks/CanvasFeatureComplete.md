@@ -1,7 +1,9 @@
 # Canvas feature complete
 
 Status: proposal, revision 2 — supersedes the first draft after adversarial
-review. Not an active contract.  
+review. Not an active contract. **Partly implemented** — see
+[`ImplementationStatus.md`](ImplementationStatus.md) for what has landed,
+what is green, and what is still only prose.  
 Scope: an extensible page layer model carrying efficiently placed images and
 PDF/image background layers for annotation, plus tool-drawn shapes as snapped
 ink. Design direction and sequencing only — no implementation, no prescribed
