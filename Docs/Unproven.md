@@ -42,6 +42,13 @@ Nothing here is a reason not to ship. It is a reason not to be surprised.
 - **Pencil feel, stroke fidelity, palm rejection, and Pencil/touch separation
   are unrendered.** They are Phillip's verdict alone, and no mechanical evidence
   substitutes.
+- **No `image` layer has ever been seen.** The kind is durable — it saves,
+  loads, round-trips a transform, and reclaims its asset — and nothing renders
+  it, so every claim here is about files. Whether the payload the durable half
+  chose (an asset ref plus a transform of the image's unit square, with the
+  source's pixel size deliberately not stored) is the shape the compositor
+  actually wants is unproven until phase 2's rendering half lands against it.
+  No image has been imported through any UI, because there is none.
 
 ## Nothing exercises a touch
 
