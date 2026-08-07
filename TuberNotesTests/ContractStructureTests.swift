@@ -551,6 +551,14 @@ struct ContractStructureTests {
         // PencilKit is deliberately not imported there: it needs a scroll
         // view's zoom scale and a layer, not a canvas's vocabulary.
         "TuberNotesApp/LayerSelectionRuntime.swift",
+        // The import UI's plumbing: the SwiftUI wrapper around the system
+        // photo picker (a UIViewControllerRepresentable is UIKit by
+        // definition) and the ImageIO preparation of a picked image's bytes.
+        // Nothing in it is frame-frequency and nothing in it is a durable
+        // value type — it turns one user action into one session intention,
+        // off the main actor, and the checker's ban on graphics vocabulary in
+        // durable types does not reach a picker presentation.
+        "TuberNotesApp/ImportPickers.swift",
         // THROWAWAY SPIKE — CanvasFeatureComplete device spike 1. Compiled
         // only under TN_SPIKE_MIRROR and instruments the canvas runtime,
         // where UIKit is already allowed; the entry dies with the file.
@@ -564,7 +572,17 @@ struct ContractStructureTests {
     ]
 
     /// `DocumentStore` is the only writer of durable state.
-    static let fileIOAllowlist: Set<String> = ["TuberNotesApp/DocumentStore.swift"]
+    ///
+    /// `ImportPickers.swift` is here for one read, not a write: a document
+    /// picked from the Files picker arrives as a security-scoped URL outside
+    /// the sandbox, and its bytes must be read where the scope is held. That
+    /// file is the *user's source*, not the document's durable state — the
+    /// bytes become durable only by passing through `EditorSession.importPDF`
+    /// and then the store, which remains the one writer.
+    static let fileIOAllowlist: Set<String> = [
+        "TuberNotesApp/DocumentStore.swift",
+        "TuberNotesApp/ImportPickers.swift",
+    ]
 
     @Test("Only the canvas runtime imports the UI frameworks")
     func onlyTheCanvasRuntimeImportsUIFrameworks() throws {

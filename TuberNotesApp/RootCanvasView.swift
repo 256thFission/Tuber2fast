@@ -14,6 +14,13 @@ struct RootCanvasView: View {
     /// (`Contract.md` — Owners, golden rule 2).
     @State private var shapeKind: ShapeKind?
 
+    /// Import UI state: which picker is up, and the last import failure. View
+    /// state only — the imports themselves are the session's, and both throw
+    /// loudly rather than being swallowed here.
+    @State private var showingImagePicker = false
+    @State private var showingPDFImporter = false
+    @State private var importError: String?
+
     var body: some View {
         ZStack {
             Color(uiColor: .systemGray5)
@@ -34,10 +41,117 @@ struct RootCanvasView: View {
                     // along the bottom edge and a bottom-anchored control
                     // collides with it.
                     .overlay(alignment: .topLeading) { saveFailure }
-                    .overlay(alignment: .topTrailing) { shapePicker }
+                    .overlay(alignment: .topTrailing) {
+                        VStack(alignment: .trailing, spacing: 8) {
+                            shapePicker
+                            importPicker
+                        }
+                        .padding(16)
+                    }
             }
         }
         .task { await session.start() }
+        .sheet(isPresented: $showingImagePicker) {
+            PhotoImportPicker { outcome in
+                showingImagePicker = false
+                switch outcome {
+                case .cancelled:
+                    break
+                case .failed(let message):
+                    importError = message
+                case .picked(let data):
+                    importPickedImage(data)
+                }
+            }
+        }
+        .fileImporter(
+            isPresented: $showingPDFImporter,
+            allowedContentTypes: [.pdf]
+        ) { result in
+            // Cancelling never reaches here; a cancelled picker is not an error.
+            switch result {
+            case .failure(let error):
+                importError = String(describing: error)
+            case .success(let url):
+                importPickedPDF(url)
+            }
+        }
+        .alert(
+            "Import failed",
+            isPresented: Binding(
+                get: { importError != nil },
+                set: { if !$0 { importError = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(importError ?? "")
+        }
+    }
+
+    /// The import controls: one image, one PDF. They sit under the shape
+    /// picker in the same floating cluster, because both are user actions on
+    /// the document rather than canvas chrome.
+    private var importPicker: some View {
+        HStack(spacing: 2) {
+            importButton("photo", named: "Add image") { showingImagePicker = true }
+            importButton("doc", named: "Add PDF") { showingPDFImporter = true }
+        }
+        .padding(4)
+        .background(.regularMaterial, in: Capsule())
+        .accessibilityIdentifier("import.picker")
+    }
+
+    private func importButton(
+        _ symbol: String, named name: String, action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.body)
+                .frame(width: 36, height: 36)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(name)
+        .accessibilityIdentifier("import.\(symbol)")
+    }
+
+    /// One picked image, prepared off the main actor and imported onto the
+    /// current page. The preparation is what closes the EXIF hole: the extent
+    /// handed to `importImage` is the orientation-applied one — see
+    /// `PreparedImageImport`.
+    private func importPickedImage(_ data: Data) {
+        Task {
+            do {
+                let prepared = try await Task.detached(priority: .userInitiated) {
+                    try ImageImportPreparation.prepare(data)
+                }.value
+                try await session.importImage(
+                    prepared.bytes,
+                    format: prepared.format,
+                    sourceWidth: prepared.orientedPixelWidth,
+                    sourceHeight: prepared.orientedPixelHeight
+                )
+            } catch {
+                importError = String(describing: error)
+            }
+        }
+    }
+
+    /// One picked PDF, read under its security scope off the main actor. Its
+    /// pages land at the end and the visible page does not change — turning to
+    /// an import would be navigation the user did not ask for, and finding the
+    /// pages at the end is the documented behavior ("import-doesn't-navigate").
+    private func importPickedPDF(_ url: URL) {
+        Task {
+            do {
+                let bytes = try await Task.detached(priority: .userInitiated) {
+                    try PickedFileReading.read(url)
+                }.value
+                try await session.importPDF(bytes)
+            } catch {
+                importError = String(describing: error)
+            }
+        }
     }
 
     /// The shape tool's whole user interface.
@@ -58,7 +172,6 @@ struct RootCanvasView: View {
         }
         .padding(4)
         .background(.regularMaterial, in: Capsule())
-        .padding(16)
         .accessibilityIdentifier("shape.picker")
     }
 
