@@ -212,6 +212,15 @@ already permits, and it writes nothing to disk. This amendment is required only
 by the **on-disk** render cache, which is deliberately not built. Adopt it with
 phase 3 or not at all.
 
+> **NEW after phase 3c (this note is the phase 3c agent's, not part of the
+> amendment text):** phase 3c — pdf compositing, the lens, and the prefetch
+> warm — also landed entirely in memory. The lens texture is uncached
+> (viewport-sized, one per live page, dropped the moment the view moves) and
+> the warm goes through the same in-memory composite cache under the same
+> byte bound. Nothing on this branch writes a render to disk, so **A7 now has
+> no code waiting on it at all** — it can be adopted for the future or simply
+> dropped; nothing landed forces either.
+
 
 Replace:
 
