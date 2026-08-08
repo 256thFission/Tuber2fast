@@ -590,7 +590,7 @@ struct PDFLayerTests {
         let pageID = try #require(appended.first)
         try await session.importImage(
             Data([0x89, 0x50, 0x4E, 0x47]),
-            format: .png,
+            format: .heic,
             sourceWidth: 100,
             sourceHeight: 100,
             onPage: pageID
@@ -604,7 +604,7 @@ struct PDFLayerTests {
         let survivor = try #require(reloaded.staticLayers.first)
         #expect(survivor.recognizedKind == .image)
         let imageRef = try ImageLayerRef(payload: survivor.payload)
-        #expect(FileManager.default.fileExists(atPath: scratch.assetURL(imageRef.assetID, "png").path))
+        #expect(FileManager.default.fileExists(atPath: scratch.assetURL(imageRef.assetID, "heic").path))
     }
 
     /// The refusal is typed rather than silent because the caller is a button:
