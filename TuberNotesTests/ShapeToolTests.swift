@@ -448,22 +448,22 @@ struct ShapeToolRuntimeTests {
         let root = controller.view!
         root.frame = CGRect(x: 0, y: 0, width: 820, height: 1180)
         root.layoutIfNeeded()
-        controller.setPages(count: 5, currentPageIndex: 0)
+        controller.setTestPages(count: 5, current: 0)
         controller.markEditable()
 
         controller.setShapeTool(.ellipse)
         #expect(controller.shapeTool == .ellipse)
-        #expect(controller.livePage(at: 0)?.canvasView.isDrawingEnabled == false)
+        #expect(controller.testLivePage(at: 0)?.canvasView.isDrawingEnabled == false)
 
         // Page 2 is outside the opening window, so its canvas is built after
         // the tool was chosen. It must still draw ellipses.
         let scroll = controller.scrollView
         scroll.contentOffset = CGPoint(x: scroll.bounds.width * 2, y: 0)
         controller.scrollViewDidEndDecelerating(scroll)
-        #expect(controller.livePage(at: 2)?.canvasView.isDrawingEnabled == false)
+        #expect(controller.testLivePage(at: 2)?.canvasView.isDrawingEnabled == false)
 
         controller.setShapeTool(nil)
-        #expect(controller.livePage(at: 2)?.canvasView.isDrawingEnabled == true)
+        #expect(controller.testLivePage(at: 2)?.canvasView.isDrawingEnabled == true)
     }
 
     private func pencilDragRecognizers(on canvas: PKCanvasView) -> [PencilDragRecognizer] {

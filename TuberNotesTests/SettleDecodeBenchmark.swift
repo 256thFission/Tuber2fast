@@ -222,7 +222,7 @@ struct SettleDecodeBenchmark {
             let root = controller.view!
             root.frame = CGRect(x: 0, y: 0, width: 820, height: 1180)
             root.layoutIfNeeded()
-            controller.setPages(count: 40, currentPageIndex: 0)
+            controller.setTestPages(count: 40, current: 0)
             controller.markEditable()
 
             // A jump of ten pages: the old window and the new share nothing, so

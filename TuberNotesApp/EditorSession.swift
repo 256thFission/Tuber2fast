@@ -97,9 +97,9 @@ final class EditorSession {
     /// Read only by tests: `EditorSessionTests` draws through it to make
     /// `Contract.md` — Saving observable. The live canvas for the visible page,
     /// or `nil` before the runtime has laid out. The save path never reads it —
-    /// `performOneSave` captures via `liveRuntime?.snapshot(at:)`.
+    /// `performOneSave` captures via `liveRuntime?.snapshot(ofPage:)`.
     var currentCanvas: PageCanvasController? {
-        liveRuntime?.livePage(at: index.currentPageIndex)
+        liveRuntime?.livePage(currentPageID)
     }
 
     /// Read only by tests: the prefetch warm is observable nowhere else —
@@ -123,7 +123,14 @@ final class EditorSession {
     /// not in the runtime unless that page happens to be live — and the seam
     /// that answers the runtime is not a surface a test may read through.
     func staticLayersForTesting(forPageAt pageIndex: Int) -> [LayerEnvelope] {
-        staticLayers(forPageAt: pageIndex)
+        staticLayers(forPage: index.pageIDs[pageIndex])
+    }
+
+    /// Read only by tests: a page's identity by position. Tests think in page
+    /// numbers because a person does; the seam they drive is identity-keyed,
+    /// and this is the one translation between the two.
+    func pageIDForTesting(at pageIndex: Int) -> UUID {
+        index.pageIDs[pageIndex]
     }
     #endif
 
@@ -175,36 +182,36 @@ final class EditorSession {
             self.session = session
         }
 
-        func canvasContent(forPageAt index: Int) -> PagedCanvasController.PageContent {
-            session.content(forPageAt: index)
+        func canvasContent(forPage pageID: UUID) -> PagedCanvasController.PageContent {
+            session.content(forPage: pageID)
         }
 
-        func staticLayers(forPageAt index: Int) -> [LayerEnvelope] {
-            session.staticLayers(forPageAt: index)
+        func staticLayers(forPage pageID: UUID) -> [LayerEnvelope] {
+            session.staticLayers(forPage: pageID)
         }
 
-        func projection(forPageAt index: Int) -> PageProjection {
-            session.projection(forPageAt: index)
+        func projection(forPage pageID: UUID) -> PageProjection {
+            session.projection(forPage: pageID)
         }
 
-        func drawingChanged(onPageAt index: Int) {
-            session.drawingChanged(atPageIndex: index)
+        func drawingChanged(onPage pageID: UUID) {
+            session.drawingChanged(onPage: pageID)
         }
 
         func layerTransformed(
-            onPageAt index: Int,
+            onPage pageID: UUID,
             layerID: UUID,
             to transform: PageSpaceTransform
         ) -> Bool {
-            session.layerTransformed(atPageIndex: index, layerID: layerID, to: transform)
+            session.layerTransformed(onPage: pageID, layerID: layerID, to: transform)
         }
 
-        func pageIsRetiring(at index: Int, handingOver snapshot: DrawingSnapshot) {
-            session.pageIsRetiring(atPageIndex: index, snapshot: snapshot)
+        func pageIsRetiring(_ pageID: UUID, handingOver snapshot: DrawingSnapshot) {
+            session.pageIsRetiring(pageID, snapshot: snapshot)
         }
 
-        func currentPageChanged(to index: Int) {
-            session.currentPageChanged(to: index)
+        func currentPageChanged(to pageID: UUID) {
+            session.currentPageChanged(to: pageID)
         }
 
         func reachedEndBoundary() {
@@ -499,7 +506,7 @@ final class EditorSession {
             }
             alignedWithIndex()
             phase = .ready
-            pages.setPages(count: index.pageIDs.count, currentPageIndex: index.currentPageIndex)
+            pages.setPages(index.pageIDs, current: currentPageID)
             // Editing opens only now, after the loaded drawings are installed.
             // Each canvas enforces the ordering; the session decides when it
             // holds, and a page whose bytes have not arrived stays closed.
@@ -520,10 +527,23 @@ final class EditorSession {
     /// The one lookup from identity to state. Pages are never removed, so a
     /// missing entry is a broken invariant, not an answerable question.
     private func stateIndex(of pageID: UUID) -> Int {
-        guard let found = pageStates.firstIndex(where: { $0.id == pageID }) else {
+        guard let found = stateIndexIfPresent(of: pageID) else {
             preconditionFailure("no state for page \(pageID); pages are never removed")
         }
         return found
+    }
+
+    /// The same lookup, for the callers that may legitimately ask about a page
+    /// this session does not have.
+    ///
+    /// Today that is only the runtime laying out before `start()` has populated
+    /// the session — reachable in tests alone, where hosting order is the
+    /// setup's choice. It is a separate spelling rather than a softening of
+    /// `stateIndex(of:)` so that the callers which must fail loud keep doing
+    /// so: an answerable question and a broken invariant look identical at the
+    /// call site otherwise.
+    private func stateIndexIfPresent(of pageID: UUID) -> Int? {
+        pageStates.firstIndex(where: { $0.id == pageID })
     }
 
     /// `pageStates` and `index.pageIDs` are the same list in the same order.
@@ -542,11 +562,11 @@ final class EditorSession {
     /// ink state. Unsaved ink outranks anything on disk: it is newer by
     /// construction, which is what stops a fast turn away and back from
     /// restoring pre-edit ink.
-    private func content(forPageAt pageIndex: Int) -> PagedCanvasController.PageContent {
-        // Out of range only when the runtime lays out before `start()` has
+    private func content(forPage pageID: UUID) -> PagedCanvasController.PageContent {
+        // Unknown only when the runtime lays out before `start()` has
         // populated the session — reachable in tests alone, where hosting
         // order is the setup's choice.
-        guard pageStates.indices.contains(pageIndex) else { return .blank }
+        guard let pageIndex = stateIndexIfPresent(of: pageID) else { return .blank }
         if let refused = pageStates[pageIndex].refusedLayers.first {
             // The refusal is the layer's, but the input refusal is the
             // page's: a page is editable exactly when its ink layer is
@@ -570,13 +590,13 @@ final class EditorSession {
         case .clean:
             guard let data = pageStates[pageIndex].durable else {
                 preconditionFailure(
-                    "page \(pageIndex) is clean but its durable bytes are missing"
+                    "page \(pageID) is clean but its durable bytes are missing"
                 )
             }
             return data.isEmpty ? .blank : .ink(data)
         case .live:
             preconditionFailure(
-                "asked to rebuild page \(pageIndex) while its live canvas is the authority"
+                "asked to rebuild page \(pageID) while its live canvas is the authority"
             )
         case .held(let unsaved), .saving(let unsaved):
             switch unsaved {
@@ -595,8 +615,8 @@ final class EditorSession {
     /// does, the answer must not be the layers it *could* read. A stack missing
     /// the layer it refused would render as a picture that looks correct and is
     /// not, which is the one failure the layer model exists to prevent.
-    private func staticLayers(forPageAt pageIndex: Int) -> [LayerEnvelope] {
-        guard pageStates.indices.contains(pageIndex) else { return [] }
+    private func staticLayers(forPage pageID: UUID) -> [LayerEnvelope] {
+        guard let pageIndex = stateIndexIfPresent(of: pageID) else { return [] }
         guard pageStates[pageIndex].refusedLayers.isEmpty else { return [] }
         return pageStates[pageIndex].staticLayers
     }
@@ -609,8 +629,9 @@ final class EditorSession {
     /// canonical page is the right answer there for the same reason `.blank`
     /// is: the session replaces the slot the moment it knows better, through
     /// `setPages`.
-    private func projection(forPageAt pageIndex: Int) -> PageProjection {
-        index.projection(ofPageAt: pageIndex) ?? .canonical
+    private func projection(forPage pageID: UUID) -> PageProjection {
+        index.pageIDs.firstIndex(of: pageID)
+            .flatMap { index.projection(ofPageAt: $0) } ?? .canonical
     }
 
     /// Drops every cached composite whose page has left the live window plus
@@ -676,7 +697,7 @@ final class EditorSession {
             guard pageStates[pageIndex].refusedLayers.isEmpty,
                   !pageStates[pageIndex].staticLayers.isEmpty,
                   let geometry = index.geometry(ofPageAt: pageIndex),
-                  let detail = liveRuntime?.compositeDetail(forPageAt: pageIndex)
+                  let detail = liveRuntime?.compositeDetail(forPage: pageStates[pageIndex].id)
             else { continue }
             let request = StaticLayerRequest(
                 layers: pageStates[pageIndex].staticLayers,
@@ -745,9 +766,7 @@ final class EditorSession {
                 )
                 pageStates[stateIndex(of: pageID)].loadFailed(String(describing: error))
             }
-            if let current = index.pageIDs.firstIndex(of: pageID) {
-                liveRuntime?.reloadPage(at: current)
-            }
+            liveRuntime?.reloadPage(pageID)
         }
     }
 
@@ -820,7 +839,7 @@ final class EditorSession {
         indexDirty = true
         alignedWithIndex()
 
-        pages.setPages(count: index.pageIDs.count, currentPageIndex: index.currentPageIndex)
+        pages.setPages(index.pageIDs, current: currentPageID)
         CanvasLog.event(
             .canvas,
             "appended page \(index.currentPageIndex); pages=\(index.pageIDs.count)"
@@ -840,7 +859,7 @@ final class EditorSession {
     /// The phase guard remains for `.failed`, where autosaving would overwrite a
     /// document that could not be read, and for `.loading`, where no page should
     /// be reporting anything yet.
-    private func drawingChanged(atPageIndex pageIndex: Int) {
+    private func drawingChanged(onPage pageID: UUID) {
         if isClosing {
             // After close no canvas should exist to send this; one arriving is
             // a caller holding a released editor. Ignored rather than trapped
@@ -850,12 +869,12 @@ final class EditorSession {
             // the final pass or is still live in the canvas that sent this.
             CanvasLog.event(
                 .lifecycle,
-                "drawing change on page \(pageIndex) after close; ignored — "
+                "drawing change on page \(pageID) after close; ignored — "
                     + "no canvas should exist to send one"
             )
             return
         }
-        guard phase == .ready, pageStates.indices.contains(pageIndex) else { return }
+        guard phase == .ready, let pageIndex = stateIndexIfPresent(of: pageID) else { return }
         // A page whose bytes are not held has no canvas — it is a placeholder
         // in the runtime — so `edited()`'s trap for `.loading` and
         // `.unreadable` is unreachable from here rather than a case to route
@@ -876,18 +895,18 @@ final class EditorSession {
     /// bytes back later — left a window in which the page had no canvas and no
     /// held ink. A save landing in that window found only the last bytes that
     /// reached disk, wrote those over the newer ink, and marked the page clean.
-    private func pageIsRetiring(atPageIndex pageIndex: Int, snapshot: DrawingSnapshot) {
-        guard phase == .ready, pageStates.indices.contains(pageIndex) else { return }
+    private func pageIsRetiring(_ pageID: UUID, snapshot: DrawingSnapshot) {
+        guard phase == .ready, let pageIndex = stateIndexIfPresent(of: pageID) else { return }
         pageStates[pageIndex].retired(handingOver: snapshot)
     }
 
-    /// The visible page settled on a new index.
-    private func currentPageChanged(to pageIndex: Int) {
+    /// The visible page settled on a new page.
+    private func currentPageChanged(to pageID: UUID) {
         if isClosing {
-            CanvasLog.event(.lifecycle, "page turn to \(pageIndex) after close; ignored")
+            CanvasLog.event(.lifecycle, "page turn to \(pageID) after close; ignored")
             return
         }
-        guard phase == .ready, index.pageIDs.indices.contains(pageIndex) else { return }
+        guard phase == .ready, let pageIndex = index.pageIDs.firstIndex(of: pageID) else { return }
         guard pageIndex != index.currentPageIndex else { return }
 
         index = index.withPages(index.pages, currentPageIndex: pageIndex)
@@ -1110,7 +1129,7 @@ final class EditorSession {
                     )
                 )
             case .live:
-                guard let snapshot = liveRuntime?.snapshot(at: pageIndex) else {
+                guard let snapshot = liveRuntime?.snapshot(ofPage: pageStates[pageIndex].id) else {
                     preconditionFailure(
                         "page \(pageStates[pageIndex].id) is live but its canvas "
                             + "yielded no snapshot"
@@ -1405,9 +1424,7 @@ final class EditorSession {
         // renders from the asset, which is already durable, and making the user
         // wait for a page write to see their own import would be a save on an
         // interaction path in everything but name.
-        if let visible = index.pageIDs.firstIndex(of: targetPageID) {
-            liveRuntime?.reloadStaticLayers(at: visible)
-        }
+        liveRuntime?.reloadStaticLayers(onPage: targetPageID)
 
         await saveIfNeeded()
         return layerID
@@ -1516,7 +1533,7 @@ final class EditorSession {
         )
         indexDirty = true
         alignedWithIndex()
-        pages.setPages(count: index.pageIDs.count, currentPageIndex: index.currentPageIndex)
+        pages.setPages(index.pageIDs, current: currentPageID)
 
         CanvasLog.event(
             .canvas,
@@ -1544,18 +1561,18 @@ final class EditorSession {
     /// the layer back where it was, so the picture never disagrees with the
     /// file.
     private func layerTransformed(
-        atPageIndex pageIndex: Int,
+        onPage pageID: UUID,
         layerID: UUID,
         to transform: PageSpaceTransform
     ) -> Bool {
-        guard phase == .ready, index.pageIDs.indices.contains(pageIndex) else { return false }
+        guard phase == .ready, index.pageIDs.contains(pageID) else { return false }
         do {
-            _ = try transformLayer(layerID, onPage: index.pageIDs[pageIndex], to: transform)
+            _ = try transformLayer(layerID, onPage: pageID, to: transform)
             return true
         } catch {
             CanvasLog.event(
                 .canvas,
-                "layer \(layerID) on page \(pageIndex) was not transformed: \(error)"
+                "layer \(layerID) on page \(pageID) was not transformed: \(error)"
             )
             return false
         }
@@ -1656,9 +1673,7 @@ final class EditorSession {
         // The ink is untouched, so the canvas is told rather than rebuilt —
         // the same distinction `importImage` and `deleteLayer` make, and the
         // reason `reloadStaticLayers` exists separately from `reloadPage`.
-        if let visible = index.pageIDs.firstIndex(of: pageID) {
-            liveRuntime?.reloadStaticLayers(at: visible)
-        }
+        liveRuntime?.reloadStaticLayers(onPage: pageID)
         markDirty()
         return existing
     }
@@ -1724,9 +1739,7 @@ final class EditorSession {
         // than rebuilt. A page that was refusing input has no canvas to tell —
         // it becomes one below, through `reloadPage`, which asks for the layer
         // list as it builds.
-        if let visible = index.pageIDs.firstIndex(of: pageID) {
-            liveRuntime?.reloadStaticLayers(at: visible)
-        }
+        liveRuntime?.reloadStaticLayers(onPage: pageID)
 
         await saveIfNeeded()
 
@@ -1734,12 +1747,11 @@ final class EditorSession {
         // and an index that outlives one is the class of bug this file already
         // carries elsewhere. Pages are append-only today, which makes this
         // caution rather than a fix.
-        if pageStates[stateIndex(of: pageID)].refusedLayers.count != refusalsBefore,
-           let visible = index.pageIDs.firstIndex(of: pageID) {
+        if pageStates[stateIndex(of: pageID)].refusedLayers.count != refusalsBefore {
             // A page that was refusing input may now accept it, so the runtime
             // rebuilds the placeholder into a canvas. Only ever reached from a
             // page that had a refusal, which is a page with no live canvas.
-            liveRuntime?.reloadPage(at: visible)
+            liveRuntime?.reloadPage(pageID)
         }
 
         // Reclamation asks the *disk* whether anything still references the

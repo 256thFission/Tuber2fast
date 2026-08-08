@@ -205,7 +205,7 @@ struct LayerEnvelopeTests {
         let rootView = session.pages.view!
         rootView.frame = CGRect(x: 0, y: 0, width: 820, height: 1180)
         rootView.layoutIfNeeded()
-        #expect(session.pages.livePage(at: 0) == nil)
+        #expect(session.pages.livePage(session.pageIDForTesting(at: 0)) == nil)
         #expect(session.currentCanvas == nil)
     }
 
@@ -376,7 +376,7 @@ struct LayerEnvelopeTests {
         let rootView = session.pages.view!
         rootView.frame = CGRect(x: 0, y: 0, width: 820, height: 1180)
         rootView.layoutIfNeeded()
-        #expect(session.pages.livePage(at: 0) == nil)
+        #expect(session.pages.livePage(session.pageIDForTesting(at: 0)) == nil)
         #expect(session.currentCanvas == nil)
 
         // Nothing is dirty, so nothing saves, and the refused layer's bytes

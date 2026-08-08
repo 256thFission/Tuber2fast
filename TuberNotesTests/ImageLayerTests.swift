@@ -322,7 +322,7 @@ struct ImageLayerTests {
         let rootView = try #require(session.pages.view)
         rootView.frame = CGRect(x: 0, y: 0, width: 820, height: 1180)
         rootView.layoutIfNeeded()
-        #expect(session.pages.livePage(at: 0) == nil)
+        #expect(session.pages.livePage(session.pageIDForTesting(at: 0)) == nil)
         #expect(session.currentCanvas == nil)
 
         // An import onto such a page is refused too, and nothing is rewritten.

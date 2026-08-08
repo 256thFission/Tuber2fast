@@ -59,13 +59,13 @@ struct PrefetchWarmTests {
         session.pages.scrollViewDidEndDecelerating(scroll)
         root.layoutIfNeeded()
 
-        #expect(session.pages.livePage(at: 4) == nil, "page 4 must have no canvas — the warm is the only requester")
+        #expect(session.pages.livePage(session.pageIDForTesting(at: 4)) == nil, "page 4 must have no canvas — the warm is the only requester")
         try await waitUntil("the neighbour's composite warms") {
             await renderer.cachedCompositeCount == 1
         }
 
         // The identity the cache holds, taken now, before any canvas exists.
-        let detail = try #require(session.pages.compositeDetail(forPageAt: 4))
+        let detail = try #require(session.pages.compositeDetail(forPage: session.pageIDForTesting(at: 4)))
         let request = StaticLayerRequest(
             layers: [decorated],
             geometry: .canonical,
@@ -84,7 +84,7 @@ struct PrefetchWarmTests {
         session.pages.scrollViewDidEndDecelerating(scroll)
         root.layoutIfNeeded()
 
-        let neighbour = try #require(session.pages.livePage(at: 4), "page 4 is in the live window now")
+        let neighbour = try #require(session.pages.livePage(session.pageIDForTesting(at: 4)), "page 4 is in the live window now")
         let backdrop = try #require(neighbour.backdrop)
         let pageLayer = backdrop.pageLayerForTesting
         try await waitUntilOnMain("the composite shows") { pageLayer.contents != nil }

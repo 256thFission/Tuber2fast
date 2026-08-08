@@ -11,7 +11,7 @@ struct PagedCanvasControllerTests {
     @Test("A page-sized slot exists for every page")
     func contentSizeCoversEveryPage() {
         let controller = hosted()
-        controller.setPages(count: 7, currentPageIndex: 0)
+        controller.setTestPages(count: 7, current: 0)
 
         let scroll = controller.scrollView
         #expect(scroll.contentSize.width == scroll.bounds.width * 7)
@@ -24,7 +24,7 @@ struct PagedCanvasControllerTests {
         let controller = hosted()
 
         for count in [1, 2, 5, 40, 400] {
-            controller.setPages(count: count, currentPageIndex: 0)
+            controller.setTestPages(count: count, current: 0)
             // The window is the visible page and two either side. It is the
             // count that matters, not the number: it must not scale with
             // `count` (`Contract.md` — Performance), which is why the assertion
@@ -37,7 +37,7 @@ struct PagedCanvasControllerTests {
     @Test("Sweeping across many pages does not accumulate canvases")
     func longSweepDoesNotAccumulateCanvases() {
         let controller = hosted()
-        controller.setPages(count: 120, currentPageIndex: 0)
+        controller.setTestPages(count: 120, current: 0)
 
         var highWaterMark = controller.liveCanvasCount
         for page in 0..<120 {
@@ -55,58 +55,58 @@ struct PagedCanvasControllerTests {
     @Test("Two pages either side are prepared, not placeholders")
     func theWindowReachesTwoPagesEitherSide() {
         let controller = hosted()
-        controller.setPages(count: 9, currentPageIndex: 0)
+        controller.setTestPages(count: 9, current: 0)
         turn(controller, to: 4)
 
         // The device finding this answers (2026-08-07): a *flick* crosses two
         // slots before anything settles, and with one prepared neighbour the
         // second slot was still a placeholder when it came under the finger.
         for index in 2...6 {
-            #expect(controller.livePage(at: index) != nil, "page \(index) is inside the window")
+            #expect(controller.testLivePage(at: index) != nil, "page \(index) is inside the window")
         }
         // Still bounded, and still symmetric — the window is a radius, not a
         // lead in the direction of travel.
-        #expect(controller.livePage(at: 1) == nil)
-        #expect(controller.livePage(at: 7) == nil)
+        #expect(controller.testLivePage(at: 1) == nil)
+        #expect(controller.testLivePage(at: 7) == nil)
     }
 
     @Test("A page that leaves the window hands its ink over before it is released")
     func retiringPageSurrendersItsInk() {
         var retired: [Int] = []
         let controller = hosted { $0.onPageRetiring = { index, _ in retired.append(index) } }
-        controller.setPages(count: 10, currentPageIndex: 0)
+        controller.setTestPages(count: 10, current: 0)
         controller.markEditable()
 
         turn(controller, to: 5)
 
         // Page 0 cannot still be live, and must not have been dropped silently.
-        #expect(controller.livePage(at: 0) == nil)
+        #expect(controller.testLivePage(at: 0) == nil)
         #expect(retired.contains(0))
     }
 
     @Test("A page whose ink has not arrived is a placeholder, not a canvas")
     func pageWithoutBytesIsNotACanvas() {
         let controller = hosted { $0.content = { _ in .loading } }
-        controller.setPages(count: 3, currentPageIndex: 0)
+        controller.setTestPages(count: 3, current: 0)
         controller.markEditable()
 
         // The hazard this refuses: an empty canvas the user could draw on,
         // whose blank drawing would then be saved over the page's real ink —
         // or whose accepted strokes would be silently dropped. There is no
         // canvas, so neither can exist.
-        #expect(controller.livePage(at: 0) == nil)
+        #expect(controller.testLivePage(at: 0) == nil)
         #expect(controller.liveCanvasCount == 0)
-        #expect(controller.snapshot(at: 0) == nil)
+        #expect(controller.snapshot(ofPage: TestPages.id(0)) == nil)
     }
 
     @Test("An unreadable page is refused, never rendered as an editable blank")
     func unreadablePageIsRefused() {
         let controller = hosted { $0.content = { _ in .unreadable("decode failed") } }
-        controller.setPages(count: 2, currentPageIndex: 0)
+        controller.setTestPages(count: 2, current: 0)
         controller.markEditable()
 
-        #expect(controller.livePage(at: 0) == nil)
-        #expect(controller.snapshot(at: 0) == nil)
+        #expect(controller.testLivePage(at: 0) == nil)
+        #expect(controller.snapshot(ofPage: TestPages.id(0)) == nil)
     }
 
     @Test("A page is rebuilt with its ink once the bytes arrive")
@@ -118,12 +118,12 @@ struct PagedCanvasControllerTests {
                 return .ink(available)
             }
         }
-        controller.setPages(count: 2, currentPageIndex: 0)
+        controller.setTestPages(count: 2, current: 0)
         controller.markEditable()
-        #expect(controller.livePage(at: 0) == nil)
+        #expect(controller.testLivePage(at: 0) == nil)
 
         available = strokeAcrossPage().dataRepresentation()
-        controller.reloadPage(at: 0)
+        controller.reloadPage(TestPages.id(0))
 
         let page = try await requireCanvas(controller, at: 0)
         #expect(page.canvasView.drawing.strokes.count == 1)
@@ -133,7 +133,7 @@ struct PagedCanvasControllerTests {
     func inkIsDecodedOffTheSettlePath() async throws {
         let data = strokeAcrossPage().dataRepresentation()
         let controller = hosted { $0.content = { _ in .ink(data) } }
-        controller.setPages(count: 3, currentPageIndex: 0)
+        controller.setTestPages(count: 3, current: 0)
         controller.markEditable()
 
         // The settle returned without decoding: the slot is not a canvas yet.
@@ -143,8 +143,8 @@ struct PagedCanvasControllerTests {
         // accept no input — a canvas here would be one the user could draw on,
         // whose empty drawing the save path would write over the page's real
         // ink, or whose strokes the install would silently overwrite.
-        #expect(controller.livePage(at: 0) == nil)
-        #expect(controller.snapshot(at: 0) == nil)
+        #expect(controller.testLivePage(at: 0) == nil)
+        #expect(controller.snapshot(ofPage: TestPages.id(0)) == nil)
         #expect(controller.liveCanvasCount == 0)
         #expect(controller.pendingInkDecodeCount == 3)
 
@@ -157,7 +157,7 @@ struct PagedCanvasControllerTests {
     func aSupersededDecodeIsCancelled() async throws {
         let data = strokeAcrossPage().dataRepresentation()
         let controller = hosted { $0.content = { _ in .ink(data) } }
-        controller.setPages(count: 40, currentPageIndex: 0)
+        controller.setTestPages(count: 40, current: 0)
         controller.markEditable()
         #expect(controller.pendingInkDecodeCount == 3)
 
@@ -173,7 +173,7 @@ struct PagedCanvasControllerTests {
         // the Pencil, which is what `CONTRIBUTING.md` — Cancellation forbids.
         #expect(controller.pendingInkDecodeCount == 5)
         for index in 0...2 {
-            #expect(controller.livePage(at: index) == nil)
+            #expect(controller.testLivePage(at: index) == nil)
         }
 
         try await waitUntil("the new window's decodes install") {
@@ -183,7 +183,7 @@ struct PagedCanvasControllerTests {
         // decode installing behind the user would be the currency check
         // failing.
         for index in 0...2 {
-            #expect(controller.livePage(at: index) == nil)
+            #expect(controller.testLivePage(at: index) == nil)
         }
         #expect(controller.liveCanvasCount == 5)
     }
@@ -191,17 +191,17 @@ struct PagedCanvasControllerTests {
     @Test("Reloading a slot that is a live canvas does nothing")
     func reloadNeverReplacesACanvas() throws {
         let controller = hosted { $0.content = { _ in .blank } }
-        controller.setPages(count: 2, currentPageIndex: 0)
+        controller.setTestPages(count: 2, current: 0)
         controller.markEditable()
 
-        let page = try #require(controller.livePage(at: 0))
+        let page = try #require(controller.testLivePage(at: 0))
         page.canvasView.drawing = strokeAcrossPage()
 
         // A canvas holds ink; only retirement may replace it. A reload here
         // would destroy the stroke with an older load result.
-        controller.reloadPage(at: 0)
+        controller.reloadPage(TestPages.id(0))
 
-        let after = try #require(controller.livePage(at: 0))
+        let after = try #require(controller.testLivePage(at: 0))
         #expect(after === page)
         #expect(after.canvasView.drawing.strokes.count == 1)
     }
@@ -210,7 +210,7 @@ struct PagedCanvasControllerTests {
     func pageChangeIsReportedOnceWhenSettled() {
         var reported: [Int] = []
         let controller = hosted { $0.onPageChanged = { reported.append($0) } }
-        controller.setPages(count: 5, currentPageIndex: 0)
+        controller.setTestPages(count: 5, current: 0)
         let scroll = controller.scrollView
 
         // A deceleration that comes to rest on page 1.
@@ -230,8 +230,8 @@ struct PagedCanvasControllerTests {
     func halfDragCommitsNothing() throws {
         var reported: [Int] = []
         let controller = hosted { $0.onPageChanged = { reported.append($0) } }
-        controller.setPages(count: 5, currentPageIndex: 0)
-        let before = try #require(controller.livePage(at: 0))
+        controller.setTestPages(count: 5, current: 0)
+        let before = try #require(controller.testLivePage(at: 0))
         let scroll = controller.scrollView
 
         // The finger is past the halfway point of a drag toward page 1. The
@@ -248,14 +248,14 @@ struct PagedCanvasControllerTests {
         controller.scrollViewDidEndDecelerating(scroll)
         #expect(reported.isEmpty)
         #expect(controller.currentPageIndex == 0)
-        #expect(controller.livePage(at: 0) === before)
+        #expect(controller.testLivePage(at: 0) === before)
     }
 
     @Test("A fast fling across several pages fires one turn, for the landing page")
     func flingAcrossPagesReportsOneTurn() {
         var reported: [Int] = []
         let controller = hosted { $0.onPageChanged = { reported.append($0) } }
-        controller.setPages(count: 6, currentPageIndex: 0)
+        controller.setTestPages(count: 6, current: 0)
         let scroll = controller.scrollView
 
         // The finger crosses the midpoints of pages 1 and 2 mid-gesture. No
@@ -280,7 +280,7 @@ struct PagedCanvasControllerTests {
     func endBoundaryIsReportedNotActedOn() {
         var asked = 0
         let controller = hosted { $0.onReachedEndBoundary = { asked += 1 } }
-        controller.setPages(count: 3, currentPageIndex: 2)
+        controller.setTestPages(count: 3, current: 2)
 
         let scroll = controller.scrollView
         scroll.contentOffset = CGPoint(x: scroll.bounds.width * 2.5, y: 0)
@@ -291,11 +291,42 @@ struct PagedCanvasControllerTests {
         #expect(controller.pageCount == 3)
     }
 
+    /// The pull shows the page it would create, and the created page lands on
+    /// the promise: the preview sits in the slot after the last, shaped as the
+    /// canonical page will open there, and an append puts the real page's slot
+    /// exactly over it (device verdict, 2026-08-08: the pull showed grey void
+    /// that popped into a page).
+    @Test("The append pull shows a page-shaped preview, and the appended page lands on it")
+    func appendPreviewStandsWhereTheAppendedPageWillBe() {
+        let controller = hosted()
+        controller.setTestPages(count: 3, current: 2)
+
+        let scroll = controller.scrollView
+        let preview = controller.appendPreviewFrameForTesting
+
+        // Past the last page, inside the slot an appended page would take, and
+        // page-shaped: the canonical aspect at the scale it will open at, on
+        // the same dark gutter every live slot shows around its page.
+        #expect(preview.minX >= scroll.bounds.width * 3)
+        #expect(preview.maxX <= scroll.bounds.width * 4)
+        let aspect = preview.height / preview.width
+        let canonical = CGFloat(PageGeometry.canonical.height / PageGeometry.canonical.width)
+        #expect(abs(aspect - canonical) < 0.01)
+        // A picture, not a page: it takes no input.
+        #expect(!controller.appendPreviewTakesInputForTesting)
+
+        // The commit lands the real page's slot over the preview's slot, and
+        // the preview moves on to promise the page after it.
+        controller.setTestPages(count: 4, current: 3)
+        #expect(scroll.contentSize.width == scroll.bounds.width * 4)
+        #expect(controller.appendPreviewFrameForTesting.minX >= scroll.bounds.width * 4)
+    }
+
     @Test("Settling on the last page does not ask for a new one")
     func ordinaryTurnOntoLastPageDoesNotAppend() {
         var asked = 0
         let controller = hosted { $0.onReachedEndBoundary = { asked += 1 } }
-        controller.setPages(count: 3, currentPageIndex: 2)
+        controller.setTestPages(count: 3, current: 2)
 
         let scroll = controller.scrollView
         // A small rubber-band overshoot from an ordinary turn, well short of the
@@ -318,14 +349,14 @@ struct PagedCanvasControllerTests {
         // test is about what an appended blank page is when it arrives.
         session.content = { _ in .blank }
         let controller = hosted(session)
-        controller.setPages(count: count, currentPageIndex: 2)
+        controller.setTestPages(count: count, current: 2)
         controller.markEditable()
         // The session's shape: the append is synchronous in intent.
         session.onReachedEndBoundary = { [unowned controller] in
             count += 1
-            controller.setPages(count: count, currentPageIndex: count - 1)
+            controller.setTestPages(count: count, current: count - 1)
         }
-        let kept = try #require(controller.livePage(at: 2))
+        let kept = try #require(controller.testLivePage(at: 2))
 
         let scroll = controller.scrollView
         scroll.contentOffset = CGPoint(x: scroll.bounds.width * 2.5, y: 0)
@@ -333,11 +364,11 @@ struct PagedCanvasControllerTests {
 
         // Immediately — before any runloop turn, fetch, or animation — the new
         // slot is a live, editable, empty canvas, never a placeholder.
-        let appended = try #require(controller.livePage(at: 3))
+        let appended = try #require(controller.testLivePage(at: 3))
         #expect(appended.canvasView.drawing.strokes.isEmpty)
         #expect(controller.currentPageIndex == 3)
         // And the slot the user was just writing on was not rebuilt.
-        #expect(controller.livePage(at: 2) === kept)
+        #expect(controller.testLivePage(at: 2) === kept)
     }
 
     /// The device finding of 2026-08-07: the turn onto the appended page
@@ -355,10 +386,10 @@ struct PagedCanvasControllerTests {
         // test is about what an appended blank page is when it arrives.
         session.content = { _ in .blank }
         let controller = hosted(session)
-        controller.setPages(count: count, currentPageIndex: 2)
+        controller.setTestPages(count: count, current: 2)
         session.onReachedEndBoundary = { [unowned controller] in
             count += 1
-            controller.setPages(count: count, currentPageIndex: count - 1)
+            controller.setTestPages(count: count, current: count - 1)
         }
 
         let scroll = controller.scrollView
@@ -396,10 +427,12 @@ struct PagedCanvasControllerTests {
             $0.onReachedEndBoundary = { asked += 1 }
             $0.onPageChanged = { reported.append($0) }
         }
-        controller.setPages(count: 3, currentPageIndex: 2)
+        controller.setTestPages(count: 3, current: 2)
 
         let scroll = controller.scrollView
-        scroll.contentOffset = CGPoint(x: scroll.bounds.width * 2.3, y: 0)
+        // Just under the trigger (0.15 past the last page since the 2026-08-08
+        // device measurement lowered it): abandoned, not an ask.
+        scroll.contentOffset = CGPoint(x: scroll.bounds.width * 2.12, y: 0)
         controller.scrollViewDidEndDragging(scroll, willDecelerate: true)
         #expect(asked == 0)
         #expect(controller.pageCount == 3)
@@ -440,7 +473,7 @@ struct PagedCanvasControllerTests {
                 )
             }
         }
-        controller.setPages(count: geometries.count, currentPageIndex: 0)
+        controller.setTestPages(count: geometries.count, current: 0)
         controller.markEditable()
         controller.view.layoutIfNeeded()
 
@@ -457,7 +490,7 @@ struct PagedCanvasControllerTests {
             controller.view.layoutIfNeeded()
             #expect(controller.currentPageIndex == page)
 
-            let canvas = try #require(controller.livePage(at: page)).canvasView
+            let canvas = try #require(controller.testLivePage(at: page)).canvasView
             let expected = geometries[page]
             let unscaled = CGSize(
                 width: canvas.contentSize.width / canvas.zoomScale,
@@ -499,11 +532,11 @@ struct PagedCanvasControllerTests {
                 )
             }
         }
-        controller.setPages(count: 2, currentPageIndex: 0)
+        controller.setTestPages(count: 2, current: 0)
         controller.view.layoutIfNeeded()
 
-        let portraitCanvas = try #require(controller.livePage(at: 0)).canvasView
-        let landscapeCanvas = try #require(controller.livePage(at: 1)).canvasView
+        let portraitCanvas = try #require(controller.testLivePage(at: 0)).canvasView
+        let landscapeCanvas = try #require(controller.testLivePage(at: 1)).canvasView
         let slot = controller.scrollView.bounds
 
         #expect(portraitCanvas.minimumZoomScale != landscapeCanvas.minimumZoomScale)
@@ -524,7 +557,7 @@ struct PagedCanvasControllerTests {
     func widthChangeRecentresTheCurrentPage() throws {
         var turns: [Int] = []
         let controller = hosted { $0.onPageChanged = { turns.append($0) } }
-        controller.setPages(count: 9, currentPageIndex: 0)
+        controller.setTestPages(count: 9, current: 0)
         turn(controller, to: 4)
         #expect(turns == [4])
 
@@ -541,7 +574,7 @@ struct PagedCanvasControllerTests {
         #expect(controller.currentPageIndex == 4)
         // A resize is not a page turn, and must not be reported as one.
         #expect(turns == [4])
-        #expect(try #require(controller.livePage(at: 4)).view.frame
+        #expect(try #require(controller.testLivePage(at: 4)).view.frame
             == CGRect(x: narrow * 4, y: 0, width: narrow, height: 1180))
     }
 
@@ -553,7 +586,7 @@ struct PagedCanvasControllerTests {
         for newWidth in [500.0, 1180.0] as [CGFloat] {
             var turns: [Int] = []
             let controller = hosted { $0.onPageChanged = { turns.append($0) } }
-            controller.setPages(count: 9, currentPageIndex: 0)
+            controller.setTestPages(count: 9, current: 0)
             turn(controller, to: 8)
             turns.removeAll()
 
@@ -625,9 +658,9 @@ struct PagedCanvasControllerTests {
         sourceLocation: SourceLocation = #_sourceLocation
     ) async throws -> PageCanvasController {
         try await waitUntil("page \(index) becomes a canvas", sourceLocation: sourceLocation) {
-            controller.livePage(at: index) != nil
+            controller.testLivePage(at: index) != nil
         }
-        return try #require(controller.livePage(at: index), sourceLocation: sourceLocation)
+        return try #require(controller.testLivePage(at: index), sourceLocation: sourceLocation)
     }
 
     /// Polls until `condition` holds, or fails after a second.

@@ -325,7 +325,7 @@ struct EditorSessionTests {
         // sleep at this point would be stepping over the exact race this test
         // exists to catch.
         for _ in 0..<4 { pullPastTheEnd(session) }
-        #expect(session.pages.livePage(at: 0) == nil)
+        #expect(session.pages.livePage(session.pageIDForTesting(at: 0)) == nil)
 
         await session.saveIfNeeded()
 
@@ -434,7 +434,7 @@ struct EditorSessionTests {
         // and the failed save's retry then wrote the pre-edit bytes and
         // acknowledged the page clean.
         turn(session, to: 4)
-        #expect(session.pages.livePage(at: 0) == nil)
+        #expect(session.pages.livePage(session.pageIDForTesting(at: 0)) == nil)
 
         await held.release()
         await save.value
@@ -492,7 +492,7 @@ struct EditorSessionTests {
         // The refused page is a placeholder, not a canvas: there is nothing to
         // draw on, so no ink can exist for a save to misaccount.
         turn(second, to: 1)
-        #expect(second.pages.livePage(at: 1) == nil)
+        #expect(second.pages.livePage(second.pageIDForTesting(at: 1)) == nil)
     }
 
     // MARK: - Autosave

@@ -15,6 +15,16 @@ import TuberModel
 /// a compile error, so the state no longer exists to be classified
 /// (`Contract.md` — Invalid states fail loud).
 ///
+/// **Every question and every report carries a page identity, never a page
+/// position.** An index is only the page it names for as long as the list does
+/// not change, and the list changes the moment a page can be inserted, deleted,
+/// reordered, or duplicated. A stale index does not fail — it addresses the
+/// *wrong page*, which on this seam means a page marked dirty that the user
+/// never touched, a layer transformed on the wrong page, and, worst, a retiring
+/// page's ink handed into a different page's custody. Identity is stable for
+/// the page's life; a position is derived from it locally, in the one place
+/// scroll arithmetic needs one.
+///
 /// **Ownership.** The runtime holds its session **strongly**, which is what
 /// lets the reference be non-optional — there is no `weak` that is not also an
 /// optional, and an optional here is the defect this type removes. So whoever
@@ -30,7 +40,7 @@ package protocol PagedCanvasSession: AnyObject {
     /// the window before the session has its bytes, or with bytes that refuse
     /// to read. Such a page is a placeholder, never an editable blank — ink
     /// drawn on a blank standing in for a real page would be saved over it.
-    func canvasContent(forPageAt index: Int) -> PagedCanvasController.PageContent
+    func canvasContent(forPage pageID: UUID) -> PagedCanvasController.PageContent
 
     /// A page's recognized layers below its ink, in order.
     ///
@@ -45,34 +55,34 @@ package protocol PagedCanvasSession: AnyObject {
     /// all — it is a placeholder, not a canvas — and answering empty is the
     /// belt to that braces: no partial composite exists to be mistaken for a
     /// correct one.
-    func staticLayers(forPageAt index: Int) -> [LayerEnvelope]
+    func staticLayers(forPage pageID: UUID) -> [LayerEnvelope]
 
     /// The page-space facts a page's canvas is built with: that page's own
     /// geometry, and the document's zoom cap.
     ///
     /// A third question rather than a field on `PageContent`, for the reason
-    /// `staticLayers(forPageAt:)` is a second: it changes on a different
+    /// `staticLayers(forPage:)` is a second: it changes on a different
     /// occasion from ink — never, in fact, after the page exists — and it is
     /// needed at canvas construction, which is before any content decision has
     /// been taken.
     ///
-    /// An index the session does not know is the session's own question to
+    /// A page the session does not know is the session's own question to
     /// answer, and it answers it in one place rather than at this seam.
-    func projection(forPageAt index: Int) -> PageProjection
+    func projection(forPage pageID: UUID) -> PageProjection
 
-    /// A live page's drawing changed. The index is the page's, and nothing
+    /// A live page's drawing changed. The identity is the page's, and nothing
     /// else travels with it (`Contract.md` — Saving).
-    func drawingChanged(onPageAt index: Int)
+    func drawingChanged(onPage pageID: UUID)
 
     /// One committed layer transform, and whether the session accepted it.
     ///
-    /// The page index is added by `PagedCanvasController` and nowhere else,
+    /// The page identity is added by `PagedCanvasController` and nowhere else,
     /// because a `PageCanvasController` is blind to which page it is
     /// (`Contract.md` — Owners, golden rule 7). Nothing about the gesture that
     /// produced the value travels with it — one immutable transform does,
     /// which is the same shape as a retiring page's drawing snapshot.
     func layerTransformed(
-        onPageAt index: Int,
+        onPage pageID: UUID,
         layerID: UUID,
         to transform: PageSpaceTransform
     ) -> Bool
@@ -80,10 +90,10 @@ package protocol PagedCanvasSession: AnyObject {
     /// A retiring page's ink, handed over before its controller is released.
     /// Without this a page's edits would die with its canvas when it left the
     /// window (`Contract.md` — Navigation: the handover is synchronous).
-    func pageIsRetiring(at index: Int, handingOver snapshot: DrawingSnapshot)
+    func pageIsRetiring(_ pageID: UUID, handingOver snapshot: DrawingSnapshot)
 
     /// The visible page changed. Fired once per settled turn, not per frame.
-    func currentPageChanged(to index: Int)
+    func currentPageChanged(to pageID: UUID)
 
     /// The user swiped past the last page. The session decides whether a page
     /// is appended; the runtime never grows the document by itself.

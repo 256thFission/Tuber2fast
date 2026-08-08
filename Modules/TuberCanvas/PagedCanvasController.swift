@@ -49,10 +49,46 @@ package final class PagedCanvasController: UIViewController, UIScrollViewDelegat
 
     let scrollView = UIScrollView()
 
-    /// The page the user is looking at. `EditorSession` owns the durable current
-    /// index; this is the runtime's view of it.
-    private(set) var currentPageIndex = 0
-    private(set) var pageCount = 1
+    /// The rendered order: the page identities this runtime lays out, in
+    /// document order, exactly as the session last stated them
+    /// (`setPages(_:current:)`). Told, never inferred, and never grown here —
+    /// the runtime does not create pages (`Contract.md` — Owners).
+    ///
+    /// Empty until the session states an order. A runtime with no order lays
+    /// out nothing and asks nothing, which is the honest picture of "this
+    /// document has not been read yet": before, a bare runtime showed one slot
+    /// for a page nobody had described, and the session answered it `.blank` —
+    /// an editable blank canvas standing where a real page was about to load.
+    private var order: [UUID] = []
+
+    /// The page the user is looking at, by identity. `EditorSession` owns the
+    /// durable current index; this is the runtime's view of it, and it survives
+    /// a list change that would move the same page to a different position.
+    private(set) var currentPageID: UUID?
+
+    /// Where a page sits in the rendered order — **the one place identity
+    /// becomes geometry**, and the only reason a position exists in this file
+    /// at all. Every offset, frame, and content size is derived through here.
+    ///
+    /// A linear scan, deliberately: it runs at turn, layout, and list-mutation
+    /// frequency — never per Pencil sample, per scroll tick, or per frame
+    /// (`Contract.md` — Performance) — and a `[UUID: Int]` beside `order` would
+    /// be a second copy of a fact `order` already states, to be kept in step
+    /// with it. If a measurement ever says the scan matters, that dictionary is
+    /// the fix, rebuilt in `setPages` and nowhere else.
+    private func position(of pageID: UUID) -> Int? {
+        order.firstIndex(of: pageID)
+    }
+
+    /// The visible page's position, or 0 before an order exists.
+    ///
+    /// Derived and read-only: `currentPageID` is the value, and this is where
+    /// it becomes geometry. Nothing writes a *position* — a write would be a
+    /// second authority over which page is current, and the whole point of the
+    /// identity is that it survives the list changing under it.
+    var currentPageIndex: Int { currentPageID.flatMap(position(of:)) ?? 0 }
+
+    var pageCount: Int { order.count }
 
     /// Everything this runtime cannot answer for itself, and everything it
     /// reports. Non-optional and supplied at construction, so an unwired seam
@@ -77,30 +113,36 @@ package final class PagedCanvasController: UIViewController, UIScrollViewDelegat
     /// One page's link back to the runtime that placed it.
     ///
     /// It exists to do two things a `PageCanvasController` must not do itself:
-    /// add the page index, which that controller is blind to
+    /// add the page identity, which that controller is blind to
     /// (`Contract.md` — Owners, golden rule 7), and hold the runtime `unowned`
     /// so that a page owning its host does not close an ownership loop. The
     /// runtime owns the page, the page owns this, and this outlives nothing.
     ///
-    /// The index is captured for the slot's life, exactly as the closures it
-    /// replaces captured it: a slot's index does not change while the slot
-    /// exists.
+    /// **The identity is captured for the slot's life, and that is now sound
+    /// rather than assumed.** It used to capture the page's *index*, on the
+    /// stated assumption that a slot's index does not change while the slot
+    /// exists — true only while pages were append-only. A delete or a reorder
+    /// falsifies it for every surviving slot at once, and the failure is
+    /// silent: the live canvas keeps reporting under an index that now names a
+    /// different page, so a stroke dirties a page the user never touched and a
+    /// retirement hands one page's ink into another page's custody. An identity
+    /// is stable for the page's life, which is strictly longer than the slot's.
     private final class SlotHost: PageCanvasHost {
         private unowned let runtime: PagedCanvasController
-        private let pageIndex: Int
+        private let pageID: UUID
 
-        init(runtime: PagedCanvasController, pageIndex: Int) {
+        init(runtime: PagedCanvasController, pageID: UUID) {
             self.runtime = runtime
-            self.pageIndex = pageIndex
+            self.pageID = pageID
         }
 
         func drawingChanged() {
-            runtime.session.drawingChanged(onPageAt: pageIndex)
+            runtime.session.drawingChanged(onPage: pageID)
         }
 
         func layerTransformed(_ layerID: UUID, to transform: PageSpaceTransform) -> Bool {
             runtime.session.layerTransformed(
-                onPageAt: pageIndex,
+                onPage: pageID,
                 layerID: layerID,
                 to: transform
             )
@@ -126,8 +168,37 @@ package final class PagedCanvasController: UIViewController, UIScrollViewDelegat
         }
     }
 
-    /// Live slots by page index. Bounded by `windowRadius`.
-    private var slots: [Int: Slot] = [:]
+    /// Live slots by page identity. Bounded by `windowRadius`.
+    ///
+    /// Keyed by identity for the reason `SlotHost` captures one: a slot holds a
+    /// *page*, and after a delete or a reorder the page at a given position is
+    /// a different page. Keyed by position, every surviving slot would show the
+    /// wrong page and `refreshWindow` would keep it there.
+    private var slots: [UUID: Slot] = [:]
+
+    /// The page the append pull would create, standing in the overscroll room
+    /// past the last slot — so pulling for a new page shows a page arriving,
+    /// not grey void that pops into one (device verdict, 2026-08-08).
+    ///
+    /// A picture, not a page: the white page rect with its hairline on the
+    /// gutter's dark, which since the universally-dark-margins verdict
+    /// (2026-08-08, "it's neater") is exactly what a live slot shows around
+    /// its page — so the seam between the last real page and the promised one
+    /// is one continuous gutter. It lives in content space, so it scrolls for
+    /// free and is repositioned only when the slots are — never per frame. It
+    /// takes no input, holds no ink, and is not a slot: the runtime still
+    /// never grows the document, and the commit is still the drag-end
+    /// trigger. When the commit lands, the real canvas lays its paper over
+    /// exactly this rect, which is what makes the release continuous instead
+    /// of a pop.
+    ///
+    /// Always present past the end, visible only in overscroll. An ordinary
+    /// turn's bounce onto the last page can flash its leading sliver; that
+    /// sliver is a true statement — this is what pulling further gets you.
+    /// The one lie it can tell is a session that refuses the append (not
+    /// ready): the pull shows a page and the release rubber-bands it away.
+    /// Rare, transient, and honest the moment the session can append again.
+    private let appendPreview = UIView()
 
     private var isEditable = false
     private var hasSettledInitialPage = false
@@ -182,6 +253,11 @@ package final class PagedCanvasController: UIViewController, UIScrollViewDelegat
         scrollView.backgroundColor = .systemGray5
         scrollView.delegate = self
 
+        appendPreview.backgroundColor = .white
+        appendPreview.isUserInteractionEnabled = false
+        appendPreview.layer.borderColor = UIColor.separator.cgColor
+        scrollView.addSubview(appendPreview)
+
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(scrollView)
         NSLayoutConstraint.activate([
@@ -231,7 +307,7 @@ package final class PagedCanvasController: UIViewController, UIScrollViewDelegat
             hasSettledInitialPage = true
             scrollTo(page: currentPageIndex, animated: false)
             refreshWindow()
-            livePage(at: currentPageIndex)?.becomeActivePage()
+            currentPageID.flatMap(livePage)?.becomeActivePage()
         } else if let previousWidth, previousWidth != width {
             // A non-animated programmatic set fires no settle callback, so this
             // cannot be mistaken for a turn — and there is none to report.
@@ -244,26 +320,34 @@ package final class PagedCanvasController: UIViewController, UIScrollViewDelegat
     /// Sets the run of pages and which one is visible. Called by
     /// `EditorSession`, which owns page order and identity.
     ///
+    /// The order arrives as a whole snapshot rather than as a mutation, because
+    /// the session is the one writer of it: this runtime never reasons about
+    /// what changed, it renders what it is told.
+    ///
     /// This scrolls with `animated: false`, and UIKit fires no delegate
     /// callback for that — so this path performs the settle work itself,
     /// directly. Waiting on a settle callback here would mean the page never
     /// becomes editable after launch or append.
-    package func setPages(count: Int, currentPageIndex index: Int) {
-        precondition(count > 0, "a document always has at least one page")
+    package func setPages(_ pageIDs: [UUID], current pageID: UUID) {
+        precondition(!pageIDs.isEmpty, "a document always has at least one page")
         precondition(
-            (0..<count).contains(index),
-            "current page index must address an existing page"
+            pageIDs.contains(pageID),
+            "the current page must be one of the document's pages"
+        )
+        precondition(
+            Set(pageIDs).count == pageIDs.count,
+            "page identities are unique within a document"
         )
 
-        let countChanged = count != pageCount
-        pageCount = count
-        currentPageIndex = index
+        let countChanged = pageIDs.count != order.count
+        order = pageIDs
+        currentPageID = pageID
 
         guard isViewLoaded, scrollView.bounds.width > 0 else { return }
         if countChanged { updateContentSize() }
-        scrollTo(page: index, animated: false)
+        scrollTo(page: currentPageIndex, animated: false)
         refreshWindow()
-        livePage(at: index)?.becomeActivePage()
+        livePage(pageID)?.becomeActivePage()
     }
 
     /// Opens every live canvas for editing, and every later one as it is built.
@@ -295,12 +379,12 @@ package final class PagedCanvasController: UIViewController, UIScrollViewDelegat
     /// bytes would destroy anything drawn since — exactly the overwrite
     /// `Contract.md` — Lifecycle forbids. A canvas is replaced only by
     /// retirement.
-    package func reloadPage(at index: Int) {
-        guard case .placeholder(let stale)? = slots[index] else { return }
+    package func reloadPage(_ pageID: UUID) {
+        guard case .placeholder(let stale)? = slots[pageID] else { return }
         stale.removeFromSuperview()
-        slots[index] = makeSlot(at: index)
+        slots[pageID] = makeSlot(for: pageID)
         layoutSlots()
-        if index == currentPageIndex { livePage(at: index)?.becomeActivePage() }
+        if pageID == currentPageID { livePage(pageID)?.becomeActivePage() }
     }
 
     /// Re-reads what sits beneath a live page's ink, after its layer list
@@ -314,15 +398,15 @@ package final class PagedCanvasController: UIViewController, UIScrollViewDelegat
     /// A placeholder slot has no backdrop to refresh; a page whose refusal was
     /// just repaired becomes a canvas through `reloadPage(at:)` instead, which
     /// asks for the layer list as it builds.
-    package func reloadStaticLayers(at index: Int) {
-        livePage(at: index)?.setStaticLayers(session.staticLayers(forPageAt: index))
+    package func reloadStaticLayers(onPage pageID: UUID) {
+        livePage(pageID)?.setStaticLayers(session.staticLayers(forPage: pageID))
     }
 
-    /// The live page controller for an index, if that slot is a canvas.
-    /// Read by `snapshot(at:)` — which is how the save path reaches a live
+    /// The live page controller for a page, if that slot is a canvas.
+    /// Read by `snapshot(ofPage:)` — which is how the save path reaches a live
     /// drawing — and by tests via `EditorSession.currentCanvas`.
-    package func livePage(at index: Int) -> PageCanvasController? {
-        guard case .canvas(let page)? = slots[index] else { return nil }
+    package func livePage(_ pageID: UUID) -> PageCanvasController? {
+        guard case .canvas(let page)? = slots[pageID] else { return nil }
         return page
     }
 
@@ -345,20 +429,20 @@ package final class PagedCanvasController: UIViewController, UIScrollViewDelegat
     /// outside that controller that knows the slot width — a slot is one
     /// viewport wide, and the canvas fills its slot, so the viewport width
     /// *is* the future canvas's width.
-    package func compositeDetail(forPageAt index: Int) -> Double? {
+    package func compositeDetail(forPage pageID: UUID) -> Double? {
         guard isViewLoaded, scrollView.bounds.width > 0 else { return nil }
         return PageCanvasController.compositeDetail(
             viewportWidth: scrollView.bounds.width,
             displayScale: traitCollection.displayScale,
-            geometry: session.projection(forPageAt: index).geometry
+            geometry: session.projection(forPage: pageID).geometry
         )
     }
 
     /// A snapshot of one live page, or `nil` when the page has no canvas —
     /// outside the window, or a placeholder. A placeholder accepts no input,
     /// so `nil` here never discards ink; it only ever means there is none.
-    package func snapshot(at index: Int) -> DrawingSnapshot? {
-        livePage(at: index)?.drawingSnapshot()
+    package func snapshot(ofPage pageID: UUID) -> DrawingSnapshot? {
+        livePage(pageID)?.drawingSnapshot()
     }
 
     // MARK: - Windowing
@@ -373,11 +457,11 @@ package final class PagedCanvasController: UIViewController, UIScrollViewDelegat
     /// page in it measures. The page varies inside its slot, not the slot.**
     ///
     /// A page canvas fills its slot and fits its own page inside itself — its
-    /// zoom floor and its opening fit-width scale come from its own geometry,
+    /// zoom floor and its opening fit-page scale come from its own geometry,
     /// and `PageCanvasController.centerPageInViewport` centres what is left
-    /// over. A landscape page therefore opens at its own fit-width and leaves
-    /// room above and below; a portrait page beside it opens at a different
-    /// scale and fills more of the height. Neighbours never bleed into the
+    /// over. A landscape page therefore opens at its own fit and leaves
+    /// room on the axis its shape does not fill; a portrait page beside it
+    /// opens at a different scale. Neighbours never bleed into the
     /// slot: nothing is ever partly visible, so nothing has to be decided about
     /// how two differently sized pages sit against each other.
     ///
@@ -412,7 +496,7 @@ package final class PagedCanvasController: UIViewController, UIScrollViewDelegat
     /// carries it.
     private func updateContentSize() {
         scrollView.contentSize = CGSize(
-            width: scrollView.bounds.width * CGFloat(pageCount),
+            width: scrollView.bounds.width * CGFloat(order.count),
             height: scrollView.bounds.height
         )
     }
@@ -433,10 +517,17 @@ package final class PagedCanvasController: UIViewController, UIScrollViewDelegat
         )
     }
 
-    private var windowedIndices: Set<Int> {
-        let lower = max(0, currentPageIndex - Self.windowRadius)
-        let upper = min(pageCount - 1, currentPageIndex + Self.windowRadius)
-        return Set(lower...upper)
+    /// The pages that should have a live slot: the visible one and
+    /// `windowRadius` either side, by identity.
+    ///
+    /// Empty before an order exists, which is what makes a runtime nobody has
+    /// described lay out nothing at all.
+    private var windowedPageIDs: Set<UUID> {
+        guard let position = currentPageID.flatMap(position(of:)) else { return [] }
+        let lower = max(0, position - Self.windowRadius)
+        let upper = min(order.count - 1, position + Self.windowRadius)
+        guard lower <= upper else { return [] }
+        return Set(order[lower...upper])
     }
 
     /// Builds slots that entered the window and retires those that left.
@@ -447,15 +538,16 @@ package final class PagedCanvasController: UIViewController, UIScrollViewDelegat
     /// a canvas only exists once its ink was supplied, so there is no
     /// unloaded-blank exception to carve out.
     private func refreshWindow() {
-        let wanted = windowedIndices
+        let wanted = windowedPageIDs
+        let position = currentPageIndex
 
-        for (index, slot) in slots where !wanted.contains(index) {
+        for (pageID, slot) in slots where !wanted.contains(pageID) {
             // The page is leaving; a decode still running for it is work
             // nobody will install, competing with the Pencil for the CPU.
-            cancelDecode(at: index)
+            cancelDecode(for: pageID)
             switch slot {
             case .canvas(let page):
-                session.pageIsRetiring(at: index, handingOver: page.drawingSnapshot())
+                session.pageIsRetiring(pageID, handingOver: page.drawingSnapshot())
                 // After the handover and before the release: the ink is safe,
                 // and what goes now is only this page's undo actions, whose
                 // target is about to stop existing.
@@ -468,19 +560,18 @@ package final class PagedCanvasController: UIViewController, UIScrollViewDelegat
                 // construction.
                 view.removeFromSuperview()
             }
-            slots[index] = nil
+            slots[pageID] = nil
         }
 
-        // Nearest the current page first. It was `wanted.sorted()`, which is
-        // left to right and starts two pages behind the user. Now that each
-        // inked slot starts a decode as it is built, build order is start
-        // order, and the page under the finger should not be queued behind
-        // the two the user just left.
-        let byDistance = wanted.sorted {
-            abs($0 - currentPageIndex) < abs($1 - currentPageIndex)
-        }
-        for index in byDistance where slots[index] == nil {
-            slots[index] = makeSlot(at: index)
+        // Nearest the current page first. It was left to right, which starts
+        // two pages behind the user. Now that each inked slot starts a decode
+        // as it is built, build order is start order, and the page under the
+        // finger should not be queued behind the two the user just left.
+        let byDistance = wanted
+            .compactMap { pageID in self.position(of: pageID).map { (pageID, $0) } }
+            .sorted { abs($0.1 - position) < abs($1.1 - position) }
+        for (pageID, _) in byDistance where slots[pageID] == nil {
+            slots[pageID] = makeSlot(for: pageID)
         }
 
         layoutSlots()
@@ -500,15 +591,15 @@ package final class PagedCanvasController: UIViewController, UIScrollViewDelegat
     /// measurement is still owed (`Docs/Unproven.md`); what it can overturn is
     /// the *residual* — whether the construction left here is itself too much
     /// — not the decision to move the decode.
-    private func makeSlot(at index: Int) -> Slot {
-        // Whatever this index was doing, it is not doing it any more. Every
+    private func makeSlot(for pageID: UUID) -> Slot {
+        // Whatever this page was doing, it is not doing it any more. Every
         // rebuild of a slot funnels through here, so this is the one place
         // that has to remember to stop a decode nobody will install.
-        cancelDecode(at: index)
+        cancelDecode(for: pageID)
 
-        switch session.canvasContent(forPageAt: index) {
+        switch session.canvasContent(forPage: pageID) {
         case .blank:
-            return .canvas(makeCanvas(at: index, installing: nil))
+            return .canvas(makeCanvas(for: pageID, installing: nil))
 
         case .ink(let data):
             // A placeholder, exactly as for `.loading` — and for the same
@@ -519,10 +610,10 @@ package final class PagedCanvasController: UIViewController, UIScrollViewDelegat
             // the page's real ink, or its strokes dropped when the install
             // overwrote them. So the page stays a placeholder — no input, no
             // `livePage`, no snapshot — until the drawing is in it.
-            return .placeholder(startDecoding(at: index, from: data))
+            return .placeholder(startDecoding(for: pageID, from: data))
 
         case .retained(let snapshot):
-            return .canvas(makeCanvas(at: index, installing: snapshot))
+            return .canvas(makeCanvas(for: pageID, installing: snapshot))
 
         case .loading:
             return .placeholder(makePlaceholder(saying: "This page is loading…"))
@@ -554,11 +645,11 @@ package final class PagedCanvasController: UIViewController, UIScrollViewDelegat
         let task: Task<Void, Never>
     }
 
-    private var pendingDecodes: [Int: PendingDecode] = [:]
+    private var pendingDecodes: [UUID: PendingDecode] = [:]
     private var lastDecodeToken = 0
 
     /// Puts a placeholder in the slot now and asks for the drawing off main.
-    private func startDecoding(at index: Int, from data: Data) -> UIView {
+    private func startDecoding(for pageID: UUID, from data: Data) -> UIView {
         lastDecodeToken += 1
         let token = lastDecodeToken
         let placeholder = makePlaceholder(saying: "This page is loading…")
@@ -569,9 +660,9 @@ package final class PagedCanvasController: UIViewController, UIScrollViewDelegat
         let task = Task { [weak self] in
             let decoded = await Self.decodeInk(data)
             guard let self else { return }
-            self.installDecoded(decoded, at: index, token: token)
+            self.installDecoded(decoded, for: pageID, token: token)
         }
-        pendingDecodes[index] = PendingDecode(token: token, task: task)
+        pendingDecodes[pageID] = PendingDecode(token: token, task: task)
         return placeholder
     }
 
@@ -604,24 +695,24 @@ package final class PagedCanvasController: UIViewController, UIScrollViewDelegat
     /// a page that has moved on.
     private func installDecoded(
         _ decoded: Result<PKDrawing, any Error>,
-        at index: Int,
+        for pageID: UUID,
         token: Int
     ) {
-        guard pendingDecodes[index]?.token == token else { return }
-        pendingDecodes[index] = nil
+        guard pendingDecodes[pageID]?.token == token else { return }
+        pendingDecodes[pageID] = nil
         // The slot this decode was started for, which the token says is still
         // the one that asked. It is a placeholder by construction —
         // `startDecoding` put one there and only a rebuild replaces it, which
         // would have changed the token. The guard is belt and braces, and it
         // fails closed: whatever is in the slot stays, because the one thing
         // this must never do is replace a canvas, which would destroy ink.
-        guard case .placeholder(let placeholder)? = slots[index] else { return }
+        guard case .placeholder(let placeholder)? = slots[pageID] else { return }
 
         switch decoded {
         case .success(let drawing):
             placeholder.removeFromSuperview()
-            slots[index] = .canvas(
-                makeCanvas(at: index, installing: DrawingSnapshot(drawing: drawing))
+            slots[pageID] = .canvas(
+                makeCanvas(for: pageID, installing: DrawingSnapshot(drawing: drawing))
             )
         case .failure(is CancellationError):
             // A cancel this runtime issued took the token entry with it, so
@@ -636,17 +727,17 @@ package final class PagedCanvasController: UIViewController, UIScrollViewDelegat
             // Bytes the session holds that nonetheless refuse to decode. The
             // same refusal as `.unreadable`, discovered one step later: never
             // an editable blank.
-            CanvasLog.event(.canvas, "page \(index) drawing failed to decode: \(error)")
+            CanvasLog.event(.canvas, "page \(pageID) drawing failed to decode: \(error)")
             placeholder.removeFromSuperview()
-            slots[index] = .placeholder(makePlaceholder(saying: "This page could not be read."))
+            slots[pageID] = .placeholder(makePlaceholder(saying: "This page could not be read."))
         }
 
         layoutSlots()
-        if index == currentPageIndex { livePage(at: index)?.becomeActivePage() }
+        if pageID == currentPageID { livePage(pageID)?.becomeActivePage() }
     }
 
-    private func cancelDecode(at index: Int) {
-        pendingDecodes.removeValue(forKey: index)?.task.cancel()
+    private func cancelDecode(for pageID: UUID) {
+        pendingDecodes.removeValue(forKey: pageID)?.task.cancel()
     }
 
     /// Read only by tests: how many slots are waiting on a decode. That an
@@ -656,7 +747,7 @@ package final class PagedCanvasController: UIViewController, UIScrollViewDelegat
     /// (`CONTRIBUTING.md` — Rules for any check you add). It computes nothing.
     var pendingInkDecodeCount: Int { pendingDecodes.count }
 
-    private func makeCanvas(at index: Int, installing snapshot: DrawingSnapshot?) -> PageCanvasController {
+    private func makeCanvas(for pageID: UUID, installing snapshot: DrawingSnapshot?) -> PageCanvasController {
         // The page reports through its host from the moment it exists: there is
         // no window in which a canvas is live and reporting nowhere. What used
         // to keep the install from being reported as an edit was the *absence*
@@ -665,13 +756,13 @@ package final class PagedCanvasController: UIViewController, UIScrollViewDelegat
         // assignment is and where a reader looking for the rule will be.
         let page = PageCanvasController(
             toolPicker: toolPicker,
-            projection: session.projection(forPageAt: index),
-            host: SlotHost(runtime: self, pageIndex: index),
+            projection: session.projection(forPage: pageID),
+            host: SlotHost(runtime: self, pageID: pageID),
             staticRenderer: staticRenderer
         )
 
         addChild(page)
-        page.view.frame = slotFrame(for: index)
+        page.view.frame = slotFrame(for: position(of: pageID) ?? 0)
         scrollView.addSubview(page.view)
         page.didMove(toParent: self)
 
@@ -690,7 +781,7 @@ package final class PagedCanvasController: UIViewController, UIScrollViewDelegat
         // nothing about rendering the backdrop may participate in loading a
         // page's ink, and a composite arriving late must never be able to
         // reach the drawing.
-        page.setStaticLayers(session.staticLayers(forPageAt: index))
+        page.setStaticLayers(session.staticLayers(forPage: pageID))
 
         if isEditable { page.markEditable() }
         return page
@@ -723,11 +814,49 @@ package final class PagedCanvasController: UIViewController, UIScrollViewDelegat
         return placeholder
     }
 
+    /// Frames every live slot from its page's *current* position.
+    ///
+    /// Driven from `order` rather than from `slots`, so one pass over the
+    /// document answers every slot's position — and so a slot whose page is no
+    /// longer in the order is simply not framed, rather than framed somewhere
+    /// arbitrary. `refreshWindow` is what removes such a slot; this never
+    /// pretends it has a place.
     private func layoutSlots() {
-        for (index, slot) in slots {
-            slot.view.frame = slotFrame(for: index)
+        for (position, pageID) in order.enumerated() {
+            slots[pageID]?.view.frame = slotFrame(for: position)
         }
+        appendPreview.layer.borderWidth = 1 / max(traitCollection.displayScale, 1)
+        appendPreview.frame = appendPreviewFrame()
     }
+
+    /// Where the appended page will open: the canonical page at its fit-page
+    /// scale, centred in the slot after the last — the same numbers
+    /// `PageCanvasController.establishZoomIfNeeded` and `centerPageInViewport`
+    /// will produce for the real page, restated here because the preview
+    /// exists before any controller does.
+    private func appendPreviewFrame() -> CGRect {
+        let slot = slotFrame(for: order.count)
+        guard slot.width > 0, slot.height > 0 else { return .zero }
+        let page = CGSize(
+            width: PageGeometry.canonical.width,
+            height: PageGeometry.canonical.height
+        )
+        let scale = min(slot.width / page.width, slot.height / page.height)
+        let size = CGSize(width: page.width * scale, height: page.height * scale)
+        return CGRect(
+            x: slot.minX + (slot.width - size.width) / 2,
+            y: slot.minY + (slot.height - size.height) / 2,
+            width: size.width,
+            height: size.height
+        )
+    }
+
+    #if DEBUG
+    /// Read by tests: the preview's rect, to pin that the appended page's slot
+    /// covers the room the preview promised and the promise is page-shaped.
+    var appendPreviewFrameForTesting: CGRect { appendPreview.frame }
+    var appendPreviewTakesInputForTesting: Bool { appendPreview.isUserInteractionEnabled }
+    #endif
 
     // MARK: - UIScrollViewDelegate
 
@@ -745,12 +874,20 @@ package final class PagedCanvasController: UIViewController, UIScrollViewDelegat
         guard scrollView.bounds.width > 0, hasSettledInitialPage else { return }
 
         let settled = Int((scrollView.contentOffset.x / scrollView.bounds.width).rounded())
-        guard settled != currentPageIndex, (0..<pageCount).contains(settled) else { return }
+        guard order.indices.contains(settled) else { return }
+        // The position is resolved to an identity *here*, at rest, against the
+        // order as it stands — and what is reported onward is that identity.
+        // A position reported to the session would name whichever page happens
+        // to sit there when the session reads it, which after any list change
+        // is a page the user never turned to and the session would write
+        // durably as current.
+        let settledPageID = order[settled]
+        guard settledPageID != currentPageID else { return }
 
-        currentPageIndex = settled
+        currentPageID = settledPageID
         refreshWindow()
-        livePage(at: settled)?.becomeActivePage()
-        session.currentPageChanged(to: settled)
+        livePage(settledPageID)?.becomeActivePage()
+        session.currentPageChanged(to: settledPageID)
     }
 
     // The delegate callbacks below, and the `override`s above, are `package`
@@ -771,17 +908,17 @@ package final class PagedCanvasController: UIViewController, UIScrollViewDelegat
     /// session's decision (`Contract.md` — Owners). An ordinary drag that ends
     /// without deceleration is already at rest, so it settles here.
     package func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate: Bool) {
-        guard scrollView.bounds.width > 0 else { return }
-        let lastPageOffset = scrollView.bounds.width * CGFloat(pageCount - 1)
+        guard scrollView.bounds.width > 0, !order.isEmpty else { return }
+        let lastPageOffset = scrollView.bounds.width * CGFloat(order.count - 1)
         if scrollView.contentOffset.x > lastPageOffset + Self.appendTriggerFraction
             * scrollView.bounds.width {
             // The session's append drives `setPages`, which settles the new
             // page itself — synchronously, inside this call: the page count,
             // contentSize, the blank slot, and the offset all describe the new
             // page by the time the callback below returns.
-            let countBeforeAppend = pageCount
+            let countBeforeAppend = order.count
             session.reachedEndBoundary()
-            if pageCount > countBeforeAppend {
+            if order.count > countBeforeAppend {
                 // UIKit computed this gesture's deceleration target *before*
                 // this delegate call, against the contentSize that still ended
                 // at the old last page, and it arms that animation after we
@@ -794,11 +931,15 @@ package final class PagedCanvasController: UIViewController, UIScrollViewDelegat
                 // the in-flight bounce. This re-asserts an offset for a page
                 // the session already created; the runtime still never grows
                 // the document, or the contentSize, by itself.
-                let target = currentPageIndex
+                // The page, not its position: by the time this runs the list
+                // may name a different page at the same index, and the offset
+                // this re-asserts must be the one the session just committed.
+                let target = currentPageID
                 // A task, not per-sample work: this runs once per append
                 // gesture, at drag end (`Contract.md` — Performance).
                 Task { [weak self] in
-                    guard let self, self.currentPageIndex == target else { return }
+                    guard let self, self.currentPageID == target else { return }
+                    let position = self.currentPageIndex
                     // A programmatic non-animated set cancels the in-flight
                     // bounce; one tick in it has barely moved, so the
                     // correction is imperceptible next to the fight it
@@ -806,7 +947,7 @@ package final class PagedCanvasController: UIViewController, UIScrollViewDelegat
                     // needed: setPages already committed this index, so no
                     // second turn can exist.
                     self.scrollView.setContentOffset(
-                        CGPoint(x: self.scrollView.bounds.width * CGFloat(target), y: 0),
+                        CGPoint(x: self.scrollView.bounds.width * CGFloat(position), y: 0),
                         animated: false
                     )
                 }
@@ -821,6 +962,14 @@ package final class PagedCanvasController: UIViewController, UIScrollViewDelegat
 
     /// How far past the last page you must pull before it counts as asking for a
     /// new one. Generous enough that the rubber-band from an ordinary turn onto
-    /// the last page does not trigger it.
-    private static let appendTriggerFraction: CGFloat = 0.35
+    /// the last page does not trigger it — and no more than that.
+    ///
+    /// 0.35 was measured out of reach on hardware (2026-08-08, iPad Air 5):
+    /// the rubber band damps a full natural pull to ~0.25–0.29 of the viewport
+    /// width in either orientation, so every pull fell short and append was
+    /// simply dead. The measured pulls put the deliberate gesture at 0.24+ of
+    /// the width; 0.15 sits under the weakest of them and far above the
+    /// overshoot an ordinary turn leaves at finger-lift, which arrives from
+    /// the previous page and does not cross the last page's edge at all.
+    private static let appendTriggerFraction: CGFloat = 0.15
 }
