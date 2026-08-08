@@ -27,7 +27,23 @@ final class FolderListingModel {
         case all, documents, folders
     }
 
-    let folderPath: String
+    /// What the model lists: one folder's contents, or the flat cross-parent
+    /// favorites collection. Every mutation resolves against the item's own
+    /// full relative path (`item.id`), so the same mutation set works from
+    /// either source — a rename from Favorites lands in the item's real
+    /// parent, not in some "current folder".
+    enum Source: Equatable {
+        case folder(String)
+        case favorites
+    }
+
+    let source: Source
+    /// The folder this model lists — `""` for the root and for Favorites,
+    /// which has no folder of its own (nothing is created there).
+    var folderPath: String {
+        if case .folder(let path) = source { return path }
+        return ""
+    }
     /// Exposed for the move picker's drill-down, which lists other folders
     /// through the same store; every mutation still lands through this model.
     let library: LibraryStore
@@ -47,22 +63,41 @@ final class FolderListingModel {
     var mutationBanner: String?
 
     init(folderPath: String, library: LibraryStore) {
-        self.folderPath = folderPath
+        self.source = .folder(folderPath)
+        self.library = library
+    }
+
+    /// The Favorites collection over the same model: `listFavorites` feeds
+    /// `items`, and every mutation already resolves against `item.id`.
+    init(favoritesIn library: LibraryStore) {
+        self.source = .favorites
         self.library = library
     }
 
     var displayTitle: String {
-        folderPath.isEmpty
-            ? "Documents"
-            : folderPath.split(separator: "/").last.map(String.init) ?? folderPath
+        switch source {
+        case .favorites:
+            return "Favorites"
+        case .folder(let path):
+            return path.isEmpty
+                ? "Documents"
+                : path.split(separator: "/").last.map(String.init) ?? path
+        }
     }
 
     func refresh() async {
         do {
-            let listing = try await library.listFolder(folderPath)
             let prefs = await library.prefs()
-            items = Self.sorted(listing.items, by: prefs.sortKey, ascending: prefs.ascending)
-            degradations = listing.degradations
+            switch source {
+            case .folder(let path):
+                let listing = try await library.listFolder(path)
+                items = Self.sorted(listing.items, by: prefs.sortKey, ascending: prefs.ascending)
+                degradations = listing.degradations
+            case .favorites:
+                let favorites = try await library.listFavorites()
+                items = Self.sorted(favorites, by: prefs.sortKey, ascending: prefs.ascending)
+                degradations = []
+            }
             state = .loaded
         } catch {
             state = .refused(Self.describe(error))
@@ -192,6 +227,33 @@ final class FolderListingModel {
             if moved.name != item.name {
                 mutationBanner = "\(item.name) was moved as \u{201C}\(moved.name)\u{201D}."
             }
+        } catch {
+            mutationBanner = Self.describe(error)
+        }
+        await refresh()
+    }
+
+    /// The star's tap. The flag flips from the snapshot the cell rendered —
+    /// one writer, so a stale snapshot can at worst repeat the state the
+    /// store already has, never invent a third.
+    func toggleFavorite(_ item: LibraryItem) async {
+        do {
+            try await library.setFavorite(!item.isFavorite, at: item.id)
+        } catch {
+            mutationBanner = Self.describe(error)
+        }
+        await refresh()
+    }
+
+    /// Documents only — the observed folder menu has no Duplicate (spec
+    /// §6.5, `03-review.md` UX-9), and the store's precondition agrees.
+    /// The suffixed copy name is surfaced, not silent (M-C's license covers
+    /// the suffix; the banner covers the adaptation).
+    func duplicate(_ item: LibraryItem) async {
+        guard case .document = item.kind else { return }
+        do {
+            let copy = try await library.duplicateDocument(at: item.id)
+            mutationBanner = "Duplicated as \u{201C}\(copy.name)\u{201D}."
         } catch {
             mutationBanner = Self.describe(error)
         }

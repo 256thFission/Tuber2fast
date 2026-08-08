@@ -11,6 +11,11 @@ struct LibraryBrowserView: View {
     @State private var sidebarCollapsed = false
     @State private var selection: SidebarSelection = .documents
     @State private var path: [String] = []
+    /// Favorites' own folder pushes. A starred folder opens in the content
+    /// pane while the sidebar stays on Favorites — the spec is silent on
+    /// GoodNotes' behavior here, and this is the smaller machine: no
+    /// cross-selection handoff, and Back walks back to the collection.
+    @State private var favoritesPath: [String] = []
     /// One prefs snapshot for the whole browser — sort and view mode are
     /// global, not per-folder, so every folder view renders from this one
     /// object and a change anywhere re-orders them all.
@@ -72,7 +77,23 @@ struct LibraryBrowserView: View {
                 }
             }
         case .favorites:
-            FavoritesStubView(sidebarCollapsed: $sidebarCollapsed)
+            NavigationStack(path: $favoritesPath) {
+                FavoritesContentView(
+                    coordinator: coordinator,
+                    viewOptions: viewOptions,
+                    sidebarCollapsed: $sidebarCollapsed,
+                    path: $favoritesPath
+                )
+                .navigationDestination(for: String.self) { folderPath in
+                    FolderContentView(
+                        folderPath: folderPath,
+                        coordinator: coordinator,
+                        viewOptions: viewOptions,
+                        sidebarCollapsed: $sidebarCollapsed,
+                        path: $favoritesPath
+                    )
+                }
+            }
         }
     }
 
@@ -590,10 +611,36 @@ struct FolderContentView: View {
     }
 }
 
-/// The Favorites row's stub: the collection lands with the favorites lane;
-/// the row exists so the sidebar reads GoodNotes.
-struct FavoritesStubView: View {
+/// The Favorites collection (spec §10): flat and cross-parent, documents and
+/// folders mixed in one listing, the same cells and chevron popover as any
+/// folder — every mutation resolves against the item's real path, so rename
+/// and trash from here land in the item's true parent. The toolbar carries
+/// **only view options**: the observed Favorites screen has no + New pill
+/// (nothing is created *into* a smart collection), and sort/view apply
+/// because they are global prefs.
+struct FavoritesContentView: View {
+    let coordinator: LibraryCoordinator
+    let viewOptions: LibraryViewOptionsModel
     @Binding var sidebarCollapsed: Bool
+    @Binding var path: [String]
+
+    @State private var model: FolderListingModel
+    @State private var showingViewOptions = false
+
+    init(
+        coordinator: LibraryCoordinator,
+        viewOptions: LibraryViewOptionsModel,
+        sidebarCollapsed: Binding<Bool>,
+        path: Binding<[String]>
+    ) {
+        self.coordinator = coordinator
+        self.viewOptions = viewOptions
+        self._sidebarCollapsed = sidebarCollapsed
+        self._path = path
+        self._model = State(
+            initialValue: FolderListingModel(favoritesIn: coordinator.library)
+        )
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -608,6 +655,7 @@ struct FavoritesStubView: View {
                             .frame(width: 36, height: 36)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Show sidebar")
                 }
                 Text("Favorites")
                     .font(.system(size: 40, weight: .bold))
@@ -617,19 +665,194 @@ struct FavoritesStubView: View {
             .padding(.horizontal, 28)
             .padding(.top, 16)
 
-            VStack(spacing: 10) {
+            HStack {
                 Spacer()
-                Image(systemName: "bookmark")
-                    .font(.system(size: 56))
-                    .foregroundStyle(Color(white: 0.35))
-                    .padding(.bottom, 10)
-                Text("Nothing is in Favorites yet")
-                    .font(.system(size: 20, weight: .bold))
+                Button {
+                    showingViewOptions = true
+                } label: {
+                    Image(systemName: "square.grid.2x2")
+                        .font(.system(size: 17, weight: .medium))
+                        .foregroundStyle(.white)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("View options")
+                .accessibilityIdentifier("library.viewoptions")
+                .popover(isPresented: $showingViewOptions, arrowEdge: .top) {
+                    LibraryViewOptionsPopover(options: viewOptions)
+                }
+            }
+            .padding(.horizontal, 28)
+            .padding(.vertical, 14)
+
+            listingBody
+        }
+        .background(Color.black)
+        .toolbar(.hidden, for: .navigationBar)
+        .task(id: coordinator.libraryGeneration) {
+            await model.refresh()
+        }
+        // The stack keeps this root alive across a push, so a star toggled
+        // inside a pushed folder needs the pop itself to re-list — the
+        // generation only bumps on the coordinator's own transitions.
+        .onChange(of: path) { _, newPath in
+            if newPath.isEmpty {
+                Task { await model.refresh() }
+            }
+        }
+        .overlay(alignment: .bottom) { banner }
+    }
+
+    private var openBlockedReason: String? {
+        coordinator.canOpenDocuments
+            ? nil
+            : "A document with unsaved changes is still saving."
+    }
+
+    @ViewBuilder
+    private var listingBody: some View {
+        switch model.state {
+        case .loading:
+            Spacer()
+            HStack {
+                Spacer()
+                ProgressView()
+                Spacer()
+            }
+            Spacer()
+        case .refused(let message):
+            VStack(spacing: 12) {
+                Spacer()
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.largeTitle)
+                    .foregroundStyle(.secondary)
+                Text("Favorites could not be shown.")
+                    .font(.headline)
                     .foregroundStyle(.white)
+                Text(message)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 480)
+                Button("Retry") {
+                    Task { await model.refresh() }
+                }
+                .buttonStyle(.bordered)
                 Spacer()
             }
             .frame(maxWidth: .infinity)
+            .accessibilityIdentifier("library.error")
+        case .loaded where model.items.isEmpty:
+            emptyView
+        case .loaded:
+            let displayed = model.displayed(under: viewOptions.prefs)
+            switch viewOptions.prefs.viewMode {
+            case .grid: grid(displayed)
+            case .list: list(displayed)
+            }
         }
-        .background(Color.black)
+    }
+
+    private func grid(_ displayed: [LibraryItem]) -> some View {
+        ScrollView {
+            LazyVGrid(
+                columns: Array(
+                    repeating: GridItem(.flexible(), spacing: 36, alignment: .top),
+                    count: 4
+                ),
+                alignment: .center,
+                spacing: 44
+            ) {
+                ForEach(displayed) { item in
+                    LibraryItemCell(
+                        item: item,
+                        model: model,
+                        openBlockedReason: openBlockedReason,
+                        onOpen: { open(item) }
+                    )
+                }
+            }
+            .padding(.horizontal, 36)
+            .padding(.vertical, 20)
+        }
+        .accessibilityIdentifier("library.grid")
+    }
+
+    private func list(_ displayed: [LibraryItem]) -> some View {
+        ScrollView {
+            LazyVStack(spacing: 0) {
+                ForEach(displayed) { item in
+                    LibraryItemRow(
+                        item: item,
+                        model: model,
+                        openBlockedReason: openBlockedReason,
+                        onOpen: { open(item) }
+                    )
+                    Divider()
+                        .overlay(Color(white: 0.18))
+                }
+            }
+            .padding(.horizontal, 36)
+            .padding(.vertical, 8)
+        }
+        .accessibilityIdentifier("library.list")
+    }
+
+    /// A starred folder opens as a folder listing pushed in this pane; the
+    /// sidebar stays on Favorites (choice recorded at `favoritesPath`).
+    private func open(_ item: LibraryItem) {
+        switch item.kind {
+        case .document:
+            coordinator.openDocument(at: item.id, named: item.name)
+        case .folder:
+            path.append(item.id)
+        }
+    }
+
+    /// Empty favorites: the designed empty state — star illustration slot,
+    /// copy, and **no button** (nothing can be created into Favorites).
+    private var emptyView: some View {
+        VStack(spacing: 10) {
+            Spacer()
+            Image(systemName: "star")
+                .font(.system(size: 56))
+                .foregroundStyle(Color(white: 0.35))
+                .padding(.bottom, 10)
+            Text("Nothing is in Favorites yet")
+                .font(.system(size: 20, weight: .bold))
+                .foregroundStyle(.white)
+            Text("Tap the star on a document or folder to keep it here.")
+                .font(.system(size: 15))
+                .foregroundStyle(Color(white: 0.55))
+            Spacer()
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    /// The same one-banner surface every folder view carries — favorites has
+    /// no listing degradations of its own, so this shows mutation failures.
+    @ViewBuilder
+    private var banner: some View {
+        if let message = model.mutationBanner {
+            HStack(spacing: 12) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.yellow)
+                Text(message)
+                    .font(.caption)
+                    .lineLimit(2)
+                Button {
+                    model.mutationBanner = nil
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 12, weight: .semibold))
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(12)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+            .padding(.bottom, 16)
+            .accessibilityIdentifier("library.degradations")
+        }
     }
 }

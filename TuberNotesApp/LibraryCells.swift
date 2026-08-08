@@ -31,6 +31,13 @@ struct LibraryItemCell: View {
             .buttonStyle(.plain)
             .disabled(openDisabled)
             .opacity(openDisabled ? 0.4 : 1)
+            // The star overlays the open button rather than living inside its
+            // label: a button nested in a button's label yields its tap to
+            // the outer one, and the star's tap must never open the document.
+            .overlay(alignment: .topTrailing) {
+                LibraryFavoriteStar(item: item, model: model)
+                    .padding(isDocument ? 8 : 4)
+            }
 
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 Text(item.name)
@@ -73,18 +80,12 @@ struct LibraryItemCell: View {
     private var thumbnail: some View {
         switch item.kind {
         case .document:
-            ZStack(alignment: .topTrailing) {
-                LibraryPaperCover()
-                    .shadow(color: .black.opacity(0.45), radius: 8, y: 4)
-                LibraryFavoriteStar(item: item)
-                    .padding(8)
-            }
+            LibraryPaperCover()
+                .shadow(color: .black.opacity(0.45), radius: 8, y: 4)
         case .folder(let decoration):
             ZStack(alignment: .topTrailing) {
                 LibraryFolderGlyph(decoration: decoration)
                     .padding(.vertical, 14)
-                LibraryFavoriteStar(item: item)
-                    .padding(4)
                 if item.decorationDegraded {
                     // The sidecar was missing or set aside: the folder renders
                     // the default and wears the warning rather than refusing.
@@ -175,7 +176,7 @@ struct LibraryItemRow: View {
                 MovePickerSheet(item: item, model: model)
             }
 
-            LibraryFavoriteStar(item: item, size: 15)
+            LibraryFavoriteStar(item: item, model: model, size: 15)
 
             if !isDocument {
                 Image(systemName: "chevron.right")
@@ -251,16 +252,33 @@ struct LibraryFolderGlyph: View {
     }
 }
 
-/// Static tonight: the outline renders so the cell reads GoodNotes; the
-/// favorites toggle lands with the favorites lane.
+/// The favorites toggle, on the thumbnail where GoodNotes puts it: grey
+/// outline off, red filled on; favoriting lives here and in no menu
+/// (spec §10). The tap flips through the model — snapshot in, intention out.
 struct LibraryFavoriteStar: View {
     let item: LibraryItem
+    let model: FolderListingModel
     var size: CGFloat = 16
 
     var body: some View {
-        Image(systemName: item.isFavorite ? "star.fill" : "star")
-            .font(.system(size: size, weight: .medium))
-            .foregroundStyle(item.isFavorite ? Color.red : Color(white: 0.55))
+        Button {
+            let target = item
+            let listing = model
+            Task { await listing.toggleFavorite(target) }
+        } label: {
+            Image(systemName: item.isFavorite ? "star.fill" : "star")
+                .font(.system(size: size, weight: .medium))
+                .foregroundStyle(item.isFavorite ? Color.red : Color(white: 0.55))
+                .frame(width: 28, height: 28)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(
+            item.isFavorite
+                ? "Remove \(item.name) from Favorites"
+                : "Add \(item.name) to Favorites"
+        )
+        .accessibilityIdentifier("library.item.star.\(item.name)")
     }
 }
 

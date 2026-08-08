@@ -2,10 +2,10 @@ import SwiftUI
 import TuberStore
 
 /// The chevron popover: inline rename for both kinds; Color|Icon with the
-/// nine primary dots for a folder; Move then Move to Trash for both — the
-/// observed menus put Move first of the action rows. Duplicate and Export
-/// are deliberately absent tonight — later lanes — and the rows are
-/// structured so they append cleanly.
+/// nine primary dots for a folder; Duplicate for documents only; Move then
+/// Move to Trash for both — the observed menus put Move first of the
+/// non-duplicate action rows. Export is deliberately absent tonight — a
+/// later lane — and the rows are structured so it appends cleanly.
 struct LibraryItemMenuPopover: View {
     let item: LibraryItem
     let model: FolderListingModel
@@ -78,6 +78,23 @@ struct LibraryItemMenuPopover: View {
             }
 
             Divider()
+
+            if decoration == nil {
+                // Documents only: the observed folder menu has no Duplicate
+                // (spec §6.5, `03-review.md` UX-9) — a folder duplicate is a
+                // tree copy this design deliberately does not build tonight.
+                Button {
+                    let target = item
+                    let listing = model
+                    Task { await listing.duplicate(target) }
+                    dismiss()
+                } label: {
+                    Label("Duplicate", systemImage: "plus.square.on.square")
+                        .foregroundStyle(.white)
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("library.item.duplicate")
+            }
 
             Button {
                 dismiss()
