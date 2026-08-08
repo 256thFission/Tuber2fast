@@ -59,6 +59,13 @@ Nothing here is a reason not to ship. It is a reason not to be surprised.
   first-contact ink, scroll and zoom against the page, background-flush
   survival, autosave spacing under continuous writing, and the five-second
   retry ceiling.
+- **No window has ever been resized.** `PagedCanvasController` now re-centres
+  the current page when the viewport width changes, and the tests drive that by
+  setting the hosted view's frame and laying out — which proves the arithmetic
+  and nothing about Split View or Slide Over. What a real resize does to the
+  live canvases inside the slots (their fit-width scale and content offset are
+  `PageCanvasController`'s, not this one's), and whether the re-centre is
+  invisible or a visible jump, are device evidence and Phillip's verdict.
 - **Pencil feel, stroke fidelity, palm rejection, and Pencil/touch separation
   are unrendered.** They are Phillip's verdict alone, and no mechanical evidence
   substitutes.
@@ -283,7 +290,11 @@ Not gaps — properties of the tooling that read as project defects when hit.
   printing `(… → 612.0) == (… → 612.0)` — the two operands' `bitPattern`s were
   compared and are the same. Convert explicitly (`Double(layer.bounds.width)`)
   at every mixed comparison. Cost of not knowing this: an hour spent looking
-  for a bug in code that was correct.
+  for a bug in code that was correct. The same trap wears a second face:
+  *literal arithmetic* on the right of the comparison infers `Int` rather than
+  the left side's type, so `#expect(scroll.contentSize.width == 500 * 9)` fails
+  printing `(→ 4500.0) == (→ 4500)`. Bind the constant with a type
+  (`let width: CGFloat = 500`) and compare against `width * 9`.
 - **`Thread.isMainThread` is unavailable from an asynchronous context** under
   Swift 6, which is reasonable for the question it usually answers and useless
   when the thread genuinely is the question. `pthread_main_np() == 0` is the
