@@ -21,7 +21,9 @@ final class FolderListingModel {
     }
 
     let folderPath: String
-    private let library: LibraryStore
+    /// Exposed for the move picker's drill-down, which lists other folders
+    /// through the same store; every mutation still lands through this model.
+    let library: LibraryStore
 
     private(set) var state: ListingState = .loading
     /// One array, one comparator — folders and documents interleaved.
@@ -130,6 +132,21 @@ final class FolderListingModel {
     func trash(_ item: LibraryItem) async {
         do {
             try await library.trashItem(at: item.id)
+        } catch {
+            mutationBanner = Self.describe(error)
+        }
+        await refresh()
+    }
+
+    /// The collision suffix is the store's job (L3's one sanctioned
+    /// adaptation); when it changed the name, the adaptation is surfaced in
+    /// the banner rather than passing silently.
+    func move(_ item: LibraryItem, toFolder destination: String) async {
+        do {
+            let moved = try await library.moveItem(at: item.id, toFolder: destination)
+            if moved.name != item.name {
+                mutationBanner = "\(item.name) was moved as \u{201C}\(moved.name)\u{201D}."
+            }
         } catch {
             mutationBanner = Self.describe(error)
         }

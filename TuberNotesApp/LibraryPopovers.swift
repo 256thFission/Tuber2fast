@@ -2,12 +2,16 @@ import SwiftUI
 import TuberStore
 
 /// The chevron popover: inline rename for both kinds; Color|Icon with the
-/// nine primary dots for a folder; Move to Trash for both. Duplicate, Move,
-/// and Export are deliberately absent tonight — later lanes — and the rows
-/// are structured so they append cleanly.
+/// nine primary dots for a folder; Move then Move to Trash for both — the
+/// observed menus put Move first of the action rows. Duplicate and Export
+/// are deliberately absent tonight — later lanes — and the rows are
+/// structured so they append cleanly.
 struct LibraryItemMenuPopover: View {
     let item: LibraryItem
     let model: FolderListingModel
+    /// The move picker is the cell's sheet, not this popover's — a popover
+    /// cannot outlive its own dismissal to present it.
+    let onMove: () -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var name: String
@@ -19,9 +23,10 @@ struct LibraryItemMenuPopover: View {
         case color, icon
     }
 
-    init(item: LibraryItem, model: FolderListingModel) {
+    init(item: LibraryItem, model: FolderListingModel, onMove: @escaping () -> Void) {
         self.item = item
         self.model = model
+        self.onMove = onMove
         self._name = State(initialValue: item.name)
     }
 
@@ -74,8 +79,18 @@ struct LibraryItemMenuPopover: View {
 
             Divider()
 
+            Button {
+                dismiss()
+                onMove()
+            } label: {
+                Label("Move", systemImage: "folder")
+                    .foregroundStyle(.white)
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("library.item.move")
+
             // Recoverable, so no confirmation — platform convention; the
-            // permanent deletes confirm, and they live with the Trash lane.
+            // permanent deletes confirm on the Trash screen.
             Button(role: .destructive) {
                 let target = item
                 let listing = model
