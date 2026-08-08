@@ -25,10 +25,23 @@ import UIKit
 /// framework rather than from gesture recognizers of ours.
 @MainActor
 final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
-    /// How many pages either side of the visible one stay live. One, so that a
-    /// turn in either direction reveals a prepared page rather than a blank slot
-    /// being built mid-gesture.
-    private static let windowRadius = 1
+    /// How many pages either side of the visible one stay live.
+    ///
+    /// **Two**, raised from one on Phillip's device verdict (2026-08-07): one
+    /// prepared neighbour is enough for a deliberate turn, but a *flick* crosses
+    /// two slots before anything settles, and the second one was still a
+    /// placeholder when it came under the finger. The window is what the eye
+    /// sees; the session's own prefetch radius — bytes and warmed composites —
+    /// stays one wider than this, so a page entering the window still finds its
+    /// bytes already here.
+    ///
+    /// This is a memory decision as much as a feel one: five live
+    /// `PKCanvasView`s and five backdrops rather than three. It stays a
+    /// constant, and that is the part `Contract.md` — Performance actually
+    /// requires — the live count must not grow with the page count, which is
+    /// what `PagedCanvasControllerTests` asserts. Raising a constant is a feel
+    /// trade; making it a function of the document would be the defect.
+    private static let windowRadius = 2
 
     let scrollView = UIScrollView()
 

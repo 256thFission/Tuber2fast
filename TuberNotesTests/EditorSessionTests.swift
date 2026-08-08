@@ -350,7 +350,12 @@ struct EditorSessionTests {
         await session.start()
         _ = canvas(of: session)
 
-        // Three pages, all saved, then back to page 0 for the edit under test.
+        // Five pages, all saved, then back to page 0 for the edit under test.
+        // Five rather than three because retirement is what this test needs and
+        // the live window is two pages either side (`PagedCanvasController`);
+        // page 0 must be able to leave it.
+        pullPastTheEnd(session)
+        pullPastTheEnd(session)
         pullPastTheEnd(session)
         pullPastTheEnd(session)
         await session.saveIfNeeded()
@@ -373,7 +378,7 @@ struct EditorSessionTests {
         // page was not in the dirty set, so retirement surrendered nothing —
         // and the failed save's retry then wrote the pre-edit bytes and
         // acknowledged the page clean.
-        turn(session, to: 2)
+        turn(session, to: 4)
         #expect(session.pages.livePage(at: 0) == nil)
 
         await save.value

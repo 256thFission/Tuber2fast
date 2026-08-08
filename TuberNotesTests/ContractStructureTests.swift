@@ -302,19 +302,35 @@ enum ContractChecker {
 
     // MARK: Rule — one PKCanvasView construction site
 
-    /// How many times this source constructs a `PKCanvasView`.
+    /// The type names that name a live ink surface.
     ///
-    /// Counts `PKCanvasView(`, `PKCanvasView (`, and `PKCanvasView.init(`;
-    /// `PKCanvasViewDelegate` and a bare type reference are not construction.
+    /// `InkCanvasView` is this project's `PKCanvasView` subclass — it exists to
+    /// refuse PencilKit's editing menu and adds no state — so constructing one
+    /// *is* constructing a canvas, and the rule below must see it. Adding it
+    /// here closes half of the KNOWN DEFECT this scan used to carry: a subclass
+    /// constructed by its own name was invisible. It is invisible no longer,
+    /// but only for the subclass this list knows about, which is why a new one
+    /// belongs here on the same commit that introduces it.
+    static let canvasTypeNames = ["PKCanvasView", "InkCanvasView"]
+
+    /// How many times this source constructs a live canvas.
     ///
-    /// KNOWN DEFECT: a `PKCanvasView` subclass constructed by its own name, and
-    /// `let v: PKCanvasView = .init()`, are invisible here. Both are visible to
+    /// Counts `T(`, `T (`, and `T.init(` for each name in `canvasTypeNames`;
+    /// `PKCanvasViewDelegate`, a superclass clause, and a bare type reference
+    /// are not construction.
+    ///
+    /// KNOWN DEFECT: `let v: PKCanvasView = .init()` is still invisible here,
+    /// as is a subclass this file has not been told about. Both are visible to
     /// review, and both would need a type checker rather than a token scan.
     static func canvasConstructionCount(in code: String) -> Int {
+        canvasTypeNames.reduce(0) { $0 + constructionCount(of: $1, in: code) }
+    }
+
+    private static func constructionCount(of typeName: String, in code: String) -> Int {
         var count = 0
         var searchStart = code.startIndex
 
-        while let hit = code.range(of: "PKCanvasView", range: searchStart..<code.endIndex) {
+        while let hit = code.range(of: typeName, range: searchStart..<code.endIndex) {
             var i = hit.upperBound
             func skipWhitespace() {
                 while i < code.endIndex, code[i] == " " || code[i] == "\t" || code[i] == "\n" {
@@ -559,6 +575,18 @@ struct ContractStructureTests {
         // off the main actor, and the checker's ban on graphics vocabulary in
         // durable types does not reach a picker presentation.
         "TuberNotesApp/ImportPickers.swift",
+        // The ink surface itself: a `PKCanvasView` subclass that refuses
+        // PencilKit's editing menu. It is the canvas runtime by definition —
+        // it *is* the canvas — split into a file of its own so that the reason
+        // the menu is refused sits next to the refusal rather than inside a
+        // 1,200-line controller. It holds no state and writes nothing.
+        "TuberNotesApp/InkCanvasView.swift",
+        // A probe on the canvas runtime's own frame path: it reads the scroll
+        // view's presented transform against the model values the backdrop
+        // mirror used, and logs one line per pinch. Not a mechanism and not an
+        // owner — it answers whether the mirror or PencilKit's raster is
+        // behind, and is deleted when that verdict lands.
+        "TuberNotesApp/ZoomRegistrationProbe.swift",
         // THROWAWAY SPIKE — CanvasFeatureComplete device spike 1. Compiled
         // only under TN_SPIKE_MIRROR and instruments the canvas runtime,
         // where UIKit is already allowed; the entry dies with the file.

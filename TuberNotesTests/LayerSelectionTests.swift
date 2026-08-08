@@ -221,6 +221,122 @@ struct LayerSelectionTests {
         #expect(landed.to == PageSpaceTransform(a: 200, b: 0, c: 0, d: 100, tx: 150, ty: 230))
     }
 
+    @Test("A drag cannot carry a layer off the page")
+    func aDragCannotCarryALayerOffThePage() throws {
+        let canvas = UIScrollView()
+        let runtime = Self.runtime(on: canvas)
+        // 200×100, sitting well inside a canonical 612×792 page; its centre is
+        // at (200, 250).
+        let start = PageSpaceTransform(a: 200, b: 0, c: 0, d: 100, tx: 100, ty: 200)
+        let layer = Self.imageLayer(start)
+        runtime.setLayers([layer])
+        runtime.select(layer)
+
+        var committed: PageSpaceTransform?
+        runtime.onTransformCommitted = { _, _, to in
+            committed = to
+            return true
+        }
+
+        // A drag far past the bottom-right corner of the page — the gesture that
+        // used to lose the image: `PageBackdrop` masks to the page, so a layer
+        // wholly outside it draws nothing, and what draws nothing cannot be
+        // tapped to be dragged back.
+        #expect(runtime.beginTransform(atPagePoint: CGPoint(x: 200, y: 250)))
+        runtime.updateTransform(toPagePoint: CGPoint(x: 4000, y: 4000))
+        runtime.endTransform()
+
+        let landed = try #require(committed)
+        let centre = landed.apply(x: 0.5, y: 0.5)
+        #expect(centre.x == 612, "clamped to the page's right edge, not past it")
+        #expect(centre.y == 792, "clamped to the page's bottom edge, not past it")
+        // Clamped, not refused, and not reshaped: the layer slid along the
+        // corner keeping its size and orientation exactly.
+        #expect(landed.a == start.a && landed.b == start.b)
+        #expect(landed.c == start.c && landed.d == start.d)
+    }
+
+    @Test("Sliding along one edge still moves freely along the other")
+    func clampingOneAxisLeavesTheOtherAlone() throws {
+        let canvas = UIScrollView()
+        let runtime = Self.runtime(on: canvas)
+        let start = PageSpaceTransform(a: 200, b: 0, c: 0, d: 100, tx: 100, ty: 200)
+        let layer = Self.imageLayer(start)
+        runtime.setLayers([layer])
+        runtime.select(layer)
+
+        var committed: PageSpaceTransform?
+        runtime.onTransformCommitted = { _, _, to in
+            committed = to
+            return true
+        }
+
+        // Far past the right edge, a little way down. The wall is horizontal
+        // only: a clamp that pinned both axes would feel like the drag dropped.
+        #expect(runtime.beginTransform(atPagePoint: CGPoint(x: 200, y: 250)))
+        runtime.updateTransform(toPagePoint: CGPoint(x: 4000, y: 350))
+        runtime.endTransform()
+
+        let landed = try #require(committed)
+        let centre = landed.apply(x: 0.5, y: 0.5)
+        #expect(centre.x == 612)
+        #expect(centre.y == 350, "the vertical component of the drag is untouched")
+    }
+
+    @Test("A layer that bleeds off the edge is allowed; only its centre is held")
+    func aLayerMayHangOverTheEdge() throws {
+        let canvas = UIScrollView()
+        let runtime = Self.runtime(on: canvas)
+        let start = PageSpaceTransform(a: 200, b: 0, c: 0, d: 100, tx: 100, ty: 200)
+        let layer = Self.imageLayer(start)
+        runtime.setLayers([layer])
+        runtime.select(layer)
+
+        var committed: PageSpaceTransform?
+        runtime.onTransformCommitted = { _, _, to in
+            committed = to
+            return true
+        }
+
+        // Centre to (560, 250): the layer's right half hangs off a 612-wide
+        // page. That is an ordinary thing to want and must not be clamped —
+        // the rule is the centre, deliberately, not containment.
+        #expect(runtime.beginTransform(atPagePoint: CGPoint(x: 200, y: 250)))
+        runtime.updateTransform(toPagePoint: CGPoint(x: 560, y: 250))
+        runtime.endTransform()
+
+        let landed = try #require(committed)
+        #expect(landed.tx == 460, "untouched: the centre never left the page")
+        #expect(landed.apply(x: 1, y: 0).x == 660, "and it really does hang past the edge")
+    }
+
+    @Test("The clamp reads this page's geometry, not the canonical one")
+    func theClampFollowsPerPageGeometry() throws {
+        let canvas = UIScrollView()
+        // A landscape page: the vertical wall is at 612, not at 792.
+        let runtime = Self.runtime(
+            on: canvas, geometry: PageGeometry(width: 792, height: 612)
+        )
+        let start = PageSpaceTransform(a: 200, b: 0, c: 0, d: 100, tx: 100, ty: 200)
+        let layer = Self.imageLayer(start)
+        runtime.setLayers([layer])
+        runtime.select(layer)
+
+        var committed: PageSpaceTransform?
+        runtime.onTransformCommitted = { _, _, to in
+            committed = to
+            return true
+        }
+
+        #expect(runtime.beginTransform(atPagePoint: CGPoint(x: 200, y: 250)))
+        runtime.updateTransform(toPagePoint: CGPoint(x: 4000, y: 4000))
+        runtime.endTransform()
+
+        let centre = try #require(committed).apply(x: 0.5, y: 0.5)
+        #expect(centre.x == 792)
+        #expect(centre.y == 612)
+    }
+
     @Test("A corner drag scales about the opposite corner")
     func aCornerDragScales() throws {
         let canvas = UIScrollView()
@@ -512,8 +628,11 @@ struct LayerSelectionTests {
     /// `unowned` — correct in the app, where `PageCanvasController` owns both
     /// and they die together — so a fixture that let it go would read a
     /// destroyed object rather than test anything.
-    private static func runtime(on canvasView: UIScrollView) -> LayerSelectionRuntime {
-        LayerSelectionRuntime(canvasView: canvasView)
+    private static func runtime(
+        on canvasView: UIScrollView,
+        geometry: PageGeometry = .canonical
+    ) -> LayerSelectionRuntime {
+        LayerSelectionRuntime(canvasView: canvasView, geometry: geometry)
     }
 
     private static func imageLayer(

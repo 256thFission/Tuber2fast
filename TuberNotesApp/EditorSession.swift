@@ -807,7 +807,16 @@ final class EditorSession {
     }
 
     /// One page either side of the runtime's live window.
-    private static let prefetchRadius = 2
+    ///
+    /// **It is defined by that relationship, not by its value.** The runtime
+    /// keeps `PagedCanvasController.windowRadius` pages either side live; this
+    /// is that plus one, so a page entering the window always finds its bytes
+    /// and its warmed composite already here rather than starting a load under
+    /// the finger. When the window grew to two (device verdict, 2026-08-07)
+    /// this grew with it — leaving it at 2 would have meant the outermost live
+    /// page was also the outermost prefetched one, and every turn would build a
+    /// canvas for bytes that had not been asked for yet.
+    private static let prefetchRadius = 3
 
     // MARK: - Appending
 

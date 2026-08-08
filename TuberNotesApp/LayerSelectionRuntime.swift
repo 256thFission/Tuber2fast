@@ -60,6 +60,12 @@ final class LayerSelectionRuntime: NSObject {
     /// together.
     private unowned let canvasView: UIScrollView
 
+    /// This page's extent, told at construction like everything else here.
+    ///
+    /// It exists for one rule: **a drag may not carry a layer off the page.**
+    /// See `clampedToPage`.
+    private let geometry: PageGeometry
+
     /// This page's layers below the ink, in order — bottom first, which is why
     /// hit-testing walks it backwards.
     private(set) var layers: [LayerEnvelope] = []
@@ -114,8 +120,9 @@ final class LayerSelectionRuntime: NSObject {
     private let tap = UITapGestureRecognizer()
     private let drag = LayerDragRecognizer()
 
-    init(canvasView: UIScrollView) {
+    init(canvasView: UIScrollView, geometry: PageGeometry) {
         self.canvasView = canvasView
+        self.geometry = geometry
         super.init()
 
         chrome.fillColor = nil
@@ -376,10 +383,12 @@ final class LayerSelectionRuntime: NSObject {
         case .move:
             // A translation in page space, applied after the layer's own
             // mapping: the layer keeps its size and orientation exactly.
-            return start.concatenating(
-                .translation(
-                    x: Double(point.x - active.startPoint.x),
-                    y: Double(point.y - active.startPoint.y)
+            return clampedToPage(
+                start.concatenating(
+                    .translation(
+                        x: Double(point.x - active.startPoint.x),
+                        y: Double(point.y - active.startPoint.y)
+                    )
                 )
             )
 
@@ -426,6 +435,39 @@ final class LayerSelectionRuntime: NSObject {
                 .concatenating(.translation(x: centre.x, y: centre.y))
             return start.concatenating(about)
         }
+    }
+
+    /// Slides a candidate back until the layer's centre is on the page.
+    ///
+    /// **A drag may not carry a layer off the page.** Phillip's device verdict
+    /// (2026-08-07): an image dragged past the edge was *lost* — `PageBackdrop`
+    /// masks to the page, so a layer entirely outside it draws nothing, and a
+    /// layer that draws nothing cannot be tapped to select, so nothing can drag
+    /// it back. It is still in the file and still in the composite request; it
+    /// is simply unreachable. That is a durable state the user cannot undo by
+    /// looking at the screen, which makes it worse than the misplacement it
+    /// comes from.
+    ///
+    /// The rule is the **centre**, not the whole quad: containing the whole
+    /// layer would forbid the ordinary bleed of a photo off the edge of a page,
+    /// which is a real thing people want. A centre on the page guarantees a
+    /// quadrant of the layer is drawn, so there is always something to tap.
+    ///
+    /// Applied to `.move` and nothing else, because `.move` is the only grab
+    /// that *can* lose a layer: `.rotate` turns about the centre, which is
+    /// therefore invariant, and `.scale` is anchored at the opposite corner,
+    /// which is therefore invariant — a scaled layer keeps a corner wherever
+    /// its corner was, so it stays as reachable as it was when the drag began.
+    ///
+    /// Clamping rather than refusing: a refused frame would stick the layer
+    /// under a still-moving finger and read as a dropped drag. This slides
+    /// along the edge instead, which is what a wall feels like.
+    private func clampedToPage(_ candidate: PageSpaceTransform) -> PageSpaceTransform {
+        let centre = candidate.apply(x: 0.5, y: 0.5)
+        let x = min(max(centre.x, 0), geometry.width)
+        let y = min(max(centre.y, 0), geometry.height)
+        guard x != centre.x || y != centre.y else { return candidate }
+        return candidate.concatenating(.translation(x: x - centre.x, y: y - centre.y))
     }
 
     // MARK: - Chrome drawing

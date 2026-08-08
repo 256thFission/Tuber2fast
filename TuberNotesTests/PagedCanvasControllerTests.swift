@@ -24,10 +24,11 @@ struct PagedCanvasControllerTests {
 
         for count in [1, 2, 5, 40, 400] {
             controller.setPages(count: count, currentPageIndex: 0)
-            // The window is the visible page and one either side. It is the
+            // The window is the visible page and two either side. It is the
             // count that matters, not the number: it must not scale with
-            // `count` (`Contract.md` — Performance).
-            #expect(controller.liveCanvasCount <= 3)
+            // `count` (`Contract.md` — Performance), which is why the assertion
+            // survived the window growing from one either side to two.
+            #expect(controller.liveCanvasCount <= 5)
             #expect(controller.liveCanvasCount <= count)
         }
     }
@@ -46,8 +47,26 @@ struct PagedCanvasControllerTests {
         // The failure this catches is retention that grows with pages visited —
         // the multi-page form of the monotonic retention `Contract.md` —
         // Performance forbids.
-        #expect(highWaterMark <= 3)
-        #expect(controller.liveCanvasCount <= 3)
+        #expect(highWaterMark <= 5)
+        #expect(controller.liveCanvasCount <= 5)
+    }
+
+    @Test("Two pages either side are prepared, not placeholders")
+    func theWindowReachesTwoPagesEitherSide() {
+        let controller = hosted()
+        controller.setPages(count: 9, currentPageIndex: 0)
+        turn(controller, to: 4)
+
+        // The device finding this answers (2026-08-07): a *flick* crosses two
+        // slots before anything settles, and with one prepared neighbour the
+        // second slot was still a placeholder when it came under the finger.
+        for index in 2...6 {
+            #expect(controller.livePage(at: index) != nil, "page \(index) is inside the window")
+        }
+        // Still bounded, and still symmetric — the window is a radius, not a
+        // lead in the direction of travel.
+        #expect(controller.livePage(at: 1) == nil)
+        #expect(controller.livePage(at: 7) == nil)
     }
 
     @Test("A page that leaves the window hands its ink over before it is released")

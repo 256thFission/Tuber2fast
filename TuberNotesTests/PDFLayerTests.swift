@@ -519,18 +519,20 @@ struct PDFLayerTests {
         let session = EditorSession(store: scratch.store(), debounce: .milliseconds(20))
         await session.start()
 
-        // Four imported pages, so the last sits outside the prune radius of an
-        // early one.
+        // Six imported pages, so the last sits one page outside the prune
+        // radius of an early one. One page and not five: the boundary is what
+        // this asserts. `EditorSession.prefetchRadius` is that boundary — if it
+        // moves again, this count moves with it.
         let appended = try await session.importPDF(
             pdf(
-                pageSizes: Array(repeating: CGSize(width: 612, height: 792), count: 4)
+                pageSizes: Array(repeating: CGSize(width: 612, height: 792), count: 6)
             ) { _, _ in }
         )
         #expect(session.lastSaveError == nil)
-        let farPageID = appended[3]
+        let farPageID = appended[5]
         let farLayerID = try #require(scratch.layersOnDisk(ofPage: farPageID).first).layerID
 
-        // Turning prunes: the last page is outside the new page ± 2 window, so
+        // Turning prunes: the last page is outside the new page ± 3 window, so
         // its durable bytes drop and its ink becomes `.loading`.
         turn(session, to: 1)
 

@@ -17,7 +17,14 @@ import UIKit
 /// work leaving this runtime.
 @MainActor
 final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
-    let canvasView = PKCanvasView()
+    /// The ink surface. A `PKCanvasView` subclass for one reason — it refuses
+    /// PencilKit's editing menu; see `InkCanvasView`.
+    let canvasView = InkCanvasView()
+
+    /// Open question, measured rather than guessed: does the mirrored backdrop
+    /// stay registered with the ink through a fast pinch? See
+    /// `ZoomRegistrationProbe`, and delete both once the answer lands.
+    private let zoomProbe = ZoomRegistrationProbe()
 
     /// One coarse notification that the drawing changed. It carries no drawing,
     /// no sample, and no generation number (`Contract.md` — Saving).
@@ -232,7 +239,22 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
 
         canvasView.showsVerticalScrollIndicator = false
         canvasView.showsHorizontalScrollIndicator = false
-        canvasView.bouncesZoom = true
+        // **No rubber-band past the zoom limits.** Two reasons, and the first is
+        // the same verdict that set the floor at fit-width: a bounce below the
+        // floor shows exactly the dead space beside the page that Phillip
+        // overruled, briefly, on every quick zoom-out — and the page now *opens*
+        // at the floor, so every zoom-out gesture starts against it.
+        //
+        // The second is registration. Bouncing is the one state where the scale
+        // `UIScrollView` presents and the scale it reports can differ, and the
+        // mirror is driven from the reported one; the ink would then follow the
+        // presented scale while the backdrop snapped to the model. That is the
+        // leading candidate for "the ink is catching up to its scale on the
+        // images beneath it" (device session, 2026-08-07), and
+        // `ZoomRegistrationProbe` is what will say whether it was the whole of
+        // it. Off costs a little iOS-native give at the limits; the feel verdict
+        // is Phillip's.
+        canvasView.bouncesZoom = false
 
         canvasView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(canvasView)
@@ -303,13 +325,28 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
     func becomeActivePage() {
         canvasView.becomeFirstResponder()
         toolPicker.setVisible(true, forFirstResponder: canvasView)
+        // After becoming first responder, because that is when PencilKit has
+        // reason to have installed an editing-menu interaction. Once per page
+        // activation, off every frame path.
+        let removed = canvasView.removeEditMenuInteractions()
         CanvasLog.event(
             .canvas,
             "appeared; firstResponder=\(canvasView.isFirstResponder) "
                 + "policy=\(canvasView.drawingPolicy.rawValue) "
-                + "contentSize=\(canvasView.contentSize) zoom=\(canvasView.zoomScale)"
+                + "contentSize=\(canvasView.contentSize) zoom=\(canvasView.zoomScale) "
+                + "editMenuInteractionsRemoved=\(removed)"
         )
+        if !Self.hasLoggedMenuMachinery {
+            Self.hasLoggedMenuMachinery = true
+            CanvasLog.event(.canvas, "menu machinery: \(canvasView.describeMenuMachinery())")
+        }
     }
+
+    /// The interaction/gesture inventory is logged once per process, not once
+    /// per page: it is a fact about `PKCanvasView`, and five live canvases would
+    /// otherwise write the same paragraph five times. Main-actor isolated with
+    /// the rest of the type, so nothing is implied by it being static.
+    private static var hasLoggedMenuMachinery = false
 
     /// The first touch to reach the canvas, and nothing after it.
     ///
@@ -551,7 +588,7 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
     /// as a property of the object graph rather than of a code path.
     private func installSelectionIfNeeded() {
         guard selection == nil, staticLayers.contains(where: \.isSelectable) else { return }
-        let installed = LayerSelectionRuntime(canvasView: canvasView)
+        let installed = LayerSelectionRuntime(canvasView: canvasView, geometry: geometry)
         installed.onSelectionChanged = { [weak self] in
             self?.selectionChanged()
         }
@@ -1161,6 +1198,14 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
         // tick. One transform assignment, and nothing at all on a page with no
         // static layers — no composite is asked for here, at any zoom.
         backdrop?.mirror(offset: scrollView.contentOffset, zoom: scrollView.zoomScale)
+        // Reads what was just presented against what was just mirrored. Two
+        // presentation reads and no allocation, and nothing at all until a first
+        // pinch has handed the probe a zoom view.
+        zoomProbe.sample(
+            canvasView: canvasView,
+            modelZoom: scrollView.zoomScale,
+            modelOffset: scrollView.contentOffset
+        )
         #if TN_SPIKE_MIRROR
         spikeMirror?.mirror(offset: scrollView.contentOffset, zoom: scrollView.zoomScale)
         #endif
@@ -1185,6 +1230,10 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
 
     func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) {
         requestLensIfNeeded()
+        // The scroll view hands over its own zooming view here, which is how the
+        // probe reaches it without touching PencilKit's hierarchy.
+        zoomProbe.adopt(view)
+        zoomProbe.flush("pinch ended", canvasView: canvasView)
         #if TN_SPIKE_MIRROR
         spikeMirror?.flushStats("pinch ended;")
         #endif
