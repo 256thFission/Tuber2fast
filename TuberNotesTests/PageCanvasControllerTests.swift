@@ -542,6 +542,52 @@ struct PageCanvasControllerTests {
         }
     }
 
+    @Test("A retired page's composite stops rather than finishing for nobody")
+    func retirementCancelsTheCompositeInFlight() async throws {
+        let store = try scratchStore()
+        let layer = try await imageLayer(
+            store: store, color: .red,
+            transform: PageSpaceTransform(a: 200, b: 0, c: 0, d: 100, tx: 50, ty: 50)
+        )
+        let renderer = StaticLayerRenderer(store: store)
+        let controller = PageCanvasController(
+            toolPicker: PKToolPicker(), projection: .canonical,
+            host: TestPageHost(),
+            staticRenderer: renderer
+        )
+        let root = controller.view!
+        root.frame = CGRect(x: 0, y: 0, width: 820, height: 1180)
+
+        // Hold the composite in flight, so retirement happens in the window
+        // this test is about rather than in a race it hopes to win.
+        let hold = CompositeHold()
+        await renderer.setRenderGateForTesting { _ in await hold.wait() }
+
+        controller.setStaticLayers([layer])
+        root.layoutIfNeeded()
+        try await waitUntilAsync("the composite is in flight") {
+            await renderer.inFlightRenderCount == 1
+        }
+
+        // The user flicked past this page. Nothing it has in flight can ever
+        // be installed again.
+        controller.willRetire()
+        // The slot going free is the positive signal that the cancellation
+        // reached the renderer — what happens to the render *after* that is
+        // `aSupersededRenderIsCancelled`'s half of this proof.
+        try await waitUntilAsync("the abandoned render releases its slot") {
+            await renderer.inFlightRenderCount == 0
+        }
+
+        await hold.open()
+        let backdrop = try #require(controller.backdrop)
+        #expect(
+            await renderer.cachedCompositeCount == 0,
+            "the decode a retired page asked for must stop, not run to completion and be cached"
+        )
+        #expect(contents(of: backdrop.pageLayerForTesting) == nil)
+    }
+
     // MARK: - Static-layer helpers
 
     /// `CALayer.contents` as an identity, or nil. `Any?` cannot be compared
@@ -586,6 +632,21 @@ struct PageCanvasControllerTests {
             ref: ImageLayerRef(assetID: assetID, format: .heic),
             pageSpaceTransform: transform
         )
+    }
+
+    /// `waitUntil` for a condition that has to ask an actor. Separately named
+    /// rather than overloaded: an async closure and a synchronous one are
+    /// ambiguous to overload resolution at every existing call site.
+    private func waitUntilAsync(
+        _ what: String,
+        _ condition: () async -> Bool,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) async throws {
+        for _ in 0..<200 {
+            if await condition() { return }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        Issue.record("timed out waiting for \(what)", sourceLocation: sourceLocation)
     }
 
     /// Polls until `condition` holds, or fails after a second.

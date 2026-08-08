@@ -424,6 +424,70 @@ struct StaticLayerRenderTests {
         #expect(again.image === freshComposite.image, "the newer composite is the one remembered")
     }
 
+    @Test("A superseded render stops rather than running to completion")
+    func aSupersededRenderIsCancelled() async throws {
+        let scratch = try TestScratch("render")
+        let store = scratch.store
+        let renderer = StaticLayerRenderer(store: store)
+        let gate = RenderGate()
+        await renderer.setRenderGateForTesting { await gate.wait($0) }
+
+        let layer = try await scratch.imageLayer(store: store, color: .red, transform: .fullPage)
+        let request = StaticLayerRequest(layers: [layer], geometry: .canonical, pixelsPerPagePoint: 1)
+
+        let asked = Task { await renderer.composite(for: request) }
+        while await gate.waiterCount == 0 { await Task.yield() }
+
+        // The page turned: nobody is left who will install this composite.
+        asked.cancel()
+        // The slot going free is the positive signal that the abandonment
+        // landed on the actor — waited for, not slept past.
+        while await renderer.inFlightRenderCount > 0 { await Task.yield() }
+
+        // Only now does the render get to run. It must not.
+        await gate.release(request)
+        guard case .cancelled = await asked.value else {
+            Issue.record("a render nobody was waiting for ran to completion")
+            return
+        }
+        #expect(
+            await renderer.cachedCompositeCount == 0,
+            "a stopped render must not be cached: half-drawn pixels under a live key are a wrong picture forever"
+        )
+    }
+
+    @Test("One awaiter leaving does not cancel a render another is waiting for")
+    func aJoinedRenderSurvivesOneAwaiterLeaving() async throws {
+        let scratch = try TestScratch("render")
+        let store = scratch.store
+        let renderer = StaticLayerRenderer(store: store)
+        let gate = RenderGate()
+        await renderer.setRenderGateForTesting { await gate.wait($0) }
+
+        let layer = try await scratch.imageLayer(store: store, color: .red, transform: .fullPage)
+        let request = StaticLayerRequest(layers: [layer], geometry: .canonical, pixelsPerPagePoint: 1)
+
+        // Two canvases asking for the same composite: the second joins the
+        // first's render rather than starting its own, which is the dedup
+        // `inFlightDedupIsTransformAware` pins from the other side.
+        let leaving = Task { await renderer.composite(for: request) }
+        while await gate.waiterCount == 0 { await Task.yield() }
+        let staying = Task { await renderer.composite(for: request) }
+        while await renderer.renderAwaiterCount < 2 { await Task.yield() }
+
+        leaving.cancel()
+        while await renderer.renderAwaiterCount > 1 { await Task.yield() }
+        // The render is still the slot's, because someone still wants it.
+        #expect(await renderer.inFlightRenderCount == 1)
+
+        await gate.release(request)
+        guard case .composited = await staying.value else {
+            Issue.record("the remaining awaiter's render was cancelled out from under it")
+            return
+        }
+        #expect(await renderer.cachedCompositeCount == 1)
+    }
+
     /// Holds render tasks at the renderer's test gate until released, keyed by
     /// the whole request, so a test can order completions deterministically.
     private actor RenderGate {

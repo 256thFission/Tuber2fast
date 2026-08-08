@@ -294,8 +294,16 @@ package actor StaticLayerRenderer {
     }
 
     /// Read only by tests: that a cancelled render's slot is released is
-    /// otherwise observable only as the absence of something.
+    /// otherwise observable only as the absence of something, and a test that
+    /// waits on an absence waits on the machine's load instead
+    /// (`CONTRIBUTING.md` — Rules for any check you add).
     var inFlightRenderCount: Int { inFlight.count }
+
+    /// Read only by tests: how many awaiters are still waiting on a render.
+    /// The join's refcount decides whether a cancel may stop the work, so a
+    /// test proving "one awaiter leaving does not cancel the other" needs a
+    /// positive signal that the second one arrived.
+    var renderAwaiterCount: Int { renderAwaiters.values.reduce(0) { $0 + $1.count } }
 
     // MARK: - The prefetch warm
 
