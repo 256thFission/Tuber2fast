@@ -207,6 +207,57 @@ Hand-exercise on the named iPad and record, before asking for a verdict:
 `turningAwayAndBackDoesNotRewriteThePage`, so the save-trace check can now
 fail only for reasons that are about turn feel.
 
+## image-format-is-heic — decided; awaits the contract amendment and the code
+
+Phillip overruled the phase-2 mixed-format design (2026-08-07): image assets
+consolidate onto **HEIC** — one format, hardware-decoded, with transparency.
+The closed set in `AssetFormat` keeps `pdf` (a PDF is not an image, and the
+small-export story stays whole for it) and loses `png` and `jpeg` as
+image-usable formats.
+
+Evidence behind the pick, checked against the APIs this code actually uses:
+
+- HEIC carries alpha as an auxiliary image (`urn:mpeg:hevc:2015:auxid:1`);
+  `CIContext.heifRepresentation` writes it and current ImageIO reads it back.
+  The premultiplied-alpha decode bugs were iOS 12–14.
+- Decode on Apple silicon is hardware-accelerated — at parity with JPEG and
+  far past PNG, which is software zlib and 5–10× the bytes at photo sizes.
+- The accepted loss: HEIC is lossy in practice (RGB→YCbCr means a PNG
+  screenshot softens slightly on transcode), and the small-export story dies
+  for images — the user gets back a HEIC, not the file they imported.
+
+What it closes by construction: the alpha-flattening defect in the current
+transcode-to-JPEG path — a TIFF or GIF with transparency imported through the
+Files picker gets its transparent regions baked into the stored JPEG,
+durably, because assets are write-once. One alpha-carrying format removes
+the class.
+
+Implementation surface, when picked up: `AssetFormat` narrows and
+`ImageLayerRef.recognizedFormat` follows (the closed-set refusal stays — an
+unknown format string on disk is still how a future format lands safely);
+`ImageImportPreparation.prepare` keeps bytes only for HEIC sources and
+transcodes everything else with orientation baked; the fixtures in
+`ImageLayerTests`, `ImportPreparationTests`, `StaticLayerRenderTests`, and
+`LensTests` move to HEIC. Existing documents are wiped — nothing in prod, no
+migration, no refuse-shim.
+
+Pin this first, before the import path moves: a test that encodes a CGImage
+carrying real alpha to HEIC, reads it back through the renderer's
+`downsample`, and asserts a transparent pixel is still transparent. If
+`CGImageDestinationAddImage` does not embed the auxiliary image on this OS,
+the encode goes through `CIContext.heifRepresentation` instead — this is
+checkable in the simulator; do not discover it on a device. The compression
+quality for HEIC is a fresh choice; 0.9 was JPEG's.
+
+Contract amendment: the closed-set line in *Durable form* and the
+small-export comments in `AssetRef.swift` change meaning. Exact edits
+proposed in the PR; Phillip authors them.
+
+**Exit:** a notebook fed PNG, JPEG, and HEIC sources holds only `.heic`
+files under `assets/`, a transparent source round-trips its alpha through
+import → store → downsample → composite, and the amendment is in
+`Contract.md`.
+
 
 
 
