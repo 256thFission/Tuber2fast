@@ -739,17 +739,6 @@ actor DocumentStore {
         }
     }
 
-    /// Every page written whole: a convenience for the first save of a document
-    /// and for tests, whose subject is validation rather than granularity. It
-    /// is the ordinary path's opposite — "every layer changed" is exactly what
-    /// an ink edit is not — so the autosave path does not use it.
-    func save(index: DocumentIndex, changedPages: [UUID: [LayerEnvelope]]) throws {
-        try save(
-            index: index,
-            pages: changedPages.map { PageWrite(pageID: $0.key, layers: $0.value) }
-        )
-    }
-
     /// What one page's write will actually touch, decided before anything is
     /// written.
     private struct PagePlan {

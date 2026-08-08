@@ -31,7 +31,7 @@ import ImageIO
 /// here is a view, a layer, or frame-frequency work, so it needs none of the
 /// canvas runtime's vocabulary and stays off that allowlist.
 actor StaticLayerRenderer {
-    private let store: DocumentStore
+    private let store: any DocumentStoring
 
     // MARK: - The cache
     //
@@ -131,7 +131,7 @@ actor StaticLayerRenderer {
     /// `byteBound` is injectable only so a test need not allocate 96 MB of
     /// pixels to watch the bound bite. The default is the only value the app
     /// uses.
-    init(store: DocumentStore, byteBound: Int = StaticLayerRenderer.defaultByteBound) {
+    init(store: any DocumentStoring, byteBound: Int = StaticLayerRenderer.defaultByteBound) {
         precondition(byteBound > 0, "a render cache with a bound of \(byteBound) bytes cannot hold anything")
         self.store = store
         self.byteBound = byteBound
@@ -265,7 +265,7 @@ actor StaticLayerRenderer {
     nonisolated static func renderLens(
         _ request: StaticLayerRequest,
         visibleRect: CGRect,
-        store: DocumentStore
+        store: any DocumentStoring
     ) async -> StaticLayerRender {
         guard !request.layers.isEmpty else { return .empty }
         let builtOffMain = pthread_main_np() == 0
@@ -461,7 +461,7 @@ actor StaticLayerRenderer {
     nonisolated static func decodeSource(
         _ layer: LayerEnvelope,
         at scale: Double,
-        store: DocumentStore
+        store: any DocumentStoring
     ) async -> CGImage? {
         guard layer.recognizedKind == .image else { return nil }
 
@@ -594,7 +594,7 @@ actor StaticLayerRenderer {
     /// honestly shows a refusal, never a picture missing a layer.
     nonisolated static func render(
         _ request: StaticLayerRequest,
-        store: DocumentStore
+        store: any DocumentStoring
     ) async -> StaticLayerRender {
         // Sampled before the first suspension, so it is the thread this
         // function actually began on. The contract's "File encoding and disk

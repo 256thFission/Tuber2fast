@@ -432,7 +432,7 @@ final class EditorSession {
 
     @ObservationIgnored private var liveRuntime: PagedCanvasController?
 
-    private let store: DocumentStore
+    private let store: any DocumentStoring
     private let debounce: Duration
 
     /// Flattens a page's static layers into one texture, off-main. Built here
@@ -530,7 +530,7 @@ final class EditorSession {
     /// is expensive to serialize, and can never shorten it (`Contract.md` —
     /// Saving).
     /// Builds no UIKit object. See `canvas` for why that matters.
-    init(store: DocumentStore, debounce: Duration = .milliseconds(500)) {
+    init(store: any DocumentStoring, debounce: Duration = .milliseconds(500)) {
         self.store = store
         self.debounce = debounce
         self.staticRenderer = StaticLayerRenderer(store: store)
