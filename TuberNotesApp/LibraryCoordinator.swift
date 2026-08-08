@@ -128,6 +128,14 @@ final class LibraryCoordinator {
         libraryGeneration += 1
     }
 
+    /// A mutation outside the coordinator's own transitions changed the tree
+    /// under the browser — a Trash-screen recover or empty landing while the
+    /// browser is still on screen. Folder views re-list on the bump, exactly
+    /// as they do after a close.
+    func noteLibraryMutated() {
+        libraryGeneration += 1
+    }
+
     /// The drain banner's Retry: `close()` is idempotent and re-checks
     /// dirtiness, so calling it again is the re-attempt — no timer here,
     /// the session's own backoff machinery owns the schedule.
