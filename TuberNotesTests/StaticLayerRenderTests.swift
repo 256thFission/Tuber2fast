@@ -290,6 +290,56 @@ struct StaticLayerRenderTests {
         #expect(dAgain.image === d.image, "a composite bigger than the whole bound is kept, not thrashed")
     }
 
+    @Test("Eviction order is use order, not insertion order and not the cache's own")
+    func trimEvictsInUseOrderAcrossManyEntries() async throws {
+        let scratch = try TestScratch("render")
+        let store = scratch.store
+
+        // Five composites of *identical* size — same geometry, same level of
+        // detail, five different assets — so the arithmetic below is exact and
+        // the only thing deciding who dies is the recency order.
+        var layers: [LayerEnvelope] = []
+        for _ in 0..<5 {
+            layers.append(try await scratch.imageLayer(store: store, color: .red, transform: .fullPage))
+        }
+        let requests = layers.map {
+            StaticLayerRequest(layers: [$0], geometry: .canonical, pixelsPerPagePoint: 1)
+        }
+        // What one of them costs, measured rather than assumed — the padding
+        // in a CoreGraphics context's bytes-per-row is not this test's to
+        // predict.
+        let unit = try await composited(StaticLayerRenderer(store: store), request: requests[0]).byteCount
+        let renderer = StaticLayerRenderer(store: store, byteBound: unit * 3)
+
+        var made: [StaticComposite] = []
+        for request in requests[0...2] { made.append(try await composited(renderer, request: request)) }
+        #expect(await renderer.cachedCompositeCount == 3, "three fit exactly at the bound")
+
+        // Use 0 and then 1, so the use order is 2, 0, 1 — deliberately not the
+        // insertion order. This is the planted violation, standing:
+        // insertion-order eviction would drop 0 then 1 and leave 2, 3, 4, and
+        // most-recently-used eviction would leave 0, 2, 4. Only true LRU
+        // leaves what is asserted below.
+        _ = try await composited(renderer, request: requests[0])
+        _ = try await composited(renderer, request: requests[1])
+
+        made.append(try await composited(renderer, request: requests[3]))  // evicts 2
+        made.append(try await composited(renderer, request: requests[4]))  // evicts 0
+        #expect(await renderer.cachedCompositeCount == 3, "one eviction per insert, and no more")
+        #expect(await renderer.cachedByteCount == unit * 3)
+
+        // The survivors first: a hit is not an insert, so none of these three
+        // can evict anything and disturb what follows.
+        for index in [1, 3, 4] {
+            let again = try await composited(renderer, request: requests[index])
+            #expect(again.image === made[index].image, "composite \(index) was used recently and must survive")
+        }
+        for index in [0, 2] {
+            let again = try await composited(renderer, request: requests[index])
+            #expect(again.image !== made[index].image, "composite \(index) was the least recently used and must be gone")
+        }
+    }
+
     @Test("Under its bound, the cache holds both composites and re-serves them")
     func theCacheServesRepeatedRequests() async throws {
         let scratch = try TestScratch("render")

@@ -13,10 +13,11 @@ import UIKit
 /// `Contract.md` — Performance requires; a retired page's controller is
 /// released, not parked for a possible return.
 ///
-/// A slot inside the window is a canvas only when the session supplied the
-/// page's ink. A page whose bytes are not held is a placeholder view — it
-/// takes no input, so there is no stroke to drop when the bytes arrive and
-/// none to misaccount at save time. An unloaded page is not a canvas.
+/// A slot inside the window is a canvas only when the page's ink is *in it*.
+/// A page whose bytes are not held, or are held and not yet decoded, is a
+/// placeholder view — it takes no input, so there is no stroke to drop when
+/// the ink arrives and none to misaccount at save time. An unloaded page is
+/// not a canvas.
 ///
 /// Nesting is doing the hard work here, and it is deliberate. `PKCanvasView` is
 /// itself a `UIScrollView` that owns pinch-zoom and in-page panning. A nested
@@ -449,6 +450,9 @@ package final class PagedCanvasController: UIViewController, UIScrollViewDelegat
         let wanted = windowedIndices
 
         for (index, slot) in slots where !wanted.contains(index) {
+            // The page is leaving; a decode still running for it is work
+            // nobody will install, competing with the Pencil for the CPU.
+            cancelDecode(at: index)
             switch slot {
             case .canvas(let page):
                 session.pageIsRetiring(at: index, handingOver: page.drawingSnapshot())
@@ -467,40 +471,55 @@ package final class PagedCanvasController: UIViewController, UIScrollViewDelegat
             slots[index] = nil
         }
 
-        for index in wanted.sorted() where slots[index] == nil {
+        // Nearest the current page first. It was `wanted.sorted()`, which is
+        // left to right and starts two pages behind the user. Now that each
+        // inked slot starts a decode as it is built, build order is start
+        // order, and the page under the finger should not be queued behind
+        // the two the user just left.
+        let byDistance = wanted.sorted {
+            abs($0 - currentPageIndex) < abs($1 - currentPageIndex)
+        }
+        for index in byDistance where slots[index] == nil {
             slots[index] = makeSlot(at: index)
         }
 
         layoutSlots()
     }
 
-    /// KNOWN DEFECT: this runs synchronously on main, reached from the settle
-    /// callbacks via `refreshWindow`. It constructs the controller,
-    /// forces `view` (and so `PKCanvasView` setup), and synchronously decodes
-    /// ink via `PKDrawing(data:)`. Settling moved this off the drag itself —
-    /// it no longer runs mid-gesture — but at rest it is still synchronous
-    /// main-thread work. Unmeasured; a fast flick across several pages is the
-    /// case to watch.
+    /// Builds one slot. Still synchronous main-thread work — it constructs the
+    /// controller and forces `view`, and so `PKCanvasView` setup — but no
+    /// longer decodes ink: `PKDrawing(data:)` is the expensive half and it now
+    /// runs off main (`decodeInk`).
+    ///
+    /// What the measurement said, on the pinned simulator, with the 20k-stroke
+    /// / 4.64 MB page `SettleDecodeBenchmark` generates: **32 ms per decode**,
+    /// and **219 ms for one settle** that brought five such pages into the
+    /// window — thirteen frame budgets in a single main-thread turn. That is
+    /// the hitch the fork document's rule names, so the decode moved. A
+    /// simulator number bounds nothing about an iPad, and the device
+    /// measurement is still owed (`Docs/Unproven.md`); what it can overturn is
+    /// the *residual* — whether the construction left here is itself too much
+    /// — not the decision to move the decode.
     private func makeSlot(at index: Int) -> Slot {
+        // Whatever this index was doing, it is not doing it any more. Every
+        // rebuild of a slot funnels through here, so this is the one place
+        // that has to remember to stop a decode nobody will install.
+        cancelDecode(at: index)
+
         switch session.canvasContent(forPageAt: index) {
         case .blank:
             return .canvas(makeCanvas(at: index, installing: nil))
 
         case .ink(let data):
-            let drawing: PKDrawing
-            do {
-                drawing = try PKDrawing(data: data)
-            } catch {
-                // Bytes the session holds that nonetheless refuse to decode.
-                // The same refusal as `.unreadable`, discovered one step
-                // later: never an editable blank.
-                CanvasLog.event(
-                    .canvas,
-                    "page \(index) drawing failed to decode: \(error)"
-                )
-                return .placeholder(makePlaceholder(saying: "This page could not be read."))
-            }
-            return .canvas(makeCanvas(at: index, installing: DrawingSnapshot(drawing: drawing)))
+            // A placeholder, exactly as for `.loading` — and for the same
+            // reason, which is the whole of this path's ink-integrity
+            // argument. Bytes that have not been decoded are not in a canvas,
+            // and a canvas that exists before they arrive is one the user can
+            // draw on: its empty drawing would be handed to the save path over
+            // the page's real ink, or its strokes dropped when the install
+            // overwrote them. So the page stays a placeholder — no input, no
+            // `livePage`, no snapshot — until the drawing is in it.
+            return .placeholder(startDecoding(at: index, from: data))
 
         case .retained(let snapshot):
             return .canvas(makeCanvas(at: index, installing: snapshot))
@@ -514,6 +533,128 @@ package final class PagedCanvasController: UIViewController, UIScrollViewDelegat
             )
         }
     }
+
+    // MARK: - Decoding a page's ink off main
+
+    /// A decode in flight for one slot, and the token that says which request
+    /// it belongs to.
+    ///
+    /// Both halves of `CONTRIBUTING.md` — Cancellation are here, and they are
+    /// needed for different failures. The **task** is cancelled the moment the
+    /// slot stops wanting it — a page leaving the window, a rebuild — so a
+    /// five-page flick does not run five superseded decodes to completion
+    /// against the Pencil. The **token** is compared at the install site,
+    /// because cancellation is asynchronous: a decode that finished just
+    /// before the cancel landed is a completed drawing looking for somewhere
+    /// to go, and the same page index can already be back in the window
+    /// wanting different bytes. Cancel so the work stops; compare so what
+    /// finished cannot install stale.
+    private struct PendingDecode {
+        let token: Int
+        let task: Task<Void, Never>
+    }
+
+    private var pendingDecodes: [Int: PendingDecode] = [:]
+    private var lastDecodeToken = 0
+
+    /// Puts a placeholder in the slot now and asks for the drawing off main.
+    private func startDecoding(at index: Int, from data: Data) -> UIView {
+        lastDecodeToken += 1
+        let token = lastDecodeToken
+        let placeholder = makePlaceholder(saying: "This page is loading…")
+
+        // `Task`, not `Task.detached`: this one is meant to be cancellable,
+        // and detaching would detach the cancellation the checkpoints inside
+        // `decodeInk` depend on.
+        let task = Task { [weak self] in
+            let decoded = await Self.decodeInk(data)
+            guard let self else { return }
+            self.installDecoded(decoded, at: index, token: token)
+        }
+        pendingDecodes[index] = PendingDecode(token: token, task: task)
+        return placeholder
+    }
+
+    /// The expensive half, off the main actor.
+    ///
+    /// `nonisolated static` — the middle row of `CONTRIBUTING.md` — Getting
+    /// off the main actor: heavy work over a value, owning no state, so it
+    /// runs on the generic executor rather than occupying an actor's queue
+    /// behind another page's decode, and it runs in its caller's task, which
+    /// is what gives the checkpoints below something to observe.
+    private nonisolated static func decodeInk(
+        _ data: Data
+    ) async -> Result<PKDrawing, any Error> {
+        // Before the expense, which is where a checkpoint belongs: five
+        // decodes are queued by one flick and four of them are usually
+        // already unwanted by the time they are reached.
+        if Task.isCancelled { return .failure(CancellationError()) }
+        do {
+            return .success(try PKDrawing(data: data))
+        } catch {
+            return .failure(error)
+        }
+    }
+
+    /// Installs a decoded drawing into the slot that asked for it.
+    ///
+    /// The currency check is the token, and it is checked here and nowhere
+    /// else. A slot that was retired has no entry; a slot rebuilt since has a
+    /// newer one; either way this result is dropped rather than installed over
+    /// a page that has moved on.
+    private func installDecoded(
+        _ decoded: Result<PKDrawing, any Error>,
+        at index: Int,
+        token: Int
+    ) {
+        guard pendingDecodes[index]?.token == token else { return }
+        pendingDecodes[index] = nil
+        // The slot this decode was started for, which the token says is still
+        // the one that asked. It is a placeholder by construction —
+        // `startDecoding` put one there and only a rebuild replaces it, which
+        // would have changed the token. The guard is belt and braces, and it
+        // fails closed: whatever is in the slot stays, because the one thing
+        // this must never do is replace a canvas, which would destroy ink.
+        guard case .placeholder(let placeholder)? = slots[index] else { return }
+
+        switch decoded {
+        case .success(let drawing):
+            placeholder.removeFromSuperview()
+            slots[index] = .canvas(
+                makeCanvas(at: index, installing: DrawingSnapshot(drawing: drawing))
+            )
+        case .failure(is CancellationError):
+            // A cancel this runtime issued took the token entry with it, so
+            // such a decode is already refused above and never arrives here.
+            // What does arrive here is a cancellation from outside — the
+            // enclosing task tree going away. It is not a decode failure and
+            // must not be rendered as one: a benign cancel that told the user
+            // their page "could not be read" would be the worst possible lie
+            // about ink that is perfectly fine on disk.
+            return
+        case .failure(let error):
+            // Bytes the session holds that nonetheless refuse to decode. The
+            // same refusal as `.unreadable`, discovered one step later: never
+            // an editable blank.
+            CanvasLog.event(.canvas, "page \(index) drawing failed to decode: \(error)")
+            placeholder.removeFromSuperview()
+            slots[index] = .placeholder(makePlaceholder(saying: "This page could not be read."))
+        }
+
+        layoutSlots()
+        if index == currentPageIndex { livePage(at: index)?.becomeActivePage() }
+    }
+
+    private func cancelDecode(at index: Int) {
+        pendingDecodes.removeValue(forKey: index)?.task.cancel()
+    }
+
+    /// Read only by tests: how many slots are waiting on a decode. That an
+    /// abandoned decode was *cancelled* rather than merely refused at the
+    /// install site is otherwise observable only as the absence of something,
+    /// and a test that waits on an absence waits on the machine's load
+    /// (`CONTRIBUTING.md` — Rules for any check you add). It computes nothing.
+    var pendingInkDecodeCount: Int { pendingDecodes.count }
 
     private func makeCanvas(at index: Int, installing snapshot: DrawingSnapshot?) -> PageCanvasController {
         // The page reports through its host from the moment it exists: there is
