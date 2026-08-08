@@ -20,21 +20,28 @@ import Foundation
 /// `pageWidth < pageHeight` is **not** a rule any more. Landscape sources exist,
 /// and after phase 3b an imported landscape worksheet is a landscape page rather
 /// than a landscape picture letterboxed into a portrait page.
-struct PageGeometry: Codable, Sendable, Equatable {
-    let width: Double
-    let height: Double
+package struct PageGeometry: Codable, Sendable, Equatable {
+    package let width: Double
+    package let height: Double
+
+    // Spelled out because a memberwise initializer is `internal` however
+    // visible its type is.
+    package init(width: Double, height: Double) {
+        self.width = width
+        self.height = height
+    }
 
     /// What a blank page is: US Letter, in points. Every page this application
     /// creates without a source has exactly this geometry — including the blank
     /// page appended by swiping past the last page of a landscape import, which
     /// is why mixed geometry is the normal state of an annotated import rather
     /// than an edge case.
-    static let canonical = PageGeometry(width: 612, height: 792)
+    package static let canonical = PageGeometry(width: 612, height: 792)
 
     /// Finite page points greater than zero, in both axes. There is no third
     /// condition: the aspect is free, and equality with `canonical` is not
     /// required of anything but a page this application created itself.
-    var isValid: Bool {
+    package var isValid: Bool {
         width.isFinite && width > 0 && height.isFinite && height > 0
     }
 }
@@ -49,8 +56,8 @@ struct PageGeometry: Codable, Sendable, Equatable {
 /// callback is also what keeps a canvas built during the first layout pass, before
 /// `EditorSession.start()` has returned, from being built with a default it would
 /// then keep forever.
-struct PageProjection: Sendable, Equatable {
-    let geometry: PageGeometry
+package struct PageProjection: Sendable, Equatable {
+    package let geometry: PageGeometry
 
     /// The document's absolute zoom cap, in **page points per pixel**: the
     /// fewest page points one device pixel may represent. Smaller is deeper.
@@ -59,11 +66,16 @@ struct PageProjection: Sendable, Equatable {
     /// to be `fitWidth × 8`, a function of the viewport, so it moved with the
     /// device, the rotation, and Split View. Nothing durable may be derived
     /// from a limit that moves.
-    let zoomCapPagePointsPerPixel: Double
+    package let zoomCapPagePointsPerPixel: Double
+
+    package init(geometry: PageGeometry, zoomCapPagePointsPerPixel: Double) {
+        self.geometry = geometry
+        self.zoomCapPagePointsPerPixel = zoomCapPagePointsPerPixel
+    }
 
     /// What a canvas built with no document behind it uses — a test, or a
     /// runtime hosted before a session exists.
-    static let canonical = PageProjection(
+    package static let canonical = PageProjection(
         geometry: .canonical,
         zoomCapPagePointsPerPixel: DocumentIndex.canonicalZoomCapPagePointsPerPixel
     )
@@ -75,7 +87,7 @@ struct PageProjection: Sendable, Equatable {
     /// term: it is the pixel grid, which is what the cap is stated against. Two
     /// devices of different sizes and the same display scale reach the same
     /// maximum scale, which is exactly what the old cap could not do.
-    func maximumZoomScale(displayScale: Double) -> Double {
+    package func maximumZoomScale(displayScale: Double) -> Double {
         precondition(
             displayScale.isFinite && displayScale > 0,
             "a display scale of \(displayScale) cannot carry a zoom cap"
@@ -99,14 +111,14 @@ struct PageProjection: Sendable, Equatable {
     /// `fitWidth × 8` exceeds 10 whenever fit-width exceeds 1.25, which is every
     /// iPad in portrait, so most devices were already sitting on this clamp
     /// rather than on the arithmetic.
-    static let runtimeMaximumZoomScale: Double = 10
+    package static let runtimeMaximumZoomScale: Double = 10
 
     /// The coarsest pixel grid this application ships to. Every iPad is 2×; the
     /// constant exists so the durable cap can be validated against the *worst*
     /// case rather than against whichever device happens to be opening the
     /// document, which is what makes the cap a document constant rather than a
     /// device one.
-    static let minimumSupportedDisplayScale: Double = 2
+    package static let minimumSupportedDisplayScale: Double = 2
 
     /// The finest cap any document may pin: the deepest detail `PKCanvasView`
     /// will deliver on the coarsest display this application supports.
@@ -115,7 +127,7 @@ struct PageProjection: Sendable, Equatable {
     /// quietly given less — a durable promise the runtime cannot keep is an
     /// invalid state, and `DocumentIndex.validated()` is where invalid durable
     /// states are named.
-    static let finestReachablePagePointsPerPixel: Double =
+    package static let finestReachablePagePointsPerPixel: Double =
         1 / (runtimeMaximumZoomScale * minimumSupportedDisplayScale)
 
     /// The widest viewport a single page is ever fitted into: the **portrait**
@@ -132,7 +144,7 @@ struct PageProjection: Sendable, Equatable {
     /// the orientations key stops saying portrait-only, naming this constant —
     /// so lifting the pin cannot quietly leave a bound behind that is 1.33×
     /// too small.
-    static let widestSupportedViewportPoints: Double = 1032
+    package static let widestSupportedViewportPoints: Double = 1032
 
     /// The smallest a page may be, in page points, under a given zoom cap:
     /// below this the page's fit-width scale is *above* the document's own
@@ -162,7 +174,7 @@ struct PageProjection: Sendable, Equatable {
     /// A document with a coarser cap has a smaller ceiling and therefore needs a
     /// *wider* page, which is why this takes the cap rather than assuming the
     /// finest one. Only `EditorSession` knows a document's cap.
-    static func smallestDisplayablePagePoints(zoomCapPagePointsPerPixel: Double) -> Double {
+    package static func smallestDisplayablePagePoints(zoomCapPagePointsPerPixel: Double) -> Double {
         widestSupportedViewportPoints * zoomCapPagePointsPerPixel * minimumSupportedDisplayScale
     }
 }

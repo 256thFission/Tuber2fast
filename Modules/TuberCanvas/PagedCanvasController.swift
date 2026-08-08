@@ -1,4 +1,7 @@
 import PencilKit
+import TuberCore
+import TuberModel
+import TuberRender
 import UIKit
 
 /// Hosts an ordered run of pages and turns between them
@@ -24,7 +27,7 @@ import UIKit
 /// exactly the rule `Contract.md` — Navigation commits to, obtained from the
 /// framework rather than from gesture recognizers of ours.
 @MainActor
-final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
+package final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
     /// How many pages either side of the visible one stay live.
     ///
     /// **Two**, raised from one on Phillip's device verdict (2026-08-07): one
@@ -56,9 +59,9 @@ final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
     /// the window before the session has its bytes, or with bytes that refuse
     /// to read. Such a page is a placeholder, never an editable blank — ink
     /// drawn on a blank standing in for a real page would be saved over it.
-    var contentForPage: ((Int) -> PageContent)?
+    package var contentForPage: ((Int) -> PageContent)?
 
-    enum PageContent {
+    package enum PageContent {
         case blank
         case ink(Data)
         /// Unsaved ink the session holds for this page. It outranks anything
@@ -85,7 +88,7 @@ final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
     /// all — it is a placeholder, not a canvas — and answering empty is the
     /// belt to that braces: no partial composite exists to be mistaken for a
     /// correct one.
-    var staticLayersForPage: ((Int) -> [LayerEnvelope])?
+    package var staticLayersForPage: ((Int) -> [LayerEnvelope])?
 
     /// Supplies the page-space facts a page's canvas is built with: that page's
     /// own geometry, and the document's zoom cap.
@@ -99,11 +102,11 @@ final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
     /// `nil`, or an index the session does not know, answers
     /// `PageProjection.canonical` — a runtime hosted without a document behind
     /// it, which is every test that drives this controller directly.
-    var projectionForPage: ((Int) -> PageProjection)?
+    package var projectionForPage: ((Int) -> PageProjection)?
 
     /// Reports that a live page's drawing changed. The index is the page's, and
     /// nothing else travels with it (`Contract.md` — Saving).
-    var onDrawingChanged: ((Int) -> Void)?
+    package var onDrawingChanged: ((Int) -> Void)?
 
     /// Reports one committed layer transform and takes back whether the session
     /// accepted it.
@@ -113,19 +116,19 @@ final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
     /// (`Contract.md` — Owners, golden rule 7). Nothing about the gesture that
     /// produced the value travels with it — one immutable transform does, which
     /// is the same shape as a retiring page's drawing snapshot.
-    var onLayerTransformed: ((Int, UUID, PageSpaceTransform) -> Bool)?
+    package var onLayerTransformed: ((Int, UUID, PageSpaceTransform) -> Bool)?
 
     /// Hands a retiring page's ink to the session before the controller is
     /// released. Without this a page's edits would die with its canvas when it
     /// left the window.
-    var onPageRetiring: ((Int, DrawingSnapshot) -> Void)?
+    package var onPageRetiring: ((Int, DrawingSnapshot) -> Void)?
 
     /// The visible page changed. Fired once per settled turn, not per frame.
-    var onPageChanged: ((Int) -> Void)?
+    package var onPageChanged: ((Int) -> Void)?
 
     /// The user swiped past the last page. The session decides whether a page is
     /// appended; this runtime never grows the document by itself.
-    var onReachedEndBoundary: (() -> Void)?
+    package var onReachedEndBoundary: (() -> Void)?
 
     /// The shared tool picker. One per editor session, not one per page, so the
     /// selected pen survives a page turn.
@@ -163,7 +166,7 @@ final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
     /// is this runtime's state (`Contract.md` — Owners), one setting for the
     /// document rather than one per page, so choosing "rectangle" and turning
     /// the page does not silently put the pen back in your hand.
-    private(set) var shapeTool: ShapeKind?
+    package private(set) var shapeTool: ShapeKind?
 
     /// Flattens a page's static layers off-main. Shared across every page the
     /// way the tool picker is, so one cache serves the whole live window.
@@ -173,7 +176,7 @@ final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
     /// before this feature existed.
     private let staticRenderer: StaticLayerRenderer?
 
-    init(staticRenderer: StaticLayerRenderer? = nil) {
+    package init(staticRenderer: StaticLayerRenderer? = nil) {
         self.staticRenderer = staticRenderer
         super.init(nibName: nil, bundle: nil)
     }
@@ -183,7 +186,7 @@ final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
         fatalError("PagedCanvasController is created in code only")
     }
 
-    override func viewDidLoad() {
+    package override func viewDidLoad() {
         super.viewDidLoad()
 
         scrollView.isPagingEnabled = true
@@ -232,7 +235,7 @@ final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
     /// `contentOffset` against the still-old `contentSize` before this runs, so
     /// the offset read here has already lost the last page's position. The
     /// index has not.
-    override func viewDidLayoutSubviews() {
+    package override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         let width = scrollView.bounds.width
         guard width > 0 else { return }
@@ -264,7 +267,7 @@ final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
     /// callback for that — so this path performs the settle work itself,
     /// directly. Waiting on a settle callback here would mean the page never
     /// becomes editable after launch or append.
-    func setPages(count: Int, currentPageIndex index: Int) {
+    package func setPages(count: Int, currentPageIndex index: Int) {
         precondition(count > 0, "a document always has at least one page")
         precondition(
             (0..<count).contains(index),
@@ -285,7 +288,7 @@ final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
     /// Opens every live canvas for editing, and every later one as it is built.
     /// A placeholder has nothing to open: a page's canvas only exists at all
     /// once its ink was supplied.
-    func markEditable() {
+    package func markEditable() {
         isEditable = true
         for case .canvas(let page) in slots.values {
             page.markEditable()
@@ -296,7 +299,7 @@ final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
     ///
     /// An intention from the SwiftUI root by way of `EditorSession`; nothing
     /// about it is durable, and no page's ink changes here.
-    func setShapeTool(_ kind: ShapeKind?) {
+    package func setShapeTool(_ kind: ShapeKind?) {
         shapeTool = kind
         for case .canvas(let page) in slots.values {
             page.setShapeTool(kind)
@@ -311,7 +314,7 @@ final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
     /// bytes would destroy anything drawn since — exactly the overwrite
     /// `Contract.md` — Lifecycle forbids. A canvas is replaced only by
     /// retirement.
-    func reloadPage(at index: Int) {
+    package func reloadPage(at index: Int) {
         guard case .placeholder(let stale)? = slots[index] else { return }
         stale.removeFromSuperview()
         slots[index] = makeSlot(at: index)
@@ -330,14 +333,14 @@ final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
     /// A placeholder slot has no backdrop to refresh; a page whose refusal was
     /// just repaired becomes a canvas through `reloadPage(at:)` instead, which
     /// asks for the layer list as it builds.
-    func reloadStaticLayers(at index: Int) {
+    package func reloadStaticLayers(at index: Int) {
         livePage(at: index)?.setStaticLayers(staticLayersForPage?(index) ?? [])
     }
 
     /// The live page controller for an index, if that slot is a canvas.
     /// Read by `snapshot(at:)` — which is how the save path reaches a live
     /// drawing — and by tests via `EditorSession.currentCanvas`.
-    func livePage(at index: Int) -> PageCanvasController? {
+    package func livePage(at index: Int) -> PageCanvasController? {
         guard case .canvas(let page)? = slots[index] else { return nil }
         return page
     }
@@ -361,7 +364,7 @@ final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
     /// outside that controller that knows the slot width — a slot is one
     /// viewport wide, and the canvas fills its slot, so the viewport width
     /// *is* the future canvas's width.
-    func compositeDetail(forPageAt index: Int) -> Double? {
+    package func compositeDetail(forPageAt index: Int) -> Double? {
         guard isViewLoaded, scrollView.bounds.width > 0 else { return nil }
         return PageCanvasController.compositeDetail(
             viewportWidth: scrollView.bounds.width,
@@ -373,7 +376,7 @@ final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
     /// A snapshot of one live page, or `nil` when the page has no canvas —
     /// outside the window, or a placeholder. A placeholder accepts no input,
     /// so `nil` here never discards ink; it only ever means there is none.
-    func snapshot(at index: Int) -> DrawingSnapshot? {
+    package func snapshot(at index: Int) -> DrawingSnapshot? {
         livePage(at: index)?.drawingSnapshot()
     }
 
@@ -642,11 +645,16 @@ final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
         onPageChanged?(settled)
     }
 
-    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+    // The delegate callbacks below, and the `override`s above, are `package`
+    // because Swift requires a member satisfying a protocol requirement — or
+    // overriding one — to be as visible as its type, not because anything
+    // outside this module calls them. Read the visibility of a *named* member
+    // as a statement about the module boundary; read these as the language's.
+    package func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
         settle()
     }
 
-    func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) {
+    package func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) {
         settle()
     }
 
@@ -654,7 +662,7 @@ final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
     /// gesture. Reported, never acted on here: growing the document is the
     /// session's decision (`Contract.md` — Owners). An ordinary drag that ends
     /// without deceleration is already at rest, so it settles here.
-    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate: Bool) {
+    package func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate: Bool) {
         guard scrollView.bounds.width > 0 else { return }
         let lastPageOffset = scrollView.bounds.width * CGFloat(pageCount - 1)
         if scrollView.contentOffset.x > lastPageOffset + Self.appendTriggerFraction

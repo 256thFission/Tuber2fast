@@ -1,7 +1,8 @@
 import Testing
-import UIKit
-
+@testable import TuberModel
 @testable import TuberNotes
+@testable import TuberStore
+import UIKit
 
 /// Phase 1 of `Docs/Forks/CanvasFeatureComplete.md`: the page's durable form
 /// is an ordered layer list, envelopes inlined in the page file, with `ink`

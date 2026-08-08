@@ -1,8 +1,10 @@
 import PencilKit
 import Testing
-import UIKit
-
+@testable import TuberCanvas
+@testable import TuberModel
 @testable import TuberNotes
+@testable import TuberStore
+import UIKit
 
 /// Phase 2 of `Docs/Forks/CanvasFeatureComplete.md`, durable half: the asset
 /// store and the `image` layer kind. These pin write-once assets, the

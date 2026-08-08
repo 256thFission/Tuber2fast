@@ -1,5 +1,6 @@
 import Foundation
 import PencilKit
+import TuberCore
 
 /// A copied, immutable snapshot of a PencilKit drawing.
 ///
@@ -8,11 +9,11 @@ import PencilKit
 /// to a utility task with compiler-checked transfer safety. The long-term page
 /// store still replaces whole-drawing serialization with a measured,
 /// page-bounded persistence boundary.
-struct DrawingSnapshot: Sendable {
+package struct DrawingSnapshot: Sendable {
     private let drawing: PKDrawing
 
     @MainActor
-    init(drawing: PKDrawing) {
+    package init(drawing: PKDrawing) {
         self.drawing = drawing
     }
 
@@ -25,7 +26,7 @@ struct DrawingSnapshot: Sendable {
     /// is what stops a fast turn away and back from restoring pre-edit ink
     /// (`Contract.md` — Owners, golden rule 5: custody, not a second copy).
     @MainActor
-    var drawingValue: PKDrawing { drawing }
+    package var drawingValue: PKDrawing { drawing }
 
     /// Serializes off the main actor and reports how long it took.
     ///
@@ -33,7 +34,7 @@ struct DrawingSnapshot: Sendable {
     /// derives the autosave debounce from it (`Contract.md` — Saving): the cost of
     /// a whole-drawing serialization is only knowable here, and measuring it a
     /// second time on the session side would mean serializing twice.
-    func serialized() async -> (data: Data, duration: Duration) {
+    package func serialized() async -> (data: Data, duration: Duration) {
         await Task.detached(priority: .utility) { [self] in
             let clock = ContinuousClock()
             let started = clock.now

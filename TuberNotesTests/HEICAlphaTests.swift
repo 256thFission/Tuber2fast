@@ -2,9 +2,10 @@ import CoreGraphics
 import Foundation
 import ImageIO
 import Testing
-import UniformTypeIdentifiers
-
+@testable import TuberModel
 @testable import TuberNotes
+@testable import TuberRender
+import UniformTypeIdentifiers
 
 /// The pin under `image-format-is-heic` (`Docs/Queue.md`): HEIC is only allowed
 /// to be the one image format because it carries transparency, so that claim is

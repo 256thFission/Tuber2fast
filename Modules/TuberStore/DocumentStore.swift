@@ -1,4 +1,6 @@
 import Foundation
+import TuberCore
+import TuberModel
 
 /// The sole writer of the saved document (`Contract.md` — Owners, Durable form).
 ///
@@ -17,7 +19,7 @@ import Foundation
 /// an orphan at some level and a dangling ref at none. Deletion is the mirror,
 /// root to leaf: the page file drops the ref, the layer file dies, the asset
 /// dies last.
-actor DocumentStore {
+package actor DocumentStore {
     private let directoryURL: URL
 
     /// The index as it currently exists on disk, as far as this store knows.
@@ -41,7 +43,7 @@ actor DocumentStore {
     /// "never migrate eagerly" means.
     private var indexOnDiskIsSupersededForm = false
 
-    init(directoryURL: URL) {
+    package init(directoryURL: URL) {
         self.directoryURL = directoryURL
     }
 
@@ -91,7 +93,7 @@ actor DocumentStore {
     /// This is the leaf of the leaf-to-root write order: the asset is durable
     /// before any page file may name it, and `save` enforces that rather than
     /// trusting it.
-    func writeAsset(_ bytes: Data, assetID: UUID, format: AssetFormat) throws {
+    package func writeAsset(_ bytes: Data, assetID: UUID, format: AssetFormat) throws {
         let url = assetURL(assetID, format)
         guard !FileManager.default.fileExists(atPath: url.path) else {
             throw AssetError.assetAlreadyExists(assetID: assetID)
@@ -104,7 +106,7 @@ actor DocumentStore {
     /// One asset's original bytes. Decoding them is the canvas runtime's, off
     /// this actor and off the main thread; reading them is this store's, because
     /// `DocumentStore` is the only thing here that touches files.
-    func loadAsset(assetID: UUID, format: AssetFormat) throws -> Data {
+    package func loadAsset(assetID: UUID, format: AssetFormat) throws -> Data {
         try Data(contentsOf: assetURL(assetID, format))
     }
 
@@ -164,7 +166,7 @@ actor DocumentStore {
     /// envelope, where a page file used to be every envelope on the page
     /// including its ink.
     @discardableResult
-    func deleteAssetIfUnreferenced(assetID: UUID, format: AssetFormat) throws -> Bool {
+    package func deleteAssetIfUnreferenced(assetID: UUID, format: AssetFormat) throws -> Bool {
         let url = assetURL(assetID, format)
         guard FileManager.default.fileExists(atPath: url.path) else { return false }
 
@@ -202,7 +204,7 @@ actor DocumentStore {
     /// page file is now a list of IDs, so nothing has to decode an envelope to
     /// answer it.
     @discardableResult
-    func deleteLayerFileIfUnreferenced(layerID: UUID) throws -> Bool {
+    package func deleteLayerFileIfUnreferenced(layerID: UUID) throws -> Bool {
         let url = layerURL(layerID)
         guard FileManager.default.fileExists(atPath: url.path) else { return false }
 
@@ -276,7 +278,7 @@ actor DocumentStore {
     /// A decode error, an unsupported version, invalid geometry, or an index
     /// naming a page file that is not there all throw, and nothing on disk is
     /// modified.
-    func load() throws -> DocumentIndex? {
+    package func load() throws -> DocumentIndex? {
         let data: Data
         do {
             data = try Data(contentsOf: indexURL)
@@ -333,7 +335,7 @@ actor DocumentStore {
     /// A layer whose asset file is not there is refused the same way, at the
     /// same scope: a dangling asset ref is fatal to its layer, and the page
     /// refuses input while carrying one, but the document opens.
-    func loadPage(_ pageID: UUID) throws -> LoadedPage {
+    package func loadPage(_ pageID: UUID) throws -> LoadedPage {
         let data = try Data(contentsOf: pageURL(pageID))
         let page = try PropertyListDecoder().decode(PageFile.self, from: data)
         guard page.pageID == pageID else {
@@ -602,7 +604,7 @@ actor DocumentStore {
     /// save is the smaller mechanism than preserving the original envelope
     /// bytes through a re-encode. The refusal's scope is the page — see the
     /// per-page planning below and `PageSaveRefusal`.
-    func save(index: DocumentIndex, pages: [PageWrite]) throws {
+    package func save(index: DocumentIndex, pages: [PageWrite]) throws {
         let validated = try index.validated()
 
         var seenPages = Set<UUID>()
@@ -907,7 +909,7 @@ extension DocumentStore {
     /// Directory creation belongs to `save`, on the store actor. Resolving these
     /// URLs performs no synchronous creation while the SwiftUI app value is
     /// being initialized.
-    static func defaultDirectoryURL() -> URL {
+    package static func defaultDirectoryURL() -> URL {
         applicationSupport().appendingPathComponent("JustACanvas.tubernotes")
     }
 }

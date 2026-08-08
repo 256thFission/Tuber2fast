@@ -2,9 +2,11 @@ import CoreGraphics
 import ImageIO
 import PencilKit
 import Testing
-import UIKit
-
+@testable import TuberCanvas
+@testable import TuberModel
 @testable import TuberNotes
+@testable import TuberRender
+import UIKit
 
 /// Phase 3c, third deliverable: a settled turn warms neighbour pages' base
 /// composites through the existing renderer cache, so a swipe lands on a

@@ -2,9 +2,11 @@ import CoreGraphics
 import ImageIO
 import PencilKit
 import Testing
-import UIKit
-
+@testable import TuberCanvas
+@testable import TuberModel
 @testable import TuberNotes
+@testable import TuberRender
+import UIKit
 
 /// Phase 3c of `Docs/Forks/CanvasFeatureComplete.md`, first deliverable: a
 /// `pdf` layer renders in the static composite, through `PDFPageRasterizer`,

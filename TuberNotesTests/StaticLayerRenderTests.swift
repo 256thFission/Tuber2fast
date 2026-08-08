@@ -2,10 +2,13 @@ import CoreGraphics
 import ImageIO
 import PencilKit
 import Testing
+@testable import TuberCanvas
+@testable import TuberModel
+@testable import TuberNotes
+@testable import TuberRender
+@testable import TuberStore
 import UIKit
 import UniformTypeIdentifiers
-
-@testable import TuberNotes
 
 /// Phase 2 of `Docs/Forks/CanvasFeatureComplete.md`, rendering half: an `image`
 /// layer visible under the ink.

@@ -27,9 +27,16 @@ import Foundation
 ///
 /// It also keeps the no-duplication rule true. Geometry lives here and nowhere
 /// else; a page file still holds only its own ID and its layer list.
-struct PageRecord: Codable, Sendable, Equatable {
-    let id: UUID
-    let geometry: PageGeometry
+package struct PageRecord: Codable, Sendable, Equatable {
+    package let id: UUID
+    package let geometry: PageGeometry
+
+    // Spelled out because a memberwise initializer is `internal` however
+    // visible its type is.
+    package init(id: UUID, geometry: PageGeometry) {
+        self.id = id
+        self.geometry = geometry
+    }
 }
 
 /// The index of a document (`Contract.md` — Durable form).
@@ -65,12 +72,12 @@ struct PageRecord: Codable, Sendable, Equatable {
 /// must refuse a version 3 index saying "this document was written by a newer
 /// version", not fail to find a `pageIDs` key and report that the index will not
 /// decode.
-struct DocumentIndex: Codable, Sendable, Equatable {
-    let formatVersion: UInt32
-    let documentID: UUID
+package struct DocumentIndex: Codable, Sendable, Equatable {
+    package let formatVersion: UInt32
+    package let documentID: UUID
     /// The document's pages, in order, each with its own geometry.
-    let pages: [PageRecord]
-    let currentPageIndex: Int
+    package let pages: [PageRecord]
+    package let currentPageIndex: Int
 
     /// The absolute zoom cap, in page points per pixel — the fewest page points
     /// one device pixel may represent, anywhere in this document.
@@ -84,7 +91,7 @@ struct DocumentIndex: Codable, Sendable, Equatable {
     /// rather than reading the application's constant is what makes that
     /// promise survive a later change to the constant: a document keeps the
     /// ceiling it was written under.
-    let zoomCapPagePointsPerPixel: Double
+    package let zoomCapPagePointsPerPixel: Double
 
     /// Whether this value was read from a superseded on-disk form and must be
     /// written forward.
@@ -94,13 +101,13 @@ struct DocumentIndex: Codable, Sendable, Equatable {
     /// is conservative in the only direction that matters — `DocumentStore`
     /// compares indexes to decide whether to write one, and "different" there
     /// only ever means "write it".
-    let wasReadInSupersededForm: Bool
+    package let wasReadInSupersededForm: Bool
 
-    static let currentFormatVersion: UInt32 = 3
+    package static let currentFormatVersion: UInt32 = 3
 
     /// The oldest index form this build reads: page order with one
     /// document-wide geometry.
-    static let supersededFormatVersion: UInt32 = 2
+    package static let supersededFormatVersion: UInt32 = 2
 
     /// **1/20 of a page point per pixel** — twenty device pixels per page point
     /// at the deepest zoom this application allows.
@@ -123,9 +130,9 @@ struct DocumentIndex: Codable, Sendable, Equatable {
     ///
     /// Whether it *feels* right at the extremes is a maintainer's verdict on a
     /// physical iPad; what is settled here is that it does not move.
-    static let canonicalZoomCapPagePointsPerPixel: Double = 1.0 / 20.0
+    package static let canonicalZoomCapPagePointsPerPixel: Double = 1.0 / 20.0
 
-    init(
+    package init(
         formatVersion: UInt32,
         documentID: UUID,
         pages: [PageRecord],
@@ -156,7 +163,7 @@ struct DocumentIndex: Codable, Sendable, Equatable {
         case pageHeight
     }
 
-    init(from decoder: Decoder) throws {
+    package init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let onDisk = try container.decode(UInt32.self, forKey: .formatVersion)
         let documentID = try container.decode(UUID.self, forKey: .documentID)
@@ -204,7 +211,7 @@ struct DocumentIndex: Codable, Sendable, Equatable {
         )
     }
 
-    func encode(to encoder: Encoder) throws {
+    package func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(Self.currentFormatVersion, forKey: .formatVersion)
         try container.encode(documentID, forKey: .documentID)
@@ -214,7 +221,7 @@ struct DocumentIndex: Codable, Sendable, Equatable {
     }
 }
 
-enum DocumentIndexError: Error, Equatable {
+package enum DocumentIndexError: Error, Equatable {
     case unsupportedFormatVersion(UInt32)
     case invalidGeometry(pageID: UUID, width: Double, height: Double)
     case invalidZoomCap(Double)
@@ -229,16 +236,16 @@ extension DocumentIndex {
     /// The document's pages, by identity, in order. Computed rather than
     /// stored, because a second list of the same IDs is a list that can
     /// disagree with the first.
-    var pageIDs: [UUID] { pages.map(\.id) }
+    package var pageIDs: [UUID] { pages.map(\.id) }
 
-    func geometry(ofPageAt index: Int) -> PageGeometry? {
+    package func geometry(ofPageAt index: Int) -> PageGeometry? {
         guard pages.indices.contains(index) else { return nil }
         return pages[index].geometry
     }
 
     /// What a page's canvas is built with: its own geometry, and the document's
     /// zoom cap.
-    func projection(ofPageAt index: Int) -> PageProjection? {
+    package func projection(ofPageAt index: Int) -> PageProjection? {
         guard let geometry = geometry(ofPageAt: index) else { return nil }
         return PageProjection(
             geometry: geometry,
@@ -247,7 +254,7 @@ extension DocumentIndex {
     }
 
     /// Every field the contract constrains, checked in one place.
-    func validated() throws -> DocumentIndex {
+    package func validated() throws -> DocumentIndex {
         guard formatVersion == Self.currentFormatVersion else {
             throw DocumentIndexError.unsupportedFormatVersion(formatVersion)
         }
@@ -297,7 +304,7 @@ extension DocumentIndex {
     }
 
     /// A one-page document at the canonical geometry.
-    static func newDocument(documentID: UUID, pageID: UUID) -> DocumentIndex {
+    package static func newDocument(documentID: UUID, pageID: UUID) -> DocumentIndex {
         DocumentIndex(
             formatVersion: Self.currentFormatVersion,
             documentID: documentID,
@@ -306,7 +313,7 @@ extension DocumentIndex {
         )
     }
 
-    func withPages(_ pages: [PageRecord], currentPageIndex: Int) -> DocumentIndex {
+    package func withPages(_ pages: [PageRecord], currentPageIndex: Int) -> DocumentIndex {
         DocumentIndex(
             formatVersion: formatVersion,
             documentID: documentID,

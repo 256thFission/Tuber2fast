@@ -1,4 +1,6 @@
 import SwiftUI
+import TuberCanvas
+import TuberModel
 
 /// The SwiftUI root: navigation and visible controls only.
 ///

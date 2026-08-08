@@ -1,4 +1,5 @@
 import SwiftUI
+import TuberCore
 
 @main
 struct TuberNotesApp: App {

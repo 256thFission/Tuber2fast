@@ -2,9 +2,9 @@ import CoreGraphics
 import Foundation
 import ImageIO
 import Testing
-import UniformTypeIdentifiers
-
 @testable import TuberNotes
+@testable import TuberRender
+import UniformTypeIdentifiers
 
 /// The import UI's data half, and above all the EXIF hole
 /// (`Docs/Forks/ReviewFindings.md`, finding 8): `importImage` trusts the

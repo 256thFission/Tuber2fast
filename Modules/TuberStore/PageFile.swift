@@ -1,4 +1,5 @@
 import Foundation
+import TuberModel
 
 /// The page file and the shape of one page's write, phase 3 of
 /// `Docs/Forks/CanvasFeatureComplete.md`: layer envelopes split out of the page
@@ -140,15 +141,15 @@ struct PageFile: Codable, Sendable, Equatable {
 /// every layer named by the page either is being written now or already has a
 /// file, so a caller that understates what changed produces a loud refusal
 /// rather than a page file naming a layer that is not there.
-struct PageWrite: Sendable, Equatable {
-    let pageID: UUID
+package struct PageWrite: Sendable, Equatable {
+    package let pageID: UUID
     /// The page's layers, in order, ink last.
-    let layers: [LayerEnvelope]
+    package let layers: [LayerEnvelope]
     /// The subset whose files must be rewritten. A layer named by `layers` and
     /// absent here is asserted to be already durable, byte for byte.
-    let changedLayerIDs: Set<UUID>
+    package let changedLayerIDs: Set<UUID>
 
-    init(pageID: UUID, layers: [LayerEnvelope], changedLayerIDs: Set<UUID>) {
+    package init(pageID: UUID, layers: [LayerEnvelope], changedLayerIDs: Set<UUID>) {
         self.pageID = pageID
         self.layers = layers
         self.changedLayerIDs = changedLayerIDs
@@ -157,7 +158,7 @@ struct PageWrite: Sendable, Equatable {
     /// A page written whole: every layer changed. The first save of a document
     /// and the tests use it; the ordinary autosave path does not, because
     /// "every layer changed" is exactly what an ink edit is not.
-    init(pageID: UUID, layers: [LayerEnvelope]) {
+    package init(pageID: UUID, layers: [LayerEnvelope]) {
         self.init(
             pageID: pageID,
             layers: layers,

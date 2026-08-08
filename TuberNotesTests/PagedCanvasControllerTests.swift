@@ -1,8 +1,9 @@
 import PencilKit
 import Testing
-import UIKit
-
+@testable import TuberCanvas
+@testable import TuberModel
 @testable import TuberNotes
+import UIKit
 
 @Suite("Paged canvas runtime")
 @MainActor

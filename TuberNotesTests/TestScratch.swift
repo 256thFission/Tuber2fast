@@ -1,8 +1,9 @@
 import CoreGraphics
 import Foundation
-import UIKit
-
+@testable import TuberModel
 @testable import TuberNotes
+@testable import TuberStore
+import UIKit
 
 /// A unique document directory per test, removed when the test ends.
 ///

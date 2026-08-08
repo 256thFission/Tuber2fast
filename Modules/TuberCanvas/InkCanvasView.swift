@@ -1,4 +1,5 @@
 import PencilKit
+import TuberModel
 import UIKit
 
 /// The ink surface, with PencilKit's tap-raised context menu refused and its

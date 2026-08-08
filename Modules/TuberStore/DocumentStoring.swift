@@ -1,4 +1,5 @@
 import Foundation
+import TuberModel
 
 /// The saved document as its consumers use it.
 ///
@@ -27,7 +28,7 @@ import Foundation
 /// Construction is deliberately absent. `EditorLifecycle` builds the one
 /// `DocumentStore` over the one document directory; a protocol that could
 /// build one would be inviting a second.
-protocol DocumentStoring: Sendable {
+package protocol DocumentStoring: Sendable {
     /// The document index, or `nil` when no document exists. An invalid file
     /// throws — `nil` means absent, never unreadable (`Contract.md` — Durable
     /// form).
@@ -71,7 +72,7 @@ extension DocumentStoring {
     /// It lives here rather than on the store because it is not a capability:
     /// it is one line of shorthand over the single primitive, so a substitute
     /// inherits it already correct and cannot implement it inconsistently.
-    func save(index: DocumentIndex, changedPages: [UUID: [LayerEnvelope]]) async throws {
+    package func save(index: DocumentIndex, changedPages: [UUID: [LayerEnvelope]]) async throws {
         try await save(
             index: index,
             pages: changedPages.map { PageWrite(pageID: $0.key, layers: $0.value) }
@@ -82,9 +83,14 @@ extension DocumentStoring {
 /// One page the store refused to save, and why — carried as text because the
 /// caller's use is reporting, and the repair is a later edit, not a branch on
 /// the cause.
-struct PageRefusal: Sendable, Equatable {
-    let pageID: UUID
-    let reason: String
+package struct PageRefusal: Sendable, Equatable {
+    package let pageID: UUID
+    package let reason: String
+
+    package init(pageID: UUID, reason: String) {
+        self.pageID = pageID
+        self.reason = reason
+    }
 }
 
 /// Thrown by `save` when at least one page refused its plan. **Every page not
@@ -100,11 +106,16 @@ struct PageRefusal: Sendable, Equatable {
 /// which is exactly the coupling the seam exists to remove, and which would
 /// have made the app target import the store module for a type the protocol
 /// already speaks.
-struct PageSaveRefusal: Error, Sendable, Equatable, CustomStringConvertible {
-    let refusedPages: [PageRefusal]
-    let indexWritten: Bool
+package struct PageSaveRefusal: Error, Sendable, Equatable, CustomStringConvertible {
+    package let refusedPages: [PageRefusal]
+    package let indexWritten: Bool
 
-    var description: String {
+    package init(refusedPages: [PageRefusal], indexWritten: Bool) {
+        self.refusedPages = refusedPages
+        self.indexWritten = indexWritten
+    }
+
+    package var description: String {
         "save refused for \(refusedPages.count) page(s): "
             + refusedPages
                 .map { "\($0.pageID) (\($0.reason))" }

@@ -1,8 +1,11 @@
 import PencilKit
 import Testing
-import UIKit
-
+@testable import TuberCanvas
+@testable import TuberModel
 @testable import TuberNotes
+@testable import TuberRender
+@testable import TuberStore
+import UIKit
 
 /// Phase 3 of `Docs/Forks/CanvasFeatureComplete.md`, durable half: the `pdf`
 /// layer kind, and `layers/` splitting out of the page file.

@@ -1,6 +1,7 @@
 import Foundation
-
+@testable import TuberModel
 @testable import TuberNotes
+@testable import TuberStore
 
 /// A real store with one difference: its `save` can be held open.
 ///

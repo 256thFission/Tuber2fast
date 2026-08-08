@@ -204,8 +204,9 @@ enum ContractChecker {
 
     // MARK: Rule — UI framework imports
 
-    /// The modules a durable value type may not import.
-    /// `Docs/Contract.md`, *Owners*: "Durable value types import Foundation only."
+    /// The framework imports this checker can see, and which it therefore
+    /// decides the placement of. `Docs/Contract.md`, *Owners*: "Durable value
+    /// types import Foundation only."
     ///
     /// `CoreGraphics` joined the list with phase 3's `pdf` kind. It is not a UI
     /// framework, and it is here for the rule behind the rule rather than the
@@ -213,9 +214,14 @@ enum ContractChecker {
     /// a graphics framework's whole vocabulary, and `CGPDFDocument` arrives with
     /// `CGContext`, `CGImage`, and every drawing call attached. Without the
     /// entry, any file could import it and the checker would say nothing.
-    /// `SwiftUI` is deliberately absent: the SwiftUI root is a named owner in
-    /// *Owners*, and adding it would allowlist the two files that are supposed
-    /// to have it.
+    ///
+    /// **`SwiftUI` is deliberately absent, and the reason changed with the
+    /// module split.** It used to be absent because a flat allowlist would have
+    /// had to name the SwiftUI files. It is absent now because the *compiler*
+    /// refuses it: no target below the app aliases `SwiftUI` to anything that
+    /// exists (`project.yml`, the `Framework` template), so `import SwiftUI` in
+    /// the canvas runtime is a build failure, not a test failure. A rule the
+    /// link graph holds does not belong in a token scanner.
     static let uiFrameworkModules: Set<String> = ["UIKit", "PencilKit", "CoreGraphics"]
 
     /// Declaration kinds Swift permits in a scoped import: `import struct UIKit.X`.
@@ -443,18 +449,41 @@ struct ContractStructureTests {
         .deletingLastPathComponent()
         .deletingLastPathComponent()
 
-    static let appDirectory = repoRoot.appendingPathComponent("TuberNotesApp")
-
-    /// The fewest Swift sources the application can plausibly have.
+    /// Every module's source directory, repo-relative, in graph order. The app
+    /// target's directory is last because it is the top of the graph.
     ///
-    /// The old guard was `names.isEmpty`, which fires only if `TuberNotesApp/`
+    /// This is the list the split turned into the unit of every rule below.
+    /// Before it, one flat allowlist of file paths spanned three frameworks, so
+    /// a file allowlisted for CoreGraphics could add `import PencilKit`
+    /// silently — and every entry was a hardcoded path that expired the moment
+    /// anything moved.
+    static let moduleDirectories = [
+        "Modules/TuberCore",
+        "Modules/TuberModel",
+        "Modules/TuberStore",
+        "Modules/TuberRender",
+        "Modules/TuberCanvas",
+        "TuberNotesApp",
+    ]
+
+    /// The module a policed path belongs to: the last component of its
+    /// directory, which is the target name for every entry above.
+    static func module(of path: String) -> String {
+        let components = path.split(separator: "/").map(String.init)
+        return components.count >= 2 ? components[components.count - 2] : ""
+    }
+
+    /// The fewest Swift sources the application can plausibly have, across
+    /// every module.
+    ///
+    /// The old guard was `names.isEmpty`, which fires only if the source tree
     /// is emptied entirely — an enumeration that returned one file read as a
     /// clean run. This floor and the cross-check in `theEnumerationSeesTheTree`
     /// are the two halves of "a broken enumerator is a failure, not a pass".
     /// Lower it only alongside a real deletion of that many files.
-    static let minimumPlausibleSourceCount = 10
+    static let minimumPlausibleSourceCount = 20
 
-    /// Every Swift file under `TuberNotesApp/`, at any depth.
+    /// Every Swift file in every module, at any depth.
     ///
     /// Fails rather than returning empty when the tree cannot be read. A check
     /// that silently passes when it cannot find its input is decoration — that
@@ -465,18 +494,30 @@ struct ContractStructureTests {
             "resolved repo root has no project.yml: \(repoRoot.path) — this test cannot see the source tree"
         )
 
-        let sources = try ContractChecker.sources(under: appDirectory, label: "TuberNotesApp")
+        var sources: [CheckedSource] = []
+        for directory in moduleDirectories {
+            let url = repoRoot.appendingPathComponent(directory)
+            let found = try ContractChecker.sources(under: url, label: directory)
+            #expect(
+                !found.isEmpty,
+                """
+                \(directory) holds no Swift sources. Either a module was emptied or the enumeration \
+                is broken; a checker that reads no files reports green while seeing nothing.
+                """
+            )
+            sources += found
+        }
 
         #expect(
             sources.count >= minimumPlausibleSourceCount,
             """
-            found only \(sources.count) Swift sources under \(appDirectory.path), expected at least \
-            \(minimumPlausibleSourceCount). Either the tree shrank or the enumeration is broken; \
-            a checker that reads too few files reports green while seeing nothing.
+            found only \(sources.count) Swift sources across \(moduleDirectories.count) modules, \
+            expected at least \(minimumPlausibleSourceCount). Either the tree shrank or the \
+            enumeration is broken.
             """
         )
 
-        return sources
+        return sources.sorted { $0.path < $1.path }
     }
 
     /// Allowlist entries that name a file that no longer exists.
@@ -496,31 +537,47 @@ struct ContractStructureTests {
     @Test("The enumeration sees the whole source tree, at every depth")
     func theEnumerationSeesTheTree() throws {
         let sources = try Self.appSources()
-        let independentCount = try ContractChecker.swiftFileCountViaSubpaths(under: Self.appDirectory)
 
-        #expect(
-            sources.count == independentCount,
-            """
-            two independent enumerations of \(Self.appDirectory.path) disagree: the walk found \
-            \(sources.count) Swift files, subpathsOfDirectory found \(independentCount). Either \
-            the walk stopped descending, or a source is a symbolic link — the walk skips those \
-            and this count does not.
-            """
-        )
+        for directory in Self.moduleDirectories {
+            let url = Self.repoRoot.appendingPathComponent(directory)
+            let walked = sources.filter { $0.path.hasPrefix(directory + "/") }.count
+            let independentCount = try ContractChecker.swiftFileCountViaSubpaths(under: url)
+            #expect(
+                walked == independentCount,
+                """
+                two independent enumerations of \(url.path) disagree: the walk found \(walked) \
+                Swift files, subpathsOfDirectory found \(independentCount). Either the walk \
+                stopped descending, or a source is a symbolic link — the walk skips those and \
+                this count does not.
+                """
+            )
+        }
 
-        // Paths are repo-relative and carry their subdirectories, because the
-        // allowlists are written in those terms.
+        // Paths are repo-relative and carry their subdirectories, because every
+        // rule below is written in those terms.
         for source in sources {
-            #expect(source.path.hasPrefix("TuberNotesApp/"), "\(source.path) is not repo-relative")
+            #expect(
+                Self.moduleDirectories.contains(where: { source.path.hasPrefix($0 + "/") }),
+                "\(source.path) is not under a declared module directory"
+            )
             #expect(source.path.hasSuffix(".swift"), "\(source.path) is not a Swift source")
+            #expect(
+                Self.moduleUIFrameworkPolicy[Self.module(of: source.path)] != nil,
+                "\(source.path) belongs to no module the import policy names"
+            )
         }
     }
 
-    /// The checker polices every `.swift` file on disk under `TuberNotesApp/`,
-    /// which is sound only while every such file is also compiled into the app
-    /// target. `project.yml` declares that whole directory as one source path,
-    /// so today the two sets are identical and policing disk is policing the
-    /// build.
+    /// The checker polices every `.swift` file on disk under each module
+    /// directory, which is sound only while every such file is also compiled
+    /// into that module's target. `project.yml` declares each whole directory
+    /// as one source path, so today the two sets are identical and policing
+    /// disk is policing the build.
+    ///
+    /// Since the split this test is doing more than it was: it is also the one
+    /// place the checker's idea of the module list and `project.yml`'s idea of
+    /// it are held against each other. A sixth framework whose directory nobody
+    /// added to `moduleDirectories` would otherwise be policed by nothing.
     ///
     /// If that ever stops being true — an `excludes:` key, a narrower glob — the
     /// choice has to be made again rather than inherited, so this test fails and
@@ -528,7 +585,7 @@ struct ContractStructureTests {
     /// that names `PKCanvasView(` is a violation waiting for one line of YAML,
     /// and the failure mode of over-policing is an argument, while the failure
     /// mode of under-policing is the silence this whole item is about.
-    @Test("Every policed file is a file the app target compiles")
+    @Test("Every policed file is a file its module compiles, and every module is policed")
     func policedFilesAreTargetFiles() throws {
         let yaml = try String(
             contentsOf: Self.repoRoot.appendingPathComponent("project.yml"),
@@ -537,108 +594,113 @@ struct ContractStructureTests {
         let lines = yaml.split(separator: "\n", omittingEmptySubsequences: false)
             .map { $0.trimmingCharacters(in: .whitespaces) }
 
+        for directory in Self.moduleDirectories {
+            #expect(
+                lines.contains("- path: \(directory)"),
+                """
+                project.yml no longer declares \(directory) as a whole source path, so the set of \
+                files on disk is no longer the set of files compiled. Decide what the checker \
+                polices and say so here.
+                """
+            )
+        }
+
+        let declared = Set(
+            lines
+                .filter { $0.hasPrefix("- path: ") }
+                .map { String($0.dropFirst("- path: ".count)) }
+        )
         #expect(
-            lines.contains("- path: TuberNotesApp"),
+            declared.subtracting(Self.moduleDirectories).subtracting(["TuberNotesTests"]).isEmpty,
             """
-            project.yml no longer declares TuberNotesApp as a whole source path, so the set of files \
-            on disk is no longer the set of files compiled. Decide what the checker polices and \
-            say so here.
+            project.yml declares source paths this checker does not police: \
+            \(declared.subtracting(Self.moduleDirectories).subtracting(["TuberNotesTests"]).sorted()). \
+            A new module policed by nothing is the silence the split was supposed to end — add it \
+            to moduleDirectories and to moduleUIFrameworkPolicy.
             """
         )
+
         #expect(
             !lines.contains { $0.hasPrefix("excludes:") || $0.hasPrefix("includes:") },
             """
-            project.yml filters its sources. The checker polices everything on disk under \
-            TuberNotesApp/, which is now more (or less) than the target compiles — reconcile the \
+            project.yml filters its sources. The checker polices everything on disk under each \
+            module directory, which is now more (or less) than the targets compile — reconcile the \
             two deliberately.
+            """
+        )
+    }
+
+    /// Golden rule 2's import half is the compiler's now, and this is the one
+    /// line of it a test can still lose silently.
+    ///
+    /// The ban itself needs no test: `import SwiftUI` below the app target does
+    /// not compile, and a build failure is not something a suite has to notice.
+    /// What a suite *can* notice is the flag going missing — delete
+    /// `-module-alias SwiftUI=…` from `project.yml` and every module quietly
+    /// regains SwiftUI with no test anywhere turning red. So this asserts the
+    /// mechanism exists, and leaves the enforcement to the mechanism.
+    @Test("No module below the app target can import SwiftUI")
+    func swiftUIIsBannedBelowTheAppTarget() throws {
+        let yaml = try String(
+            contentsOf: Self.repoRoot.appendingPathComponent("project.yml"),
+            encoding: .utf8
+        )
+        #expect(
+            yaml.contains("-module-alias SwiftUI="),
+            """
+            project.yml no longer aliases SwiftUI away from the framework targets, so the canvas \
+            runtime can import it again and nothing but review would say so. Golden rule 2's \
+            import half is enforced there and nowhere else — restore it, or decide deliberately \
+            that a scanner rule replaces it.
             """
         )
     }
 
     // MARK: - Rules
 
-    /// UIKit and PencilKit may be imported only by the owners of
-    /// frame-frequency canvas state and by the owner of the background lease.
+    /// Which of the three scanned frameworks each module may import.
     ///
     /// `Docs/Contract.md`, *Owners*: "Durable value types import Foundation
-    /// only." This is the rule Swift 6 isolation cannot express, and the one a
-    /// hurried change breaks first.
-    static let uiFrameworkImportAllowlist: Set<String> = [
-        "TuberNotesApp/DrawingSnapshot.swift", // the immutable value that carries a drawing out of the runtime
-        "TuberNotesApp/PageCanvasController.swift",   // the live PencilKit canvas
-        "TuberNotesApp/PagedCanvasController.swift",  // paging and gesture arbitration
-        "TuberNotesApp/EditorLifecycle.swift",        // the background-execution lease
-        // The shape tool. Both files are the canvas runtime: one builds the
-        // live values PencilKit renders (`PKStroke`s from a drag), the other
-        // is `PageCanvasController`'s own drag handling and its preview
-        // layer, split out for size rather than made a second owner.
-        "TuberNotesApp/ShapeSynthesis.swift",
-        "TuberNotesApp/ShapeToolRuntime.swift",
-        // The static-layer backdrop: `PageCanvasController`'s own sibling
-        // CALayer stack under the transparent PKCanvasView, mirrored by one
-        // transform per scroll tick. Frame-frequency work on a UIKit view
-        // hierarchy — the canvas runtime, split out for size exactly as the
-        // shape tool is, and not a second owner.
-        //
-        // `StaticLayerRenderer.swift` is deliberately *not* here: it decodes
-        // and composites off-main and imports CoreGraphics and ImageIO only,
-        // because nothing in it is a view, a layer, or frame-frequency work.
-        "TuberNotesApp/PageBackdrop.swift",
-        // The off-main decode and composite. CoreGraphics and ImageIO only —
-        // no UIKit, no view, no layer, no frame-frequency state. It is here
-        // because `CoreGraphics` joined the banned set with phase 3's `pdf`
-        // kind (see `uiFrameworkModules`), and pixels cannot be decoded in
-        // Foundation. Manifestly not a durable value type, which is the rule
-        // that list actually enforces.
-        "TuberNotesApp/StaticLayerRenderer.swift",
-        // The one place a source PDF is opened. CoreGraphics only: it is
-        // handed bytes and returns values — a page count, each page's box,
-        // and (since phase 3's rendering half) a page's pixels via
-        // `PDFPageRasterizer`, which lives in this file so that "which
-        // rectangle a PDF page shows" is decided exactly once. It touches no
-        // file and holds no frame-frequency state; the rasterizer is
-        // off-main by construction, the way `StaticLayerRenderer.render` is.
-        // `PDFKit` — the obvious alternative — would bring a whole document
-        // *view* stack for the same answers.
-        "TuberNotesApp/PDFSource.swift",
-        // Selection and the transform gesture: two gesture recognizers on the
-        // live canvas and a `CAShapeLayer` of chrome, both frame-frequency
-        // UIKit objects. `PageCanvasController`'s own runtime, split out for
-        // size exactly as the shape tool and the backdrop are — it writes
-        // nothing durable and hands one committed transform back per gesture.
-        // PencilKit is deliberately not imported there: it needs a scroll
-        // view's zoom scale and a layer, not a canvas's vocabulary.
-        "TuberNotesApp/LayerSelectionRuntime.swift",
-        // The import UI's plumbing: the SwiftUI wrapper around the system
-        // photo picker (a UIViewControllerRepresentable is UIKit by
-        // definition) and the ImageIO preparation of a picked image's bytes.
-        // Nothing in it is frame-frequency and nothing in it is a durable
-        // value type — it turns one user action into one session intention,
-        // off the main actor, and the checker's ban on graphics vocabulary in
-        // durable types does not reach a picker presentation.
-        "TuberNotesApp/ImportPickers.swift",
-        // The ink surface itself: a `PKCanvasView` subclass that refuses
-        // PencilKit's editing menu. It is the canvas runtime by definition —
-        // it *is* the canvas — split into a file of its own so that the reason
-        // the menu is refused sits next to the refusal rather than inside a
-        // 1,200-line controller. It holds no state and writes nothing.
-        "TuberNotesApp/InkCanvasView.swift",
-        // A probe on the canvas runtime's own frame path: it reads the scroll
-        // view's presented transform against the model values the backdrop
-        // mirror used, and logs one line per pinch. Not a mechanism and not an
-        // owner — it answers whether the mirror or PencilKit's raster is
-        // behind, and is deleted when that verdict lands.
-        "TuberNotesApp/ZoomRegistrationProbe.swift",
-        // THROWAWAY SPIKE — CanvasFeatureComplete device spike 1. Compiled
-        // only under TN_SPIKE_MIRROR and instruments the canvas runtime,
-        // where UIKit is already allowed; the entry dies with the file.
-        "TuberNotesApp/SpikeMirrorFidelity.swift",
-        // THROWAWAY SPIKE — CanvasFeatureComplete device spike 2, "Lens
-        // latency". Compiled only under TN_SPIKE_LENS; a self-contained
-        // UIKit scroll-view bench that replaces the editor scene while the
-        // flag is on, so its UIKit never touches the flag-off app. The
-        // entry dies with the file.
-        "TuberNotesApp/SpikeLensLatency.swift",
+    /// only", and "UIKit and PencilKit may be imported only by the canvas
+    /// runtime ... and by the owner of the background-execution lease."
+    ///
+    /// **This replaced a twenty-three-entry allowlist of file paths.** The
+    /// allowlist could not express the rule it was enforcing: it was one flat
+    /// set across three frameworks, so a file permitted CoreGraphics could add
+    /// `import PencilKit` in silence, and every entry expired the moment a file
+    /// moved. The module is the honest unit — a file's permissions are now a
+    /// property of where it lives, which is the same fact the link graph
+    /// already carries, and there is nothing left to keep in sync per file.
+    ///
+    /// The scanner is still the enforcement for these three because the
+    /// compiler cannot be: PencilKit requires UIKit and Foundation requires
+    /// CoreGraphics, so aliasing either away (the trick `project.yml` uses for
+    /// SwiftUI) breaks the transitive load as well as the written import.
+    static let moduleUIFrameworkPolicy: [String: Set<String>] = [
+        // Foundation and os. The floor of the graph imports nothing else.
+        "TuberCore": [],
+        // PencilKit, and only for `DrawingSnapshot` — the immutable box that
+        // carries a drawing out of the canvas runtime. Phillip's decision of
+        // 2026-08-07 (`project.yml`, TuberModel): this project no longer claims
+        // that no durable value type imports PencilKit. CoreGraphics is still
+        // refused here, which is the half of the old rule that was really about
+        // durable values acquiring a drawing vocabulary.
+        "TuberModel": ["PencilKit"],
+        // The one target that touches files, and it does so in Foundation.
+        "TuberStore": [],
+        // Off-main decode and composite: CoreGraphics and ImageIO, no view, no
+        // layer, no frame-frequency state. `PDFSource` opens a source PDF with
+        // `CGPDFDocument` — PDFKit would bring a whole document *view* stack
+        // for a page count and a page box, and `project.yml` does not link it.
+        "TuberRender": ["CoreGraphics"],
+        // The canvas runtime: everything that owns frame-frequency state. This
+        // is the module the two named exceptions in *Owners* describe.
+        "TuberCanvas": ["UIKit", "PencilKit", "CoreGraphics"],
+        // The SwiftUI shell, the pickers, `EditorLifecycle` — which imports
+        // UIKit for the background-execution lease, the second named exception
+        // — and `EditorSession`. This module is where SwiftUI is allowed, and
+        // it is allowed nowhere else by the compiler rather than by this table.
+        "TuberNotesApp": ["UIKit", "PencilKit", "CoreGraphics"],
     ]
 
     /// `DocumentStore` is the only writer of durable state.
@@ -649,21 +711,30 @@ struct ContractStructureTests {
     /// file is the *user's source*, not the document's durable state — the
     /// bytes become durable only by passing through `EditorSession.importPDF`
     /// and then the store, which remains the one writer.
+    ///
+    /// Still a file-path allowlist rather than a module one, deliberately:
+    /// TuberStore is a whole module that may touch files, but the app target's
+    /// one permitted read is a single file's business and naming the module
+    /// would licence the whole SwiftUI shell.
     static let fileIOAllowlist: Set<String> = [
-        "TuberNotesApp/DocumentStore.swift",
+        "Modules/TuberStore/DocumentStore.swift",
         "TuberNotesApp/ImportPickers.swift",
     ]
 
-    @Test("Only the canvas runtime imports the UI frameworks")
-    func onlyTheCanvasRuntimeImportsUIFrameworks() throws {
-        for source in try Self.appSources() where !Self.uiFrameworkImportAllowlist.contains(source.path) {
-            let imports = ContractChecker.importedUIFrameworks(in: source.code)
+    @Test("Each module imports only the frameworks its place in the graph allows")
+    func eachModuleImportsOnlyWhatItsPlaceAllows() throws {
+        for source in try Self.appSources() {
+            let module = Self.module(of: source.path)
+            let permitted = Self.moduleUIFrameworkPolicy[module] ?? []
+            let violations = Set(ContractChecker.importedUIFrameworks(in: source.code))
+                .subtracting(permitted)
             #expect(
-                imports.isEmpty,
+                violations.isEmpty,
                 """
-                \(source.path) imports \(imports.joined(separator: ", ")). Only the canvas runtime and \
-                EditorLifecycle may. If this file genuinely owns frame-frequency canvas \
-                state, that is a contract change: update Docs/Contract.md and this allowlist.
+                \(source.path) imports \(violations.sorted().joined(separator: ", ")), which \(module) \
+                may not. Either the file is in the wrong module — move it — or the module's place in \
+                the graph changed, which is a contract change: update Docs/Contract.md, project.yml, \
+                and moduleUIFrameworkPolicy together.
                 """
             )
         }
@@ -731,19 +802,15 @@ struct ContractStructureTests {
     }
 
     /// An allowlist entry naming a file that no longer exists.
+    ///
+    /// One allowlist is left to keep honest. The UI-framework half of this test
+    /// died with the twenty-three-entry path allowlist it policed: a module
+    /// policy has no paths to go stale, and `policedFilesAreTargetFiles` covers
+    /// the failure that replaced it — a module `project.yml` builds that no
+    /// policy names.
     @Test("No allowlist entry outlives its file")
     func allowlistsNameFilesThatExist() throws {
         let sources = try Self.appSources()
-
-        let staleImports = Self.staleAllowlistEntries(Self.uiFrameworkImportAllowlist, in: sources)
-        #expect(
-            staleImports.isEmpty,
-            """
-            the UI-framework import allowlist names files that do not exist: \
-            \(staleImports.joined(separator: ", ")). A permission nobody can see is a permission \
-            nobody reviews — delete the entry, or fix the path if the file moved.
-            """
-        )
 
         let staleIO = Self.staleAllowlistEntries(Self.fileIOAllowlist, in: sources)
         #expect(
@@ -1008,6 +1075,8 @@ struct ContractCheckerOwnTests {
         let ignored = [
             "import Foundation",
             "import os",
+            // Not an oversight: SwiftUI is the compiler's to refuse below the
+            // app target, so the scanner has no opinion about it anywhere.
             "import SwiftUI",
             "let importUIKit = 1",
             "#if canImport(UIKit)",

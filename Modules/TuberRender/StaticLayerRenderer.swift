@@ -1,6 +1,9 @@
 import CoreGraphics
 import Foundation
 import ImageIO
+import TuberCore
+import TuberModel
+import TuberStore
 
 /// Renders a page's static layers — everything below the ink — into one
 /// texture, strictly off the main thread.
@@ -30,7 +33,7 @@ import ImageIO
 /// It imports CoreGraphics and ImageIO rather than UIKit deliberately: nothing
 /// here is a view, a layer, or frame-frequency work, so it needs none of the
 /// canvas runtime's vocabulary and stays off that allowlist.
-actor StaticLayerRenderer {
+package actor StaticLayerRenderer {
     private let store: any DocumentStoring
 
     // MARK: - The cache
@@ -146,7 +149,7 @@ actor StaticLayerRenderer {
     /// `byteBound` is injectable only so a test need not allocate 96 MB of
     /// pixels to watch the bound bite. The default is the only value the app
     /// uses.
-    init(store: any DocumentStoring, byteBound: Int = StaticLayerRenderer.defaultByteBound) {
+    package init(store: any DocumentStoring, byteBound: Int = StaticLayerRenderer.defaultByteBound) {
         precondition(byteBound > 0, "a render cache with a bound of \(byteBound) bytes cannot hold anything")
         self.store = store
         self.byteBound = byteBound
@@ -161,7 +164,7 @@ actor StaticLayerRenderer {
     /// shows the current texture scaled and slightly soft, exactly as every PDF
     /// viewer on iOS does, and `PageCanvasController` enforces it by requesting
     /// only at layout and at a layer edit.
-    func composite(for request: StaticLayerRequest) async -> StaticLayerRender {
+    package func composite(for request: StaticLayerRequest) async -> StaticLayerRender {
         guard !request.layers.isEmpty else { return .empty }
         precondition(
             request.pixelsPerPagePoint.isFinite && request.pixelsPerPagePoint > 0,
@@ -228,7 +231,7 @@ actor StaticLayerRenderer {
     /// the next `retain`, which is the droppability this path needs —
     /// cancellation buys nothing a bounded, self-correcting cache does not
     /// already give (the accepted shape of review finding 13).
-    func warm(_ request: StaticLayerRequest) async {
+    package func warm(_ request: StaticLayerRequest) async {
         guard !request.layers.isEmpty else { return }
         let key = CompositeKey(request)
         if let entry = cache[key], entry.request == request { return }
@@ -261,7 +264,7 @@ actor StaticLayerRenderer {
     /// refuses out-of-page sub-rects, and this function additionally
     /// intersects per layer, so a caller that clamps can never be refused for
     /// geometry.
-    func lens(for request: StaticLayerRequest, visibleRect: CGRect) async -> StaticLayerRender {
+    package func lens(for request: StaticLayerRequest, visibleRect: CGRect) async -> StaticLayerRender {
         precondition(
             request.pixelsPerPagePoint.isFinite && request.pixelsPerPagePoint > 0,
             "a lens at \(request.pixelsPerPagePoint) pixels per page point is not a level of detail"
@@ -467,7 +470,7 @@ actor StaticLayerRenderer {
     /// the composite where it already is. That ordering matters: the composite
     /// may only drop a layer once something else is drawing it, or the layer
     /// would simply vanish.
-    func sourceImage(for layer: LayerEnvelope, at pixelsPerPagePoint: Double) async -> CGImage? {
+    package func sourceImage(for layer: LayerEnvelope, at pixelsPerPagePoint: Double) async -> CGImage? {
         precondition(
             pixelsPerPagePoint.isFinite && pixelsPerPagePoint > 0,
             "a source at \(pixelsPerPagePoint) pixels per page point is not a level of detail"
@@ -531,7 +534,7 @@ actor StaticLayerRenderer {
     /// legitimately exceed the byte bound, and without this the LRU backstop
     /// could answer that pressure by evicting the one composite that is on
     /// screen, which is speculation costing the user a visible re-render.
-    func retain(layerIDs live: Set<UUID>, protecting visible: Set<UUID> = []) {
+    package func retain(layerIDs live: Set<UUID>, protecting visible: Set<UUID> = []) {
         protectedLayerIDs = visible
         var dropped = 0
         for (key, entry) in cache where entry.layerIDs.isDisjoint(with: live) {
@@ -857,7 +860,7 @@ actor StaticLayerRenderer {
 /// order, and the level of detail to flatten them at.
 ///
 /// Carries no page identity, by design — see `StaticLayerRenderer.CompositeKey`.
-struct StaticLayerRequest: Sendable, Equatable {
+package struct StaticLayerRequest: Sendable, Equatable {
     /// The page's recognized layers below the ink, in order. The ink layer is
     /// never here: PencilKit renders ink, above this texture, and a composite
     /// containing ink would be a derived artifact restating what the ink
@@ -874,26 +877,34 @@ struct StaticLayerRequest: Sendable, Equatable {
     /// Composite pixels per page point. Fit-width times the display scale, so
     /// the texture is pixel-exact at the scale the page opens at and merely
     /// soft when zoomed past it.
-    let pixelsPerPagePoint: Double
+    package let pixelsPerPagePoint: Double
+
+    // Spelled out because a memberwise initializer is `internal` however
+    // visible its type is, and the canvas runtime builds the request.
+    package init(layers: [LayerEnvelope], geometry: PageGeometry, pixelsPerPagePoint: Double) {
+        self.layers = layers
+        self.geometry = geometry
+        self.pixelsPerPagePoint = pixelsPerPagePoint
+    }
 }
 
 /// One page's static stack, flattened.
-struct StaticComposite: Sendable {
-    let image: CGImage
-    let pixelsPerPagePoint: Double
+package struct StaticComposite: Sendable {
+    package let image: CGImage
+    package let pixelsPerPagePoint: Double
 
     /// The texture's cost, which is what the cache's bound is stated in.
-    let byteCount: Int
+    package let byteCount: Int
 
     /// Whether this composite was built off the main thread. Read by tests:
     /// `Contract.md` — Performance forbids image work on main, and this is that
     /// rule in a form a test can fail on.
-    let builtOffMain: Bool
+    package let builtOffMain: Bool
 }
 
 /// What a page's static stack renders as. Three outcomes and no fourth: there
 /// is deliberately no "partially rendered" case.
-enum StaticLayerRender: Sendable {
+package enum StaticLayerRender: Sendable {
     /// The page has no static layers. Not a failure — it is every page in a
     /// blank notebook, and it is the case that must cost nothing.
     case empty

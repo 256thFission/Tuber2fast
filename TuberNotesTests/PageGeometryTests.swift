@@ -1,6 +1,7 @@
 import Foundation
 import Testing
-
+@testable import TuberCanvas
+@testable import TuberModel
 @testable import TuberNotes
 
 @Suite("Page geometry")

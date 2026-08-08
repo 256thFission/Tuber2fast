@@ -1,5 +1,7 @@
 import CoreGraphics
 import Foundation
+import TuberModel
+import TuberStore
 
 /// What a source PDF says about itself — page count and each page's extent —
 /// and, since the rendering half of phase 3, the pixels a page rasterizes to.
@@ -27,19 +29,19 @@ import Foundation
 /// One source page's extent, in the source's own points, ready to be fitted
 /// into a page. Never durable: it is used to compute a layer's
 /// `pageSpaceTransform` and then discarded. See `PDFLayerRef` for why.
-struct PDFSourcePage: Sendable, Equatable {
+package struct PDFSourcePage: Sendable, Equatable {
     /// Zero-based, in the source document's own order — the value that becomes
     /// `PDFLayerRef.sourcePageIndex`.
-    let index: Int
-    let width: Double
-    let height: Double
+    package let index: Int
+    package let width: Double
+    package let height: Double
 }
 
 /// A source PDF this build will not import. Every case refuses the import
 /// whole: a PDF that is half-readable is not a document, and importing the
 /// readable half silently would be exactly the quiet correction the contract
 /// forbids.
-enum PDFSourceError: Error, Equatable {
+package enum PDFSourceError: Error, Equatable {
     /// The bytes are not a PDF this build can open at all.
     case notAPDF
     /// A PDF with no pages. Valid per the spec's letter, importable by nothing.
@@ -49,7 +51,7 @@ enum PDFSourceError: Error, Equatable {
     case unreadableSourcePage(index: Int)
 }
 
-enum PDFSource {
+package enum PDFSource {
     /// Every page of a source PDF, in order.
     ///
     /// `async` and `nonisolated`, which is load-bearing rather than decorative:
@@ -68,7 +70,7 @@ enum PDFSource {
     /// This decision is the reason the durable payload stores no source size: a
     /// layer's transform maps *this* rectangle's unit square into page space,
     /// and this is the only code that has to know which rectangle that is.
-    static func pages(in bytes: Data) async throws -> [PDFSourcePage] {
+    package static func pages(in bytes: Data) async throws -> [PDFSourcePage] {
         guard let provider = CGDataProvider(data: bytes as CFData),
               let document = CGPDFDocument(provider)
         else {
@@ -109,7 +111,7 @@ enum PDFSource {
     /// purpose (`PDFLayerRef`), so this is re-derived from the asset's bytes
     /// wherever it is needed, and this function is the only place the
     /// derivation is written.
-    struct DisplayGeometry: Sendable, Equatable {
+    package struct DisplayGeometry: Sendable, Equatable {
         /// The displayed region, in the source's own coordinates: PDF user
         /// space, origin bottom-left, y up.
         let box: CGRect
@@ -131,7 +133,7 @@ enum PDFSource {
     /// `/Rotate` that is not a multiple of 90 (the specification allows
     /// nothing else; anything else is a page this build refuses rather than
     /// rounds).
-    static func displayGeometry(of page: CGPDFPage) -> DisplayGeometry? {
+    package static func displayGeometry(of page: CGPDFPage) -> DisplayGeometry? {
         var box = page.getBoxRect(.cropBox)
         if box.isNull || box.isEmpty { box = page.getBoxRect(.mediaBox) }
 
@@ -152,7 +154,7 @@ enum PDFSource {
 /// A rasterization this build refuses. Typed and loud: a wrong picture served
 /// quietly is the failure mode the layer model exists to prevent
 /// (`Docs/Contract.md` — Invalid states fail loud).
-enum PDFRasterizeError: Error, Equatable {
+package enum PDFRasterizeError: Error, Equatable {
     /// The bytes are not a PDF this build can open at all.
     case notAPDF
     /// The page asked for does not exist in this document.
@@ -179,7 +181,7 @@ enum PDFRasterizeError: Error, Equatable {
 /// asks for the whole page at fit-width, the lens asks for the visible
 /// sub-rect at the settled zoom. Neither integration exists yet — this type
 /// answers the question and stops.
-enum PDFPageRasterizer {
+package enum PDFPageRasterizer {
     /// The displayed extent of one source page, in the source's own points —
     /// CropBox falling back to MediaBox, `/Rotate` applied.
     ///
@@ -190,7 +192,7 @@ enum PDFPageRasterizer {
     /// extent. It throws exactly the refusals `rasterize` would throw for the
     /// same bytes and index, so a caller that survives this call cannot then
     /// be surprised by the render.
-    static func displaySize(of bytes: Data, sourcePageIndex: Int) throws -> CGSize {
+    package static func displaySize(of bytes: Data, sourcePageIndex: Int) throws -> CGSize {
         let geometry = try displayGeometry(of: bytes, sourcePageIndex: sourcePageIndex).geometry
         return CGSize(width: geometry.displayWidth, height: geometry.displayHeight)
     }
@@ -245,7 +247,7 @@ enum PDFPageRasterizer {
     /// The y-flip therefore happens **exactly once** — converting the
     /// sub-rect's top-left origin into the context's bottom-left one — and
     /// everything after it composes rotation and box origin in y-up space.
-    static func rasterize(
+    package static func rasterize(
         _ bytes: Data,
         sourcePageIndex: Int,
         pixelsPerPagePoint: Double,

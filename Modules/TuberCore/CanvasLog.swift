@@ -26,7 +26,7 @@ import os
 ///
 /// Nothing here may be called per Pencil sample, pan tick, or zoom tick: the
 /// coarse drawing-change callback is the finest event this logs.
-enum CanvasLog {
+package enum CanvasLog {
     private static let subsystem = "com.tubernotes.greenfield"
 
     static let lifecycle = Logger(subsystem: subsystem, category: "lifecycle")
@@ -36,7 +36,7 @@ enum CanvasLog {
 
     /// One name per event stream. The case is both the `Logger` and the
     /// stderr bracket label, so the two sinks cannot disagree at a call site.
-    enum Category: String {
+    package enum Category: String {
         case lifecycle, canvas, save, contract
 
         var logger: Logger {
@@ -81,7 +81,7 @@ enum CanvasLog {
     static let fatalLabel = "fatal"
 
     /// One event, to both sinks.
-    static func event(_ category: Category, _ message: String) {
+    package static func event(_ category: Category, _ message: String) {
         category.logger.log("\(message, privacy: .public)")
         guard mirrorsToStderr else { return }
         // stderr only. This is a stream the launcher captures, not storage.
@@ -93,7 +93,7 @@ enum CanvasLog {
     /// A crash report gives the stack but none of the app's own state, and
     /// UIKit exceptions surface with no app frames at all. This records the
     /// name, reason, and throw-time stack while the process is still alive.
-    static func installCrashDiagnostics() {
+    package static func installCrashDiagnostics() {
         NSSetUncaughtExceptionHandler { exception in
             let frames = exception.callStackSymbols.prefix(24).joined(separator: "\n  ")
             let report = """

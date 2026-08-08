@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-
+@testable import TuberCore
 @testable import TuberNotes
 
 /// The trace sink's gate and its wire format.
@@ -76,7 +76,7 @@ struct CanvasLogTests {
         let source = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-            .appendingPathComponent("TuberNotesApp/CanvasLog.swift")
+            .appendingPathComponent("Modules/TuberCore/CanvasLog.swift")
 
         let code = ContractChecker.codeOnly(try String(contentsOf: source, encoding: .utf8))
 

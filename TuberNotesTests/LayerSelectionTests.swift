@@ -1,10 +1,12 @@
 import CoreGraphics
 import Foundation
 import Testing
+@testable import TuberCanvas
+@testable import TuberModel
+@testable import TuberNotes
+@testable import TuberRender
 import UIKit
 import UniformTypeIdentifiers
-
-@testable import TuberNotes
 
 /// Phase 4 of `Docs/Forks/CanvasFeatureComplete.md`: transformable `image`
 /// layers — select, move, scale, rotate.
@@ -959,7 +961,7 @@ struct SelectionOwnershipTests {
 
     @Test("EditorSession holds no selection state")
     func theSessionHoldsNoSelectionState() throws {
-        let code = try Self.appCode(named: "EditorSession.swift")
+        let code = try Self.appCode(named: "TuberNotesApp/EditorSession.swift")
         let found = Self.selectionTokens.filter { code.contains($0) }
         #expect(
             found.isEmpty,
@@ -976,7 +978,7 @@ struct SelectionOwnershipTests {
     /// failed is decoration" failure in its quietest form.
     @Test("PageCanvasController is where selection lives")
     func theCanvasRuntimeIsWhereSelectionLives() throws {
-        let code = try Self.appCode(named: "PageCanvasController.swift")
+        let code = try Self.appCode(named: "Modules/TuberCanvas/PageCanvasController.swift")
         #expect(code.contains("LayerSelectionRuntime"))
         #expect(code.contains("selection"))
     }
@@ -1006,8 +1008,11 @@ struct SelectionOwnershipTests {
         )
     }
 
+    /// Repo-relative since the module split: a source's module is part of its
+    /// name now, and a path that names only the file would follow it silently
+    /// from one target to another.
     private static func appCode(named name: String) throws -> String {
-        let url = ContractStructureTests.appDirectory.appendingPathComponent(name)
+        let url = ContractStructureTests.repoRoot.appendingPathComponent(name)
         return ContractChecker.codeOnly(try String(contentsOf: url, encoding: .utf8))
     }
 }

@@ -22,13 +22,169 @@ settings:
     ENABLE_USER_SCRIPT_SANDBOXING: YES
     DEVELOPMENT_TEAM: $(TN_DEVELOPMENT_TEAM)
     CODE_SIGN_STYLE: Automatic
+    # Every target is one package, so `package` is the honest default for a
+    # declaration one module up the graph needs and nobody outside the app
+    # should ever see. `public` here would mean "part of a shipped framework's
+    # API", and nothing in this repository ships a framework.
+    SWIFT_PACKAGE_NAME: TuberNotes
+  configs:
+    # THROWAWAY SPIKE wiring — CanvasFeatureComplete device spikes 1 and 2.
+    # TN_SPIKE_CONDITIONS is empty by default, so both lines are inert and
+    # the flag-off app compiles with exactly the conditions it always had
+    # (DEBUG in Debug, none in Release). To build a spike in, pass the
+    # setting on the command line
+    #   xcodebuild build ... TN_SPIKE_CONDITIONS=TN_SPIKE_MIRROR
+    #   xcodebuild build ... TN_SPIKE_CONDITIONS=TN_SPIKE_LENS
+    # or add `TN_SPIKE_CONDITIONS = TN_SPIKE_MIRROR` (or TN_SPIKE_LENS) to
+    # Local.xcconfig for Tools/device runs (and remove it after). Not
+    # both at once: TN_SPIKE_LENS replaces the editor scene that
+    # TN_SPIKE_MIRROR instruments.
+    #
+    # Release carries the same hook as Debug. It used to be Debug-only
+    # because the spike's trace depended on CanvasLog's stderr mirror and
+    # that mirror was `#if DEBUG`; the mirror now ships in every
+    # configuration, gated on TN_TRACE alone, so a Release spike build is
+    # readable — and Release is what device.yml distributes.
+    #
+    # Project-level rather than per-target since the module split: spike 1
+    # lives in TuberCanvas and spike 2 in the app, and a condition set on one
+    # target is invisible to the other.
+    Debug:
+      SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG $(TN_SPIKE_CONDITIONS)
+    Release:
+      SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(TN_SPIKE_CONDITIONS)
+
+# The module graph, bottom first. It exists to make golden rule 2's *import*
+# half a compile error rather than a token scan: see `noSwiftUI` below and
+# `Docs/Forks/ContractPass/08-Modules.md`.
+#
+#   TuberCore   <- TuberModel <- TuberStore <- TuberRender <- TuberCanvas
+#        \____________\______________\______________\____________\__ TuberNotes
+#
+# TuberCanvas deliberately does *not* depend on TuberStore. The canvas runtime
+# never sees the store — it holds a `StaticLayerRenderer`, and the renderer
+# holds the store. Keep it that way: a canvas that can name `DocumentStoring`
+# is one refactor away from breaking golden rule 4.
+targetTemplates:
+  # Every framework target below the app. Same product shape, same warnings.
+  Framework:
+    type: framework
+    platform: iOS
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(TN_BUNDLE_ID_PREFIX).${target_name}
+        TARGETED_DEVICE_FAMILY: "2"
+        GENERATE_INFOPLIST_FILE: YES
+        # A framework nobody outside this repository links needs no stable
+        # ABI and no generated .swiftinterface.
+        BUILD_LIBRARY_FOR_DISTRIBUTION: NO
+        DEFINES_MODULE: YES
+        # No SwiftUI below the app target — the compiler's answer to golden
+        # rule 2's import half.
+        #
+        # It is spelled as a module alias, not as an absent link, because an
+        # absent link does not forbid anything: Swift autolinks an imported
+        # system framework and the linker finds it in the SDK, so a framework
+        # target that never lists SwiftUI still builds if a file imports it.
+        # `-module-alias SwiftUI=<nothing>` makes `import SwiftUI` resolve to
+        # a module that does not exist. Observed, on a planted violation in
+        # `InkCanvasView.swift`:
+        #
+        #   Modules/TuberCanvas/InkCanvasView.swift:1:8: error: unable to
+        #   resolve module dependency: 'TuberSwiftUIIsNotBelowTheAppTarget'
+        #
+        # — which is why the alias is named a sentence rather than a letter:
+        # the alias name is the whole of the error message a contributor sees.
+        #
+        # Only SwiftUI is banned this way. UIKit, PencilKit, and CoreGraphics
+        # cannot be: PencilKit requires UIKit and Foundation requires
+        # CoreGraphics, and an alias breaks the *transitive* load as well as
+        # the written import ("missing required module 'UIKit'"). Which
+        # targets may import those three stays a `ContractStructureTests`
+        # rule, now written per module instead of per file.
+        OTHER_SWIFT_FLAGS: $(inherited) -module-alias SwiftUI=TuberSwiftUIIsNotBelowTheAppTarget
 
 targets:
+
+  # The floor: structured logging and the crash handler. Foundation + os.
+  # It is imported by the store, the renderer, the snapshot, and the canvas
+  # runtime, so it cannot live anywhere but the bottom.
+  TuberCore:
+    templates: [Framework]
+    sources:
+      - path: Modules/TuberCore
+
+  # The durable value types, and the box that carries a drawing out of the
+  # canvas runtime.
+  #
+  # **TuberModel links PencilKit, by Phillip's decision (2026-08-07).** The
+  # dropped claim, stated so nobody re-derives it: *this project no longer
+  # claims that no durable value type ever imports PencilKit.* `DrawingSnapshot`
+  # is the `PKDrawing` box and it crosses every seam the graph draws; the
+  # alternative was a sixth target holding one 56-line file. TuberNotes is an
+  # iPad-and-Pencil application forever, so PencilKit at the model layer costs
+  # nothing this project would otherwise have kept. There is no TuberInk.
+  #
+  # UIKit and SwiftUI remain out: UIKit arrives transitively with PencilKit and
+  # so cannot be banned by the compiler, but no file here writes the import and
+  # `ContractStructureTests` says so.
+  TuberModel:
+    templates: [Framework]
+    sources:
+      - path: Modules/TuberModel
+    dependencies:
+      - target: TuberCore
+
+  # `DocumentStore`, the `DocumentStoring` seam its consumers declare, and the
+  # durable file form. The only target that touches the file system.
+  TuberStore:
+    templates: [Framework]
+    sources:
+      - path: Modules/TuberStore
+    dependencies:
+      - target: TuberModel
+      - target: TuberCore
+
+  # Off-main decode and composite: `StaticLayerRenderer`, `PDFSource`, the
+  # lens. Depends on TuberStore because the renderer holds the store — through
+  # `DocumentStoring`, so the edge is to a surface rather than to an actor.
+  #
+  # PDFKit is deliberately not linked and never should be: `PDFSource.swift`
+  # records the decision to open a source PDF with `CGPDFDocument` instead,
+  # because PDFKit brings a whole document *view* stack for a page count and a
+  # page box.
+  TuberRender:
+    templates: [Framework]
+    sources:
+      - path: Modules/TuberRender
+    dependencies:
+      - target: TuberStore
+      - target: TuberModel
+      - target: TuberCore
+
+  # The canvas runtime: everything that owns frame-frequency state.
+  #
+  # No TuberStore edge, on purpose — see the graph comment above.
+  TuberCanvas:
+    templates: [Framework]
+    sources:
+      - path: Modules/TuberCanvas
+    dependencies:
+      - target: TuberRender
+      - target: TuberModel
+      - target: TuberCore
+
   TuberNotes:
     type: application
     platform: iOS
     sources:
       - path: TuberNotesApp
+    dependencies:
+      - target: TuberCanvas
+      - target: TuberRender
+      - target: TuberStore
+      - target: TuberModel
+      - target: TuberCore
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(TN_BUNDLE_ID_PREFIX)
@@ -42,28 +198,6 @@ targets:
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: UIInterfaceOrientationPortrait
         GENERATE_INFOPLIST_FILE: YES
         ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS: NO
-      configs:
-        # THROWAWAY SPIKE wiring — CanvasFeatureComplete device spikes 1 and 2.
-        # TN_SPIKE_CONDITIONS is empty by default, so both lines are inert and
-        # the flag-off app compiles with exactly the conditions it always had
-        # (DEBUG in Debug, none in Release). To build a spike in, pass the
-        # setting on the command line
-        #   xcodebuild build ... TN_SPIKE_CONDITIONS=TN_SPIKE_MIRROR
-        #   xcodebuild build ... TN_SPIKE_CONDITIONS=TN_SPIKE_LENS
-        # or add `TN_SPIKE_CONDITIONS = TN_SPIKE_MIRROR` (or TN_SPIKE_LENS) to
-        # Local.xcconfig for Tools/device runs (and remove it after). Not
-        # both at once: TN_SPIKE_LENS replaces the editor scene that
-        # TN_SPIKE_MIRROR instruments.
-        #
-        # Release carries the same hook as Debug. It used to be Debug-only
-        # because the spike's trace depended on CanvasLog's stderr mirror and
-        # that mirror was `#if DEBUG`; the mirror now ships in every
-        # configuration, gated on TN_TRACE alone, so a Release spike build is
-        # readable — and Release is what device.yml distributes.
-        Debug:
-          SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG $(TN_SPIKE_CONDITIONS)
-        Release:
-          SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(TN_SPIKE_CONDITIONS)
 
   TuberNotesTests:
     type: bundle.unit-test
@@ -72,6 +206,18 @@ targets:
       - path: TuberNotesTests
     dependencies:
       - target: TuberNotes
+      # Linked but not embedded: the host app already carries them, and a
+      # second copy inside the test bundle is a second copy of every global.
+      - target: TuberCanvas
+        embed: false
+      - target: TuberRender
+        embed: false
+      - target: TuberStore
+        embed: false
+      - target: TuberModel
+        embed: false
+      - target: TuberCore
+        embed: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(TN_BUNDLE_ID_PREFIX).tests

@@ -33,6 +33,8 @@
 
 #if TN_SPIKE_MIRROR
 
+import TuberCore
+import TuberModel
 import UIKit
 
 /// The mirrored registration pattern and its per-tick bookkeeping.

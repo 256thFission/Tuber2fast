@@ -40,6 +40,9 @@
 #if TN_SPIKE_LENS
 
 import SwiftUI
+import TuberCore
+import TuberModel
+import TuberRender
 import UIKit
 
 /// The SwiftUI face of the spike, hosted by `TuberNotesApp` in place of the

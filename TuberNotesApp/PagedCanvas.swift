@@ -1,4 +1,5 @@
 import SwiftUI
+import TuberCanvas
 
 /// Hosts the paged canvas runtime in SwiftUI.
 ///

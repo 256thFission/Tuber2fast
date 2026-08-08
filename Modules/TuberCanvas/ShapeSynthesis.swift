@@ -7,12 +7,12 @@ import PencilKit
 /// ink, snapped. `Docs/Forks/CanvasFeatureComplete.md` — "Shapes are snapped
 /// ink" — decided it that way so the eraser, the lasso, stroke undo, the save
 /// path, and the renderer all apply to a shape without a single new seam.
-enum ShapeKind: String, CaseIterable, Sendable, Identifiable {
+package enum ShapeKind: String, CaseIterable, Sendable, Identifiable {
     case line
     case rectangle
     case ellipse
 
-    var id: String { rawValue }
+    package var id: String { rawValue }
 }
 
 /// Turns a drag and the pen in hand into finished strokes.

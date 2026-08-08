@@ -1,8 +1,10 @@
 import Foundation
 import PencilKit
 import Testing
-
+@testable import TuberCanvas
+@testable import TuberModel
 @testable import TuberNotes
+@testable import TuberStore
 
 /// Behavior of the editor's save policy and page extension.
 ///

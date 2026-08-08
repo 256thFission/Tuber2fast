@@ -1,4 +1,7 @@
 import PencilKit
+import TuberCore
+import TuberModel
+import TuberRender
 import UIKit
 
 /// The live runtime for exactly one page.
@@ -16,7 +19,7 @@ import UIKit
 /// the framework's own — no gesture recognizers of ours, and no frame-frequency
 /// work leaving this runtime.
 @MainActor
-final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
+package final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
     /// The ink surface. A `PKCanvasView` subclass for one reason — it refuses
     /// PencilKit's editing menu; see `InkCanvasView`.
     let canvasView = InkCanvasView()
@@ -28,7 +31,7 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
 
     /// One coarse notification that the drawing changed. It carries no drawing,
     /// no sample, and no generation number (`Contract.md` — Saving).
-    var onDrawingChanged: (() -> Void)?
+    package var onDrawingChanged: (() -> Void)?
 
     /// Shared across pages and owned by `PagedCanvasController`. One picker per
     /// page would mean the selected tool resetting every time you turn one.
@@ -125,7 +128,7 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
     /// session accepted it. The page index is added by
     /// `PagedCanvasController`, because this controller is blind to which page
     /// it is (`Contract.md` — Owners, golden rule 7).
-    var onLayerTransformed: ((UUID, PageSpaceTransform) -> Bool)?
+    package var onLayerTransformed: ((UUID, PageSpaceTransform) -> Bool)?
 
     /// Increments on every lifted-source request, so an image that arrives
     /// after the selection moved on is dropped rather than shown.
@@ -231,7 +234,7 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
         fatalError("PageCanvasController is created in code only")
     }
 
-    override func viewDidLoad() {
+    package override func viewDidLoad() {
         super.viewDidLoad()
 
         // The canvas is the page: its content coordinate system is page space,
@@ -362,7 +365,7 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
     /// This exists to answer one question the crash reports could not: whether
     /// the app survives long enough to see a touch at all. It is not a
     /// per-sample hook — it logs once and then never again.
-    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+    package override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         super.touchesBegan(touches, with: event)
         guard !hasLoggedFirstTouch else { return }
         hasLoggedFirstTouch = true
@@ -370,7 +373,7 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
         CanvasLog.event(.canvas, "first touch reached the canvas; types=[\(types)]")
     }
 
-    override func viewDidLayoutSubviews() {
+    package override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         establishZoomIfNeeded()
         centerPageInViewport()
@@ -830,7 +833,7 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
     /// request this controller will make when the page turns live. Two copies
     /// of this arithmetic would be two numbers that drift, and a drifted warm
     /// is a cache that never hits while looking like it works.
-    static func compositeDetail(
+    package static func compositeDetail(
         viewportWidth: CGFloat,
         displayScale: CGFloat,
         geometry: PageGeometry
@@ -941,7 +944,7 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
     /// Owners), which is why this is told and never asked: every live page and
     /// every page built afterwards carries the same setting, so the tool
     /// survives a page turn exactly as the pen does.
-    func setShapeTool(_ kind: ShapeKind?) {
+    package func setShapeTool(_ kind: ShapeKind?) {
         shapeKind = kind
         shapeTool?.setKind(kind)
     }
@@ -1143,7 +1146,7 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
     /// Copying the live drawing is the only work performed on the main actor.
     /// The full `dataRepresentation()` traversal runs from the snapshot's
     /// utility task, after the debounce, never from PencilKit's callback.
-    func drawingSnapshot() -> DrawingSnapshot {
+    package func drawingSnapshot() -> DrawingSnapshot {
         let clock = ContinuousClock()
         let started = clock.now
         let snapshot = DrawingSnapshot(drawing: canvasView.drawing)
@@ -1157,7 +1160,7 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
 
     /// Opens the canvas for user editing. Called once by `EditorSession` when the
     /// document is loaded and the ready phase begins (`Contract.md` — Lifecycle).
-    func markEditable() {
+    package func markEditable() {
         isEditable = true
     }
 
@@ -1192,7 +1195,7 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
     /// Reported for every drawing mutation, including the load-time install. The
     /// canvas does not classify them: `EditorSession` owns save policy and is the
     /// one place that decides a change is not user editing.
-    func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
+    package func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
         if !hasLoggedFirstChange {
             hasLoggedFirstChange = true
             CanvasLog.event(
@@ -1205,7 +1208,7 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
 
     /// Frame-frequency work, and it stays here inside the canvas runtime: a
     /// frame assignment on one view, no publication and no allocation.
-    func scrollViewDidZoom(_ scrollView: UIScrollView) {
+    package func scrollViewDidZoom(_ scrollView: UIScrollView) {
         // The view is transforming away from whatever state a lens described:
         // drop it before this frame renders. An integer bump and a nil check —
         // no decode is ever triggered by a gesture frame.
@@ -1242,7 +1245,7 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
     ///
     /// `PagedCanvasController` is the delegate of the *outer* paging scroll
     /// view, so this observes only this page's own canvas.
-    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+    package func scrollViewDidScroll(_ scrollView: UIScrollView) {
         // Same rule as the zoom half: a pan moves the viewport off the rect
         // the lens was rendered for.
         invalidateLens()
@@ -1254,7 +1257,7 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
 
     // MARK: The settle callbacks — where the lens is asked for
 
-    func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) {
+    package func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) {
         requestLensIfNeeded()
         // The scroll view hands over its own zooming view here, which is how the
         // probe reaches it without touching PencilKit's hierarchy.
@@ -1265,7 +1268,7 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
         #endif
     }
 
-    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+    package func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
         // A pan at depth settles too: without this, panning across a zoomed
         // worksheet would lose sharpness at the first tick and never regain
         // it until the next pinch.
@@ -1275,7 +1278,7 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
         #endif
     }
 
-    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate: Bool) {
+    package func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate: Bool) {
         if !willDecelerate {
             requestLensIfNeeded()
             #if TN_SPIKE_MIRROR

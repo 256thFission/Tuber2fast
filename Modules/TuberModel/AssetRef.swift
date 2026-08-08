@@ -29,7 +29,7 @@ import Foundation
 ///
 /// The alpha claim is pinned by `HEICAlphaTests`, in the simulator, before the
 /// import path was allowed to depend on it.
-enum AssetFormat: String, Sendable, Equatable, CaseIterable {
+package enum AssetFormat: String, Sendable, Equatable, CaseIterable {
     /// The one image encoding. Every image asset this build writes is one of
     /// these, whatever the user picked.
     case heic
@@ -50,7 +50,7 @@ enum AssetFormat: String, Sendable, Equatable, CaseIterable {
     /// The extension in `assets/<assetID>.<ext>`. It is the raw value, and the
     /// two are deliberately the same string: a second mapping is a second place
     /// the file name could be decided.
-    var fileExtension: String { rawValue }
+    package var fileExtension: String { rawValue }
 }
 
 /// An `image` layer's payload: which asset, and how to name its file. Two
@@ -85,20 +85,20 @@ enum AssetFormat: String, Sendable, Equatable, CaseIterable {
 /// format a payload migration rather than one amendment. The field is one
 /// short string per image layer, and it is what keeps "the set is closed" a
 /// mechanism instead of a sentence.
-struct ImageLayerRef: Codable, Sendable, Equatable {
-    let assetID: UUID
-    let format: String
+package struct ImageLayerRef: Codable, Sendable, Equatable {
+    package let assetID: UUID
+    package let format: String
 
     /// The one initializer application code uses: a format must be named in the
     /// closed set to be written.
-    init(assetID: UUID, format: AssetFormat) {
+    package init(assetID: UUID, format: AssetFormat) {
         self.assetID = assetID
         self.format = format.rawValue
     }
 
     /// A ref with an arbitrary format string. Tests are its only caller — it
     /// exists so a test can put a format this build does not know on disk.
-    init(assetID: UUID, rawFormat: String) {
+    package init(assetID: UUID, rawFormat: String) {
         self.assetID = assetID
         self.format = rawFormat
     }
@@ -119,7 +119,7 @@ struct ImageLayerRef: Codable, Sendable, Equatable {
     /// which a build older than 2026-08-07 could write and this one cannot
     /// read. Those refuse the layer, not the page and not the document, which
     /// is exactly how the next image format would land safely too.
-    var recognizedFormat: AssetFormat? {
+    package var recognizedFormat: AssetFormat? {
         switch AssetFormat(rawValue: format) {
         case .heic: .heic
         case .pdf: nil
@@ -130,7 +130,7 @@ struct ImageLayerRef: Codable, Sendable, Equatable {
     /// The asset's file name inside `assets/`, or `nil` when the format is one
     /// this build does not recognize — a ref this build cannot resolve does not
     /// get to guess at a name.
-    var fileName: String? {
+    package var fileName: String? {
         guard let recognizedFormat else { return nil }
         return "\(assetID.uuidString).\(recognizedFormat.fileExtension)"
     }
@@ -142,7 +142,7 @@ struct ImageLayerRef: Codable, Sendable, Equatable {
     /// A nested property list inside the envelope's opaque `payload` keeps the
     /// envelope uniform across kinds — `{ layerID, kind, payload,
     /// pageSpaceTransform }` — rather than growing a per-kind field on it.
-    func encodedPayload() throws -> Data {
+    package func encodedPayload() throws -> Data {
         let encoder = PropertyListEncoder()
         encoder.outputFormat = .binary
         return try encoder.encode(self)
@@ -150,7 +150,7 @@ struct ImageLayerRef: Codable, Sendable, Equatable {
 
     /// The ref an `image` envelope carries, or a throw. A payload that will not
     /// decode refuses the layer at its caller; it is never defaulted.
-    init(payload: Data) throws {
+    package init(payload: Data) throws {
         self = try PropertyListDecoder().decode(ImageLayerRef.self, from: payload)
     }
 }
@@ -218,11 +218,11 @@ struct ImageLayerRef: Codable, Sendable, Equatable {
 /// `sourcePageIndex` is not a restatement and that is the distinction worth
 /// keeping straight: the asset states all N pages, and which one this layer
 /// shows is a durable *choice* the asset cannot answer.
-struct PDFLayerRef: Codable, Sendable, Equatable {
-    let assetID: UUID
-    let sourcePageIndex: Int
+package struct PDFLayerRef: Codable, Sendable, Equatable {
+    package let assetID: UUID
+    package let sourcePageIndex: Int
 
-    init(assetID: UUID, sourcePageIndex: Int) {
+    package init(assetID: UUID, sourcePageIndex: Int) {
         self.assetID = assetID
         self.sourcePageIndex = sourcePageIndex
     }
@@ -230,13 +230,13 @@ struct PDFLayerRef: Codable, Sendable, Equatable {
     /// A `pdf` asset's file name inside `assets/`. Unconditional, unlike
     /// `ImageLayerRef.fileName`: the kind names the encoding, so there is no
     /// unrecognized case to refuse.
-    var fileName: String { "\(assetID.uuidString).\(AssetFormat.pdf.fileExtension)" }
+    package var fileName: String { "\(assetID.uuidString).\(AssetFormat.pdf.fileExtension)" }
 
     // MARK: - The envelope payload
 
     /// The ref as the bytes that live in `LayerEnvelope.payload`, keeping the
     /// envelope uniform across kinds.
-    func encodedPayload() throws -> Data {
+    package func encodedPayload() throws -> Data {
         let encoder = PropertyListEncoder()
         encoder.outputFormat = .binary
         return try encoder.encode(self)
@@ -244,7 +244,7 @@ struct PDFLayerRef: Codable, Sendable, Equatable {
 
     /// The ref a `pdf` envelope carries, or a throw. A payload that will not
     /// decode refuses the layer at its caller; it is never defaulted.
-    init(payload: Data) throws {
+    package init(payload: Data) throws {
         self = try PropertyListDecoder().decode(PDFLayerRef.self, from: payload)
     }
 }
@@ -252,7 +252,7 @@ struct PDFLayerRef: Codable, Sendable, Equatable {
 /// The asset store's invariants, violated. Assets are write-once and immutable
 /// (`Docs/Forks/CanvasFeatureComplete.md` — Durable form), so there is no
 /// update and no overwrite to fail at: only these.
-enum AssetError: Error, Equatable {
+package enum AssetError: Error, Equatable {
     /// A write named an asset that already exists. Assets are write-once: an
     /// import writes a new asset, never mutates one. Reaching this means an
     /// asset ID was reused, which is a defect in whatever minted it.

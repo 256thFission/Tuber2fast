@@ -1,8 +1,8 @@
 import CoreGraphics
 import Foundation
 import Testing
-
 @testable import TuberNotes
+@testable import TuberRender
 
 /// Phase 3 of `Docs/Forks/CanvasFeatureComplete.md`, rendering half, first
 /// piece: a source PDF page as pixels.

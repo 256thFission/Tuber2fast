@@ -1,7 +1,8 @@
 import Foundation
 import Testing
-
+@testable import TuberModel
 @testable import TuberNotes
+@testable import TuberStore
 
 @Suite("Document store")
 struct DocumentStoreTests {

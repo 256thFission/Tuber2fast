@@ -5,6 +5,7 @@
 // `ShapeToolRuntime` and `PageBackdrop` are — not a second owner. PencilKit is
 // deliberately *not* imported: nothing here needs a canvas's vocabulary, only a
 // scroll view's zoom scale and a layer to hang chrome on.
+import TuberModel
 import UIKit
 import UIKit.UIGestureRecognizerSubclass
 

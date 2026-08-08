@@ -1,8 +1,8 @@
 import PencilKit
 import Testing
-import UIKit
-
+@testable import TuberCanvas
 @testable import TuberNotes
+import UIKit
 
 /// The ink canvas refuses PencilKit's tap-raised context menu, and keeps its
 /// lasso menu.

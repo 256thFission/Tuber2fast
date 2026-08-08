@@ -1,8 +1,11 @@
 import PencilKit
 import Testing
-import UIKit
-
+@testable import TuberCanvas
+@testable import TuberModel
 @testable import TuberNotes
+@testable import TuberRender
+@testable import TuberStore
+import UIKit
 
 /// Configuration invariants of a canvas runtime.
 @Suite("Canvas runtime", .serialized)
