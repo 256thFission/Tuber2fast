@@ -600,6 +600,160 @@ struct PagedCanvasControllerTests {
         }
     }
 
+    // MARK: - Reconciling a page list that changed
+
+    @Test("A surviving canvas keeps reporting as itself after a page is removed")
+    func survivingCanvasKeepsItsIdentityAcrossADelete() throws {
+        var edited: [Int] = []
+        let controller = hosted { $0.onDrawingChanged = { edited.append($0) } }
+        controller.setTestPages(count: 6, current: 0)
+        controller.markEditable()
+
+        // Page 3 is live and two pages behind it are about to vanish. Under the
+        // index-keyed slots this replaced, page 3's host still said "2" — the
+        // position it now occupies — so this stroke dirtied page 2.
+        let survivor = try #require(controller.testLivePage(at: 1))
+        controller.setPages(
+            [0, 1, 3, 4, 5].map(TestPages.id),
+            current: TestPages.id(0)
+        )
+
+        survivor.canvasView.drawing = strokeAcrossPage()
+
+        #expect(edited == [1], "the surviving canvas reports as page 1, not as its new position")
+    }
+
+    @Test("A page removed from the document is retired without handing its ink over")
+    func removedPageDoesNotHandOverItsInk() {
+        var retired: [Int] = []
+        let controller = hosted { $0.onPageRetiring = { index, _ in retired.append(index) } }
+        controller.setTestPages(count: 4, current: 0)
+        controller.markEditable()
+        #expect(controller.testLivePage(at: 2) != nil)
+
+        controller.setPages([0, 1, 3].map(TestPages.id), current: TestPages.id(0))
+
+        // A page leaving the *window* hands over, because it is still a page of
+        // the document and its unsaved ink would otherwise die with the canvas.
+        // A page leaving the *document* must not: the session would take
+        // custody of ink for a page nothing will ever save, and stay
+        // permanently dirty for a page it no longer has.
+        #expect(!retired.contains(2), "a deleted page hands nothing over")
+        #expect(controller.testLivePage(at: 2) == nil, "its canvas is gone all the same")
+        #expect(controller.pageCount == 3)
+    }
+
+    @Test("Deleting the visible page leaves its successor taking the Pencil")
+    func successorBecomesTheActivePageAfterADelete() throws {
+        // A real key window, unlike every other test here: first responder is
+        // the thing under test, and `becomeFirstResponder()` answers false for
+        // a view that is in no window at all. Hosting one is the only way this
+        // check can fail for the reason it names.
+        let scene = try #require(
+            UIApplication.shared.connectedScenes.first as? UIWindowScene,
+            "the test host has a window scene to attach to"
+        )
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 820, height: 1180)
+        let controller = PagedCanvasController(session: TestCanvasSession())
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        controller.view.layoutIfNeeded()
+
+        controller.setTestPages(count: 4, current: 1)
+        controller.markEditable()
+        #expect(controller.testLivePage(at: 1)?.canvasView.isFirstResponder == true)
+
+        controller.setPages([0, 2, 3].map(TestPages.id), current: TestPages.id(2))
+
+        // `becomeActivePage` is what moves first responder and the shared tool
+        // picker. Without it the successor page is on screen and inert: the
+        // picker is dead and the Pencil writes nowhere.
+        let successor = try #require(controller.testLivePage(at: 2))
+        #expect(successor.canvasView.isFirstResponder == true)
+    }
+
+    @Test("A decode for a removed page is cancelled rather than left to install")
+    func decodeForARemovedPageIsCancelled() {
+        let data = strokeAcrossPage().dataRepresentation()
+        let controller = hosted { $0.content = { _ in .ink(data) } }
+        controller.setTestPages(count: 5, current: 0)
+        #expect(controller.pendingInkDecodeCount == 3)
+
+        controller.setPages([0, 1].map(TestPages.id), current: TestPages.id(0))
+
+        // Page 2's decode was in flight and its page is gone. Left running it
+        // competes with the Pencil for a result nothing can install.
+        #expect(controller.pendingInkDecodeCount == 2)
+    }
+
+    @Test("Reconciling a changed list reports no turn and shows the stated page")
+    func reconcileIsNotATurn() {
+        var turns: [Int] = []
+        let controller = hosted { $0.onPageChanged = { turns.append($0) } }
+        controller.setTestPages(count: 6, current: 4)
+        turns.removeAll()
+
+        // Two pages ahead of the visible one are deleted, so page 4 slides from
+        // position 4 to position 2. The offset must follow the *page*, and no
+        // turn may be reported: the user turned nothing.
+        controller.setPages(
+            [0, 1, 4, 5].map(TestPages.id),
+            current: TestPages.id(4)
+        )
+
+        let scroll = controller.scrollView
+        #expect(turns.isEmpty, "a list change is not a page turn")
+        #expect(controller.currentPageIndex == 2)
+        #expect(scroll.contentOffset.x == scroll.bounds.width * 2)
+        #expect(scroll.contentSize.width == scroll.bounds.width * 4)
+        // Synchronously, inside the call — the property the append correction
+        // in `scrollViewDidEndDragging` depends on.
+        #expect(controller.testLivePage(at: 4) != nil)
+    }
+
+    @Test("The live window stays bounded across inserts and deletes")
+    func windowStaysBoundedAcrossListChanges() {
+        let controller = hosted()
+        controller.setTestPages(count: 40, current: 20)
+        #expect(controller.liveCanvasCount <= 5)
+
+        // Delete every page before the visible one, then grow the document
+        // again. The bound is a property of the window, not of how the list
+        // arrived at its current shape.
+        controller.setPages(Array(20..<40).map(TestPages.id), current: TestPages.id(20))
+        #expect(controller.liveCanvasCount <= 5)
+
+        controller.setPages(Array(0..<60).map(TestPages.id), current: TestPages.id(20))
+        #expect(controller.liveCanvasCount <= 5)
+        #expect(controller.pageCount == 60)
+    }
+
+    @Test("A page that moved is re-framed rather than rebuilt")
+    func reorderMovesACanvasWithoutRebuildingIt() throws {
+        let controller = hosted()
+        // Five pages with the middle one visible: the window is a radius of
+        // two, so every page here is live and a reorder among them cannot be
+        // confused with a page merely leaving the window.
+        controller.setTestPages(count: 5, current: 2)
+        controller.markEditable()
+        let page3 = try #require(controller.testLivePage(at: 3))
+        page3.canvasView.drawing = strokeAcrossPage()
+        let scroll = controller.scrollView
+        #expect(page3.view.frame.minX == scroll.bounds.width * 3)
+
+        // Pages 3 and 4 swap. Both stay inside the window; only their
+        // positions change.
+        controller.setPages([0, 1, 2, 4, 3].map(TestPages.id), current: TestPages.id(2))
+
+        // The same controller, holding the same ink, at its new position: a
+        // reorder *moves* live canvases and never rebuilds them, so nothing
+        // drawn since the last save can be lost to one.
+        #expect(controller.testLivePage(at: 3) === page3)
+        #expect(page3.canvasView.drawing.strokes.count == 1)
+        #expect(page3.view.frame.minX == scroll.bounds.width * 4)
+    }
+
     /// A laid-out runtime, and the session it answers to.
     private func hosted(
         configure: (TestCanvasSession) -> Void = { _ in }

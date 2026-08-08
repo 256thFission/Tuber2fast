@@ -524,24 +524,48 @@ final class EditorSession {
 
     // MARK: - Page state
 
-    /// The one lookup from identity to state. Pages are never removed, so a
-    /// missing entry is a broken invariant, not an answerable question.
+    /// The one lookup from identity to state, for the callers that must fail
+    /// loud when it is absent.
+    ///
+    /// ## Two worlds cross this boundary, and they earn different policies
+    ///
+    /// **Reports from the canvas runtime** — a drawing changed, a page retired,
+    /// a layer moved, a turn settled — are synchronous with respect to
+    /// page-list mutations: every mutation reconciles the runtime *before the
+    /// mutating call returns*, and that reconcile retires a departed page's
+    /// canvas before releasing it. A report naming a page this session no
+    /// longer holds therefore cannot be produced by any sequence the session
+    /// permits, so it is a defect and it traps here (`Contract.md` — Invalid
+    /// states fail loud).
+    ///
+    /// **Returns from the store** — a page load, an asset write — are
+    /// asynchronous and deliberately uncancelled, so they can legitimately
+    /// outlive the page that asked for them. Those callers use
+    /// `stateIndexIfPresent(of:)` and drop the result loudly; `fetchPageData`
+    /// is the one that matters. That is a finding of fact about the load path
+    /// rather than leniency, and it is the same distinction the runtime's own
+    /// decode token draws one level down: cancel so the work stops, compare so
+    /// what finished cannot install stale.
     private func stateIndex(of pageID: UUID) -> Int {
         guard let found = stateIndexIfPresent(of: pageID) else {
-            preconditionFailure("no state for page \(pageID); pages are never removed")
+            preconditionFailure(
+                "no state for page \(pageID); a report about a page this session "
+                    + "does not hold means a page-list mutation did not reconcile "
+                    + "the runtime before it returned"
+            )
         }
         return found
     }
 
     /// The same lookup, for the callers that may legitimately ask about a page
-    /// this session does not have.
+    /// this session does not have: the store's asynchronous returns, and the
+    /// runtime's *questions* asked before `start()` has populated the session —
+    /// reachable in tests alone, where hosting order is the setup's choice.
     ///
-    /// Today that is only the runtime laying out before `start()` has populated
-    /// the session — reachable in tests alone, where hosting order is the
-    /// setup's choice. It is a separate spelling rather than a softening of
-    /// `stateIndex(of:)` so that the callers which must fail loud keep doing
-    /// so: an answerable question and a broken invariant look identical at the
-    /// call site otherwise.
+    /// A separate spelling rather than a softening of `stateIndex(of:)`, so
+    /// that the callers which must fail loud keep doing so: an answerable
+    /// question and a broken invariant look identical at the call site
+    /// otherwise.
     private func stateIndexIfPresent(of pageID: UUID) -> Int? {
         pageStates.firstIndex(where: { $0.id == pageID })
     }
@@ -745,9 +769,19 @@ final class EditorSession {
         let upper = min(index.pageIDs.count - 1, pageIndex + Self.prefetchRadius)
         guard lower <= upper else { return }
 
-        for candidate in lower...upper {
-            let pageID = index.pageIDs[candidate]
-            guard case .loading = pageStates[stateIndex(of: pageID)].ink,
+        // **The identities, taken before the first await.** The bounds were
+        // computed above against the list as it is now, and each iteration
+        // below suspends; indexing `index.pageIDs` after one of those
+        // suspensions would read whatever page has moved into that position.
+        // A snapshot of identities cannot go stale — it can only name a page
+        // that no longer exists, which the lookups below answer for.
+        let candidates = Array(index.pageIDs[lower...upper])
+
+        for pageID in candidates {
+            // The page may have been deleted by a mutation that ran during an
+            // earlier iteration's await.
+            guard let waiting = stateIndexIfPresent(of: pageID) else { continue }
+            guard case .loading = pageStates[waiting].ink,
                   !pageLoadsInFlight.contains(pageID) else { continue }
 
             pageLoadsInFlight.insert(pageID)
@@ -755,16 +789,28 @@ final class EditorSession {
 
             do {
                 let loaded = try await store.loadPage(pageID)
-                // The page list can change while this is in flight; write the
-                // bytes under the identity they were loaded for, never under
-                // an index.
-                pageStates[stateIndex(of: pageID)].bytesLoaded(loaded)
+                // A store return, not a runtime report: page loads are
+                // deliberately never cancelled ("dedup, not staleness"), so a
+                // load *will* outlive a page deleted while it was in flight.
+                // Its bytes are a cache entry for a page that no longer exists,
+                // so dropping them loses nothing — and trapping here would turn
+                // an ordinary delete during a fetch into a crash.
+                guard let landing = stateIndexIfPresent(of: pageID) else {
+                    CanvasLog.event(
+                        .lifecycle,
+                        "page \(pageID) loaded after it was removed from the "
+                            + "document; its bytes are dropped"
+                    )
+                    continue
+                }
+                pageStates[landing].bytesLoaded(loaded)
             } catch {
                 CanvasLog.event(
                     .lifecycle,
                     "page \(pageID) failed to load: \(error)"
                 )
-                pageStates[stateIndex(of: pageID)].loadFailed(String(describing: error))
+                guard let landing = stateIndexIfPresent(of: pageID) else { continue }
+                pageStates[landing].loadFailed(String(describing: error))
             }
             liveRuntime?.reloadPage(pageID)
         }
@@ -874,7 +920,12 @@ final class EditorSession {
             )
             return
         }
-        guard phase == .ready, let pageIndex = stateIndexIfPresent(of: pageID) else { return }
+        guard phase == .ready else { return }
+        // Traps for an unknown page rather than returning: see `stateIndex(of:)`.
+        // A canvas reporting a stroke for a page this session does not hold has
+        // outlived a mutation that failed to reconcile the runtime, and the
+        // stroke is about to be accounted to whatever page is nearby.
+        let pageIndex = stateIndex(of: pageID)
         // A page whose bytes are not held has no canvas — it is a placeholder
         // in the runtime — so `edited()`'s trap for `.loading` and
         // `.unreadable` is unreachable from here rather than a case to route
@@ -896,8 +947,14 @@ final class EditorSession {
     /// held ink. A save landing in that window found only the last bytes that
     /// reached disk, wrote those over the newer ink, and marked the page clean.
     private func pageIsRetiring(_ pageID: UUID, snapshot: DrawingSnapshot) {
-        guard phase == .ready, let pageIndex = stateIndexIfPresent(of: pageID) else { return }
-        pageStates[pageIndex].retired(handingOver: snapshot)
+        guard phase == .ready else { return }
+        // Traps for an unknown page rather than returning, and this is the
+        // report where that matters most: a handover the session cannot file is
+        // a page's unsaved ink with nowhere to go. A *deleted* page never
+        // reaches here — the reconciler retires it without handing over — so
+        // arriving here for a page the session does not hold means a canvas
+        // outlived its page without that reconcile.
+        pageStates[stateIndex(of: pageID)].retired(handingOver: snapshot)
     }
 
     /// The visible page settled on a new page.
@@ -1565,7 +1622,13 @@ final class EditorSession {
         layerID: UUID,
         to transform: PageSpaceTransform
     ) -> Bool {
-        guard phase == .ready, index.pageIDs.contains(pageID) else { return false }
+        guard phase == .ready else { return false }
+        // No page-existence guard of its own: `transformLayer` refuses an
+        // unknown page with a typed `pageNotFound`, which the catch below logs
+        // and answers `false` to. That is the honest shape for this one report
+        // — the caller is a gesture, and a refusal it can act on beats both a
+        // trap and a silent `false`, because the canvas puts the layer back and
+        // the picture never disagrees with the file.
         do {
             _ = try transformLayer(layerID, onPage: pageID, to: transform)
             return true

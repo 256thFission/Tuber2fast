@@ -328,6 +328,29 @@ package final class PagedCanvasController: UIViewController, UIScrollViewDelegat
     /// callback for that — so this path performs the settle work itself,
     /// directly. Waiting on a settle callback here would mean the page never
     /// becomes editable after launch or append.
+    ///
+    /// ## Reconciling a list that changed
+    ///
+    /// A page that is in the runtime and not in the new order has been
+    /// **deleted**, and its live canvas is retired here — deliberately
+    /// *without* the handover `refreshWindow` performs. The distinction is the
+    /// whole of it: a page leaving the *window* is still a page of the
+    /// document, so its unsaved ink must reach the session's custody or it
+    /// dies with the canvas; a page leaving the *document* has been deleted by
+    /// an act the user confirmed, and handing its ink over would resurrect it
+    /// as custody for a page nothing will ever save — a session permanently
+    /// dirty for a page it no longer has.
+    ///
+    /// What still runs for a departed page is `willRetire()`. It is not part
+    /// of the handover: it cancels the page's in-flight render tasks, drops
+    /// the undo actions whose target is about to stop existing, and removes
+    /// the selection's two gesture recognizers from a view that is going away.
+    /// Skipping it would leak a dangling undo target, which is a crash.
+    ///
+    /// Everything below completes **synchronously inside this call** — the
+    /// property `scrollViewDidEndDragging`'s append correction depends on: by
+    /// the time this returns, the order, the content size, the slots, and the
+    /// offset all describe the new list.
     package func setPages(_ pageIDs: [UUID], current pageID: UUID) {
         precondition(!pageIDs.isEmpty, "a document always has at least one page")
         precondition(
@@ -339,14 +362,40 @@ package final class PagedCanvasController: UIViewController, UIScrollViewDelegat
             "page identities are unique within a document"
         )
 
+        // Before the order changes under them, and before `refreshWindow` can
+        // see them: it retires by "not in the window", which for a deleted page
+        // would take the handover path and hand a deleted page's ink into the
+        // session's custody.
+        let surviving = Set(pageIDs)
+        for (departedID, slot) in slots where !surviving.contains(departedID) {
+            slots[departedID] = nil
+            retire(departedID, slot, handingOver: false)
+        }
+        // A decode in flight for a departed page is cancelled by `retire`
+        // above, and needs no pass of its own: a decode is started only by
+        // `makeSlot`, whose slot is always filed in `slots`, so every entry in
+        // `pendingDecodes` has a slot and every departed slot is retired here.
+        // A second sweep was written, and deleted for being unable to fail —
+        // reverting `retire`'s cancellation left it green.
+
         let countChanged = pageIDs.count != order.count
         order = pageIDs
         currentPageID = pageID
 
         guard isViewLoaded, scrollView.bounds.width > 0 else { return }
         if countChanged { updateContentSize() }
+        // The offset is restated for the current *page*, whose position may
+        // have moved even when the count did not — a reorder, or a delete
+        // before it. Non-animated, so no delegate callback fires and no settle
+        // can mistake this for a turn the user made.
         scrollTo(page: currentPageIndex, animated: false)
+        // Survivors are re-framed inside here, from their new positions: a
+        // live canvas *moves*, it is never rebuilt, so no ink and no zoom
+        // state is touched by a page being inserted ahead of it.
         refreshWindow()
+        // Without this, deleting the page you are looking at leaves the
+        // successor without first responder: the tool picker is dead and the
+        // Pencil writes nowhere.
         livePage(pageID)?.becomeActivePage()
     }
 
@@ -542,25 +591,10 @@ package final class PagedCanvasController: UIViewController, UIScrollViewDelegat
         let position = currentPageIndex
 
         for (pageID, slot) in slots where !wanted.contains(pageID) {
-            // The page is leaving; a decode still running for it is work
-            // nobody will install, competing with the Pencil for the CPU.
-            cancelDecode(for: pageID)
-            switch slot {
-            case .canvas(let page):
-                session.pageIsRetiring(pageID, handingOver: page.drawingSnapshot())
-                // After the handover and before the release: the ink is safe,
-                // and what goes now is only this page's undo actions, whose
-                // target is about to stop existing.
-                page.willRetire()
-                page.willMove(toParent: nil)
-                page.view.removeFromSuperview()
-                page.removeFromParent()
-            case .placeholder(let view):
-                // Nothing to hand over: a placeholder holds no ink by
-                // construction.
-                view.removeFromSuperview()
-            }
             slots[pageID] = nil
+            // A page leaving the window is still a page of the document, so
+            // its ink must reach the session before its canvas is released.
+            retire(pageID, slot, handingOver: true)
         }
 
         // Nearest the current page first. It was left to right, which starts
@@ -575,6 +609,42 @@ package final class PagedCanvasController: UIViewController, UIScrollViewDelegat
         }
 
         layoutSlots()
+    }
+
+    /// Releases one slot, with or without handing its ink to the session.
+    ///
+    /// The caller has already removed the slot from `slots`: this owns the
+    /// teardown, not the bookkeeping, so there is no moment at which a
+    /// half-retired slot is reachable.
+    ///
+    /// **`handingOver` is the only difference between a page leaving the
+    /// window and a page leaving the document**, and it is a parameter rather
+    /// than two methods because everything else about the two is identical and
+    /// must stay identical — the cancellation, the undo teardown, the
+    /// parent/child unwind, and their order.
+    private func retire(_ pageID: UUID, _ slot: Slot, handingOver: Bool) {
+        // The page is leaving; a decode still running for it is work nobody
+        // will install, competing with the Pencil for the CPU.
+        cancelDecode(for: pageID)
+        switch slot {
+        case .canvas(let page):
+            if handingOver {
+                session.pageIsRetiring(pageID, handingOver: page.drawingSnapshot())
+            }
+            // After the handover and before the release: the ink is safe, and
+            // what goes now is this page's in-flight renders, its undo actions
+            // — whose target is about to stop existing — and its selection's
+            // recognizers. None of it reports to the session, which is what
+            // makes it safe to run for a page the session has already dropped.
+            page.willRetire()
+            page.willMove(toParent: nil)
+            page.view.removeFromSuperview()
+            page.removeFromParent()
+        case .placeholder(let view):
+            // Nothing to hand over: a placeholder holds no ink by
+            // construction.
+            view.removeFromSuperview()
+        }
     }
 
     /// Builds one slot. Still synchronous main-thread work — it constructs the
