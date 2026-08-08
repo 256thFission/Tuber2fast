@@ -368,6 +368,11 @@ private final class HeldLoadStore: DocumentStoring {
     }
 
     @discardableResult
+    func deletePageFileIfUnreferenced(pageID: UUID) async throws -> Bool {
+        try await underlying.deletePageFileIfUnreferenced(pageID: pageID)
+    }
+
+    @discardableResult
     func deleteLayerFileIfUnreferenced(layerID: UUID) async throws -> Bool {
         try await underlying.deleteLayerFileIfUnreferenced(layerID: layerID)
     }
@@ -429,6 +434,11 @@ private final class CountingStore: DocumentStoring {
 
     func loadAsset(assetID: UUID, format: AssetFormat) async throws -> Data {
         try await underlying.loadAsset(assetID: assetID, format: format)
+    }
+
+    @discardableResult
+    func deletePageFileIfUnreferenced(pageID: UUID) async throws -> Bool {
+        try await underlying.deletePageFileIfUnreferenced(pageID: pageID)
     }
 
     @discardableResult

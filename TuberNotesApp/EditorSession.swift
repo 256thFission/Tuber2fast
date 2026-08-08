@@ -38,6 +38,28 @@ enum LayerEditError: Error, Equatable {
     case noPDFLayerOnPage(UUID)
 }
 
+/// A page-list edit the session refuses. Each is a caller's mistake, a page
+/// that is not in a state to be copied, or the one rule the document form
+/// itself states — never a durable-form violation, which `DocumentStore` owns
+/// and fails loud on.
+enum PageEditError: Error, Equatable {
+    case sessionNotReady
+    case pageNotFound(UUID)
+    /// "A document always has at least one page" (`Contract.md` — Durable
+    /// form), refused at intake. `PagedCanvasController.setPages`'s
+    /// precondition stays as the loud backstop behind this polite one.
+    case lastPage
+    /// The page carries a layer this build refused to read. A copy of it
+    /// would save cleanly *without* that layer, because a refusal is held
+    /// outside the layer list and has no envelope to copy — which is the
+    /// "carried blind" outcome *Durable form* forbids. Refused rather than
+    /// silently narrowed.
+    case pageCarriesRefusedLayer(UUID)
+    /// The page's own bytes are not here, or could not be read, so there is
+    /// nothing to copy from.
+    case pageNotReady(UUID)
+}
+
 /// What a session does when `load()` answers `nil`: whether nobody has ever
 /// created this document, or somebody has and its index is gone.
 ///
@@ -891,6 +913,210 @@ final class EditorSession {
             "appended page \(index.currentPageIndex); pages=\(index.pageIDs.count)"
         )
         markDirty()
+    }
+
+    // MARK: - Page management
+
+    /// The tail of the chain of structural page-list mutations.
+    ///
+    /// Every page-list mutation runs behind this, in the order it was issued.
+    ///
+    /// **What actually enforces "a capture and a list mutation never overlap"
+    /// is `quiesceSaves`'s drain *loop*, not this tail** — and that distinction
+    /// is worth stating because it was learned by trying to break it. Two
+    /// operations racing both drain to quiescence, and whichever mutates first
+    /// immediately arms a save, which the other's loop then re-checks and waits
+    /// out. Reverting this whole method to `try await body()` leaves the suite
+    /// green: no test here can yet tell it from the drain loop alone.
+    ///
+    /// It is kept for the property the drain loop does not provide — that two
+    /// operations issued in an order run in that order, rather than in
+    /// whichever order the scheduler resumes their continuations. Nothing
+    /// observes that yet either, because deleting two pages commutes. The
+    /// operation that will make it observable is an insert issued behind a
+    /// delete, and if that test cannot distinguish it either, this belongs in
+    /// the same bin as the decode sweep that was written and deleted for being
+    /// unable to fail (`PagedCanvasController.setPages`).
+    ///
+    /// A tail rather than a lock because the window that matters opens across
+    /// `await`, where the main actor gives no exclusion at all.
+    @ObservationIgnored private var structuralTail: Task<Void, Never>?
+
+    /// Runs one page-list mutation with every other one held behind it.
+    ///
+    /// The body is responsible for the rest of the discipline, and every
+    /// operation below follows it in the same order: validate, quiesce the save
+    /// machinery, **re-validate after every suspension**, mutate synchronously,
+    /// then persist. Nothing observed before a suspension survives one.
+    /// `T: Sendable` because the result leaves the operation's task to reach
+    /// its caller. Every operation here answers `Void` or a fresh page's
+    /// `UUID`, so the constraint costs nothing and states the truth.
+    private func inStructuralGate<T: Sendable>(
+        _ body: @escaping @MainActor () async throws -> T
+    ) async throws -> T {
+        // No await between reading the tail and replacing it, so two callers
+        // arriving in the same turn of the main actor cannot both see the same
+        // predecessor.
+        let previous = structuralTail
+        let operation = Task { @MainActor () async throws -> T in
+            await previous?.value
+            return try await body()
+        }
+        // What the *next* caller waits on: `Void` and non-failing, so a refused
+        // operation does not poison the queue behind it.
+        structuralTail = Task { @MainActor in _ = try? await operation.value }
+        return try await operation.value
+    }
+
+    /// Brings the save machinery to a standstill: no timer armed, no pass in
+    /// flight.
+    ///
+    /// A loop rather than one await, and the timer is dropped on every pass,
+    /// because `performOneSave`'s exit arms a fresh debounce when the document
+    /// is still dirty — so cancelling once and awaiting once can return with a
+    /// timer running and a pass about to begin.
+    ///
+    /// It terminates because nothing here starts a save and the debounce is
+    /// dropped before each check: what it drains is the work already in flight.
+    private func quiesceSaves() async {
+        while true {
+            debounceTask?.cancel()
+            debounceTask = nil
+            guard let save = currentSave else { return }
+            await save.value
+        }
+    }
+
+    /// Removes one page and everything it owned.
+    ///
+    /// **Deleting a page with unsaved ink discards that ink**, deliberately:
+    /// the reconciler retires its canvas without a handover, so no custody
+    /// entry survives to keep the session dirty for a page it no longer has.
+    /// That is why the destructive operation is the one that gets a
+    /// confirmation in the UI rather than an undo — see the proposal's
+    /// argument, and `Contract.md` — Undo, which has no semantic undo domain
+    /// for this to live in.
+    func deletePage(_ pageID: UUID) async throws {
+        try await inStructuralGate { [self] in
+            guard phase == .ready, !isClosing else { throw PageEditError.sessionNotReady }
+            guard index.pageIDs.contains(pageID) else { throw PageEditError.pageNotFound(pageID) }
+            guard index.pageIDs.count > 1 else { throw PageEditError.lastPage }
+
+            await quiesceSaves()
+
+            // Re-established from scratch: a close may have landed, and an
+            // earlier link in the chain may have taken this very page.
+            guard phase == .ready, !isClosing else { throw PageEditError.sessionNotReady }
+            guard let position = index.pageIDs.firstIndex(of: pageID) else {
+                throw PageEditError.pageNotFound(pageID)
+            }
+            guard index.pageIDs.count > 1 else { throw PageEditError.lastPage }
+
+            // Everything the reclamation will need, read before the page's
+            // state is dropped.
+            let doomed = pageStates[position]
+            let hadAFile = !doomed.neverWritten
+            let ownedLayers = doomed.staticLayers
+            let inkLayerID = doomed.inkLayerID
+
+            // From here to `setPages` there is no suspension, which is what
+            // makes it impossible for a capture to begin mid-mutation.
+            var remaining = index.pages
+            remaining.remove(at: position)
+            let wasCurrent = position == index.currentPageIndex
+            let successor: Int = if wasCurrent {
+                // The page that visually slides under the finger; deleting the
+                // last page steps back onto its predecessor.
+                min(position, remaining.count - 1)
+            } else if position < index.currentPageIndex {
+                // A page ahead of the current one left, so the same *page* is
+                // now one position earlier.
+                index.currentPageIndex - 1
+            } else {
+                index.currentPageIndex
+            }
+            index = index.withPages(remaining, currentPageIndex: successor)
+            pageStates.remove(at: position)
+            indexDirty = true
+            alignedWithIndex()
+            pages.setPages(index.pageIDs, current: currentPageID)
+            retainRenderedLayers()
+            CanvasLog.event(
+                .canvas,
+                "deleted page \(pageID) at \(position); pages=\(index.pageIDs.count)"
+            )
+
+            // The index write is what makes the deletion durable. A crash
+            // before it reopens the document with the page still present —
+            // stale, never torn.
+            await saveIfNeeded()
+
+            // A page nobody ever wrote on has no file, no layer files, and no
+            // assets: the index never named it, so there is nothing on disk to
+            // reclaim and nothing to be an orphan.
+            guard hadAFile else { return }
+            await reclaimPage(pageID, layers: ownedLayers, inkLayerID: inkLayerID)
+        }
+    }
+
+    /// Reclaims a deleted page's files, **root to leaf in reference order**:
+    /// the page file, then its layer files, then their assets.
+    ///
+    /// The order is not a preference. Each step is answered by scanning the
+    /// level above it *on disk* — `deleteLayerFileIfUnreferenced` scans page
+    /// files, `deleteAssetIfUnreferenced` scans layer files — so while this
+    /// page's own file is still there it still names every one of its layers,
+    /// and reclaiming leaves-first reclaims **nothing at all** while leaving
+    /// orphan layer files pinning assets for the life of the document. An
+    /// interruption between any two steps leaves an orphan, never a dangling
+    /// ref, which is the mirror of the write order.
+    private func reclaimPage(
+        _ pageID: UUID,
+        layers: [LayerEnvelope],
+        inkLayerID: UUID
+    ) async {
+        // The same guard `deleteLayer` reclaims under, and for the same
+        // reason: the scans are blind to a layer list that exists only in
+        // memory, so while any page holds an unsaved one a reference can exist
+        // where disk cannot see it, and reclaiming would destroy a write-once
+        // asset a surviving page still needs.
+        guard !pageStates.contains(where: \.layersUnsaved) else {
+            CanvasLog.event(
+                .save,
+                "reclamation after deleting page \(pageID) skipped: unsaved layer "
+                    + "lists exist, so the on-disk reference scan cannot be "
+                    + "trusted; its files stay as inert orphans"
+            )
+            return
+        }
+
+        do {
+            try await store.deletePageFileIfUnreferenced(pageID: pageID)
+        } catch {
+            CanvasLog.event(
+                .save,
+                "page \(pageID) deleted, but its file was not removed: \(error); "
+                    + "it and everything it names are inert orphans"
+            )
+            // Nothing below can succeed while the page file survives naming
+            // them, so there is no point asking.
+            return
+        }
+
+        for layer in layers {
+            await reclaim(layer)
+        }
+        // The ink layer has a file like any other and references no asset, so
+        // it needs the first step of `reclaim` and not the second.
+        do {
+            try await store.deleteLayerFileIfUnreferenced(layerID: inkLayerID)
+        } catch {
+            CanvasLog.event(
+                .save,
+                "page \(pageID) deleted, but its ink layer file \(inkLayerID) was "
+                    + "not removed: \(error); it is an inert orphan"
+            )
+        }
     }
 
     // MARK: - Autosave
@@ -1807,10 +2033,21 @@ final class EditorSession {
         await saveIfNeeded()
 
         // Re-resolved rather than reused: `page` was computed before an await,
-        // and an index that outlives one is the class of bug this file already
-        // carries elsewhere. Pages are append-only today, which makes this
-        // caution rather than a fix.
-        if pageStates[stateIndex(of: pageID)].refusedLayers.count != refusalsBefore {
+        // and an index that outlives one is the class of bug this file used to
+        // carry. It is no longer caution — a page delete can win the race for
+        // the save this just awaited, and then the page and its layers are gone
+        // together. There is nothing left to reclaim and nothing left to tell
+        // the runtime, so this returns rather than trapping: the caller asked
+        // to delete a layer, and something deleted more than that.
+        guard let surviving = stateIndexIfPresent(of: pageID) else {
+            CanvasLog.event(
+                .canvas,
+                "page \(pageID) was deleted while layer \(layerID) was being "
+                    + "removed from it; the page took its layers with it"
+            )
+            return
+        }
+        if pageStates[surviving].refusedLayers.count != refusalsBefore {
             // A page that was refusing input may now accept it, so the runtime
             // rebuilds the placeholder into a canvas. Only ever reached from a
             // page that had a refusal, which is a page with no live canvas.

@@ -59,6 +59,11 @@ final class HeldSaveStore: DocumentStoring {
     }
 
     @discardableResult
+    func deletePageFileIfUnreferenced(pageID: UUID) async throws -> Bool {
+        try await underlying.deletePageFileIfUnreferenced(pageID: pageID)
+    }
+
+    @discardableResult
     func deleteLayerFileIfUnreferenced(layerID: UUID) async throws -> Bool {
         try await underlying.deleteLayerFileIfUnreferenced(layerID: layerID)
     }

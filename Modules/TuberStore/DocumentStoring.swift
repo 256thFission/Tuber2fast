@@ -51,6 +51,13 @@ package protocol DocumentStoring: Sendable {
     /// An imported original's bytes, for decoding off-main.
     func loadAsset(assetID: UUID, format: AssetFormat) async throws -> Data
 
+    /// Removes a page's file if the index no longer names it. The **first**
+    /// step of the same reclamation, and the one whose order matters: run
+    /// after the layer step it would reclaim nothing, because the page file
+    /// still names every layer the scan below asks about.
+    @discardableResult
+    func deletePageFileIfUnreferenced(pageID: UUID) async throws -> Bool
+
     /// Removes a layer's file if no page still names it. Reclamation is
     /// root-to-leaf and each step is optional: what it costs to skip is an
     /// orphan, which *Durable form* rules inert.

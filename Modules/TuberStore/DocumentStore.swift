@@ -193,6 +193,44 @@ package actor DocumentStore {
         return true
     }
 
+    /// Deletes one page's file, if the index on disk no longer names it — the
+    /// **first** step of the root-to-leaf deletion order, above layer files
+    /// and assets.
+    ///
+    /// Referenced-ness is answered from the index on disk, for the reason the
+    /// two steps below answer from the level above them: a page delete whose
+    /// index write failed still has the page named on disk, so the scan finds
+    /// it and the page file lives.
+    ///
+    /// **Its position in the order is load-bearing, and getting it wrong is
+    /// silent.** `deleteLayerFileIfUnreferenced` decides by scanning page
+    /// files; while this page's own file is still on disk it still names every
+    /// one of the page's layers, so every layer file survives — and
+    /// `deleteAssetIfUnreferenced` then scans those surviving layer files and
+    /// keeps their assets too. Reclaiming leaves first therefore reclaims
+    /// *nothing at all*, and leaves orphan layer files pinning assets for the
+    /// life of the document. Root first, always.
+    ///
+    /// A missing index is not an error: the whole document is gone, so nothing
+    /// references anything and the page file may go.
+    @discardableResult
+    package func deletePageFileIfUnreferenced(pageID: UUID) throws -> Bool {
+        let url = pageURL(pageID)
+        guard FileManager.default.fileExists(atPath: url.path) else { return false }
+
+        if FileManager.default.fileExists(atPath: indexURL.path) {
+            let index = try PropertyListDecoder().decode(
+                DocumentIndex.self,
+                from: Data(contentsOf: indexURL)
+            )
+            if index.pageIDs.contains(pageID) { return false }
+        }
+
+        try FileManager.default.removeItem(at: url)
+        CanvasLog.event(.save, "deleted page file \(pageID); the index no longer names it")
+        return true
+    }
+
     /// Deletes one layer's file, if no page still names it — the middle step of
     /// the root-to-leaf deletion order, between the page file dropping the ref
     /// and the asset dying.
