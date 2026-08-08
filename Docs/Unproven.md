@@ -22,6 +22,13 @@ Nothing here is a reason not to ship. It is a reason not to be surprised.
 
 ## Never exercised by hand
 
+- **Library name collisions have never met a case-sensitive volume.**
+  `LibraryStore` resolves collisions by asking the file system (`fileExists`
+  on the real path), never by string-comparing listings, precisely because
+  the device's data volume is case-sensitive while the pinned simulator's is
+  not — so `Notes` and `notes` are one name in CI and two on an iPad. The
+  mechanism is the right one, but its case-sensitive behavior has only ever
+  run where case does not exist; it belongs on the device checklist.
 - **Nothing has been exercised on the device since page turning landed.** No
   swipe, turn, zoom-versus-swipe, append, or multi-page relaunch has been
   performed by anyone. The unit tests drive turns by setting `contentOffset`
