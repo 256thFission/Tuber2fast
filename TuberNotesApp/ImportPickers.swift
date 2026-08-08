@@ -59,6 +59,49 @@ enum ImageImportPreparation {
     /// swaps the image's width and height.
     private static let transposedOrientations: ClosedRange<UInt32> = 5...8
 
+    /// The quality every HEIC this build writes is encoded at.
+    ///
+    /// A fresh choice, not JPEG's 0.9 carried over: with one alpha-carrying
+    /// format this knob now governs the *matte* as well as the colour, because
+    /// HEIC stores alpha as a separately coded auxiliary image. A quality that
+    /// is merely fine for photographs would soften the edge of a cut-out, and a
+    /// soft edge on an imported sticker is a wrong picture in a way that a
+    /// slightly soft photograph is not. So it stays high, and the reason it is
+    /// high is different from the reason JPEG's was.
+    static let heicCompressionQuality = 0.9
+
+    /// The one place this build encodes HEIC bytes.
+    ///
+    /// One site, so the alpha behaviour pinned by
+    /// `HEICAlphaTests.transparencySurvivesTheRoundTrip` is the behaviour every
+    /// stored asset actually gets. `nil` is a refusal — this build does not
+    /// have a second format to fall back to, and silently writing something
+    /// else is how a closed set stops being one.
+    ///
+    /// `CGImageDestination` rather than `CIContext.heifRepresentation`: it is
+    /// the same ImageIO the renderer's `downsample` reads back with, it does
+    /// embed the alpha auxiliary image (`urn:mpeg:hevc:2015:auxid:1`), and it
+    /// needs no `CIContext` — a GPU-backed object with a lifetime — on a path
+    /// that is otherwise pure bytes-to-bytes. The pin is what says the first of
+    /// those is true rather than hoped.
+    static func heicEncoded(_ image: CGImage) -> Data? {
+        let encoded = NSMutableData()
+        guard
+            let destination = CGImageDestinationCreateWithData(
+                encoded, UTType.heic.identifier as CFString, 1, nil
+            )
+        else {
+            return nil
+        }
+        CGImageDestinationAddImage(
+            destination,
+            image,
+            [kCGImageDestinationLossyCompressionQuality: heicCompressionQuality] as CFDictionary
+        )
+        guard CGImageDestinationFinalize(destination) else { return nil }
+        return encoded as Data
+    }
+
     /// Turns picked bytes into what `importImage` needs.
     ///
     /// `png` and `jpeg` sources keep their original bytes — the asset store is
