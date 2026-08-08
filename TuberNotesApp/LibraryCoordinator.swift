@@ -39,6 +39,12 @@ final class LibraryCoordinator {
     /// popovers, and the sheets all speak to one store over one root.
     let library: LibraryStore
 
+    /// The browser's one thumbnail cache, owned beside the library it renders
+    /// from so it survives open/close transitions of the browser view. The
+    /// cache's owner/bound/eviction are stated at its declaration, in
+    /// `LibraryThumbnailStore`.
+    let thumbnails = LibraryThumbnailStore()
+
     private(set) var openDocument: OpenDocument?
     private(set) var draining: DrainingSession?
 
