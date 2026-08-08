@@ -304,17 +304,54 @@ which is a different gap and is recorded above.
 
 Still asserted and not reproduced:
 
-- **`fetchPageData` computes its bounds before awaiting and indexes after.**
-  Latent only: nothing removes pages today.
 - **`DocumentStore.save` reports a page absent from the index as
   `missingPageFile`**, which names the wrong condition on a diagnostic path.
 - **`deleteOrphanedPages` has no caller**, so orphans from a failed save
   accumulate for the life of the document.
-- **The runtime is index-keyed while the session is identity-keyed.** Correct
-  today because the page list is append-only; the first delete or reorder
-  makes every callback a wrong-page write. The Handovers proposal's S8 (opaque
-  page tokens) is the answer, deliberately not built until such a feature
-  exists.
+
+Two are fixed and gone from that list. **The runtime is no longer index-keyed**
+— identity crosses the canvas seam, `SlotHost` captures a page ID rather than a
+position, and `setPages` reconciles a list that changed; the S8 opaque-token
+idea was considered and not built, because the codebase already had a stable
+identity and a translation layer is exactly what the change exists to remove.
+**`fetchPageData` now takes its candidate identities before its first await**,
+and its post-await writes go through a lookup that tolerates a page deleted
+while its load was in flight.
+
+## Page management has never been used by a person
+
+Insert, delete, reorder, and duplicate exist and are exercised only by tests
+driving `EditorSession` directly. Specifically unproven:
+
+- **No UI calls any of them.** There is no button, no menu, no drag, and no
+  delete confirmation — and the confirmation is not decoration: deleting a page
+  discards any unsaved ink on it, which is the trade taken deliberately in
+  place of an undo (`Contract.proposed.md` P4). Until that UI exists, the
+  destructive operation has no guard in front of it.
+- **Nothing has been felt.** Whether the offset restatement under a finger is
+  invisible or a visible jump, whether a live reorder reads as the pages moving
+  or as a jump, and whether deleting the page you are looking at lands
+  comfortably on its successor are all Phillip's verdict on a physical iPad.
+  The tests drive `setPages` and assert arithmetic.
+- **The re-quiesce inside `duplicatePage` has no test of its own.** A duplicate
+  whose source has been pruned must fetch its bytes, and it drains the save
+  machinery a second time afterwards because a drain performed before a
+  suspension has not been performed. Constructing a save that begins inside
+  that window needs a store that can hold a *page load* open, and
+  `HeldSaveStore` only holds saves. The reasoning is in the code; the check is
+  owed.
+- **A serializing queue for page edits was written and deleted**, because
+  nothing could observe it — including a test written specifically to catch
+  it, an insert issued beside a page together with that page's deletion. What
+  actually enforces "a capture and a list mutation never overlap" is the drain
+  *loop* plus the absence of any suspension inside a mutation. If a future
+  operation needs real mutual exclusion, the queue comes back **with the test
+  that fails without it**; `EditorSession`'s page-management section records
+  the experiment so it is not re-added on intuition.
+- **No document has been through a delete on a device**, so the reclamation
+  order — index, page file, layer files, assets — has been proven only against
+  a simulator's file system, where the volume is case-insensitive and
+  `removeItem` never contends with anything.
 
 ## Doc comments are not checked against the code
 

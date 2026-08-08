@@ -1051,3 +1051,125 @@ cache was argued carefully while the read that fills it was not (B5 in
   browser-serving fields.
 - **`UserDefaults` stays a forbidden token.** Browser preferences are a
   library sidecar, not process-global state.
+
+---
+
+# The page-management run's amendments (P-series)
+
+Five amendments, all **FORCED**: the code is written and green
+(`Docs/Forks/identity-keyed-pages-proposal.md`, revision 2, and the six
+commits that implement it). Insert, delete, reorder, and duplicate exist, so
+the sentences that assumed pages are only ever appended are now false in
+`Contract.md` and true nowhere.
+
+## P1. *Owners* — the runtime addresses pages by identity — **FORCED**
+
+Golden rule 7 currently reads:
+
+> 7. A `PageCanvasController` owns exactly one page's live drawing and renders
+> the geometry it is given. It is blind to page numbers and turns: it is told,
+> and never asks.
+
+Replace with:
+
+> 7. A `PageCanvasController` owns exactly one page's live drawing and renders
+> the geometry it is given. It is blind to page numbers and turns: it is told,
+> and never asks. **Every question and every report crossing the canvas seam
+> names a page by its identity, never by its position.** A position exists in
+> exactly two places: the canvas runtime's own scroll arithmetic, derived from
+> the order it was told, and the durable current-page index. A page-list
+> mutation reconciles the runtime **synchronously, before the mutating call
+> returns**.
+
+And add a row to the owner table, beside the runtime's:
+
+> | The rendered order — the page identities laid out, and which is current |
+> `PagedCanvasController` (told by `setPages`, never inferred) | user action |
+> app session |
+
+*Why:* an index is only the page it names for as long as the list does not
+change. Under a delete or a reorder a captured index addresses the *wrong
+page*, and the three failures that produces are silent: a stroke dirties a
+page the user never touched, a layer moves on the wrong page, and a retiring
+page's ink is handed into another page's custody. Identity is stable for the
+page's life, which is strictly longer than a slot's.
+
+## P2. *Owners* — pages are removed now, and the two worlds fail differently — **FORCED**
+
+The held-bytes paragraph and `stateIndex`'s premise both rest on "pages are
+never removed". Add, after the held-bytes paragraph:
+
+> Removing a page removes its state, its held bytes, and its custody together;
+> there is no residue of a page the document no longer has. Two kinds of
+> arrival name a page, and they fail differently. **A report from the canvas
+> runtime** — a drawing changed, a page retired, a layer moved, a turn settled
+> — naming a page the session does not hold is a defect and fails loud, because
+> every list mutation reconciles the runtime before it returns. **A return from
+> the store** — a page load, an asset write — naming a page that no longer
+> exists is dropped and logged, because such work is deliberately uncancelled
+> and may legitimately outlive the page that asked for it; its result is a
+> cache entry for a page that is gone, so dropping it loses nothing.
+
+*Why:* without the distinction, one of the two has to be wrong. Trapping on a
+store return turns an ordinary delete-during-a-load into a crash; tolerating a
+runtime report turns a wrong-page write into silence.
+
+## P3. *Durable form* — deleting a page, in reference order — **FORCED**
+
+Add to the bulleted rules in *Durable form*:
+
+> - **Deleting a page rewrites the index first and reclaims its files second,
+>   root to leaf in reference order: the page file, then its layer files, then
+>   their assets.** Each step is answered by scanning the level above it on
+>   disk, so the order is not a preference — while the page file survives it
+>   still names every layer of the page, so a leaves-first pass reclaims
+>   nothing at all and leaves orphan layer files pinning assets for the life of
+>   the document. An interruption between any two steps leaves an orphan, never
+>   a dangling ref, which is the mirror of the write order.
+> - **A document always has at least one page**, and deleting the last one is
+>   refused rather than trapped: it is a thing a person can ask for, not a
+>   defect in a caller.
+
+*Why:* the first bullet is the defect this run actually found. It was written
+the other way round in the proposal's first revision, and against the real
+scans that version is a no-op — proven by planting it, which leaves both the
+layer file and the asset on disk.
+
+## P4. *Navigation* and *Undo* — page edits are documents edits, and are not undoable — **FORCED**
+
+Add to *Undo*:
+
+> Inserting, deleting, reordering, and duplicating pages are document edits
+> with no undo. There is no semantic undo domain for them to live in, and
+> PencilKit's per-page manager never learns of them — it cannot, because it
+> does not survive the page turn that a structural edit implies. **Deletion is
+> confirmed, not undone**: prevention where restoration is unaffordable.
+> Deleting a page discards any unsaved ink on it, deliberately — the page's
+> canvas is retired without the handover a page leaving the *window* performs,
+> because taking custody of ink for a page nothing will ever save would leave
+> the session permanently dirty for a page it no longer has.
+
+*Why:* an undoable delete needs the session to retain the deleted page's ink,
+layers, and position — a second custody, which golden rule 5 forbids — and to
+register with a manager owned by a canvas that may not exist. This is a
+decision, and stating it is what keeps it from reading as an omission.
+
+## P5. *Saving* — a capture and a list mutation never overlap — **FORCED**
+
+Add to *Saving*, after the `saveIfNeeded` pseudocode:
+
+> A page-list mutation brings the save machinery to a standstill before it
+> touches the list: it cancels the debounce and drains any pass in flight, in a
+> **loop** — because a pass's own exit arms a fresh debounce — and then mutates
+> with no suspension between its last validation and the end of the mutation.
+> An operation that must suspend part-way through drains again afterwards; a
+> drain performed before a suspension has not been performed. A capture and a
+> list mutation therefore never overlap, and no capture can meet a page that
+> has stopped existing.
+
+*Why:* the first draft of this rule said the mutation "waits out the save in
+flight", which is a check rather than a critical section — a save that begins
+between the check and the mutation defeats it. The loop is what makes the
+statement true. A serializing queue was also written, and deleted: nothing
+could observe it, and `EditorSession`'s page-management section records the
+experiment so it is not re-added without a test.
