@@ -256,6 +256,13 @@ final class PageBackdrop {
             page.backgroundColor = Self.refusedTint
             hasTexture = false
             CanvasLog.event(.canvas, "static layers refused: \(why)")
+
+        case .cancelled:
+            // Correct code cannot reach this: a render is cancelled only when
+            // nobody is left to install it, and the controller re-checks its
+            // own cancellation before calling here. Showing anything would
+            // paint a page the user swiped past.
+            preconditionFailure("a cancelled render was handed to the backdrop")
         }
         CATransaction.commit()
     }

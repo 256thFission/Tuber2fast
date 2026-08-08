@@ -86,7 +86,29 @@ package actor StaticLayerRenderer {
     /// the layer used to be — a wrong picture the caller then records as
     /// satisfied. A non-matching request starts its own render and takes over
     /// the slot; the superseded task still answers its own awaiters.
+    ///
+    /// This is a **dedup** structure and not a staleness one
+    /// (`CONTRIBUTING.md` — Cancellation): it answers "is someone already
+    /// doing this?", never "is this still wanted?". The second question is
+    /// answered by `renderAwaiters` below.
     private var inFlight: [CompositeKey: (request: StaticLayerRequest, task: Task<StaticLayerRender, Never>)] = [:]
+
+    /// The awaiters of each in-flight render that have not been cancelled,
+    /// as tickets.
+    ///
+    /// A render exists only to answer callers. When the last of them goes away
+    /// — the page turned, the layer moved, the canvas retired — the render is
+    /// cancelled and its slot cleared, which is how a superseded decode
+    /// actually stops rather than merely being ignored. Counting rather than
+    /// cancelling on the first departure is what preserves the in-flight join:
+    /// a second canvas awaiting the same composite keeps it alive, which
+    /// `inFlightDedupIsTransformAware` and `aJoinedRenderSurvivesOneAwaiterLeaving`
+    /// hold together.
+    ///
+    /// Keyed by the task rather than by `CompositeKey`, because a superseded
+    /// task keeps its awaiters after a newer request has taken its slot.
+    private var renderAwaiters: [Task<StaticLayerRender, Never>: Set<Int>] = [:]
+    private var nextAwaiterTicket = 0
 
     /// Awaited by every render task before it draws, when set. Exists so a
     /// test can hold a render in flight deterministically; the app never sets
@@ -165,6 +187,10 @@ package actor StaticLayerRenderer {
     /// viewer on iOS does, and `PageCanvasController` enforces it by requesting
     /// only at layout and at a layer edit.
     package func composite(for request: StaticLayerRequest) async -> StaticLayerRender {
+        // The cheapest half of the win: a request whose caller was cancelled
+        // before this ran — five pages into a flick — reaches no decoder at
+        // all.
+        if Task.isCancelled { return .cancelled }
         guard !request.layers.isEmpty else { return .empty }
         precondition(
             request.pixelsPerPagePoint.isFinite && request.pixelsPerPagePoint > 0,
@@ -182,7 +208,7 @@ package actor StaticLayerRenderer {
         // Join a running render only when the *whole* request matches — the
         // key alone says nothing about transforms.
         if let running = inFlight[key], running.request == request {
-            return await running.task.value
+            return await join(running.task, key: key)
         }
 
         // KNOWN DEFECT: a `retain(layerIDs:)` that lands while this render is
@@ -202,18 +228,74 @@ package actor StaticLayerRenderer {
             return await Self.render(request, store: store)
         }
         inFlight[key] = (request, task)
-        let render = await task.value
+        let render = await join(task, key: key)
 
         // Only the key's latest render is remembered. A superseded render —
         // one whose slot a newer request took over — still answers its own
         // awaiters above, but caching it would park a stale transform under a
-        // key the newer request then misses forever.
+        // key the newer request then misses forever. A cancelled render has no
+        // slot either: `abandon` cleared it, so the check below is already
+        // false and nothing half-drawn is ever cached.
         if inFlight[key]?.task == task {
             inFlight[key] = nil
             remember(render, for: request, key: key)
         }
         return render
     }
+
+    /// Awaits one render as one awaiter, and cancels it if this awaiter was
+    /// the last one that wanted it.
+    ///
+    /// The cancellation handler is why this exists at all: `Task { }` is
+    /// unstructured, so cancelling the canvas's composite task does not reach
+    /// the render it is waiting on. The handle is shared between awaiters by
+    /// design (the in-flight join), so the render may only be cancelled once
+    /// every awaiter has gone — which is what this counts.
+    private func join(
+        _ task: Task<StaticLayerRender, Never>,
+        key: CompositeKey
+    ) async -> StaticLayerRender {
+        nextAwaiterTicket += 1
+        let ticket = nextAwaiterTicket
+        renderAwaiters[task, default: []].insert(ticket)
+
+        let render = await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            // The handler runs synchronously on the cancelling task, so the
+            // bookkeeping hops back here. One hop per abandoned render, at
+            // page-turn and selection frequency — never per input sample.
+            Task { await self.abandon(task, ticket: ticket, key: key) }
+        }
+
+        renderAwaiters[task]?.remove(ticket)
+        if renderAwaiters[task]?.isEmpty == true { renderAwaiters[task] = nil }
+        return render
+    }
+
+    /// One awaiter stopped wanting a render.
+    private func abandon(
+        _ task: Task<StaticLayerRender, Never>,
+        ticket: Int,
+        key: CompositeKey
+    ) {
+        guard var outstanding = renderAwaiters[task] else { return }
+        outstanding.remove(ticket)
+        guard outstanding.isEmpty else {
+            renderAwaiters[task] = outstanding
+            return
+        }
+        renderAwaiters[task] = nil
+        task.cancel()
+        // Cleared in the same step as the cancel, so a request arriving after
+        // this point starts a fresh render instead of joining one already on
+        // its way to `.cancelled`.
+        if inFlight[key]?.task == task { inFlight[key] = nil }
+    }
+
+    /// Read only by tests: that a cancelled render's slot is released is
+    /// otherwise observable only as the absence of something.
+    var inFlightRenderCount: Int { inFlight.count }
 
     // MARK: - The prefetch warm
 
@@ -228,9 +310,10 @@ package actor StaticLayerRenderer {
     /// touching the entry's recency: a warm is speculation, and speculation
     /// must not displace what a user actually looked at in the LRU order. A
     /// warm for a page that leaves the window before it lands is dropped by
-    /// the next `retain`, which is the droppability this path needs —
-    /// cancellation buys nothing a bounded, self-correcting cache does not
-    /// already give (the accepted shape of review finding 13).
+    /// the next `retain`, which is the droppability this path needs — the
+    /// session holds no handle to a warm and cancels nothing, because a warm
+    /// that lands is a cache hit for the next turn rather than wasted work.
+    /// Were one ever cancelled, `composite`'s join would carry it through.
     package func warm(_ request: StaticLayerRequest) async {
         guard !request.layers.isEmpty else { return }
         let key = CompositeKey(request)
@@ -265,6 +348,12 @@ package actor StaticLayerRenderer {
     /// intersects per layer, so a caller that clamps can never be refused for
     /// geometry.
     package func lens(for request: StaticLayerRequest, visibleRect: CGRect) async -> StaticLayerRender {
+        // No task handle and no join: a lens is never shared, so this call and
+        // everything below it runs inside the caller's own task and inherits
+        // its cancellation directly. That is the ordinary case
+        // (`CONTRIBUTING.md` — Cancellation); `composite`'s ticketing exists
+        // only because its render handle is shared.
+        if Task.isCancelled { return .cancelled }
         precondition(
             request.pixelsPerPagePoint.isFinite && request.pixelsPerPagePoint > 0,
             "a lens at \(request.pixelsPerPagePoint) pixels per page point is not a level of detail"
@@ -299,6 +388,9 @@ package actor StaticLayerRenderer {
         guard widthPixels > 0, heightPixels > 0 else {
             return .refused("a lens of \(widthPixels)x\(heightPixels) pixels is not a viewport")
         }
+        // Before the viewport-sized context is allocated: a settle the user
+        // has already zoomed away from allocates nothing.
+        if Task.isCancelled { return .cancelled }
 
         guard let context = CGContext(
             data: nil,
@@ -324,6 +416,8 @@ package actor StaticLayerRenderer {
         context.translateBy(x: -visibleRect.minX, y: -visibleRect.minY)
 
         for layer in request.layers {
+            // One checkpoint per layer, for the reason `render` has one.
+            if Task.isCancelled { return .cancelled }
             let transform = layer.pageSpaceTransform
             guard transform.isInvertible else {
                 return .refused("layer \(layer.layerID) has a singular transform and is not placeable")
@@ -470,7 +564,14 @@ package actor StaticLayerRenderer {
     /// the composite where it already is. That ordering matters: the composite
     /// may only drop a layer once something else is drawing it, or the layer
     /// would simply vanish.
+    ///
+    /// A cancelled lift also answers `nil`, which is safe for exactly one
+    /// reason: the only task that can be cancelled here is the caller's own,
+    /// and `PageCanvasController` re-checks its own cancellation before it
+    /// treats `nil` as "this layer cannot be lifted". Shared like `composite`
+    /// is, this would need `composite`'s ticketing; a lift is never shared.
     package func sourceImage(for layer: LayerEnvelope, at pixelsPerPagePoint: Double) async -> CGImage? {
+        if Task.isCancelled { return nil }
         precondition(
             pixelsPerPagePoint.isFinite && pixelsPerPagePoint > 0,
             "a source at \(pixelsPerPagePoint) pixels per page point is not a level of detail"
@@ -513,6 +614,10 @@ package actor StaticLayerRenderer {
             return nil
         }
 
+        // After the read and before the decode: the selection moved on while
+        // the asset was coming off disk, so the decode is nobody's.
+        if Task.isCancelled { return nil }
+
         // The same bound the composite decodes to, so a lifted layer is exactly
         // as sharp as the one it replaced and no sharper.
         return downsample(bytes, maxPixelSize: maxPixelSize(of: layer.pageSpaceTransform, at: scale))
@@ -552,6 +657,14 @@ package actor StaticLayerRenderer {
     }
 
     private func remember(_ render: StaticLayerRender, for request: StaticLayerRequest, key: CompositeKey) {
+        if case .cancelled = render {
+            // Unreachable: a render is cancelled only by `abandon`, which
+            // clears the slot in the same step, and `composite` remembers only
+            // the render still holding the slot. Stated as a trap because the
+            // alternative — caching half-drawn pixels under a live key — is a
+            // wrong picture served forever after.
+            preconditionFailure("a cancelled render reached the cache")
+        }
         let bytes: Int
         if case .composited(let composite) = render { bytes = composite.byteCount } else { bytes = 0 }
 
@@ -635,6 +748,11 @@ package actor StaticLayerRenderer {
         placed.reserveCapacity(request.layers.count)
 
         for layer in request.layers {
+            // The honest checkpoint of this function: one per layer, before
+            // the decode that is the expensive thing. A ten-layer page
+            // superseded mid-flick stops at the next layer rather than
+            // decoding the remaining nine (`CONTRIBUTING.md` — Cancellation).
+            if Task.isCancelled { return .cancelled }
             let transform = layer.pageSpaceTransform
             guard transform.isInvertible else {
                 return .refused("layer \(layer.layerID) has a singular transform and is not placeable")
@@ -739,6 +857,11 @@ package actor StaticLayerRenderer {
                 )
             ))
         }
+
+        // The second honest checkpoint, and the one review finding 13 is
+        // about: the page-sized context below is the ~24 MB allocation, and a
+        // flick used to hold one per superseded render.
+        if Task.isCancelled { return .cancelled }
 
         let widthPixels = Int((request.geometry.width * scale).rounded())
         let heightPixels = Int((request.geometry.height * scale).rounded())
@@ -902,7 +1025,7 @@ package struct StaticComposite: Sendable {
     package let builtOffMain: Bool
 }
 
-/// What a page's static stack renders as. Three outcomes and no fourth: there
+/// What a page's static stack renders as. Four outcomes and no fifth: there
 /// is deliberately no "partially rendered" case.
 package enum StaticLayerRender: Sendable {
     /// The page has no static layers. Not a failure — it is every page in a
@@ -912,4 +1035,13 @@ package enum StaticLayerRender: Sendable {
     /// The stack could not be rendered honestly. The page shows a refusal
     /// tint, never a composite missing a layer.
     case refused(String)
+    /// Nobody was left who wanted this render, so it stopped where it was.
+    ///
+    /// Its own case rather than a refusal, and the distinction is load-bearing
+    /// twice: a refusal is cached (assets are write-once, so a refusal cannot
+    /// go stale) and a stopped render must never be, and a refusal paints the
+    /// page's refusal tint, which a page the user merely swiped past must
+    /// never flash. Nothing installs this — the only caller that can receive
+    /// it is one that was itself cancelled.
+    case cancelled
 }

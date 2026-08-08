@@ -128,6 +128,21 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
     /// list itself rather than of a delegate's judgement.
     private(set) var selection: LayerSelectionRuntime?
 
+    /// The three background pipelines this controller owns, held so that work
+    /// nobody will install stops rather than merely being ignored
+    /// (`CONTRIBUTING.md` — Cancellation). Each is cancelled by its own
+    /// supersession and all three by `willRetire`, which is the five-page
+    /// flick: a page that left the live window decodes nothing more.
+    ///
+    /// The generation counters below survive alongside them, and that is the
+    /// rule rather than an oversight: cancellation is asynchronous, so a
+    /// decode that finished microseconds before the cancel landed is still a
+    /// completed result looking for somewhere to go. The counter is what makes
+    /// installing it impossible; the cancel is what stops the work.
+    private var liftTask: Task<Void, Never>?
+    private var compositeTask: Task<Void, Never>?
+    private var lensTask: Task<Void, Never>?
+
     /// Increments on every lifted-source request, so an image that arrives
     /// after the selection moved on is dropped rather than shown.
     private var liftGeneration = 0
@@ -149,6 +164,11 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
 
     /// The request currently rendering or rendered, so a repeated layout pass
     /// at one size asks for nothing.
+    ///
+    /// **Dedup, not staleness** (`CONTRIBUTING.md` — Cancellation): it answers
+    /// "is this already asked for?", which is why an equal request must not
+    /// cancel the one in flight — that would restart the identical decode on
+    /// every layout pass. Staleness here is `compositeGeneration`'s job.
     private var renderedRequest: StaticLayerRequest?
 
     /// The last composite request this controller issued, read only by tests:
@@ -578,6 +598,8 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         staticLayers = layers
         renderedRequest = nil
         compositeGeneration += 1
+        // Whatever is decoding is decoding a list this page no longer has.
+        compositeTask?.cancel()
         // A lens rendered from the old list is a picture of a page that no
         // longer exists.
         invalidateLens()
@@ -658,6 +680,8 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         invalidateLens()
         liftGeneration += 1
         let generation = liftGeneration
+        // The previous selection's decode is for a layer nothing will lift.
+        liftTask?.cancel()
         // Whatever swap was queued is for a selection that no longer exists.
         pendingLift = nil
 
@@ -671,9 +695,12 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
             return
         }
 
-        Task { [weak self] in
+        liftTask = Task { [weak self] in
             let image = await staticRenderer.sourceImage(for: selected, at: scale)
-            guard let self, self.liftGeneration == generation else { return }
+            // Cancellation first, because a cancelled decode answers `nil` and
+            // `nil` otherwise means "this layer cannot be lifted" — a sentence
+            // that would be logged about a selection nobody made.
+            guard !Task.isCancelled, let self, self.liftGeneration == generation else { return }
             guard let image else {
                 // Nothing can draw this layer live, so nothing may take it out
                 // of the composite. Selection still works; the drag would move
@@ -778,15 +805,19 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
 
         compositeGeneration += 1
         let generation = compositeGeneration
+        // After the `request != renderedRequest` guard above, so re-asking for
+        // the composite already in flight never cancels it — only a genuinely
+        // different request does.
+        compositeTask?.cancel()
         backdrop.compositeRequested()
 
         // One task per composite, at page-build and viewport frequency — not
         // per input sample, which is what `Contract.md` — Performance forbids.
         // Nothing is decoded here; the main thread's whole share of this
         // pipeline is the `contents` assignment inside `show`.
-        Task { [weak self] in
+        compositeTask = Task { [weak self] in
             let render = await staticRenderer.composite(for: request)
-            guard let self, self.compositeGeneration == generation else { return }
+            guard !Task.isCancelled, let self, self.compositeGeneration == generation else { return }
             self.backdrop?.show(render)
             if let pending = self.pendingLift {
                 // The A→B swap: this composite re-includes the previously
@@ -862,6 +893,10 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
     /// than the soft base underneath it.
     private func invalidateLens() {
         lensGeneration += 1
+        // One `cancel` on a handle that is usually nil, next to the increment
+        // that is already paid every scroll tick.
+        lensTask?.cancel()
+        lensTask = nil
         backdrop?.hideLens()
     }
 
@@ -912,6 +947,7 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         )
         lensGeneration += 1
         let generation = lensGeneration
+        lensTask?.cancel()
         #if DEBUG
         lensRequestCountForTesting += 1
         lensRequestForTesting = (clamped, lensScale)
@@ -920,9 +956,9 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         // One task per settle — settle frequency, never input frequency. The
         // render runs on the global executor; the main thread's whole share
         // is the `contents` assignment inside `showLens`.
-        Task { [weak self] in
+        lensTask = Task { [weak self] in
             let render = await staticRenderer.lens(for: request, visibleRect: clamped)
-            guard let self, self.lensGeneration == generation else { return }
+            guard !Task.isCancelled, let self, self.lensGeneration == generation else { return }
             guard case .composited(let sharp) = render else {
                 if case .refused(let why) = render {
                     // The base is still on screen and still honest — soft is
@@ -1131,6 +1167,18 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
     /// has ever claimed (`Contract.md` — Navigation: turning is not undoable),
     /// and a dangling target is a crash, so the safe half is taken here.
     func willRetire() {
+        // Nothing this page has in flight can ever be installed again, so it
+        // stops here. This is the flick: five pages of superseded decodes end
+        // at the turn that superseded them rather than competing with the
+        // Pencil on the page the user actually landed on
+        // (`CONTRIBUTING.md` — Cancellation).
+        //
+        // Retirement is after the *handover*, which is synchronous by contract
+        // and is not a task — there is no save or handover here to lose.
+        compositeTask?.cancel()
+        liftTask?.cancel()
+        lensTask?.cancel()
+
         canvasView.undoManager?.removeAllActions(withTarget: self)
         // The selection is canvas-session state and dies with the canvas. It
         // also owns two recognizers on a view that is about to go, so leaving

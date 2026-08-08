@@ -34,6 +34,13 @@ package struct DrawingSnapshot: Sendable {
     /// derives the autosave debounce from it (`Contract.md` — Saving): the cost of
     /// a whole-drawing serialization is only knowable here, and measuring it a
     /// second time on the session side would mean serializing twice.
+    ///
+    /// `Task.detached` rather than a bare `nonisolated` call, for both of the
+    /// reasons `CONTRIBUTING.md` — Getting off the main actor allows: it fixes
+    /// the priority at `.utility`, and a detached task inherits no
+    /// cancellation, which is what this path wants. These are the bytes of a
+    /// save already in progress — protected work, and uncancellable here by
+    /// construction rather than by anyone remembering.
     package func serialized() async -> (data: Data, duration: Duration) {
         await Task.detached(priority: .utility) { [self] in
             let clock = ContinuousClock()

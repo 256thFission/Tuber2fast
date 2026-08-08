@@ -150,6 +150,10 @@ struct RootCanvasView: View {
     private func importPickedImage(_ data: Data) {
         Task {
             do {
+                // Detached for the first of the two reasons
+                // `CONTRIBUTING.md` — Getting off the main actor allows: the
+                // preparation is a synchronous call and this is a main-actor
+                // context, so nothing else sheds the isolation.
                 let prepared = try await Task.detached(priority: .userInitiated) {
                     try ImageImportPreparation.prepare(data)
                 }.value
@@ -172,6 +176,8 @@ struct RootCanvasView: View {
     private func importPickedPDF(_ url: URL) {
         Task {
             do {
+                // Detached to shed main-actor isolation for a synchronous
+                // read, as `importPickedImage` is.
                 let bytes = try await Task.detached(priority: .userInitiated) {
                     try PickedFileReading.read(url)
                 }.value

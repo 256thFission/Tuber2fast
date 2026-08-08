@@ -13,11 +13,21 @@ final class EditorLifecycle {
     let session: EditorSession
 
     @ObservationIgnored private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
+    /// **Protected: never cancelled** (`CONTRIBUTING.md` — Cancellation). The
+    /// background flush is the last write the process gets, and the lease it
+    /// holds is what buys the time to finish it. Each departure chains after
+    /// the one before rather than superseding it.
     @ObservationIgnored private var flushTask: Task<Void, Never>?
 
     /// Increments per departure. A flush ends the lease only if it is still
     /// the latest one, so an earlier flush finishing cannot hand the lease
     /// back underneath a later departure's flush that is still writing.
+    ///
+    /// A currency check and deliberately **not** cancellation: the earlier
+    /// flush is not superseded work, it is a write in progress. What the later
+    /// departure supersedes is only the *right to end the lease*, and that is
+    /// a comparison at the moment of ending it — exactly the case the
+    /// cancellation rule carves out.
     @ObservationIgnored private var flushGeneration = 0
 
     init(session: EditorSession) {

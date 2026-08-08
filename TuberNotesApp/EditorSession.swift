@@ -254,6 +254,14 @@ final class EditorSession {
 
     /// Pages whose bytes are being fetched. Prevents a scroll back and forth
     /// from starting the same load repeatedly.
+    ///
+    /// **Dedup, not staleness** (`CONTRIBUTING.md` — Cancellation), and no
+    /// task handle on purpose. A page load is not superseded by a turn: its
+    /// bytes are filed under the page's own ID whenever they land, a page that
+    /// left the window still needs them when it returns, and a load abandoned
+    /// half way leaves the page `.loading` — which the contract's *Lifecycle*
+    /// says is not editable. Cancelling here would trade a bounded disk read
+    /// for a page that says nothing and takes no ink.
     @ObservationIgnored private var pageLoadsInFlight: Set<UUID> = []
 
     /// The save in progress, or `nil`. A save is in flight iff this is
@@ -263,7 +271,17 @@ final class EditorSession {
     /// hand-rolled waiter array this replaces was never observed to leak, but
     /// it had to be re-audited every time it was touched; a task handle does
     /// not.
+    ///
+    /// **Protected: never cancelled** (`CONTRIBUTING.md` — Cancellation). This
+    /// task owns pages already marked `.saving`, and only its own return path
+    /// moves them out of that state. Cancelling it strands them there — ink
+    /// that is neither on disk nor recapturable, which is the one outcome that
+    /// outranks every saving of work this rule exists to do.
     private var currentSave: Task<Void, Never>?
+
+    /// The debounce, and the counter-example: cancelling this is the ordinary
+    /// path — every edit re-arms it — because it drops a *timer* and never a
+    /// capture.
     private var debounceTask: Task<Void, Never>?
 
     /// Saves that have failed in a row, reset by the first success.
@@ -299,6 +317,11 @@ final class EditorSession {
     /// `RootCanvasView.task` may be restarted as views move through the scene
     /// lifecycle. Exactly one load is allowed to cross the store boundary; later
     /// callers await that attempt instead of racing a second load over live ink.
+    ///
+    /// **Protected: never cancelled** (`CONTRIBUTING.md` — Cancellation). It
+    /// is the one load that has to complete before any canvas is editable; a
+    /// cancelled start leaves a session stuck in `.loading` with no second
+    /// attempt, because this handle is what makes the attempt singular.
     private var startTask: Task<Void, Never>?
 
     /// `debounce` is injectable only so tests need not wait 500 ms of real time.

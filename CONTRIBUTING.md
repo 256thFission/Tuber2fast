@@ -236,6 +236,67 @@ next person, which is worse than not having it.
   but no process-global singleton: future scenes and virtualized page editors
   must be able to own independent active canvases.
 
+## Cancellation
+
+Background work nobody will use must **stop**, not merely be ignored. A
+five-page flick used to run every superseded decode to completion, competing
+with the Pencil for the same CPU — which loses against this project's own
+priority order before anything is measured.
+
+One idiom, in two halves that are used together:
+
+- **Structured cancellation where the work is droppable.** Hold the `Task`,
+  cancel it the moment its result stops being wanted, and check
+  `Task.isCancelled` at honest checkpoints inside the work — before a decode,
+  between layers, after an `await` that could have taken a while, before a
+  page-sized allocation. Checkpoints go where the expense is; a check that
+  guards nothing is decoration.
+- **A currency check at the moment a result is installed, and only there.**
+  Cancellation is asynchronous, so a decode that finished microseconds before
+  the cancel landed is still a completed result looking for somewhere to go.
+  The install site compares — a generation counter, a request equality — and
+  that comparison, not the cancel, is what makes a wrong picture impossible.
+
+So: cancel so the work stops, compare so what already finished cannot install
+stale. **A generation counter with no cancellation is wasted work; a cancel
+with no comparison is a race.** Sites that only compare, with no droppable
+work behind them, say at the declaration why comparison is the whole answer.
+
+**Dedup is not staleness.** `pageLoadsInFlight` and the renderer's in-flight
+join answer "is someone already doing this?" — not "is this still wanted?".
+They are not cancellation mechanisms and must not become them: re-asking for
+the render already in flight has to *join* it, never cancel and restart it.
+Each such structure says which question it answers where it is declared.
+
+**Some work may never be cancelled**, because cancelling it loses ink or
+strands it. Nothing joins this list without a reason of the same kind:
+
+| Task | Why it is protected |
+|---|---|
+| `EditorSession.currentSave` | it owns pages already marked `.saving`, and only its own return moves them out; cancelled, they are stranded — ink neither on disk nor recapturable |
+| `EditorSession.startTask` | the one load allowed to cross the store boundary before any canvas is editable; cancelled, the session stays `.loading` with no second attempt |
+| `EditorLifecycle.flushTask` | the last write the process gets, holding the execution lease that buys the time to finish it |
+| `DrawingSnapshot.serialized`'s detached task | the bytes of a save in progress; `Task.detached` makes it uncancellable by construction rather than by anyone remembering |
+| the page handover | synchronous by contract (`Contract.md` — Navigation) and not a task at all; it must never become one |
+
+A cancelled `Task.sleep` is the ordinary outcome, not a failure, and is caught
+by name in a two-line `do`/`catch` — never `try?`, which answers a genuine
+failure with the same silence.
+
+## Getting off the main actor
+
+Three idioms exist. Each has one situation, chosen by what the work owns:
+
+| Situation | Idiom | Why |
+|---|---|---|
+| off-main work over shared mutable state | `actor` | serialized access is the type's job rather than a convention — `DocumentStore`, `StaticLayerRenderer` |
+| heavy work over values, owning no state | `nonisolated` (usually `static`) `async func` | runs on the generic executor, so it never occupies an actor's queue behind another page's request — and it runs *in the caller's task*, so it inherits the cancellation the checkpoints above depend on |
+| a *synchronous* call that must leave the main actor, or work that must outlive its caller | `Task.detached` | the only two honest reasons, and the site names which one it is |
+
+The middle row is the default for anything expensive. Reach for the third
+sparingly: detaching also detaches cancellation, which is a feature exactly
+once — for protected work — and a silent leak of effort everywhere else.
+
 ## When a test fails, find out who is wrong
 
 The assertion is wrong at least as often as the code. `UIScrollView` reports
