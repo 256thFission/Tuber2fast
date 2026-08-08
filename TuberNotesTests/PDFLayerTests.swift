@@ -956,10 +956,11 @@ struct PDFLayerTests {
         await session.saveIfNeeded()
         #expect(session.lastSaveError == nil)
 
-        let before = try scratch.snapshot()
-        // Far enough apart that an unwanted rewrite cannot hide inside the
+        // Backdated rather than waited out: with every file stamped
+        // twenty-five years back, a rewrite cannot hide inside the
         // filesystem's timestamp resolution.
-        try await Task.sleep(for: .milliseconds(1100))
+        try scratch.freezeTimestamps()
+        let before = try scratch.snapshot()
 
         try #require(session.currentCanvas).canvasView.drawing = strokeAcrossPage()
         await session.saveIfNeeded()

@@ -235,6 +235,22 @@ struct LensTests {
         await gate.releaseAll()
 
         // The render completes and must go nowhere.
+        //
+        // This wait stays wall-clock, and the reason is worth writing down
+        // because every other timing wait in this suite was retired. What is
+        // asserted here is a *non-event*: a delivery that never happens. There
+        // is no positive signal to wait on — the renderer's actor goes free at
+        // its first suspension, so a round-trip through it proves nothing
+        // about the rasterization still running off-actor, and yielding the
+        // main actor only runs work already enqueued on it. Both were tried
+        // against a planted violation (the generation guard removed) and both
+        // passed, which is the definition of decoration; this form fails.
+        //
+        // The window is therefore the assertion's only margin, in the
+        // false-green direction alone: under enough load a dropped-guard build
+        // could deliver after the check. Making it load-immune needs a
+        // positive signal the delivery decision was made, and that is a
+        // production observable this item is in the business of removing.
         try await Task.sleep(for: .milliseconds(100))
         #expect(backdrop.hasLens == false, "a lens for a superseded settle must be dropped, not shown")
         #expect(backdrop.lensLayerForTesting.contents == nil)

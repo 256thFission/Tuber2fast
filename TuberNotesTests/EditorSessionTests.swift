@@ -208,12 +208,9 @@ struct EditorSessionTests {
         canvas(of: session).drawing = twoStrokesAcrossPage()
         await session.saveIfNeeded()
 
-        let firstPageWrittenAt = try scratch.modificationDate(ofPage: firstPageID)
-        let firstInkWrittenAt = try #require(try scratch.inkWrittenAt(ofPage: firstPageID))
-
-        // Far enough apart that an unwanted rewrite cannot hide inside the
-        // filesystem's timestamp resolution.
-        try await Task.sleep(for: .milliseconds(1100))
+        // Backdated rather than waited out: a rewrite cannot hide inside a
+        // timestamp resolution it is twenty-five years away from.
+        try scratch.freezeTimestamps()
         canvas(of: session).drawing = strokeAcrossPage()
         await session.saveIfNeeded()
 
@@ -221,8 +218,8 @@ struct EditorSessionTests {
         // layer split the page file alone proves less than it used to — an ink
         // save never rewrites a page file — so the ink layer's own file is
         // checked, which is where page one's bytes actually are.
-        #expect(try scratch.modificationDate(ofPage: firstPageID) == firstPageWrittenAt)
-        #expect(try scratch.inkWrittenAt(ofPage: firstPageID) == firstInkWrittenAt)
+        #expect(try scratch.modificationDate(ofPage: firstPageID) == TestScratch.frozen)
+        #expect(try scratch.inkWrittenAt(ofPage: firstPageID) == TestScratch.frozen)
     }
 
     @Test("Turning away from a page and back does not rewrite its file")
@@ -240,12 +237,8 @@ struct EditorSessionTests {
         // path is never exercised.
         for _ in 0..<4 { pullPastTheEnd(session) }
         await session.saveIfNeeded()
-        let firstPageWrittenAt = try scratch.modificationDate(ofPage: firstPageID)
-        let firstInkWrittenAt = try #require(try scratch.inkWrittenAt(ofPage: firstPageID))
-
-        // Far enough apart that an unwanted rewrite cannot hide inside the
-        // filesystem's timestamp resolution.
-        try await Task.sleep(for: .milliseconds(1100))
+        // Backdated rather than waited out, as above.
+        try scratch.freezeTimestamps()
 
         // Back to page 0 — its ink is re-installed into a fresh canvas — and
         // away again, so the rebuilt page also retires once more. The bytes
@@ -261,8 +254,8 @@ struct EditorSessionTests {
         // Installing ink is never reported as an edit (`Contract.md` —
         // Lifecycle): a turn that changed nothing writes nothing — neither the
         // page file nor the layer file its ink actually lives in.
-        #expect(try scratch.modificationDate(ofPage: firstPageID) == firstPageWrittenAt)
-        #expect(try scratch.inkWrittenAt(ofPage: firstPageID) == firstInkWrittenAt)
+        #expect(try scratch.modificationDate(ofPage: firstPageID) == TestScratch.frozen)
+        #expect(try scratch.inkWrittenAt(ofPage: firstPageID) == TestScratch.frozen)
     }
 
     @Test("Ink drawn on a page that then scrolls out of the window is still saved")
@@ -445,15 +438,21 @@ struct EditorSessionTests {
     @Test("A drawing change is debounced and then saved")
     func drawingChangeIsDebouncedAndSaved() async throws {
         let scratch = try TestScratch("session")
-        let session = scratch.session()
+        let clock = TestClock()
+        let session = scratch.session(clock: clock)
         await session.start()
         let initial = try await savedDrawing(scratch.store)
 
         canvas(of: session).drawing = strokeAcrossPage()
         // The change callback comes from PencilKit's delegate on the real
-        // device; assigning `drawing` fires the same path here.
-        try await Task.sleep(for: .milliseconds(120))
+        // device; assigning `drawing` fires the same path here. The debounce
+        // is then armed, and nothing but the clock can fire it.
+        await clock.waitUntilSleeping("the debounce to be armed by the drawing change")
+        await clock.advance(by: .milliseconds(20))
 
+        try await waitUntil("the debounced save lands") {
+            try await savedDrawing(scratch.store) != initial
+        }
         let saved = try await savedDrawing(scratch.store)
         #expect(saved != initial)
         try expectSavedStroke(in: saved)
@@ -488,7 +487,8 @@ struct EditorSessionTests {
     @Test("A transient save failure retries itself with no user action")
     func failedSaveRetriesItself() async throws {
         let scratch = try TestScratch("session")
-        let session = scratch.session()
+        let clock = TestClock()
+        let session = scratch.session(clock: clock)
         await session.start()
 
         // Break the destination the way `failedSaveStaysDirty` does: the
@@ -497,21 +497,39 @@ struct EditorSessionTests {
         try Data().write(to: scratch.root)
 
         canvas(of: session).drawing = strokeAcrossPage()
+        await clock.waitUntilSleeping("the debounce to be armed")
+        await clock.advance(by: .milliseconds(20))
         try await waitUntil("the first autosave fails") { session.lastSaveError != nil }
 
-        // Long enough for several backed-off retries at a 20 ms debounce
-        // (40 ms, 80 ms, 160 ms, ...), all of them still failing.
-        try await Task.sleep(for: .milliseconds(300))
+        // Four backed-off retries, each one armed by the failure before it and
+        // fired by nothing but this loop. Counted rather than slept past: the
+        // old form waited 300 ms and hoped several retries had happened inside
+        // it, which under load proved nothing in either direction.
+        //
+        // The next armed sleep is the evidence, not `lastSaveError` — that
+        // string is set by the first failure and never cleared while the store
+        // is broken, so it cannot distinguish a fourth retry from the first.
+        // A timer exists only because `performOneSave` reached its exit still
+        // dirty, so waiting for one proves the retry before it ran and failed.
+        // `advance` overshoots the five-second cap deliberately: what is
+        // asserted here is that a retry was armed at all.
+        for attempt in 1...4 {
+            await clock.waitUntilSleeping("retry \(attempt) to be armed by the failure before it")
+            await clock.advance(by: .seconds(6))
+        }
+        await clock.waitUntilSleeping("the fifth retry, armed by the fourth failing")
         #expect(session.lastSaveError != nil)
 
         // Nothing below touches the session: no Retry tap, no further drawing,
-        // no scene transition. Only the store starts working again.
+        // no scene transition. Only the store starts working again — with the
+        // retry already armed and waiting on a clock only this test moves.
         try FileManager.default.removeItem(at: scratch.root)
         try FileManager.default.createDirectory(
             at: scratch.root,
             withIntermediateDirectories: true
         )
 
+        await clock.advance(by: .seconds(6))
         try await waitUntil("the retry succeeds by itself") {
             guard session.lastSaveError == nil else { return false }
             return try await savedDrawing(scratch.store) != nil
@@ -567,18 +585,24 @@ struct EditorSessionTests {
     @Test("The debounce never drops below the default 500 ms floor")
     func debounceFloorHolds() async throws {
         let scratch = try TestScratch("session")
+        let clock = TestClock()
         // The interval the app itself uses, not the tests' short one.
-        let session = scratch.session(debounce: .milliseconds(500))
+        let session = scratch.session(debounce: .milliseconds(500), clock: clock)
         await session.start()
         let initial = try await savedDrawing(scratch.store)
 
         canvas(of: session).drawing = strokeAcrossPage()
 
         // A three-stroke document serializes in microseconds, so the adaptive
-        // term is ~0 and the floor is the whole interval. Nothing may save yet.
-        try await Task.sleep(for: .milliseconds(250))
+        // term is ~0 and the floor is the whole interval. An interval shorter
+        // than the floor fails here twice over: `waitUntilSleeping` finds no
+        // armed sleep if the debounce was skipped outright, and the save lands
+        // inside the 499 ms if it was merely short.
+        await clock.waitUntilSleeping("the 500 ms floor to be armed")
+        await clock.advance(by: .milliseconds(499))
         #expect(try await savedDrawing(scratch.store) == initial, "a save beat the 500 ms floor")
 
+        await clock.advance(by: .milliseconds(1))
         try await waitUntil("the floor elapses and the save lands") {
             (try await savedDrawing(scratch.store)) != initial
         }
@@ -809,8 +833,11 @@ private extension TestScratch {
     /// A short debounce by default: these tests assert the debounce fires, not
     /// that it waits 500 ms.
     @MainActor
-    func session(debounce: Duration = .milliseconds(20)) -> EditorSession {
-        EditorSession(store: store, debounce: debounce)
+    func session(
+        debounce: Duration = .milliseconds(20),
+        clock: any Clock<Duration> = ContinuousClock()
+    ) -> EditorSession {
+        EditorSession(store: store, debounce: debounce, clock: clock)
     }
 
     /// Overwrites one page's file with bytes that cannot decode. The file still

@@ -386,13 +386,17 @@ struct StaticLayerRenderTests {
         // Hold the first render in flight until the second request has asked.
         while await gate.waiterCount == 0 { await Task.yield() }
         let fresh = Task { await renderer.composite(for: freshRequest) }
-        try await Task.sleep(for: .milliseconds(50))
+        // Both are at the gate: waited for, not slept past, so the ordering
+        // below is the test's and not the scheduler's.
+        while await gate.waiterCount < 2 { await Task.yield() }
 
         // The newer render completes first and the stale one last, so a
         // `remember` that caches unconditionally would park the stale
-        // transform under the key the newer request uses.
+        // transform under the key the newer request uses. Awaiting the fresh
+        // task is what makes "first" true — the old form released and slept
+        // 50 ms, which is the same claim with a deadline attached to it.
         await gate.release(freshRequest)
-        try await Task.sleep(for: .milliseconds(50))
+        _ = await fresh.value
         await gate.release(staleRequest)
 
         guard case .composited(let freshComposite) = await fresh.value else {

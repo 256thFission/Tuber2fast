@@ -435,6 +435,9 @@ final class EditorSession {
     private let store: any DocumentStoring
     private let debounce: Duration
 
+    /// What the debounce waits on. `ContinuousClock` in the app; see `init`.
+    private let clock: any Clock<Duration>
+
     /// Flattens a page's static layers into one texture, off-main. Built here
     /// because it reads asset bytes through the store, and the store is the
     /// session's; handed to the paging runtime, which is where it is used.
@@ -529,10 +532,22 @@ final class EditorSession {
     /// never a ceiling: the adaptive debounce may widen it for a document that
     /// is expensive to serialize, and can never shorten it (`Contract.md` —
     /// Saving).
+    ///
+    /// `clock` is the one seam the debounce waits on. It exists so a test can
+    /// hold time still rather than sleep past an interval and hope — a wait
+    /// that outruns the interval it sits inside is a failure about the
+    /// machine's load, not about the code. The app passes nothing and gets
+    /// `ContinuousClock`, which is the only clock it ever uses.
+    ///
     /// Builds no UIKit object. See `canvas` for why that matters.
-    init(store: any DocumentStoring, debounce: Duration = .milliseconds(500)) {
+    init(
+        store: any DocumentStoring,
+        debounce: Duration = .milliseconds(500),
+        clock: any Clock<Duration> = ContinuousClock()
+    ) {
         self.store = store
         self.debounce = debounce
+        self.clock = clock
         self.staticRenderer = StaticLayerRenderer(store: store)
     }
 
@@ -967,8 +982,16 @@ final class EditorSession {
     private func scheduleSave(after delay: Duration? = nil) {
         let interval = delay ?? adaptiveDebounce
         debounceTask?.cancel()
-        debounceTask = Task { [weak self] in
-            try? await Task.sleep(for: interval)
+        debounceTask = Task { [weak self, clock] in
+            // Cancellation is the ordinary outcome here — every edit cancels
+            // the pending debounce and arms a fresh one — so it is caught and
+            // named rather than swallowed by a `try?` that would answer a
+            // genuine failure with the same silence.
+            do {
+                try await clock.sleep(for: interval)
+            } catch {
+                return
+            }
             guard !Task.isCancelled else { return }
             await self?.performAutosavePass()
         }

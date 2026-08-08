@@ -246,17 +246,15 @@ struct ImageLayerTests {
                 plain: [inkEnvelope(payload: Data([0x02]))],
             ]
         )
-        let before = try scratch.modificationDate(ofPage: withImage)
-
-        // Far enough apart that an unwanted rewrite cannot hide inside the
-        // filesystem's timestamp resolution.
-        try await Task.sleep(for: .milliseconds(1100))
+        // Backdated rather than waited out: an unwanted rewrite cannot hide
+        // inside a timestamp resolution it is twenty-five years away from.
+        try scratch.freezeTimestamps()
         try await store.save(
             index: documentIndex,
             changedPages: [plain: [inkEnvelope(payload: Data([0x03]))]]
         )
 
-        #expect(try scratch.modificationDate(ofPage: withImage) == before)
+        #expect(try scratch.modificationDate(ofPage: withImage) == TestScratch.frozen)
         #expect(try await scratch.freshStore().loadPage(withImage).staticLayers.count == 1)
     }
 

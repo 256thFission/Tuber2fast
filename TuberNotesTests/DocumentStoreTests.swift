@@ -55,18 +55,17 @@ struct DocumentStoreTests {
             index: index,
             changedPages: Dictionary(uniqueKeysWithValues: ids.map { ($0, inkLayer(Data([0x01]))) })
         )
-        let before = try ids.map { try scratch.modificationDate(ofPage: $0) }
-
-        // Far enough apart that an unwanted rewrite cannot hide inside the
-        // filesystem's timestamp resolution.
-        try await Task.sleep(for: .milliseconds(1100))
+        // Backdated rather than waited out: an unwanted rewrite cannot hide
+        // inside the filesystem's timestamp resolution when the resolution it
+        // would have to hide inside is twenty-five years wide.
+        try scratch.freezeTimestamps()
         try await store.save(index: index, changedPages: [ids[2]: inkLayer(Data([0x02]))])
 
         let after = try ids.map { try scratch.modificationDate(ofPage: $0) }
-        #expect(after[0] == before[0])
-        #expect(after[1] == before[1])
-        #expect(after[2] != before[2])
-        #expect(after[3] == before[3])
+        #expect(after[0] == TestScratch.frozen)
+        #expect(after[1] == TestScratch.frozen)
+        #expect(after[2] != TestScratch.frozen)
+        #expect(after[3] == TestScratch.frozen)
         #expect(try await scratch.freshStore().loadPage(ids[2]).inkData == Data([0x02]))
     }
 
@@ -77,12 +76,10 @@ struct DocumentStoreTests {
         let index = scratch.index()
 
         try await store.save(index: index, changedPages: [index.pageIDs[0]: inkLayer(Data([0x01]))])
-        let before = try scratch.modificationDateOfIndex()
-
-        try await Task.sleep(for: .milliseconds(1100))
+        try scratch.freezeTimestamps()
         try await store.save(index: index, changedPages: [index.pageIDs[0]: inkLayer(Data([0x02]))])
 
-        #expect(try scratch.modificationDateOfIndex() == before)
+        #expect(try scratch.modificationDateOfIndex() == TestScratch.frozen)
     }
 
     @Test("A changed index is rewritten")
@@ -92,9 +89,7 @@ struct DocumentStoreTests {
         let first = scratch.index()
 
         try await store.save(index: first, changedPages: [first.pageIDs[0]: inkLayer(Data([0x01]))])
-        let before = try scratch.modificationDateOfIndex()
-
-        try await Task.sleep(for: .milliseconds(1100))
+        try scratch.freezeTimestamps()
         let appended = UUID()
         let grown = first.withPages(
             first.pages + [PageRecord(id: appended, geometry: .canonical)],
@@ -102,7 +97,7 @@ struct DocumentStoreTests {
         )
         try await store.save(index: grown, changedPages: [appended: inkLayer(Data([0x03]))])
 
-        #expect(try scratch.modificationDateOfIndex() != before)
+        #expect(try scratch.modificationDateOfIndex() != TestScratch.frozen)
         #expect(try await scratch.freshStore().load()?.pageIDs.count == 2)
     }
 
@@ -214,20 +209,19 @@ struct DocumentStoreTests {
             pageIDs: [pageID],
             geometry: PageGeometry(width: 595, height: 842)
         )
-        let before = try scratch.modificationDateOfIndex()
+        try scratch.freezeTimestamps()
 
         let store = scratch.freshStore()
         let loaded = try #require(try await store.load())
         #expect(loaded.pages.map(\.geometry) == [PageGeometry(width: 595, height: 842)])
         // Opening migrates nothing: the file on disk is byte-for-byte what it
         // was.
-        #expect(try scratch.modificationDateOfIndex() == before)
+        #expect(try scratch.modificationDateOfIndex() == TestScratch.frozen)
         #expect(try scratch.rawIndexKeys().contains("pageIDs"))
 
-        try await Task.sleep(for: .milliseconds(1100))
         try await store.save(index: loaded, changedPages: [pageID: inkLayer(Data([0x08]))])
 
-        #expect(try scratch.modificationDateOfIndex() != before)
+        #expect(try scratch.modificationDateOfIndex() != TestScratch.frozen)
         let keys = try scratch.rawIndexKeys()
         #expect(keys.contains("pages"))
         #expect(!keys.contains("pageIDs"))
@@ -251,12 +245,10 @@ struct DocumentStoreTests {
         let store = scratch.freshStore()
         let loaded = try #require(try await store.load())
         try await store.save(index: loaded, changedPages: [pageID: inkLayer(Data([0x08]))])
-        let afterMigration = try scratch.modificationDateOfIndex()
-
-        try await Task.sleep(for: .milliseconds(1100))
+        try scratch.freezeTimestamps()
         try await store.save(index: loaded, changedPages: [pageID: inkLayer(Data([0x09]))])
 
-        #expect(try scratch.modificationDateOfIndex() == afterMigration)
+        #expect(try scratch.modificationDateOfIndex() == TestScratch.frozen)
     }
 
     @Test("An out-of-range current page index is rejected rather than clamped")

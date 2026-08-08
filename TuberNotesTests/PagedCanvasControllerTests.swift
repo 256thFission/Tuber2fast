@@ -343,7 +343,9 @@ struct PagedCanvasControllerTests {
         #expect(reported.isEmpty)
         #expect(controller.currentPageIndex == 2)
 
-        // And nothing queued at drag end moves the offset afterwards.
+        // And nothing queued at drag end moves the offset afterwards. A
+        // non-event has nothing to wait *for*, so the window is wall time —
+        // the one shape of timing wait this suite still keeps.
         try await Task.sleep(for: .milliseconds(20))
         #expect(scroll.contentOffset.x == scroll.bounds.width * 2)
     }
