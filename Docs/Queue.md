@@ -207,7 +207,7 @@ Hand-exercise on the named iPad and record, before asking for a verdict:
 `turningAwayAndBackDoesNotRewriteThePage`, so the save-trace check can now
 fail only for reasons that are about turn feel.
 
-## image-format-is-heic — decided; awaits the contract amendment and the code
+## image-format-is-heic — code landed; awaits the contract amendment
 
 Phillip overruled the phase-2 mixed-format design (2026-08-07): image assets
 consolidate onto **HEIC** — one format, hardware-decoded, with transparency.
@@ -253,10 +253,21 @@ Contract amendment: the closed-set line in *Durable form* and the
 small-export comments in `AssetRef.swift` change meaning. Exact edits
 proposed in the PR; Phillip authors them.
 
-**Exit:** a notebook fed PNG, JPEG, and HEIC sources holds only `.heic`
-files under `assets/`, a transparent source round-trips its alpha through
-import → store → downsample → composite, and the amendment is in
-`Contract.md`.
+**Landed** (`14d5666` pin, `d1ec58b` narrowing). The pin came back green:
+`CGImageDestinationAddImage` does embed the alpha auxiliary image on this OS,
+so the `CIContext.heifRepresentation` fallback is unused. The quality is 0.9,
+reasoned afresh at its declaration rather than inherited. `png` and `jpeg`
+now take the closed-set refusal, tested rather than assumed. The comment that
+stood TIFF in for HEIC — "the simulator has no HEIC hardware encoder" — was a
+hardware fact wrongly generalized to the framework, and is gone.
+
+Proposed amendment text: `Docs/Forks/ContractPass/06-HEIC-amendment.md`.
+
+**Exit:** the amendment is in `Contract.md` — the only part still open — and
+a device session confirms the hardware encoder keeps alpha too, which no
+simulator run can say. The rest is met: import transcodes PNG, JPEG, and
+TIFF sources to `.heic` and passes HEIC through, and a transparent source
+round-trips its alpha through import → store → downsample → composite.
 
 
 
