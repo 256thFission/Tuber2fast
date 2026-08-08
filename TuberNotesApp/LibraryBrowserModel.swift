@@ -185,6 +185,145 @@ final class FolderListingModel {
         return false
     }
 
+    // MARK: - Multi-select
+
+    /// Select mode (spec §6.2, UX-10). The selection lives here rather than
+    /// in the view so the batch mutations resolve against the same snapshots
+    /// every single-item mutation does — ids, not indices, because a refresh
+    /// mid-selection may reorder or drop items and a stale id at worst names
+    /// nothing.
+    private(set) var isSelecting = false
+    private(set) var selectedIDs: Set<String> = []
+
+    func enterSelection() {
+        isSelecting = true
+        selectedIDs = []
+    }
+
+    /// Done. Exits and clears — a re-entry always starts empty.
+    func exitSelection() {
+        isSelecting = false
+        selectedIDs = []
+    }
+
+    func toggleSelected(_ item: LibraryItem) {
+        if selectedIDs.contains(item.id) {
+            selectedIDs.remove(item.id)
+        } else {
+            selectedIDs.insert(item.id)
+        }
+    }
+
+    /// Select All selects **the visible listing** — what the filter and
+    /// search left on screen — not the folder's full contents; selecting
+    /// hidden items would trash what the user cannot see. (Platform
+    /// convention, INFERRED — the spec images only the button.)
+    func selectAllVisible(under prefs: LibraryPrefs) {
+        selectedIDs = Set(displayed(under: prefs).map(\.id))
+    }
+
+    func deselectAll() {
+        selectedIDs = []
+    }
+
+    /// True when everything visible is selected — the moment 'Select All'
+    /// reads 'Deselect All'.
+    func allVisibleSelected(under prefs: LibraryPrefs) -> Bool {
+        let visible = displayed(under: prefs)
+        return !visible.isEmpty && visible.allSatisfy { selectedIDs.contains($0.id) }
+    }
+
+    /// The selected items as snapshots, resolved against the current listing
+    /// in its displayed order — an id whose item vanished under a refresh
+    /// resolves to nothing rather than to a guess.
+    func selectedItems(under prefs: LibraryPrefs) -> [LibraryItem] {
+        displayed(under: prefs).filter { selectedIDs.contains($0.id) }
+    }
+
+    // MARK: - Batch mutations
+
+    /// Trashes every selected item. Same stance as the single trash: no
+    /// confirmation, recoverable. Failures are counted into one banner —
+    /// a three-item batch with one refusal still trashes the other two.
+    func trashSelected(under prefs: LibraryPrefs) async {
+        var failures: [String] = []
+        for item in selectedItems(under: prefs) {
+            do {
+                try await library.trashItem(at: item.id)
+            } catch {
+                failures.append(Self.describe(error))
+            }
+        }
+        if let first = failures.first {
+            mutationBanner = failures.count == 1
+                ? first
+                : "\(first) (+\(failures.count - 1) more)"
+        }
+        exitSelection()
+        await refresh()
+    }
+
+    /// Duplicates the selected **documents**; folders are skipped and the
+    /// banner says how many — the same "no folder duplicate" stance as the
+    /// chevron menu (UX-9), surfaced instead of silent because a batch hides
+    /// what a menu's absence showed.
+    func duplicateSelected(under prefs: LibraryPrefs) async {
+        var copies = 0
+        var skippedFolders = 0
+        var failures: [String] = []
+        for item in selectedItems(under: prefs) {
+            guard case .document = item.kind else {
+                skippedFolders += 1
+                continue
+            }
+            do {
+                _ = try await library.duplicateDocument(at: item.id)
+                copies += 1
+            } catch {
+                failures.append(Self.describe(error))
+            }
+        }
+        var parts: [String] = []
+        if copies > 0 {
+            parts.append("Duplicated \(copies) document\(copies == 1 ? "" : "s").")
+        }
+        if skippedFolders > 0 {
+            parts.append(
+                "\(skippedFolders) folder\(skippedFolders == 1 ? " was" : "s were") skipped — folders do not duplicate."
+            )
+        }
+        parts.append(contentsOf: failures)
+        if !parts.isEmpty { mutationBanner = parts.joined(separator: " ") }
+        exitSelection()
+        await refresh()
+    }
+
+    /// Moves a batch to one destination. Collisions are the store's suffix,
+    /// per item, and the banner names every adaptation at once — batch-style,
+    /// where the single move names its one.
+    func moveBatch(_ batch: [LibraryItem], toFolder destination: String) async {
+        var renamed: [String] = []
+        var failures: [String] = []
+        for item in batch {
+            do {
+                let moved = try await library.moveItem(at: item.id, toFolder: destination)
+                if moved.name != item.name {
+                    renamed.append("\u{201C}\(moved.name)\u{201D}")
+                }
+            } catch {
+                failures.append(Self.describe(error))
+            }
+        }
+        var parts: [String] = []
+        if !renamed.isEmpty {
+            parts.append("Renamed to avoid collisions: \(renamed.joined(separator: ", ")).")
+        }
+        parts.append(contentsOf: failures)
+        if !parts.isEmpty { mutationBanner = parts.joined(separator: " ") }
+        exitSelection()
+        await refresh()
+    }
+
     // MARK: - Mutations
 
     /// Returns the inline reason when the name gate refused — the popover

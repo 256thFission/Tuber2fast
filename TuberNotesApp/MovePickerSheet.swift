@@ -8,19 +8,30 @@ import TuberStore
 /// only, a New Folder affordance top-right, and the item being moved (with
 /// everything under it) never offered as a destination.
 struct MovePickerSheet: View {
-    /// The item being moved.
-    let item: LibraryItem
-    /// The listing the move leaves: `move` re-lists it, and when the store's
-    /// collision suffix changed the name, its banner says so.
+    /// The items being moved — one from the chevron menu, several from
+    /// select mode. Same picker, same exclusions, one commit.
+    let items: [LibraryItem]
+    /// The listing the move leaves: the move re-lists it, and when the
+    /// store's collision suffix changed a name, its banner says so.
     let model: FolderListingModel
 
     @Environment(\.dismiss) private var dismiss
 
+    init(item: LibraryItem, model: FolderListingModel) {
+        self.items = [item]
+        self.model = model
+    }
+
+    init(items: [LibraryItem], model: FolderListingModel) {
+        self.items = items
+        self.model = model
+    }
+
     var body: some View {
         NavigationStack {
-            MovePickerLevel(folderPath: "", item: item, model: model) { dismiss() }
+            MovePickerLevel(folderPath: "", items: items, model: model) { dismiss() }
                 .navigationDestination(for: String.self) { folderPath in
-                    MovePickerLevel(folderPath: folderPath, item: item, model: model) {
+                    MovePickerLevel(folderPath: folderPath, items: items, model: model) {
                         dismiss()
                     }
                 }
@@ -36,9 +47,21 @@ struct MovePickerSheet: View {
         in items: [LibraryItem],
         excluding movedPath: String
     ) -> [LibraryItem] {
+        destinationFolders(in: items, excludingAll: [movedPath])
+    }
+
+    /// The batch form: a level drops every folder that is any moved item or
+    /// lives under one — offering the inside of any part of the move is the
+    /// same refusal-in-waiting as offering the inside of the whole.
+    nonisolated static func destinationFolders(
+        in items: [LibraryItem],
+        excludingAll movedPaths: [String]
+    ) -> [LibraryItem] {
         items.filter { candidate in
             guard case .folder = candidate.kind else { return false }
-            return candidate.id != movedPath && !candidate.id.hasPrefix(movedPath + "/")
+            return movedPaths.allSatisfy { moved in
+                candidate.id != moved && !candidate.id.hasPrefix(moved + "/")
+            }
         }
     }
 }
@@ -47,7 +70,7 @@ struct MovePickerSheet: View {
 /// Here bar beneath, New Folder top-right.
 private struct MovePickerLevel: View {
     let folderPath: String
-    let item: LibraryItem
+    let items: [LibraryItem]
     let model: FolderListingModel
     /// Dismisses the whole sheet — `@Environment(\.dismiss)` here would pop
     /// the navigation stack instead, so the root owns the dismissal.
@@ -180,10 +203,17 @@ private struct MovePickerLevel: View {
             }
             Button {
                 let listing = model
-                let target = item
+                let batch = items
                 let destination = folderPath
                 Task {
-                    await listing.move(target, toFolder: destination)
+                    // One item keeps the single move's own banner wording;
+                    // a batch collects its collisions batch-style.
+                    if batch.count == 1, let only = batch.first {
+                        await listing.move(only, toFolder: destination)
+                        listing.exitSelection()
+                    } else {
+                        await listing.moveBatch(batch, toFolder: destination)
+                    }
                     onFinished()
                 }
             } label: {
@@ -205,8 +235,10 @@ private struct MovePickerLevel: View {
     private func load() async {
         do {
             let listing = try await model.library.listFolder(folderPath)
-            folders = MovePickerSheet.destinationFolders(in: listing.items, excluding: item.id)
-                .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            folders = MovePickerSheet.destinationFolders(
+                in: listing.items, excludingAll: items.map(\.id)
+            )
+            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
             refused = nil
         } catch {
             refused = FolderListingModel.describe(error)
