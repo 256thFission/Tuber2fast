@@ -816,7 +816,7 @@ version 3, writes only version 3, and `DocumentStore` remembers that the index i
 loaded was superseded and writes it forward on the first save that follows —
 phase 1's precedent, unchanged, at one level up.
 
-## What A8 did *not* need
+## What A8 did *not* need — (see end of file for the library-run amendments L1–L5)
 
 - **No amendment for the appended page.** *Navigation* already says swiping past
   the last page yields a blank writable page; that page takes the canonical
@@ -825,3 +825,158 @@ phase 1's precedent, unchanged, at one level up.
   carries `{ a: pageWidth, d: pageHeight, tx: 0, ty: 0 }` — the unit square edge
   to edge — where under one document-wide geometry it was a letterbox. A13's
   unit-square decision needed no reconciliation, exactly as A13 predicted.
+
+---
+
+# The library run's amendments (L-series)
+
+Written by the library overnight run. **Nothing here is in force**; this file
+stays a staging area, and adopting any of it means Phillip moving text into
+`Contract.md` in a `CONTRACT:` commit. Design rationale lives in
+`Docs/Forks/Library/02-proposal.md`; review dispositions in `03-review.md`.
+Statuses follow this file's convention and are flipped as code lands.
+
+## L1. *Owners* — the library rows and the two-store boundary — **AHEAD (library phase A)**
+
+The table in *Owners* governs one document's insides; a library adds state
+above the document. Add rows:
+
+| State | Sole writer | Frequency | Lifetime |
+|---|---|---|---|
+| The library tree on disk (folders, package placement and names) | `LibraryStore` | user action | across launches |
+| Folder metadata (`.folder.plist`: color, icon) | `LibraryStore` | user action | across launches |
+| Favorites, browser preferences, trash-origin sidecars | `LibraryStore` | user action | across launches |
+| The in-memory listing of the folder being shown | `LibraryViewModel` | navigation / store reply | browser session |
+| Which document is open (the live editor session and lifecycle) | SwiftUI root | user action | open-document session |
+| In-memory thumbnail cache | `LibraryThumbnailStore` | render | browser session, bounded |
+
+And one boundary rule, stated once:
+
+> **The package boundary is the boundary between the stores.** `LibraryStore`
+> is the sole writer of the library tree and treats every `.tubernotes`
+> package as an opaque directory: it creates, moves, renames, and deletes
+> packages whole and never reads or writes inside one. `DocumentStore` owns a
+> package's insides and never reaches outside one. No file belongs to both.
+
+*Why:* the one-writer rule survives a second storage level only if the levels
+cannot write each other's files. This is golden rule 3's shape, one level up.
+
+## L2. *Owners* / structure — file-I/O confinement generalized — **AHEAD (library phase A)**
+
+The machine-checked rule confines file I/O to `DocumentStore.swift` (plus the
+import picker's security-scoped read). Enumerating a library is file I/O and
+does not belong in one document's format file. Replace the confinement's
+governing sentence (golden rule 4's neighborhood — "`PageCanvasController`
+never reads or writes files" stands untouched) with:
+
+> File I/O is confined to `TuberStore`'s actors, one per storage domain —
+> `DocumentStore` for a document's insides, `LibraryStore` for the library
+> tree — each named individually in the structural test's allowlist. A new
+> storage domain is a new actor and a new allowlist entry, never a widening
+> of an existing one.
+
+The mechanism is untouched: `fileIOAllowlist` gains exactly one entry,
+`Modules/TuberStore/LibraryStore.swift`. The checker's tokens and logic do
+not change.
+
+*Why:* the allowlist is fail-closed precisely so that new I/O must surface in
+a reviewable diff. This is that diff. The alternative — putting tree
+operations inside `DocumentStore.swift` to avoid the entry — obeys the test
+while defeating the table above.
+
+## L3. *Durable form* — the library level — **AHEAD (library phase A)**
+
+Add a section above the document diagram:
+
+> ### The library
+>
+> A library is a directory tree, and the tree is the only truth:
+>
+> ```text
+> <Application Support>/TuberLibrary/
+>   Documents/                        the root folder
+>     <Name>.tubernotes/              a document package, opaque at this level
+>     <Name>/                         a folder = a directory; nesting unbounded
+>       .folder.plist                 color and icon; nothing else
+>   Trash/                            trashed items, moved whole
+>     <Name>.tubernotes.origin.plist  where it was, for Recover
+>   library.plist                     view mode, sort key and direction
+>   favorites.plist                   ordered library-relative paths
+> ```
+>
+> - **There is no library index.** Membership, names, and structure are the
+>   directory tree; a second statement of any of them is duplicated truth.
+>   An item's display name is its directory name; created and modified dates
+>   are file-system attributes (a document's modified date is the newest
+>   among its index and its `pages/`, `layers/`, `assets/` directories,
+>   which every save's rename-into updates).
+> - **Every library-owned file is a sidecar, and every sidecar is
+>   orphan-class.** A missing or unreadable `.folder.plist`, `library.plist`,
+>   `favorites.plist`, or origin sidecar degrades to its default, loudly, and
+>   is rewritten whole on the next write. **There are no fatal library
+>   states**, deliberately: the library level holds no user content of its
+>   own, so nothing at this level may refuse the whole library. The fatal
+>   class stays where ink is — inside a document — and is contained to that
+>   document's cell.
+> - **Every library mutation is one atomic directory operation.** Create,
+>   rename, move, trash, and recover are single `moveItem`/`createDirectory`
+>   calls; there is no multi-file commit at this level and therefore no write
+>   order. Where a mutation also updates a sidecar (a move rewriting a
+>   favorite's path), the sidecar writes after the move, so a crash between
+>   the two leaves a pruned favorite, never a dangling one.
+> - **Foreign files are inert.** A file or directory the library does not
+>   recognize is ignored and logged, never deleted, never blocking.
+> - Deleting permanently (Empty Trash, Delete Permanently) is the only
+>   destruction of user data in the layer, and only ever from the Trash.
+
+*Why:* argued at length in the proposal — no-duplicated-truth and
+dangling-refs-fatal reasoned one level up produce *no index* and *no fatal
+states* respectively, because unlike a page ref, nothing at the library
+level names content that exists nowhere else.
+
+## L4. *Lifecycle* — the session gains a close — **AHEAD (library phase B)**
+
+*Lifecycle* opens one document and never closes it, because until now there
+was nowhere to go. Add:
+
+> Closing the editor (returning to the library) is a real teardown:
+> `EditorSession.close()` cancels the debounce, awaits any save in flight,
+> makes one final save pass, and refuses further edits; the root releases the
+> session only after `close()` returns. Back therefore carries the same
+> guarantee backgrounding does — no ink newer than the last completed save is
+> released — made synchronous with the transition. A session that has closed
+> is dead: it is never restarted, and reopening the document builds a new
+> session.
+
+*Why:* the alternative — releasing the graph and hoping the flush raced well —
+is the retirement-handover defect at document scale.
+
+## L5. *Navigation* — the browser exists — **AHEAD (library phase B)**
+
+Add, as its own short paragraph at the end of *Navigation*:
+
+> The library browser is SwiftUI-owned end to end: no library surface hosts a
+> canvas, so browser scrolling is not the frame path and the canvas-runtime
+> rules do not govern it. **One document is open at a time**; the browser and
+> the editor are never on screen together, and every library mutation
+> operates on closed packages only. Thumbnails are rendered off-main from
+> package contents into a bounded in-memory cache and are never written to
+> disk; a durable thumbnail remains forbidden by *Forbidden patterns*
+> unamended.
+
+*Why:* states the two invariants the design leans on (no canvas in the
+browser; no mutation of open packages) where a future multi-window or
+split-view change would otherwise break them silently.
+
+## What the library run does NOT amend, deliberately
+
+- **Forbidden patterns is untouched.** The thumbnail cache is in-memory only,
+  which *Performance* already permits (owner, bound, eviction stated at the
+  declaration). A7 is not invoked — a page-1 render includes ink, so a disk
+  cache of it stays banned under both the current rule and A7's narrowing.
+- **The document's own Durable form is untouched.** No new fields, no v4:
+  names, dates, and favorites all live outside the package or derive from
+  the file system precisely so the document format does not grow
+  browser-serving fields.
+- **`UserDefaults` stays a forbidden token.** Browser preferences are a
+  library sidecar, not process-global state.
