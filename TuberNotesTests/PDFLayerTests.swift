@@ -566,7 +566,7 @@ struct PDFLayerTests {
 
         // The layer to delete exists only in the session; no file names it.
         let firstLayer = try #require(
-            session.pages.staticLayersForPage?(session.pageCount - 2).first
+            session.staticLayersForTesting(forPageAt: session.pageCount - 2).first
         )
         let assetID = try PDFLayerRef(payload: firstLayer.payload).assetID
         try await session.deleteLayer(firstLayer.layerID, fromPage: appended[0])

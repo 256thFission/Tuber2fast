@@ -86,7 +86,7 @@ struct PagedCanvasControllerTests {
 
     @Test("A page whose ink has not arrived is a placeholder, not a canvas")
     func pageWithoutBytesIsNotACanvas() {
-        let controller = hosted { $0.contentForPage = { _ in .loading } }
+        let controller = hosted { $0.content = { _ in .loading } }
         controller.setPages(count: 3, currentPageIndex: 0)
         controller.markEditable()
 
@@ -101,7 +101,7 @@ struct PagedCanvasControllerTests {
 
     @Test("An unreadable page is refused, never rendered as an editable blank")
     func unreadablePageIsRefused() {
-        let controller = hosted { $0.contentForPage = { _ in .unreadable("decode failed") } }
+        let controller = hosted { $0.content = { _ in .unreadable("decode failed") } }
         controller.setPages(count: 2, currentPageIndex: 0)
         controller.markEditable()
 
@@ -113,7 +113,7 @@ struct PagedCanvasControllerTests {
     func reloadInstallsLateArrivingInk() throws {
         var available: Data?
         let controller = hosted {
-            $0.contentForPage = { _ in
+            $0.content = { _ in
                 guard let available else { return .loading }
                 return .ink(available)
             }
@@ -131,7 +131,7 @@ struct PagedCanvasControllerTests {
 
     @Test("Reloading a slot that is a live canvas does nothing")
     func reloadNeverReplacesACanvas() throws {
-        let controller = hosted { $0.contentForPage = { _ in .blank } }
+        let controller = hosted { $0.content = { _ in .blank } }
         controller.setPages(count: 2, currentPageIndex: 0)
         controller.markEditable()
 
@@ -254,11 +254,15 @@ struct PagedCanvasControllerTests {
     @Test("An appended blank page is a ready canvas immediately, and existing slots survive")
     func appendedBlankPageIsReadyImmediately() throws {
         var count = 3
-        let controller = hosted { $0.contentForPage = { _ in .blank } }
+        let session = TestCanvasSession()
+        // A blank page for every slot, said here rather than inherited: this
+        // test is about what an appended blank page is when it arrives.
+        session.content = { _ in .blank }
+        let controller = hosted(session)
         controller.setPages(count: count, currentPageIndex: 2)
         controller.markEditable()
         // The session's shape: the append is synchronous in intent.
-        controller.onReachedEndBoundary = { [unowned controller] in
+        session.onReachedEndBoundary = { [unowned controller] in
             count += 1
             controller.setPages(count: count, currentPageIndex: count - 1)
         }
@@ -287,9 +291,13 @@ struct PagedCanvasControllerTests {
     @Test("The append gesture lands on the new page even against the armed rubber-band")
     func appendGestureLandsOnTheNewPage() async throws {
         var count = 3
-        let controller = hosted { $0.contentForPage = { _ in .blank } }
+        let session = TestCanvasSession()
+        // A blank page for every slot, said here rather than inherited: this
+        // test is about what an appended blank page is when it arrives.
+        session.content = { _ in .blank }
+        let controller = hosted(session)
         controller.setPages(count: count, currentPageIndex: 2)
-        controller.onReachedEndBoundary = { [unowned controller] in
+        session.onReachedEndBoundary = { [unowned controller] in
             count += 1
             controller.setPages(count: count, currentPageIndex: count - 1)
         }
@@ -366,7 +374,7 @@ struct PagedCanvasControllerTests {
             .canonical,
         ]
         let controller = hosted {
-            $0.projectionForPage = { index in
+            $0.projection = { index in
                 PageProjection(
                     geometry: geometries[index],
                     zoomCapPagePointsPerPixel: DocumentIndex.canonicalZoomCapPagePointsPerPixel
@@ -425,7 +433,7 @@ struct PagedCanvasControllerTests {
     func floorsAreNotSharedAcrossMixedGeometry() throws {
         let landscape = PageGeometry(width: 842, height: 595)
         let controller = hosted {
-            $0.projectionForPage = { index in
+            $0.projection = { index in
                 PageProjection(
                     geometry: index == 1 ? landscape : .canonical,
                     zoomCapPagePointsPerPixel: DocumentIndex.canonicalZoomCapPagePointsPerPixel
@@ -500,18 +508,29 @@ struct PagedCanvasControllerTests {
         }
     }
 
-    /// A laid-out runtime.
-    ///
-    /// `configure` runs before the first layout on purpose: the initial window
-    /// is built during layout, so a callback installed afterwards would never be
-    /// asked about the pages that already exist. The app has the same ordering —
-    /// `EditorSession` wires its callbacks when it creates the controller, long
-    /// before SwiftUI hosts it.
+    /// A laid-out runtime, and the session it answers to.
     private func hosted(
-        configure: (PagedCanvasController) -> Void = { _ in }
+        configure: (TestCanvasSession) -> Void = { _ in }
     ) -> PagedCanvasController {
-        let controller = PagedCanvasController()
-        configure(controller)
+        // The runtime cannot be built without a session, so this suite states
+        // what its session answers rather than leaving the runtime to fail
+        // open on its behalf: `TestCanvasSession`'s defaults are blank pages,
+        // no static layers, and the canonical projection, and each test that
+        // needs something else says so.
+        let session = TestCanvasSession()
+        configure(session)
+        return hosted(session)
+    }
+
+    /// The same, for a test that has to reach its session after the runtime
+    /// exists — an append handler that drives the runtime it belongs to.
+    private func hosted(_ session: TestCanvasSession) -> PagedCanvasController {
+        // Strictly before the first layout: the initial window is built during
+        // layout, so an answer changed afterwards would never be asked about
+        // the pages that already exist. The app has the same ordering —
+        // `EditorSession` hands its seam over at construction, long before
+        // SwiftUI hosts the runtime.
+        let controller = PagedCanvasController(session: session)
         let root = controller.view!
         root.frame = CGRect(x: 0, y: 0, width: 820, height: 1180)
         root.layoutIfNeeded()

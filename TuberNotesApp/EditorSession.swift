@@ -89,6 +89,14 @@ final class EditorSession {
     /// two of these could suspend a production path.
     #if DEBUG
     var staticRendererForTesting: StaticLayerRenderer { staticRenderer }
+
+    /// Read only by tests: a page's layer list as the session holds it. For a
+    /// page whose layer write failed it exists nowhere else — not on disk, and
+    /// not in the runtime unless that page happens to be live — and the seam
+    /// that answers the runtime is not a surface a test may read through.
+    func staticLayersForTesting(forPageAt pageIndex: Int) -> [LayerEnvelope] {
+        staticLayers(forPageAt: pageIndex)
+    }
     #endif
 
     /// The paged canvas runtime, created once and owned here so that SwiftUI
@@ -105,38 +113,75 @@ final class EditorSession {
     /// First access is from the view body or `start()`, both after launch.
     var pages: PagedCanvasController {
         if let liveRuntime { return liveRuntime }
-        let created = PagedCanvasController(staticRenderer: staticRenderer)
-        created.contentForPage = { [weak self] pageIndex in
-            self?.content(forPageAt: pageIndex) ?? .blank
-        }
-        created.staticLayersForPage = { [weak self] pageIndex in
-            self?.staticLayers(forPageAt: pageIndex) ?? []
-        }
-        created.projectionForPage = { [weak self] pageIndex in
-            // Out of range only when the runtime lays out before `start()` has
-            // populated the session, exactly as `contentForPage` can be. The
-            // canonical page is the right answer there for the same reason
-            // `.blank` is: the session replaces the slot the moment it knows
-            // better, through `setPages`.
-            self?.index.projection(ofPageAt: pageIndex) ?? .canonical
-        }
-        created.onDrawingChanged = { [weak self] pageIndex in
-            self?.drawingChanged(atPageIndex: pageIndex)
-        }
-        created.onPageRetiring = { [weak self] pageIndex, snapshot in
-            self?.pageIsRetiring(atPageIndex: pageIndex, snapshot: snapshot)
-        }
-        created.onPageChanged = { [weak self] pageIndex in
-            self?.currentPageChanged(to: pageIndex)
-        }
-        created.onReachedEndBoundary = { [weak self] in
-            self?.appendPage()
-        }
-        created.onLayerTransformed = { [weak self] pageIndex, layerID, transform in
-            self?.layerTransformed(atPageIndex: pageIndex, layerID: layerID, to: transform) ?? false
-        }
+        let created = PagedCanvasController(
+            session: RuntimeSeam(session: self),
+            staticRenderer: staticRenderer
+        )
         liveRuntime = created
         return created
+    }
+
+    /// Answers the runtime's questions on this session's behalf.
+    ///
+    /// A separate object rather than `EditorSession: PagedCanvasSession`, and
+    /// the reason is ownership. The runtime holds what it was built with
+    /// strongly — that is what lets the reference be non-optional, and
+    /// non-optional is the whole point of the protocol: an unwired seam is a
+    /// compile error rather than a page answering `.blank` or a handover
+    /// dropped in silence. A session that conformed directly would then be
+    /// retained by the runtime it owns, and neither would ever be released.
+    ///
+    /// So the runtime owns this, this refers back `unowned`, and the session
+    /// owns the runtime. The reference is safe by construction — nothing here
+    /// can outlive the session two links above it — and the ownership is
+    /// exactly what the `[weak self]` closures this replaces had: the runtime
+    /// keeps no session alive.
+    ///
+    /// It forwards and decides nothing. Every out-of-range and not-yet-started
+    /// answer belongs to the session's own methods, which is where a reader
+    /// looking for "what does this document say about page 4" will look.
+    private final class RuntimeSeam: PagedCanvasSession {
+        private unowned let session: EditorSession
+
+        init(session: EditorSession) {
+            self.session = session
+        }
+
+        func canvasContent(forPageAt index: Int) -> PagedCanvasController.PageContent {
+            session.content(forPageAt: index)
+        }
+
+        func staticLayers(forPageAt index: Int) -> [LayerEnvelope] {
+            session.staticLayers(forPageAt: index)
+        }
+
+        func projection(forPageAt index: Int) -> PageProjection {
+            session.projection(forPageAt: index)
+        }
+
+        func drawingChanged(onPageAt index: Int) {
+            session.drawingChanged(atPageIndex: index)
+        }
+
+        func layerTransformed(
+            onPageAt index: Int,
+            layerID: UUID,
+            to transform: PageSpaceTransform
+        ) -> Bool {
+            session.layerTransformed(atPageIndex: index, layerID: layerID, to: transform)
+        }
+
+        func pageIsRetiring(at index: Int, handingOver snapshot: DrawingSnapshot) {
+            session.pageIsRetiring(atPageIndex: index, snapshot: snapshot)
+        }
+
+        func currentPageChanged(to index: Int) {
+            session.currentPageChanged(to: index)
+        }
+
+        func reachedEndBoundary() {
+            session.appendPage()
+        }
     }
 
     /// An intention from the SwiftUI root: which idealized shape a Pencil drag
@@ -427,6 +472,18 @@ final class EditorSession {
         guard pageStates.indices.contains(pageIndex) else { return [] }
         guard pageStates[pageIndex].refusedLayers.isEmpty else { return [] }
         return pageStates[pageIndex].staticLayers
+    }
+
+    /// What a page's canvas is built with: that page's own geometry, and the
+    /// document's zoom cap.
+    ///
+    /// Out of range only when the runtime lays out before `start()` has
+    /// populated the session, exactly as `content(forPageAt:)` can be. The
+    /// canonical page is the right answer there for the same reason `.blank`
+    /// is: the session replaces the slot the moment it knows better, through
+    /// `setPages`.
+    private func projection(forPageAt pageIndex: Int) -> PageProjection {
+        index.projection(ofPageAt: pageIndex) ?? .canonical
     }
 
     /// Drops every cached composite whose page has left the live window plus

@@ -53,13 +53,11 @@ package final class PagedCanvasController: UIViewController, UIScrollViewDelegat
     private(set) var currentPageIndex = 0
     private(set) var pageCount = 1
 
-    /// Supplies the content for a page about to enter the window.
-    ///
-    /// `.loading` and `.unreadable` are the cases that matter: a page can enter
-    /// the window before the session has its bytes, or with bytes that refuse
-    /// to read. Such a page is a placeholder, never an editable blank — ink
-    /// drawn on a blank standing in for a real page would be saved over it.
-    package var contentForPage: ((Int) -> PageContent)?
+    /// Everything this runtime cannot answer for itself, and everything it
+    /// reports. Non-optional and supplied at construction, so an unwired seam
+    /// is a compile error rather than a page that fails open — see
+    /// `PagedCanvasSession`, which also states why this reference is strong.
+    private let session: any PagedCanvasSession
 
     package enum PageContent {
         case blank
@@ -75,60 +73,38 @@ package final class PagedCanvasController: UIViewController, UIScrollViewDelegat
         case unreadable(String)
     }
 
-    /// Supplies a page's recognized layers below its ink, in order.
+    /// One page's link back to the runtime that placed it.
     ///
-    /// A second question rather than a case on `PageContent`, deliberately:
-    /// ink state and the layer list change on different occasions — an import
-    /// changes the list while the ink stays exactly as it was — so a page's
-    /// backdrop is refreshed without rebuilding its canvas, which would
-    /// destroy live ink.
+    /// It exists to do two things a `PageCanvasController` must not do itself:
+    /// add the page index, which that controller is blind to
+    /// (`Contract.md` — Owners, golden rule 7), and hold the runtime `unowned`
+    /// so that a page owning its host does not close an ownership loop. The
+    /// runtime owns the page, the page owns this, and this outlives nothing.
     ///
-    /// An empty list is the answer for a page with nothing beneath its ink and
-    /// for a page carrying a refused layer. The latter never reaches here at
-    /// all — it is a placeholder, not a canvas — and answering empty is the
-    /// belt to that braces: no partial composite exists to be mistaken for a
-    /// correct one.
-    package var staticLayersForPage: ((Int) -> [LayerEnvelope])?
+    /// The index is captured for the slot's life, exactly as the closures it
+    /// replaces captured it: a slot's index does not change while the slot
+    /// exists.
+    private final class SlotHost: PageCanvasHost {
+        private unowned let runtime: PagedCanvasController
+        private let pageIndex: Int
 
-    /// Supplies the page-space facts a page's canvas is built with: that page's
-    /// own geometry, and the document's zoom cap.
-    ///
-    /// A third question rather than a field on `PageContent`, for the reason
-    /// `staticLayersForPage` is a second: it changes on a different occasion
-    /// from ink — never, in fact, after the page exists — and it is needed at
-    /// canvas construction, which is before any content decision has been
-    /// taken.
-    ///
-    /// `nil`, or an index the session does not know, answers
-    /// `PageProjection.canonical` — a runtime hosted without a document behind
-    /// it, which is every test that drives this controller directly.
-    package var projectionForPage: ((Int) -> PageProjection)?
+        init(runtime: PagedCanvasController, pageIndex: Int) {
+            self.runtime = runtime
+            self.pageIndex = pageIndex
+        }
 
-    /// Reports that a live page's drawing changed. The index is the page's, and
-    /// nothing else travels with it (`Contract.md` — Saving).
-    package var onDrawingChanged: ((Int) -> Void)?
+        func drawingChanged() {
+            runtime.session.drawingChanged(onPageAt: pageIndex)
+        }
 
-    /// Reports one committed layer transform and takes back whether the session
-    /// accepted it.
-    ///
-    /// The page index is added here and nowhere else, because a
-    /// `PageCanvasController` is blind to which page it is
-    /// (`Contract.md` — Owners, golden rule 7). Nothing about the gesture that
-    /// produced the value travels with it — one immutable transform does, which
-    /// is the same shape as a retiring page's drawing snapshot.
-    package var onLayerTransformed: ((Int, UUID, PageSpaceTransform) -> Bool)?
-
-    /// Hands a retiring page's ink to the session before the controller is
-    /// released. Without this a page's edits would die with its canvas when it
-    /// left the window.
-    package var onPageRetiring: ((Int, DrawingSnapshot) -> Void)?
-
-    /// The visible page changed. Fired once per settled turn, not per frame.
-    package var onPageChanged: ((Int) -> Void)?
-
-    /// The user swiped past the last page. The session decides whether a page is
-    /// appended; this runtime never grows the document by itself.
-    package var onReachedEndBoundary: (() -> Void)?
+        func layerTransformed(_ layerID: UUID, to transform: PageSpaceTransform) -> Bool {
+            runtime.session.layerTransformed(
+                onPageAt: pageIndex,
+                layerID: layerID,
+                to: transform
+            )
+        }
+    }
 
     /// The shared tool picker. One per editor session, not one per page, so the
     /// selected pen survives a page turn.
@@ -176,7 +152,11 @@ package final class PagedCanvasController: UIViewController, UIScrollViewDelegat
     /// before this feature existed.
     private let staticRenderer: StaticLayerRenderer?
 
-    package init(staticRenderer: StaticLayerRenderer? = nil) {
+    package init(
+        session: any PagedCanvasSession,
+        staticRenderer: StaticLayerRenderer? = nil
+    ) {
+        self.session = session
         self.staticRenderer = staticRenderer
         super.init(nibName: nil, bundle: nil)
     }
@@ -334,7 +314,7 @@ package final class PagedCanvasController: UIViewController, UIScrollViewDelegat
     /// just repaired becomes a canvas through `reloadPage(at:)` instead, which
     /// asks for the layer list as it builds.
     package func reloadStaticLayers(at index: Int) {
-        livePage(at: index)?.setStaticLayers(staticLayersForPage?(index) ?? [])
+        livePage(at: index)?.setStaticLayers(session.staticLayers(forPageAt: index))
     }
 
     /// The live page controller for an index, if that slot is a canvas.
@@ -369,7 +349,7 @@ package final class PagedCanvasController: UIViewController, UIScrollViewDelegat
         return PageCanvasController.compositeDetail(
             viewportWidth: scrollView.bounds.width,
             displayScale: traitCollection.displayScale,
-            geometry: (projectionForPage?(index) ?? .canonical).geometry
+            geometry: session.projection(forPageAt: index).geometry
         )
     }
 
@@ -471,7 +451,7 @@ package final class PagedCanvasController: UIViewController, UIScrollViewDelegat
         for (index, slot) in slots where !wanted.contains(index) {
             switch slot {
             case .canvas(let page):
-                onPageRetiring?(index, page.drawingSnapshot())
+                session.pageIsRetiring(at: index, handingOver: page.drawingSnapshot())
                 // After the handover and before the release: the ink is safe,
                 // and what goes now is only this page's undo actions, whose
                 // target is about to stop existing.
@@ -502,7 +482,7 @@ package final class PagedCanvasController: UIViewController, UIScrollViewDelegat
     /// main-thread work. Unmeasured; a fast flick across several pages is the
     /// case to watch.
     private func makeSlot(at index: Int) -> Slot {
-        switch contentForPage?(index) ?? .blank {
+        switch session.canvasContent(forPageAt: index) {
         case .blank:
             return .canvas(makeCanvas(at: index, installing: nil))
 
@@ -536,9 +516,16 @@ package final class PagedCanvasController: UIViewController, UIScrollViewDelegat
     }
 
     private func makeCanvas(at index: Int, installing snapshot: DrawingSnapshot?) -> PageCanvasController {
+        // The page reports through its host from the moment it exists: there is
+        // no window in which a canvas is live and reporting nowhere. What used
+        // to keep the install from being reported as an edit was the *absence*
+        // of that wiring until after the install; the install now hides itself
+        // instead, in `PageCanvasController.installDrawing`, which is where the
+        // assignment is and where a reader looking for the rule will be.
         let page = PageCanvasController(
             toolPicker: toolPicker,
-            projection: projectionForPage?(index) ?? .canonical,
+            projection: session.projection(forPageAt: index),
+            host: SlotHost(runtime: self, pageIndex: index),
             staticRenderer: staticRenderer
         )
 
@@ -553,36 +540,16 @@ package final class PagedCanvasController: UIViewController, UIScrollViewDelegat
             page.installDrawing(from: snapshot)
         }
 
-        // Wired only now, after the install, and that ordering is the rule
-        // rather than a tidiness preference. PencilKit reports a programmatic
-        // assignment as a drawing change, synchronously, so a callback wired
-        // before the install reports loading as user editing — which marked
-        // every page in the opening window dirty and rewrote the document on
-        // every launch (`Contract.md` — Lifecycle: "installing ink is never
-        // reported as an edit").
-        page.onDrawingChanged = { [weak self] in
-            self?.onDrawingChanged?(index)
-        }
-
-        // A layer edit, not an ink edit: it carries the page's index and one
-        // committed value, and takes back whether the session wrote it. A page
-        // with no handler — a runtime built without a session, which is every
-        // test that hosts this directly — accepts by default, so the canvas
-        // keeps what the gesture produced.
-        page.onLayerTransformed = { [weak self] layerID, transform in
-            self?.onLayerTransformed?(index, layerID, transform) ?? true
-        }
-
         // A page built while the shape tool is on draws shapes too. Applied
-        // after the install for the same reason the callback is: nothing about
-        // the tool may participate in loading a page's ink.
+        // after the install, because nothing about the tool may participate in
+        // loading a page's ink.
         page.setShapeTool(shapeTool)
 
         // What sits beneath the ink. After the install, for the same reason:
         // nothing about rendering the backdrop may participate in loading a
         // page's ink, and a composite arriving late must never be able to
         // reach the drawing.
-        page.setStaticLayers(staticLayersForPage?(index) ?? [])
+        page.setStaticLayers(session.staticLayers(forPageAt: index))
 
         if isEditable { page.markEditable() }
         return page
@@ -642,7 +609,7 @@ package final class PagedCanvasController: UIViewController, UIScrollViewDelegat
         currentPageIndex = settled
         refreshWindow()
         livePage(at: settled)?.becomeActivePage()
-        onPageChanged?(settled)
+        session.currentPageChanged(to: settled)
     }
 
     // The delegate callbacks below, and the `override`s above, are `package`
@@ -672,7 +639,7 @@ package final class PagedCanvasController: UIViewController, UIScrollViewDelegat
             // contentSize, the blank slot, and the offset all describe the new
             // page by the time the callback below returns.
             let countBeforeAppend = pageCount
-            onReachedEndBoundary?()
+            session.reachedEndBoundary()
             if pageCount > countBeforeAppend {
                 // UIKit computed this gesture's deceleration target *before*
                 // this delegate call, against the contentSize that still ended

@@ -29,9 +29,13 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
     /// `ZoomRegistrationProbe`, and delete both once the answer lands.
     private let zoomProbe = ZoomRegistrationProbe()
 
-    /// One coarse notification that the drawing changed. It carries no drawing,
-    /// no sample, and no generation number (`Contract.md` — Saving).
-    package var onDrawingChanged: (() -> Void)?
+    /// Whoever placed this page, and the only thing this controller reports to.
+    ///
+    /// Non-optional and supplied at construction: a page canvas that reports
+    /// nowhere is a page whose ink is edited and never saved, and that state
+    /// no longer exists to be reached. See `PageCanvasHost`, which also states
+    /// why this reference is strong.
+    private let host: any PageCanvasHost
 
     /// Shared across pages and owned by `PagedCanvasController`. One picker per
     /// page would mean the selected tool resetting every time you turn one.
@@ -124,12 +128,6 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
     /// list itself rather than of a delegate's judgement.
     private(set) var selection: LayerSelectionRuntime?
 
-    /// Reports one committed layer transform, and takes back whether the
-    /// session accepted it. The page index is added by
-    /// `PagedCanvasController`, because this controller is blind to which page
-    /// it is (`Contract.md` — Owners, golden rule 7).
-    package var onLayerTransformed: ((UUID, PageSpaceTransform) -> Bool)?
-
     /// Increments on every lifted-source request, so an image that arrives
     /// after the selection moved on is dropped rather than shown.
     private var liftGeneration = 0
@@ -209,10 +207,12 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
     init(
         toolPicker: PKToolPicker,
         projection: PageProjection,
+        host: any PageCanvasHost,
         staticRenderer: StaticLayerRenderer? = nil
     ) {
         self.toolPicker = toolPicker
         self.projection = projection
+        self.host = host
         self.staticRenderer = staticRenderer
         super.init(nibName: nil, bundle: nil)
 
@@ -1085,7 +1085,7 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
             "layer \(layerID) was committed with a singular transform, which is not placeable"
         )
 
-        let accepted = onLayerTransformed?(layerID, committed) ?? true
+        let accepted = host.layerTransformed(layerID, to: committed)
         guard accepted else {
             CanvasLog.event(.canvas, "layer \(layerID) transform refused by the session")
             return false
@@ -1167,27 +1167,36 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
     /// Installs a page's drawing, strictly before the canvas becomes editable.
     ///
     /// PencilKit reports this assignment as a drawing change — measured, and
-    /// synchronously, see `PageCanvasControllerTests`. That callback must not
-    /// mark the document dirty, and exactly one mechanism prevents it: the
-    /// wiring order in `PagedCanvasController.makeCanvas`, which attaches the
-    /// change callback only after this runs. There used to be a
-    /// second, a flag raised and lowered around this assignment; it is gone
-    /// because two mechanisms for one rule means neither is understood, and it
-    /// would have been silently inert had delivery ever become asynchronous.
+    /// synchronously, see `PageCanvasControllerTests`. That report must not
+    /// mark the document dirty, and exactly one mechanism prevents it: nothing
+    /// is listening while the ink lands. The delegate is detached across the
+    /// assignment and restored immediately after, in the two lines that make
+    /// the assignment, where a reader of the assignment cannot miss it.
     ///
-    /// That leaves the ordering itself as the load-bearing invariant, so it is
-    /// enforced rather than described: installing over a canvas the user can
-    /// already draw on would overwrite live ink with an older load result, which
-    /// `Contract.md` — Lifecycle forbids outright. Nothing here decodes and
-    /// nothing can throw — decoding saved bytes is the paging runtime's step,
-    /// and bytes that refuse to decode never reach a canvas at all.
+    /// It used to be the wiring order in `PagedCanvasController.makeCanvas`,
+    /// which attached the change callback only after this ran. That mechanism
+    /// died with the callback: a page canvas now reports to a host it is
+    /// constructed with (`PageCanvasHost`), because a canvas that can exist
+    /// unwired is a canvas whose ink can be edited and never saved. There is
+    /// still exactly one mechanism, and it has the same known limit the
+    /// ordering had — it assumes the report is synchronous, and would be
+    /// silently inert if PencilKit ever delivered it later.
+    ///
+    /// Installing over a canvas the user can already draw on would overwrite
+    /// live ink with an older load result, which `Contract.md` — Lifecycle
+    /// forbids outright, so that ordering is a precondition rather than a
+    /// comment. Nothing here decodes and nothing can throw — decoding saved
+    /// bytes is the paging runtime's step, and bytes that refuse to decode
+    /// never reach a canvas at all.
     func installDrawing(from snapshot: DrawingSnapshot) {
         precondition(
             !isEditable,
             "installDrawing must not run once the canvas is editable; "
                 + "it would overwrite live ink with an older drawing"
         )
+        canvasView.delegate = nil
         canvasView.drawing = snapshot.drawingValue
+        canvasView.delegate = self
     }
 
     // MARK: - PKCanvasViewDelegate
@@ -1203,7 +1212,7 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
                 "first drawing change; strokes=\(canvasView.drawing.strokes.count)"
             )
         }
-        onDrawingChanged?()
+        host.drawingChanged()
     }
 
     /// Frame-frequency work, and it stays here inside the canvas runtime: a

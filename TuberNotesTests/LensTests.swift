@@ -319,6 +319,7 @@ struct LensTests {
                 geometry: Self.stripeGeometry,
                 zoomCapPagePointsPerPixel: DocumentIndex.canonicalZoomCapPagePointsPerPixel
             ),
+            host: TestPageHost(),
             staticRenderer: renderer
         )
         let root = controller.view!

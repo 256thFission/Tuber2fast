@@ -549,7 +549,12 @@ struct StaticLayerRenderTests {
         let renderer = StaticLayerRenderer(store: store)
         let layer = try await scratch.imageLayer(store: store, color: .red, transform: .fullPage)
 
-        let controller = PageCanvasController(toolPicker: PKToolPicker(), projection: .canonical, staticRenderer: renderer)
+        let controller = PageCanvasController(
+            toolPicker: PKToolPicker(),
+            projection: .canonical,
+            host: TestPageHost(),
+            staticRenderer: renderer
+        )
         let root = controller.view!
         root.frame = CGRect(x: 0, y: 0, width: 820, height: 1180)
         controller.setStaticLayers([layer])
@@ -597,7 +602,11 @@ struct StaticLayerRenderTests {
     @Test("A page with no static layers installs no stack and keeps an opaque canvas")
     @MainActor
     func aBlankPagePaysNothing() {
-        let controller = PageCanvasController(toolPicker: PKToolPicker(), projection: .canonical)
+        let controller = PageCanvasController(
+            toolPicker: PKToolPicker(),
+            projection: .canonical,
+            host: TestPageHost()
+        )
         let root = controller.view!
         root.frame = CGRect(x: 0, y: 0, width: 820, height: 1180)
         controller.setStaticLayers([])
@@ -621,7 +630,9 @@ struct StaticLayerRenderTests {
         )
 
         let controller = PageCanvasController(
-            toolPicker: PKToolPicker(), projection: .canonical, staticRenderer: StaticLayerRenderer(store: store)
+            toolPicker: PKToolPicker(), projection: .canonical,
+            host: TestPageHost(),
+            staticRenderer: StaticLayerRenderer(store: store)
         )
         let root = controller.view!
         root.frame = CGRect(x: 0, y: 0, width: 820, height: 1180)
@@ -663,7 +674,9 @@ struct StaticLayerRenderTests {
         let layer = try await scratch.imageLayer(store: store, color: .red, transform: .fullPage)
 
         let controller = PageCanvasController(
-            toolPicker: PKToolPicker(), projection: .canonical, staticRenderer: StaticLayerRenderer(store: store)
+            toolPicker: PKToolPicker(), projection: .canonical,
+            host: TestPageHost(),
+            staticRenderer: StaticLayerRenderer(store: store)
         )
         let root = controller.view!
         root.frame = CGRect(x: 0, y: 0, width: 820, height: 1180)
@@ -691,7 +704,9 @@ struct StaticLayerRenderTests {
         )
 
         let controller = PageCanvasController(
-            toolPicker: PKToolPicker(), projection: .canonical, staticRenderer: StaticLayerRenderer(store: store)
+            toolPicker: PKToolPicker(), projection: .canonical,
+            host: TestPageHost(),
+            staticRenderer: StaticLayerRenderer(store: store)
         )
         let root = controller.view!
         root.frame = CGRect(x: 0, y: 0, width: 820, height: 1180)

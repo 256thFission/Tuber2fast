@@ -344,7 +344,11 @@ struct ShapeToolRuntimeTests {
 
     @Test("Committing appends the shape and leaves earlier ink untouched")
     func commitAppendsWithoutDisturbingExistingInk() {
-        let controller = PageCanvasController(toolPicker: PKToolPicker(), projection: .canonical)
+        let controller = PageCanvasController(
+            toolPicker: PKToolPicker(),
+            projection: .canonical,
+            host: TestPageHost()
+        )
         _ = controller.view
 
         let existing = ShapeSynthesis.strokes(
@@ -383,7 +387,11 @@ struct ShapeToolRuntimeTests {
 
     @Test("Committing nothing changes nothing")
     func committingNoStrokesIsANoOp() {
-        let controller = PageCanvasController(toolPicker: PKToolPicker(), projection: .canonical)
+        let controller = PageCanvasController(
+            toolPicker: PKToolPicker(),
+            projection: .canonical,
+            host: TestPageHost()
+        )
         _ = controller.view
         controller.markEditable()
 
@@ -393,7 +401,11 @@ struct ShapeToolRuntimeTests {
 
     @Test("The shape tool switches PencilKit's own inking off, and finger behaviour is untouched")
     func theToolModeArbitratesOnlyThePencil() {
-        let controller = PageCanvasController(toolPicker: PKToolPicker(), projection: .canonical)
+        let controller = PageCanvasController(
+            toolPicker: PKToolPicker(),
+            projection: .canonical,
+            host: TestPageHost()
+        )
         _ = controller.view
         let canvas = controller.canvasView
 
@@ -417,7 +429,11 @@ struct ShapeToolRuntimeTests {
 
     @Test("The shape recognizer accepts the Pencil and nothing else")
     func theRecognizerIsPencilOnly() {
-        let controller = PageCanvasController(toolPicker: PKToolPicker(), projection: .canonical)
+        let controller = PageCanvasController(
+            toolPicker: PKToolPicker(),
+            projection: .canonical,
+            host: TestPageHost()
+        )
         _ = controller.view
 
         let recognizer = pencilDragRecognizers(on: controller.canvasView)[0]
@@ -426,7 +442,9 @@ struct ShapeToolRuntimeTests {
 
     @Test("The tool survives a page turn and reaches pages built later")
     func theToolIsTheRuntimesNotThePages() {
-        let controller = PagedCanvasController()
+        // A runtime with no document behind it: the pages are blank canvases
+        // because this test's session says they are.
+        let controller = PagedCanvasController(session: TestCanvasSession())
         let root = controller.view!
         root.frame = CGRect(x: 0, y: 0, width: 820, height: 1180)
         root.layoutIfNeeded()

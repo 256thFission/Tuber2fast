@@ -13,7 +13,11 @@ import UIKit
 struct PageCanvasControllerTests {
     @Test("The canvas owner configures page space, input policy, and fit zoom")
     func canvasInvariants() {
-        let controller = PageCanvasController(toolPicker: PKToolPicker(), projection: .canonical)
+        let controller = PageCanvasController(
+            toolPicker: PKToolPicker(),
+            projection: .canonical,
+            host: TestPageHost()
+        )
         let root = controller.view!
         root.frame = CGRect(x: 0, y: 0, width: 820, height: 1180)
         root.layoutIfNeeded()
@@ -66,7 +70,11 @@ struct PageCanvasControllerTests {
     /// fit-page floor diverged most — this test fails against that floor.
     @Test("The zoom floor is fit-width: no horizontal dead space, and vertical pan room remains")
     func zoomFloorIsFitWidth() {
-        let controller = PageCanvasController(toolPicker: PKToolPicker(), projection: .canonical)
+        let controller = PageCanvasController(
+            toolPicker: PKToolPicker(),
+            projection: .canonical,
+            host: TestPageHost()
+        )
         let root = controller.view!
         root.frame = CGRect(x: 0, y: 0, width: 1180, height: 820)
         root.layoutIfNeeded()
@@ -102,7 +110,8 @@ struct PageCanvasControllerTests {
             projection: PageProjection(
                 geometry: landscape,
                 zoomCapPagePointsPerPixel: DocumentIndex.canonicalZoomCapPagePointsPerPixel
-            )
+            ),
+            host: TestPageHost()
         )
         let root = controller.view!
         root.frame = CGRect(x: 0, y: 0, width: 820, height: 1180)
@@ -147,7 +156,11 @@ struct PageCanvasControllerTests {
     /// worth of page points there.
     @Test("The zoom ceiling is the durable cap and does not move with the viewport")
     func zoomCeilingIsDurableAndViewportIndependent() {
-        let controller = PageCanvasController(toolPicker: PKToolPicker(), projection: .canonical)
+        let controller = PageCanvasController(
+            toolPicker: PKToolPicker(),
+            projection: .canonical,
+            host: TestPageHost()
+        )
         let root = controller.view!
         root.frame = CGRect(x: 0, y: 0, width: 820, height: 1180)
         root.layoutIfNeeded()
@@ -205,7 +218,11 @@ struct PageCanvasControllerTests {
 
     @Test("A viewport resize re-fits the zoom range and keeps the user's scale")
     func viewportResizeReestablishesZoomRange() {
-        let controller = PageCanvasController(toolPicker: PKToolPicker(), projection: .canonical)
+        let controller = PageCanvasController(
+            toolPicker: PKToolPicker(),
+            projection: .canonical,
+            host: TestPageHost()
+        )
         let root = controller.view!
         root.frame = CGRect(x: 0, y: 0, width: 820, height: 1180)
         root.layoutIfNeeded()
@@ -232,7 +249,11 @@ struct PageCanvasControllerTests {
 
     @Test("A page shorter than the viewport is centred vertically; fit-width leaves no horizontal room")
     func pageIsCentredWhenSmallerThanViewport() {
-        let controller = PageCanvasController(toolPicker: PKToolPicker(), projection: .canonical)
+        let controller = PageCanvasController(
+            toolPicker: PKToolPicker(),
+            projection: .canonical,
+            host: TestPageHost()
+        )
         let root = controller.view!
         root.frame = CGRect(x: 0, y: 0, width: 820, height: 1180)
         root.layoutIfNeeded()
@@ -264,7 +285,11 @@ struct PageCanvasControllerTests {
 
     @Test("Ink stays in page space through zoom and pan")
     func inkIsAuthoredInPageSpace() {
-        let controller = PageCanvasController(toolPicker: PKToolPicker(), projection: .canonical)
+        let controller = PageCanvasController(
+            toolPicker: PKToolPicker(),
+            projection: .canonical,
+            host: TestPageHost()
+        )
         let root = controller.view!
         root.frame = CGRect(x: 0, y: 0, width: 820, height: 1180)
         root.layoutIfNeeded()
@@ -286,20 +311,51 @@ struct PageCanvasControllerTests {
         #expect(canvas.drawing.strokes.count == 1)
     }
 
+    /// The other half of the same rule, and the half that is this app's:
+    /// installing a page's ink is never reported as an edit
+    /// (`Contract.md` — Lifecycle). A canvas now reports to a host it cannot
+    /// be built without, so the report can no longer be avoided by wiring it
+    /// late; `installDrawing` detaches the delegate across the assignment
+    /// instead, and this is what says so.
+    @Test("Installing a page's ink is not reported as a drawing change")
+    func installingInkIsNotReportedAsAnEdit() {
+        let host = TestPageHost()
+        let controller = PageCanvasController(
+            toolPicker: PKToolPicker(),
+            projection: .canonical,
+            host: host
+        )
+        _ = controller.view
+
+        controller.installDrawing(from: DrawingSnapshot(drawing: strokeAcrossPage()))
+
+        #expect(controller.canvasView.drawing.strokes.count == 1)
+        #expect(host.drawingChanges == 0)
+
+        // And the canvas is still reporting: the delegate came back.
+        controller.canvasView.drawing = strokeAcrossPage()
+        #expect(host.drawingChanges == 1)
+    }
+
     /// When PencilKit reports a programmatic assignment to `drawing`.
     ///
     /// This asserts a property of the framework, not of this app, and it is
-    /// load-bearing: a suppression flag set and cleared inside one synchronous
-    /// scope can only suppress a *synchronous* callback. If PencilKit posted the
-    /// change later, such a flag would always read false by the time the
-    /// callback arrived and would suppress nothing, leaving the real protection
-    /// somewhere else entirely. The answer decides which single mechanism
-    /// prevents a load from marking the document dirty.
+    /// load-bearing: detaching the delegate across one synchronous assignment
+    /// — which is what `installDrawing` does, and the single mechanism that
+    /// keeps a load from marking the document dirty — can only suppress a
+    /// *synchronous* callback. If PencilKit posted the change later, the report
+    /// would arrive with the delegate back in place and suppress nothing,
+    /// leaving the real protection somewhere else entirely.
     @Test("PencilKit reports a programmatic drawing assignment synchronously")
     func drawingChangeDeliveryIsSynchronous() async throws {
-        let controller = PageCanvasController(toolPicker: PKToolPicker(), projection: .canonical)
         var deliveries = 0
-        controller.onDrawingChanged = { deliveries += 1 }
+        let host = TestPageHost()
+        host.onDrawingChanged = { deliveries += 1 }
+        let controller = PageCanvasController(
+            toolPicker: PKToolPicker(),
+            projection: .canonical,
+            host: host
+        )
 
         controller.canvasView.drawing = strokeAcrossPage()
         let duringAssignment = deliveries
@@ -318,7 +374,11 @@ struct PageCanvasControllerTests {
 
     @Test("A copied drawing snapshot serializes without consulting the live canvas")
     func drawingSnapshotIsIndependent() async throws {
-        let controller = PageCanvasController(toolPicker: PKToolPicker(), projection: .canonical)
+        let controller = PageCanvasController(
+            toolPicker: PKToolPicker(),
+            projection: .canonical,
+            host: TestPageHost()
+        )
         controller.canvasView.drawing = strokeAcrossPage()
         let snapshot = controller.drawingSnapshot()
 
@@ -339,7 +399,11 @@ struct PageCanvasControllerTests {
     /// promise, not a violation of it.
     @Test("A display below the supported scale clamps the zoom ceiling instead of trapping")
     func subMinimumDisplayScaleClampsInsteadOfTrapping() {
-        let controller = PageCanvasController(toolPicker: PKToolPicker(), projection: .canonical)
+        let controller = PageCanvasController(
+            toolPicker: PKToolPicker(),
+            projection: .canonical,
+            host: TestPageHost()
+        )
         controller.traitOverrides.displayScale = 1
         let root = controller.view!
         root.frame = CGRect(x: 0, y: 0, width: 820, height: 1180)
@@ -367,6 +431,7 @@ struct PageCanvasControllerTests {
 
         let controller = PageCanvasController(
             toolPicker: PKToolPicker(), projection: .canonical,
+            host: TestPageHost(),
             staticRenderer: StaticLayerRenderer(store: store)
         )
         let root = controller.view!
@@ -406,6 +471,7 @@ struct PageCanvasControllerTests {
         let renderer = StaticLayerRenderer(store: store)
         let controller = PageCanvasController(
             toolPicker: PKToolPicker(), projection: .canonical,
+            host: TestPageHost(),
             staticRenderer: renderer
         )
         let root = controller.view!
@@ -545,7 +611,8 @@ struct PageCanvasControllerTests {
             projection: PageProjection(
                 geometry: geometry,
                 zoomCapPagePointsPerPixel: zoomCap
-            )
+            ),
+            host: TestPageHost()
         )
         let root = controller.view!
         root.frame = CGRect(x: 0, y: 0, width: 820, height: 1180)
