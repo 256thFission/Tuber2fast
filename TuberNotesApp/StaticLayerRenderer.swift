@@ -88,11 +88,26 @@ actor StaticLayerRenderer {
     /// Awaited by every render task before it draws, when set. Exists so a
     /// test can hold a render in flight deterministically; the app never sets
     /// it.
+    ///
+    /// Debug-only, and the `#if` is load-bearing rather than tidy: this is a
+    /// suspension point on a path the app runs, and in Release the path has no
+    /// suspension point because these lines are not compiled. See
+    /// `EditorSession.staticRendererForTesting` for why `#if DEBUG` is the
+    /// idiom here rather than `@_spi(Testing)`.
+    ///
+    /// The store seam retired this one's sibling — `EditorSession`'s save
+    /// delay became a store that does not return — and cannot retire this
+    /// one: the gate keys on the *request*, which is the renderer's own
+    /// vocabulary. `inFlightDedupIsTransformAware` releases two renders of the
+    /// same layer, and so of the same asset, in a chosen order; a gate at the
+    /// store cannot tell those two apart.
+    #if DEBUG
     private var renderGateForTesting: (@Sendable (StaticLayerRequest) async -> Void)?
 
     func setRenderGateForTesting(_ gate: @escaping @Sendable (StaticLayerRequest) async -> Void) {
         renderGateForTesting = gate
     }
+    #endif
 
     private struct Entry {
         let request: StaticLayerRequest
@@ -174,9 +189,13 @@ actor StaticLayerRenderer {
         // fix is a generation stamp compared after the await, and it is not
         // worth the machinery for a cache that self-corrects on the next
         // swipe.
+        #if DEBUG
         let gate = renderGateForTesting
+        #endif
         let task = Task { [store] in
+            #if DEBUG
             if let gate { await gate(request) }
+            #endif
             return await Self.render(request, store: store)
         }
         inFlight[key] = (request, task)
@@ -247,8 +266,9 @@ actor StaticLayerRenderer {
             request.pixelsPerPagePoint.isFinite && request.pixelsPerPagePoint > 0,
             "a lens at \(request.pixelsPerPagePoint) pixels per page point is not a level of detail"
         )
-        let gate = renderGateForTesting
-        if let gate { await gate(request) }
+        #if DEBUG
+        if let gate = renderGateForTesting { await gate(request) }
+        #endif
         return await Self.renderLens(request, visibleRect: visibleRect, store: store)
     }
 

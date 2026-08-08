@@ -283,12 +283,14 @@ struct EditorSessionTests {
     @Test("Pulling past the last page during an in-flight save appends immediately")
     func appendDuringAnInFlightSaveGrowsTheDocument() async throws {
         let scratch = try TestScratch("session")
-        let session = scratch.session(debounce: .seconds(30))
+        let held = HeldSaveStore(scratch.store)
+        let session = scratch.session(debounce: .seconds(30), store: held)
         await session.start()
         canvas(of: session).drawing = strokeAcrossPage()
 
-        // Hold a save genuinely in flight.
-        session.serializationDelayForTesting = .milliseconds(200)
+        // Hold a save genuinely in flight — the store does not return until
+        // this test says so, so nothing below is racing a timer.
+        await held.hold()
         let save = Task { await session.saveIfNeeded() }
         await Task.yield()
 
@@ -299,7 +301,7 @@ struct EditorSessionTests {
         #expect(session.pageCount == 2)
         #expect(session.pages.currentPageIndex == 1)
 
-        session.serializationDelayForTesting = nil
+        await held.release()
         await save.value
         await session.saveIfNeeded()
         let saved = try #require(await scratch.store.load())
@@ -310,11 +312,12 @@ struct EditorSessionTests {
     @Test("Work arriving during a background flush is saved with no user action")
     func workDuringAFlushIsRearmed() async throws {
         let scratch = try TestScratch("session")
-        let session = scratch.session()
+        let held = HeldSaveStore(scratch.store)
+        let session = scratch.session(store: held)
         await session.start()
         canvas(of: session).drawing = strokeAcrossPage()
 
-        session.serializationDelayForTesting = .milliseconds(100)
+        await held.hold()
         let flush = Task { await session.flushForBackground() }
         await Task.yield()
 
@@ -324,7 +327,7 @@ struct EditorSessionTests {
         // happened to draw again.
         session.resumeForForeground()
         canvas(of: session).drawing = twoStrokesAcrossPage()
-        session.serializationDelayForTesting = nil
+        await held.release()
         await flush.value
 
         // No Retry tap, no further drawing, no scene transition: the newer
@@ -339,7 +342,8 @@ struct EditorSessionTests {
     @Test("A page that retires during a save that then fails keeps its ink")
     func retirementDuringAFailedSaveKeepsInk() async throws {
         let scratch = try TestScratch("session")
-        let session = scratch.session(debounce: .seconds(30))
+        let held = HeldSaveStore(scratch.store)
+        let session = scratch.session(debounce: .seconds(30), store: held)
         await session.start()
         _ = canvas(of: session)
 
@@ -356,8 +360,9 @@ struct EditorSessionTests {
         canvas(of: session).drawing = strokeAcrossPage()
         let inkedPageID = session.currentPageID
 
-        // Hold the save open, and make it fail: the directory becomes a file.
-        session.serializationDelayForTesting = .milliseconds(200)
+        // Hold the save open, and make it fail: the directory becomes a file
+        // while the store is held, so the write throws when it is let go.
+        await held.hold()
         try FileManager.default.removeItem(at: scratch.root)
         try Data().write(to: scratch.root)
 
@@ -374,11 +379,11 @@ struct EditorSessionTests {
         turn(session, to: 4)
         #expect(session.pages.livePage(at: 0) == nil)
 
+        await held.release()
         await save.value
         #expect(session.lastSaveError != nil)
 
         // The store starts working again; the retry must write the real ink.
-        session.serializationDelayForTesting = nil
         try FileManager.default.removeItem(at: scratch.root)
         try FileManager.default.createDirectory(
             at: scratch.root,
@@ -835,9 +840,10 @@ private extension TestScratch {
     @MainActor
     func session(
         debounce: Duration = .milliseconds(20),
-        clock: any Clock<Duration> = ContinuousClock()
+        clock: any Clock<Duration> = ContinuousClock(),
+        store: (any DocumentStoring)? = nil
     ) -> EditorSession {
-        EditorSession(store: store, debounce: debounce, clock: clock)
+        EditorSession(store: store ?? self.store, debounce: debounce, clock: clock)
     }
 
     /// Overwrites one page's file with bytes that cannot decode. The file still

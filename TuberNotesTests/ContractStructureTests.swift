@@ -300,6 +300,48 @@ enum ContractChecker {
         forbiddenFileIOTokens.filter { code.contains($0) }
     }
 
+    // MARK: Rule — test-only members exist only in Debug
+
+    /// What a member written for the tests is spelled as here.
+    static let testOnlySuffix = "ForTesting"
+
+    /// Lines naming a `…ForTesting` member outside a `#if DEBUG` block.
+    ///
+    /// Test-only members used to ship as ordinary app API — fifteen of them,
+    /// two able to *suspend a production path*: a save that awaited a delay
+    /// nothing in the app ever set, and a renderer that awaited a gate. A
+    /// member that does not exist in Release cannot do that, so the rule is
+    /// that none of them exists there.
+    ///
+    /// Uses are flagged as well as declarations, deliberately: a production
+    /// line that reads or awaits one is the same fact from the other end.
+    /// The scan runs on comment-stripped code, so prose naming the suffix —
+    /// including this rule's own explanation at each site — does not trip it.
+    ///
+    /// `#if DEBUG` only. `#if os(iOS)` around such a member is not the rule
+    /// being asked for and is reported, which is the fail-closed direction:
+    /// the argument happens at review rather than in silence.
+    static func testOnlyMembersOutsideDebug(in code: String) -> [String] {
+        var conditionals: [Bool] = []
+        var found: [String] = []
+
+        for line in code.split(separator: "\n", omittingEmptySubsequences: false) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("#if") {
+                conditionals.append(trimmed == "#if DEBUG")
+            } else if trimmed.hasPrefix("#elseif") || trimmed.hasPrefix("#else") {
+                // The other branch of a DEBUG conditional is not DEBUG.
+                if !conditionals.isEmpty { conditionals[conditionals.count - 1] = false }
+            } else if trimmed.hasPrefix("#endif") {
+                if !conditionals.isEmpty { conditionals.removeLast() }
+            } else if trimmed.contains(testOnlySuffix), !conditionals.contains(true) {
+                found.append(trimmed)
+            }
+        }
+
+        return found
+    }
+
     // MARK: Rule — one PKCanvasView construction site
 
     /// The type names that name a live ink surface.
@@ -667,6 +709,27 @@ struct ContractStructureTests {
         )
     }
 
+    /// Nothing written for the tests exists in the build people hold.
+    ///
+    /// The allowlist is empty and stays empty: a `…ForTesting` member that
+    /// must exist in Release is not a test-only member, and should be named
+    /// for whatever it actually is.
+    @Test("Test-only members exist only in Debug")
+    func testOnlyMembersAreDebugOnly() throws {
+        for source in try Self.appSources() {
+            let leaks = ContractChecker.testOnlyMembersOutsideDebug(in: source.code)
+            #expect(
+                leaks.isEmpty,
+                """
+                \(source.path) names a test-only member outside `#if DEBUG`: \
+                \(leaks.joined(separator: " / ")). It ships in Release, where it is app API \
+                nobody meant to write — and a test-only suspension point there can hold a \
+                production path.
+                """
+            )
+        }
+    }
+
     /// An allowlist entry naming a file that no longer exists.
     @Test("No allowlist entry outlives its file")
     func allowlistsNameFilesThatExist() throws {
@@ -857,6 +920,53 @@ struct ContractCheckerOwnTests {
             #expect(sources.allSatisfy { ContractChecker.fileIOTokens(in: $0.code).isEmpty })
             #expect(ContractChecker.canvasConstructionSites(in: sources).isEmpty)
         }
+    }
+
+    /// The rule can go dead in two directions, so both are planted: a member
+    /// outside the conditional must be caught, and one inside it must not.
+    @Test("A test-only member outside #if DEBUG is caught, and one inside is not")
+    func testOnlyMembersOutsideDebugAreCaught() {
+        let shipped = """
+            struct A {
+                var thingForTesting: Int { 1 }
+            }
+            """
+        #expect(ContractChecker.testOnlyMembersOutsideDebug(in: shipped).count == 1)
+
+        let gated = """
+            struct A {
+                #if DEBUG
+                var thingForTesting: Int { 1 }
+                #endif
+            }
+            """
+        #expect(ContractChecker.testOnlyMembersOutsideDebug(in: gated).isEmpty)
+
+        // The other branch of a DEBUG conditional is not DEBUG.
+        let elseBranch = """
+            #if DEBUG
+            let a = 1
+            #else
+            var thingForTesting: Int { 1 }
+            #endif
+            """
+        #expect(ContractChecker.testOnlyMembersOutsideDebug(in: elseBranch).count == 1)
+
+        // A conditional that is not DEBUG does not satisfy the rule.
+        let wrongCondition = """
+            #if os(iOS)
+            var thingForTesting: Int { 1 }
+            #endif
+            """
+        #expect(ContractChecker.testOnlyMembersOutsideDebug(in: wrongCondition).count == 1)
+
+        // And the scan is over stripped code, so prose cannot trip it —
+        // `CheckedSource.code` is what the rule reads.
+        #expect(
+            ContractChecker.testOnlyMembersOutsideDebug(
+                in: ContractChecker.codeOnly("// a comment about somethingForTesting\nlet x = 1\n")
+            ).isEmpty
+        )
     }
 
     @Test("A stale allowlist entry is reported")

@@ -95,6 +95,10 @@ final class ZoomRegistrationProbe {
     }
 
     /// Read by tests: the worst disagreement seen since the last flush.
+    // Debug-only, as every `…ForTesting` member is; the reasoning is at
+    // `EditorSession.staticRendererForTesting`.
+    #if DEBUG
     var worstScaleRatioForTesting: Double { worstScaleRatio }
     var sampleCountForTesting: Int { samples }
+    #endif
 }

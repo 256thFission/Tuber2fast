@@ -593,6 +593,9 @@ final class LayerSelectionRuntime: NSObject {
 
     // MARK: - Read only by tests
 
+    // Debug-only, as every `…ForTesting` member is; the reasoning is at
+    // `EditorSession.staticRendererForTesting`.
+    #if DEBUG
     /// The chrome layer, so a test can assert that selection draws something
     /// and deselection draws nothing.
     var chromeLayerForTesting: CAShapeLayer { chrome }
@@ -601,6 +604,7 @@ final class LayerSelectionRuntime: NSObject {
     /// "with no selection, every touch behaves exactly as today" is exactly
     /// this flag, so a test asserts the flag rather than the promise.
     var dragRecognizerIsEnabledForTesting: Bool { drag.isEnabled }
+    #endif
 }
 
 /// A finger drag that claims the touch on touch-down, and only where the

@@ -350,7 +350,19 @@ final class EditorSession {
     /// Read only by tests: the prefetch warm is observable nowhere else —
     /// "the neighbour's composite is already in the cache before its canvas
     /// exists" is a claim about this actor's contents.
+    ///
+    /// `#if DEBUG` is the idiom for every `…ForTesting` member left in this
+    /// app, and it is chosen over `@_spi(Testing)` for one reason:
+    /// `@_spi` restricts *who may name* a member and still compiles it into
+    /// the binary people hold, while the test bundle already reaches internal
+    /// members through `@testable` and gains nothing from the annotation. The
+    /// tests build Debug — `project.yml`'s scheme says so — and the build that
+    /// ships to an iPad is Release, so a member that does not exist there
+    /// cannot be read, set, or awaited by anything. That mattered concretely:
+    /// two of these could suspend a production path.
+    #if DEBUG
     var staticRendererForTesting: StaticLayerRenderer { staticRenderer }
+    #endif
 
     /// The paged canvas runtime, created once and owned here so that SwiftUI
     /// rebuilding its body cannot replace it.
@@ -511,16 +523,6 @@ final class EditorSession {
     /// 500 ms interval the fourth doubling already exceeds `maximumRetryDelay` —
     /// and an unbounded shift would overflow.
     private static let maximumFailureDoublings = 10
-
-    /// Test-only: holds the save open between serialization and the store write.
-    ///
-    /// The retirement handover and the save acknowledgement are only observable
-    /// against a save that is genuinely in flight. A real device earns that
-    /// window from a large drawing's encode; tests earn it here rather than by
-    /// sleeping and hoping (`inkSurvivesItsPageLeavingTheWindow` used to sleep
-    /// 50 ms past the race it was written to catch). `nil` — the only value the
-    /// app ever holds — costs nothing on the save path.
-    @ObservationIgnored var serializationDelayForTesting: Duration?
 
     /// `RootCanvasView.task` may be restarted as views move through the scene
     /// lifecycle. Exactly one load is allowed to cross the store boundary; later
@@ -1221,10 +1223,6 @@ final class EditorSession {
         // Measured where the work happens rather than timed again here: the next
         // debounce is derived from this cost (`Contract.md` — Saving).
         lastSerializeDuration = totalDuration
-
-        if let delay = serializationDelayForTesting {
-            try? await Task.sleep(for: delay)
-        }
 
         // The session is the one writer of a page's layer list (`Docs/Forks/
         // CanvasFeatureComplete.md` — One value, one writer), so the envelopes

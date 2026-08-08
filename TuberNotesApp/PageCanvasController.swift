@@ -153,7 +153,11 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
     /// The last composite request this controller issued, read only by tests:
     /// the minus-one wiring — selection feeding the composite request — is
     /// otherwise observable only by pixel diffing.
+    // Debug-only, as every `…ForTesting` member is; the reasoning is at
+    // `EditorSession.staticRendererForTesting`.
+    #if DEBUG
     var renderedRequestForTesting: StaticLayerRequest? { renderedRequest }
+    #endif
 
     /// Increments on every composite request, so an answer that arrives after
     /// the page's layers changed is dropped rather than shown. A late render
@@ -170,8 +174,10 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
     /// Read only by tests: "the lens is requested at settle and never by a
     /// gesture frame" and "the visible rect is clamped to the page" are
     /// otherwise observable only on a device.
+    #if DEBUG
     private(set) var lensRequestCountForTesting = 0
     private(set) var lensRequestForTesting: (rect: CGRect, pixelsPerPagePoint: Double)?
+    #endif
 
     /// A lens is only worth rendering meaningfully past the base's own
     /// detail; below this ratio the base is already pixel-exact or close
@@ -903,8 +909,10 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
         )
         lensGeneration += 1
         let generation = lensGeneration
+        #if DEBUG
         lensRequestCountForTesting += 1
         lensRequestForTesting = (clamped, lensScale)
+        #endif
 
         // One task per settle — settle frequency, never input frequency. The
         // render runs on the global executor; the main thread's whole share

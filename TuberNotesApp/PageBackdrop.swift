@@ -360,6 +360,9 @@ final class PageBackdrop {
 
     // MARK: - Read only by tests
 
+    // Debug-only, as every `…ForTesting` member is; the reasoning is at
+    // `EditorSession.staticRendererForTesting`.
+    #if DEBUG
     /// The layer the mirror transforms, so a test can assert registration
     /// arithmetic that no simulator can show and no eye can measure.
     var pageLayerForTesting: CALayer { page }
@@ -375,4 +378,5 @@ final class PageBackdrop {
     /// The lens layer, so a test can assert where a settled-zoom render
     /// landed and that invalidation genuinely emptied it.
     var lensLayerForTesting: CALayer { lens }
+    #endif
 }
