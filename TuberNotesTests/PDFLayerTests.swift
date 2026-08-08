@@ -462,12 +462,12 @@ struct PDFLayerTests {
         let receipt = pdf(
             pageSizes: [
                 CGSize(width: 612, height: 792),
-                CGSize(width: 137, height: 800),
+                CGSize(width: 103, height: 800),
             ]
         ) { _, _ in }
 
         await #expect(throws: LayerEditError.pageTooSmallToDisplay(
-            width: 137,
+            width: 103,
             height: 800,
             minimum: minimum
         )) {
@@ -495,11 +495,11 @@ struct PDFLayerTests {
         let minimum = PageProjection.smallestDisplayablePagePoints(
             zoomCapPagePointsPerPixel: DocumentIndex.canonicalZoomCapPagePointsPerPixel
         )
-        // 138 × 300: past the 137.6-point bound by four tenths of a point, and
+        // 104 × 300: past the 103.2-point bound by eight tenths of a point, and
         // narrower than anything else this suite imports.
-        #expect(minimum > 137 && minimum < 138)
+        #expect(minimum > 103 && minimum < 104)
         let appended = try await session.importPDF(
-            pdf(pageSizes: [CGSize(width: 138, height: 300)]) { _, _ in }
+            pdf(pageSizes: [CGSize(width: 104, height: 300)]) { _, _ in }
         )
 
         #expect(session.lastSaveError == nil)
@@ -508,7 +508,7 @@ struct PDFLayerTests {
         let index = try #require(await scratch.store().load())
         let position = try #require(index.pageIDs.firstIndex(of: appended[0]))
         #expect(try #require(index.geometry(ofPageAt: position))
-            == PageGeometry(width: 138, height: 300))
+            == PageGeometry(width: 104, height: 300))
     }
 
     @Test("Deleting one page's pdf layer leaves the asset the other pages still show")

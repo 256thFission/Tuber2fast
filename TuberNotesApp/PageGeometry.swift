@@ -118,17 +118,21 @@ struct PageProjection: Sendable, Equatable {
     static let finestReachablePagePointsPerPixel: Double =
         1 / (runtimeMaximumZoomScale * minimumSupportedDisplayScale)
 
-    /// The widest viewport a single page is ever fitted into: the long edge of
-    /// the largest iPad this application supports — the 13-inch iPad Pro, at
-    /// 1032 × 1376 points.
+    /// The widest viewport a single page is ever fitted into: the **portrait**
+    /// width of the largest iPad this application supports — the 13-inch iPad
+    /// Pro, at 1032 × 1376 points.
     ///
-    /// The long edge rather than the portrait width, even though
-    /// `UISupportedInterfaceOrientations_iPad` is pinned to portrait
-    /// (`project.yml`). The pin is one line, and a bound that silently becomes
-    /// wrong when someone deletes it is a bound that fails open. Split View and
-    /// Slide Over only ever make the window narrower, so nothing else raises
-    /// this number.
-    static let widestSupportedViewportPoints: Double = 1376
+    /// Portrait width and not the long edge, because `project.yml` pins
+    /// `UISupportedInterfaceOrientations_iPad` to portrait. Split View and
+    /// Slide Over only ever make the window narrower, so with that pin in force
+    /// nothing presents a page across more than 1032 points, on any iPad.
+    ///
+    /// The pin is one line of a file this constant cannot see, which is exactly
+    /// how a bound rots. `PageGeometryTests` reads `project.yml` and fails if
+    /// the orientations key stops saying portrait-only, naming this constant —
+    /// so lifting the pin cannot quietly leave a bound behind that is 1.33×
+    /// too small.
+    static let widestSupportedViewportPoints: Double = 1032
 
     /// The smallest a page may be, in page points, under a given zoom cap:
     /// below this the page's fit-width scale is *above* the document's own
@@ -150,8 +154,8 @@ struct PageProjection: Sendable, Equatable {
     /// that axis; a coarser display already clamps the ceiling *up* to
     /// `runtimeMaximumZoomScale`, which only makes the page easier to fit.
     ///
-    /// At the canonical cap of 1/20 this is `1376 × 0.05 × 2` = **137.6 points**
-    /// — about 48 mm. A till receipt at 58 mm (164 pt) and a business card at
+    /// At the canonical cap of 1/20 this is `1032 × 0.05 × 2` = **103.2 points**
+    /// — about 36 mm. A till receipt at 58 mm (164 pt) and a business card at
     /// 89 mm (252 pt) both clear it; a page that does not is a fragment of a
     /// source, not a page.
     ///
