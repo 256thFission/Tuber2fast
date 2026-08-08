@@ -316,6 +316,9 @@ struct FolderContentView: View {
                     onFolder: { showingNewFolderSheet = true }
                 )
             }
+
+            LibraryToolbarMenu(coordinator: coordinator)
+                .padding(.leading, 10)
         }
     }
 
