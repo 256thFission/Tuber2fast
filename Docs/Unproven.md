@@ -22,6 +22,30 @@ Nothing here is a reason not to ship. It is a reason not to be surprised.
 
 ## Never exercised by hand
 
+- **The library browser has been launched and seen, and almost nothing in it
+  has been tapped by a hand.** Two launches in the pinned simulator produced
+  screenshots (the spine, then the integrated build) showing the sidebar, the
+  toolbar, and the adopted document's cell. Every flow — create, open, Back,
+  rename, move, trash, recover, duplicate, favorites, sort, filter, search,
+  multi-select — is proven by unit tests driving models and stores, which
+  proves the logic and nothing about the touch. The handover's ten-minute
+  walk is the missing evidence, and the popover/sheet feel on a real screen
+  is Phillip's verdict.
+- **`EditorSession.close()` has no device evidence, and it needs it.**
+  `EditorSession.swift` is on CONTRIBUTING's device-evidence list. The
+  retain-if-dirty drain — a dirty close surviving behind the browser, the
+  banner, the blocked opens, the eventual drain — has been exercised only
+  through a gated test store, never against a really-failing disk, and never
+  on an iPad. Required but not done.
+- **Off-main `PKDrawing` thumbnail rendering is measured on the simulator
+  only.** ~52 ms cold / 2–14 ms warm per thumbnail, deterministic across
+  runs — on a Mac's CPU through a simulator PencilKit. No inequality about
+  an iPad follows from it, in either direction; same caveat as the settle
+  decode benchmark below.
+- **Adoption has run only against scratch roots and one simulator
+  container.** The one production-shaped adoption seen moved the simulator's
+  `JustACanvas.tubernotes` into the library and rendered its cell. No iPad's
+  real pre-library document has been through it.
 - **Library name collisions have never met a case-sensitive volume.**
   `LibraryStore` resolves collisions by asking the file system (`fileExists`
   on the real path), never by string-comparing listings, precisely because
