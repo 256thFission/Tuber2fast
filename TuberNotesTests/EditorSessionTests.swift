@@ -725,27 +725,57 @@ struct EditorSessionTests {
         let session = scratch.session(debounce: .seconds(30))
         await session.start()
 
-        try await canvas(of: session).drawing = manyStrokes(count: 20_000)
-        await session.saveIfNeeded()
-        let onePage = session.lastSerializeDuration
-        #expect(
-            onePage > .milliseconds(20),
-            "fixture serializes in \(onePage), too cheap to tell a maximum from a sum"
-        )
-
-        // Two pages dirty in one pass, each a freshly built drawing of the same
-        // size, so each pays the same first-traversal cost the pass above paid.
-        // Summed, the measurement would be about twice `onePage`; as a maximum
-        // it is about `onePage`.
-        try await canvas(of: session).drawing = manyStrokes(count: 20_000)
-        pullPastTheEnd(session)
+        // A throwaway pass first, and it is not optional: the process's very
+        // first serialization carries one-time cost several times the steady
+        // one. Everything measured below happens after PencilKit is warm.
         try await canvas(of: session).drawing = manyStrokes(count: 20_000)
         await session.saveIfNeeded()
 
+        // Two heavy pages in one pass, then six, and **both are batched passes
+        // of the same shape**. A page serialized inside a batch measures
+        // markedly cheaper than the same page serialized alone, so grading a
+        // multi-page pass against a single-page one would be measuring the
+        // batching rather than the arithmetic — and did, when this test was
+        // first written that way and passed against a deliberate sum.
+        let twoPages = try await heavySavePass(session, pages: 2)
+        let sixPages = try await heavySavePass(session, pages: 6)
+
         #expect(
-            session.lastSerializeDuration < onePage * 3 / 2,
-            "two pages measured \(session.lastSerializeDuration) against one page's \(onePage)"
+            twoPages > .milliseconds(10),
+            "fixture serializes in \(twoPages), too cheap to tell a maximum from a sum"
         )
+
+        // A maximum is one page's cost whether the pass held two pages or six.
+        // A sum is three times as much.
+        #expect(
+            sixPages < twoPages * 2,
+            "six pages measured \(sixPages) against two pages' \(twoPages)"
+        )
+
+        // The six pages really were in that pass. Without this the comparison
+        // could pass because nothing was summed rather than because a maximum
+        // was taken — the first and last of the run are enough to show the
+        // whole run reached disk.
+        let pages = try #require(await scratch.store.load()).pageIDs.suffix(6)
+        for pageID in [pages.first!, pages.last!] {
+            #expect(try PKDrawing(data: await scratch.store.loadPage(pageID).inkData)
+                .strokes.count == 20_000)
+        }
+    }
+
+    /// Dirties `count` pages with the same heavy fixture, appending as a person
+    /// would to reach each new one, and runs a single save pass over all of
+    /// them. Returns what that pass measured.
+    private func heavySavePass(
+        _ session: EditorSession,
+        pages count: Int
+    ) async throws -> Duration {
+        for page in 0..<count {
+            if page > 0 { pullPastTheEnd(session) }
+            try await canvas(of: session).drawing = manyStrokes(count: 20_000)
+        }
+        await session.saveIfNeeded()
+        return session.lastSerializeDuration
     }
 
     @Test("A pass that serialized nothing keeps the last real measurement")
