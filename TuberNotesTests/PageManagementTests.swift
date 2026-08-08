@@ -197,6 +197,81 @@ struct PageManagementTests {
         #expect(session.pageCount == 2)
     }
 
+    // MARK: - Insert
+
+    @Test("A page inserted mid-document lands where it was asked for")
+    func insertPlacesThePageBesideItsNeighbour() async throws {
+        let world = try await threePages()
+        let pages = world.pageIDs
+
+        let after = try await world.session.insertPage(after: pages[0])
+        let before = try await world.session.insertPage(before: pages[2])
+
+        #expect(world.session.pageCount == 5)
+        #expect(
+            (0..<5).map(world.session.pageIDForTesting(at:))
+                == [pages[0], after, pages[1], before, pages[2]]
+        )
+        // Turning to what you just made is this UI's choice, stated here so a
+        // change to it is a change to a test rather than a surprise.
+        #expect(world.session.currentPageID == before)
+    }
+
+    @Test("A page inserted ahead of a written one is durable at once")
+    func insertMidDocumentIsDurableImmediately() async throws {
+        let world = try await threePages()
+        let pages = world.pageIDs
+
+        let inserted = try await world.session.insertPage(after: pages[0])
+
+        // `durableIndex` withholds only the *trailing* run of never-written
+        // pages, so this one is named by the index — and `beginSave`'s
+        // clean-and-never-written branch owes it a file in the same pass, or
+        // the index it just wrote would dangle.
+        let saved = try #require(await world.scratch.freshStore().load())
+        #expect(saved.pageIDs == [pages[0], inserted, pages[1], pages[2]])
+        #expect(FileManager.default.fileExists(atPath: world.scratch.pageURL(inserted).path))
+        // Blank, but present: a page file with nothing but its ink layer.
+        let file = try await world.scratch.freshStore().loadPage(inserted)
+        #expect(file.staticLayers.isEmpty)
+        #expect(file.inkData.isEmpty)
+    }
+
+    @Test("A page inserted at the end is withheld exactly as an appended one is")
+    func insertAtTheEndJoinsTheWithheldTrailingRun() async throws {
+        let world = try await threePages()
+        let pages = world.pageIDs
+
+        let inserted = try await world.session.insertPage(after: pages[2])
+
+        // On screen and not in the file. This is the same rule appending
+        // obeys, not an exception to it: nothing about *where* a page was
+        // inserted may put a file on disk for a page nobody has written on
+        // when appending would not.
+        #expect(world.session.pageCount == 4)
+        let saved = try #require(await world.scratch.freshStore().load())
+        #expect(saved.pageIDs == pages, "the trailing run is withheld")
+        #expect(!FileManager.default.fileExists(atPath: world.scratch.pageURL(inserted).path))
+
+        // Its first ink is what makes it real, exactly as for an append.
+        try await world.session.importImage(
+            Data([0x0A]), format: .heic, sourceWidth: 100, sourceHeight: 100, onPage: inserted
+        )
+        let after = try #require(await world.scratch.freshStore().load())
+        #expect(after.pageIDs == pages + [inserted])
+    }
+
+    @Test("Inserting beside a page that is gone is refused, not guessed at")
+    func insertBesideAMissingPageIsRefused() async throws {
+        let world = try await threePages()
+        let vanished = UUID()
+
+        await #expect(throws: PageEditError.pageNotFound(vanished)) {
+            try await world.session.insertPage(after: vanished)
+        }
+        #expect(world.session.pageCount == 3)
+    }
+
     // MARK: - The structural gate
 
     @Test("Two page edits issued at once each remove the page they named")
@@ -220,6 +295,27 @@ struct PageManagementTests {
 
         #expect(session.pageCount == 1)
         #expect(session.pageIDForTesting(at: 0) == pages[2])
+    }
+
+    @Test("Page edits take effect in the order they were issued")
+    func structuralOperationsRunInIssueOrder() async throws {
+        let world = try await threePages()
+        let session = world.session
+        let pages = world.pageIDs
+
+        // These two do **not** commute, which is the point: an insert beside a
+        // page, and the deletion of that same page. In issue order the insert
+        // lands first and the delete then takes its neighbour. In the other
+        // order the insert has no neighbour left to land beside and throws.
+        let insertion = Task { try await session.insertPage(after: pages[0]) }
+        let deletion = Task { try await session.deletePage(pages[0]) }
+        let inserted = try await insertion.value
+        try await deletion.value
+
+        #expect(session.pageCount == 3)
+        #expect(
+            (0..<3).map(session.pageIDForTesting(at:)) == [inserted, pages[1], pages[2]]
+        )
     }
 
     @Test("A page edit waits out the save in flight rather than mutating under it")
