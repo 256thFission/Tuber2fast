@@ -20,12 +20,24 @@ final class FolderListingModel {
         case loaded
     }
 
+    /// The toolbar's funnel chip: All / Documents / Folders (spec §7.2).
+    /// Session-scoped by design — GoodNotes evidence on filter persistence
+    /// is absent ("Filter persistence: UNKNOWN"), so nothing is written.
+    enum ItemFilter: String, CaseIterable {
+        case all, documents, folders
+    }
+
     let folderPath: String
     private let library: LibraryStore
 
     private(set) var state: ListingState = .loading
     /// One array, one comparator — folders and documents interleaved.
     private(set) var items: [LibraryItem] = []
+    /// The funnel chip's choice, applied in memory over `items`.
+    var filter: ItemFilter = .all
+    /// The title search's live query. The model is built per folder view, so
+    /// a folder push starts a fresh model and the query resets structurally.
+    var searchText: String = ""
     /// The listing's own notices — corrupt sidecars set aside, foreign files
     /// ignored — surfaced in one non-modal banner.
     private(set) var degradations: [String] = []
@@ -53,6 +65,39 @@ final class FolderListingModel {
         } catch {
             state = .refused(Self.describe(error))
         }
+    }
+
+    // MARK: - What the pane shows
+
+    /// The listing as the pane renders it: filtered, searched, then sorted
+    /// under the prefs handed in at render time — so a sort changed anywhere
+    /// in the stack re-orders every visible folder view, including ones the
+    /// navigation stack kept alive across a pop.
+    ///
+    /// The search filters **this folder's in-memory listing only** — no
+    /// recursion, deliberately: a whole-tree title search would walk the tree
+    /// the design promises not to walk (`03-review.md` M-J; recursive search
+    /// is a later argument, not a smaller loop here).
+    func displayed(under prefs: LibraryPrefs) -> [LibraryItem] {
+        var visible = items
+        switch filter {
+        case .all:
+            break
+        case .documents:
+            visible = visible.filter { !Self.isFolder($0) }
+        case .folders:
+            visible = visible.filter { Self.isFolder($0) }
+        }
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !query.isEmpty {
+            visible = visible.filter {
+                $0.name.range(
+                    of: query,
+                    options: [.caseInsensitive, .diacriticInsensitive]
+                ) != nil
+            }
+        }
+        return Self.sorted(visible, by: prefs.sortKey, ascending: prefs.ascending)
     }
 
     // MARK: - The one comparator
