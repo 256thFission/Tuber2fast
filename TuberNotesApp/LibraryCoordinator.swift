@@ -2,6 +2,7 @@ import Foundation
 import Observation
 import TuberCore
 import TuberStore
+import UniformTypeIdentifiers
 
 /// The one owner of "which document is open" (`Docs/Forks/Library/02-proposal.md`
 /// §2 — Ownership: `AppRoot`'s row) and of the open/close transitions between
@@ -132,6 +133,101 @@ final class LibraryCoordinator {
             CanvasLog.event(.lifecycle, "close left \(open.itemPath) dirty; retained to drain")
         }
         libraryGeneration += 1
+    }
+
+    /// Import's own refusals, worded for the listing banner that shows them.
+    enum ImportError: Error, CustomStringConvertible {
+        case unsupportedType(String)
+        case sessionFailed(String)
+
+        var description: String {
+            switch self {
+            case .unsupportedType(let ext):
+                return "\u{201C}\(ext)\u{201D} files cannot be imported — PDFs and images can."
+            case .sessionFailed(let message):
+                return "The imported document could not be opened. \(message)"
+            }
+        }
+    }
+
+    /// The + New popover's Import: one picked file becomes one new document
+    /// named after it, opened with the file's contents already imported.
+    ///
+    /// The order is the failure-cost order: the bytes are read (and an image
+    /// prepared) **before** anything durable exists, so an unreadable pick
+    /// creates nothing. The directory reservation and `.createIfAbsent` are
+    /// exactly the New Notebook path's; the import itself is the existing
+    /// `EditorSession.importPDF`/`importImage`, run once the session is
+    /// ready. A failure after the reservation leaves a valid empty document
+    /// in the listing — visible, trashable — rather than half-torn state;
+    /// the thrown error says the import itself did not land.
+    ///
+    /// The one file read is `PickedFileReading.read` — the allowlisted
+    /// security-scoped read `RootCanvasView` uses — detached because it is a
+    /// synchronous read and this is a main-actor context.
+    func importAndOpenDocument(from url: URL, in folderPath: String) async throws {
+        guard canOpenDocuments else {
+            CanvasLog.event(.lifecycle, "import refused: a session is draining or open")
+            return
+        }
+
+        let type = UTType(filenameExtension: url.pathExtension)
+        let isPDF = type?.conforms(to: .pdf) == true
+        let isImage = type?.conforms(to: .image) == true
+        guard isPDF || isImage else {
+            throw ImportError.unsupportedType(url.pathExtension)
+        }
+
+        let bytes = try await Task.detached(priority: .userInitiated) {
+            try PickedFileReading.read(url)
+        }.value
+        // The image path transcodes to the one durable format before any
+        // directory exists — an undecodable image imports nothing at all.
+        let preparedImage: PreparedImageImport? = isPDF
+            ? nil
+            : try await Task.detached(priority: .userInitiated) {
+                try ImageImportPreparation.prepare(bytes)
+            }.value
+
+        let baseName = url.deletingPathExtension().lastPathComponent
+        let item = try await library.createDocumentDirectory(named: baseName, in: folderPath)
+        libraryGeneration += 1
+
+        let session = EditorSession(
+            store: DocumentStore(directoryURL: library.documentURL(forItemAt: item.id)),
+            intent: .createIfAbsent
+        )
+        // Started here rather than left to the editor view's `.task`: the
+        // import entry points refuse until `.ready`, and `start()` is
+        // idempotent, so the view's later call finds it done.
+        await session.start()
+        guard session.phase == .ready else {
+            let reason: String
+            if case .failed(let message) = session.phase {
+                reason = message
+            } else {
+                reason = "The session did not become ready."
+            }
+            throw ImportError.sessionFailed(reason)
+        }
+
+        if let preparedImage {
+            try await session.importImage(
+                preparedImage.bytes,
+                format: preparedImage.format,
+                sourceWidth: preparedImage.orientedPixelWidth,
+                sourceHeight: preparedImage.orientedPixelHeight
+            )
+        } else {
+            try await session.importPDF(bytes)
+        }
+
+        openDocument = OpenDocument(
+            lifecycle: EditorLifecycle(session: session),
+            itemPath: item.id,
+            displayName: item.name
+        )
+        CanvasLog.event(.lifecycle, "library imported \(url.lastPathComponent) as \(item.id)")
     }
 
     /// A mutation outside the coordinator's own transitions changed the tree

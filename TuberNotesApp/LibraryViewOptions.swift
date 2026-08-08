@@ -66,17 +66,46 @@ final class LibraryViewOptionsModel {
     }
 }
 
-/// The four-squares menu in shot 08's structure, minus Select Items (it
-/// lands with the multi-select lane): Grid ✓ / List, a divider, then the
-/// four sort keys with the checkmark and direction chevron on the active
-/// key only (UX-11).
+/// The four-squares menu in shot 08's structure: **Select Items** first,
+/// then Grid ✓ / List, a divider, then the four sort keys with the checkmark
+/// and direction chevron on the active key only (UX-11).
 struct LibraryViewOptionsPopover: View {
     let options: LibraryViewOptionsModel
+    /// Select Items (spec §6.2's entry point). The row renders only where a
+    /// caller can actually enter select mode; a menu offering what cannot
+    /// happen is lying chrome.
+    var onSelectItems: (() -> Void)?
 
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
+            if let onSelectItems {
+                Button {
+                    dismiss()
+                    onSelectItems()
+                } label: {
+                    HStack(spacing: 10) {
+                        indicator(checked: false, chevron: nil)
+                        Image(systemName: "checkmark.circle")
+                            .font(.system(size: 15))
+                            .foregroundStyle(.white)
+                            .frame(width: 24)
+                        Text("Select Items")
+                            .font(.system(size: 16))
+                            .foregroundStyle(.white)
+                        Spacer()
+                    }
+                    .padding(.vertical, 8)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("library.select")
+
+                Divider()
+                    .padding(.vertical, 6)
+            }
+
             viewModeRow(.grid, symbol: "square.grid.2x2", title: "Grid")
             viewModeRow(.list, symbol: "list.bullet", title: "List")
 

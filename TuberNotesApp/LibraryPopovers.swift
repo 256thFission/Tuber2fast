@@ -210,14 +210,14 @@ struct LibraryItemMenuPopover: View {
 }
 
 /// The + New popover, in the observed band grammar at tonight's cardinality:
-/// the Notebook square tile in the top band, Folder in its own card at the
-/// bottom. Import is omitted entirely rather than shipped disabled — a menu
-/// offering what cannot happen is lying chrome; the import lane restores it.
+/// the Notebook square tile in the top band, the Import wide tile in the
+/// middle band (spec §5.1's row 2), Folder in its own card at the bottom.
 struct LibraryNewPopover: View {
-    /// Nil while a dirty session drains — the notebook tile opens a document
-    /// and opening is blocked; folders stay available.
+    /// Nil while a dirty session drains — the notebook and import tiles both
+    /// open a document and opening is blocked; folders stay available.
     let notebookBlockedReason: String?
     let onNotebook: () -> Void
+    let onImport: () -> Void
     let onFolder: () -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -245,6 +245,27 @@ struct LibraryNewPopover: View {
                 .accessibilityIdentifier("library.new.notebook")
                 Spacer()
             }
+
+            // Middle band: the Import wide tile. Blocked with the notebook
+            // tile — an import ends in an open document.
+            Button {
+                dismiss()
+                onImport()
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: "square.and.arrow.down")
+                        .font(.system(size: 18))
+                    Text("Import")
+                        .font(.system(size: 15, weight: .medium))
+                    Spacer()
+                }
+                .padding(14)
+                .background(Color(white: 0.16), in: RoundedRectangle(cornerRadius: 14))
+            }
+            .buttonStyle(.plain)
+            .disabled(notebookBlockedReason != nil)
+            .opacity(notebookBlockedReason == nil ? 1 : 0.4)
+            .accessibilityIdentifier("library.new.import")
 
             // Bottom band: Folder in its own card.
             Button {

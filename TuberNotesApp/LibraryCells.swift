@@ -21,7 +21,11 @@ struct LibraryItemCell: View {
         return false
     }
 
-    private var openDisabled: Bool { isDocument && openBlockedReason != nil }
+    /// In select mode the tap is a toggle, not an open, so the drain block
+    /// has nothing to protect and the cell must not dim.
+    private var openDisabled: Bool {
+        isDocument && openBlockedReason != nil && !model.isSelecting
+    }
 
     var body: some View {
         VStack(spacing: 10) {
@@ -34,9 +38,17 @@ struct LibraryItemCell: View {
             // The star overlays the open button rather than living inside its
             // label: a button nested in a button's label yields its tap to
             // the outer one, and the star's tap must never open the document.
+            // In select mode the same corner carries the check-circle instead
+            // (UX-10) — the star is hidden, not inert, so the only tap a cell
+            // offers is the toggle.
             .overlay(alignment: .topTrailing) {
-                LibraryFavoriteStar(item: item, model: model)
-                    .padding(isDocument ? 8 : 4)
+                if model.isSelecting {
+                    LibrarySelectionCheck(item: item, model: model)
+                        .padding(isDocument ? 8 : 4)
+                } else {
+                    LibraryFavoriteStar(item: item, model: model)
+                        .padding(isDocument ? 8 : 4)
+                }
             }
 
             HStack(alignment: .firstTextBaseline, spacing: 4) {
@@ -46,25 +58,27 @@ struct LibraryItemCell: View {
                     .lineLimit(2)
                     .truncationMode(.middle)
                     .multilineTextAlignment(.center)
-                Button {
-                    showingMenu = true
-                } label: {
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.gray)
-                        .frame(width: 22, height: 22)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Actions for \(item.name)")
-                .accessibilityIdentifier("library.item.menu.\(item.name)")
-                .popover(isPresented: $showingMenu, arrowEdge: .bottom) {
-                    LibraryItemMenuPopover(item: item, model: model) {
-                        showingMovePicker = true
+                if !model.isSelecting {
+                    Button {
+                        showingMenu = true
+                    } label: {
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.gray)
+                            .frame(width: 22, height: 22)
+                            .contentShape(Rectangle())
                     }
-                }
-                .sheet(isPresented: $showingMovePicker) {
-                    MovePickerSheet(item: item, model: model)
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Actions for \(item.name)")
+                    .accessibilityIdentifier("library.item.menu.\(item.name)")
+                    .popover(isPresented: $showingMenu, arrowEdge: .bottom) {
+                        LibraryItemMenuPopover(item: item, model: model) {
+                            showingMovePicker = true
+                        }
+                    }
+                    .sheet(isPresented: $showingMovePicker) {
+                        MovePickerSheet(item: item, model: model)
+                    }
                 }
             }
 
@@ -125,7 +139,10 @@ struct LibraryItemRow: View {
         return false
     }
 
-    private var openDisabled: Bool { isDocument && openBlockedReason != nil }
+    /// Same stance as the grid cell: a toggle tap needs no drain protection.
+    private var openDisabled: Bool {
+        isDocument && openBlockedReason != nil && !model.isSelecting
+    }
 
     var body: some View {
         HStack(spacing: 14) {
@@ -158,33 +175,41 @@ struct LibraryItemRow: View {
             .disabled(openDisabled)
             .opacity(openDisabled ? 0.4 : 1)
 
-            Button {
-                showingMenu = true
-            } label: {
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.gray)
-                    .frame(width: 28, height: 28)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Actions for \(item.name)")
-            .accessibilityIdentifier("library.item.menu.\(item.name)")
-            .popover(isPresented: $showingMenu, arrowEdge: .bottom) {
-                LibraryItemMenuPopover(item: item, model: model) {
-                    showingMovePicker = true
+            if model.isSelecting {
+                // The row's whole trailing cluster gives way to the check:
+                // the menu and star are hidden, not inert (UX-10), and a
+                // folder's disclosure chevron would promise a push that
+                // select mode suppresses.
+                LibrarySelectionCheck(item: item, model: model)
+            } else {
+                Button {
+                    showingMenu = true
+                } label: {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.gray)
+                        .frame(width: 28, height: 28)
+                        .contentShape(Rectangle())
                 }
-            }
-            .sheet(isPresented: $showingMovePicker) {
-                MovePickerSheet(item: item, model: model)
-            }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Actions for \(item.name)")
+                .accessibilityIdentifier("library.item.menu.\(item.name)")
+                .popover(isPresented: $showingMenu, arrowEdge: .bottom) {
+                    LibraryItemMenuPopover(item: item, model: model) {
+                        showingMovePicker = true
+                    }
+                }
+                .sheet(isPresented: $showingMovePicker) {
+                    MovePickerSheet(item: item, model: model)
+                }
 
-            LibraryFavoriteStar(item: item, model: model, size: 15)
+                LibraryFavoriteStar(item: item, model: model, size: 15)
 
-            if !isDocument {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Color(white: 0.45))
+                if !isDocument {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Color(white: 0.45))
+                }
             }
         }
         .padding(.vertical, 8)
@@ -340,6 +365,40 @@ struct LibraryFavoriteStar: View {
                 : "Add \(item.name) to Favorites"
         )
         .accessibilityIdentifier("library.item.star.\(item.name)")
+    }
+}
+
+/// Select mode's check-circle (UX-10): blue filled check when selected, a
+/// dim empty circle when not — the empty circle is the platform's own way of
+/// saying "selectable" and is INFERRED, the spec images only the selected
+/// state. The tap toggles through the model, the one holder of the selection.
+struct LibrarySelectionCheck: View {
+    let item: LibraryItem
+    let model: FolderListingModel
+
+    private var selected: Bool { model.selectedIDs.contains(item.id) }
+
+    var body: some View {
+        Button {
+            model.toggleSelected(item)
+        } label: {
+            Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                .font(.system(size: 20, weight: .medium))
+                .foregroundStyle(selected ? Color.blue : Color(white: 0.6))
+                .background(
+                    // The filled check needs a plate so it reads over any
+                    // thumbnail ink; the empty circle is its own outline.
+                    selected ? AnyShapeStyle(.white) : AnyShapeStyle(.clear),
+                    in: Circle().inset(by: 2)
+                )
+                .frame(width: 28, height: 28)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(
+            selected ? "Deselect \(item.name)" : "Select \(item.name)"
+        )
+        .accessibilityIdentifier("library.item.check.\(item.name)")
     }
 }
 

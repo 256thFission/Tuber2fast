@@ -192,6 +192,113 @@ struct LibrarySidebar: View {
     }
 }
 
+/// Select mode's top bar (spec §6.2, UX-10): **Select All** left, the
+/// collection title centered, **Done** right. Select All flips to Deselect
+/// All once everything visible is selected — platform convention, INFERRED;
+/// the spec images only the resting label.
+struct LibrarySelectTopBar: View {
+    let model: FolderListingModel
+    let viewOptions: LibraryViewOptionsModel
+
+    var body: some View {
+        ZStack {
+            HStack {
+                Button {
+                    if model.allVisibleSelected(under: viewOptions.prefs) {
+                        model.deselectAll()
+                    } else {
+                        model.selectAllVisible(under: viewOptions.prefs)
+                    }
+                } label: {
+                    Text(
+                        model.allVisibleSelected(under: viewOptions.prefs)
+                            ? "Deselect All"
+                            : "Select All"
+                    )
+                    .font(.system(size: 17))
+                    .foregroundStyle(.blue)
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("library.select.all")
+
+                Spacer()
+
+                Button {
+                    model.exitSelection()
+                } label: {
+                    Text("Done")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(.blue)
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("library.select.done")
+            }
+            Text(model.displayTitle)
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(.white)
+        }
+        .frame(minHeight: 44)
+    }
+}
+
+/// The action row beneath the select-mode top bar, centered per the observed
+/// chrome: **Duplicate, Move, Trash** with icons (Export is the export
+/// lane's, appended here when it exists). Enabled only while the selection
+/// is non-empty — an action over nothing is a tap that lies.
+struct LibrarySelectActionRow: View {
+    let model: FolderListingModel
+    /// The prefs snapshot the batch resolves "visible" against — the same
+    /// one the listing rendered from, so what acts is what was shown.
+    let viewOptions: LibraryViewOptionsModel
+    /// Presents the move picker over the current selection — a sheet the
+    /// hosting view owns, exactly as the chevron popover's Move does.
+    let onMove: () -> Void
+
+    private var disabled: Bool { model.selectedIDs.isEmpty }
+
+    var body: some View {
+        HStack(spacing: 36) {
+            action("Duplicate", symbol: "plus.square.on.square", id: "duplicate") {
+                let listing = model
+                let prefs = viewOptions.prefs
+                Task { await listing.duplicateSelected(under: prefs) }
+            }
+            action("Move", symbol: "folder", id: "move") {
+                onMove()
+            }
+            action("Trash", symbol: "trash", id: "trash", tint: .red) {
+                let listing = model
+                let prefs = viewOptions.prefs
+                Task { await listing.trashSelected(under: prefs) }
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private func action(
+        _ title: String,
+        symbol: String,
+        id: String,
+        tint: Color = .white,
+        perform: @escaping () -> Void
+    ) -> some View {
+        Button(action: perform) {
+            VStack(spacing: 4) {
+                Image(systemName: symbol)
+                    .font(.system(size: 18, weight: .medium))
+                Text(title)
+                    .font(.system(size: 12))
+            }
+            .foregroundStyle(disabled ? Color(white: 0.4) : tint)
+            .frame(minWidth: 60)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
+        .accessibilityIdentifier("library.select.action.\(id)")
+    }
+}
+
 /// One folder of the content column: header, toolbar row, then the listing
 /// in one of its four states — loading, refused, empty, grid.
 struct FolderContentView: View {
@@ -207,6 +314,11 @@ struct FolderContentView: View {
     @State private var showingNewFolderSheet = false
     @State private var showingNewNotebookSheet = false
     @State private var searchExpanded = false
+    /// The batch move's sheet, with the selection captured at the tap — the
+    /// sheet must not watch a selection that Done could clear under it.
+    @State private var batchMoveItems: [LibraryItem] = []
+    @State private var showingBatchMove = false
+    @State private var showingImporter = false
     @FocusState private var searchFocused: Bool
     @Environment(\.dismiss) private var dismiss
 
@@ -231,13 +343,29 @@ struct FolderContentView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            header
-                .padding(.horizontal, 28)
-                .padding(.top, 16)
+            // Select mode replaces the chrome whole (UX-10): the top bar
+            // becomes Select All / title / Done, and the toolbar row becomes
+            // the centered action row.
+            if model.isSelecting {
+                LibrarySelectTopBar(model: model, viewOptions: viewOptions)
+                    .padding(.horizontal, 28)
+                    .padding(.top, 16)
 
-            toolbarRow
+                LibrarySelectActionRow(model: model, viewOptions: viewOptions) {
+                    batchMoveItems = model.selectedItems(under: viewOptions.prefs)
+                    showingBatchMove = true
+                }
                 .padding(.horizontal, 28)
                 .padding(.vertical, 14)
+            } else {
+                header
+                    .padding(.horizontal, 28)
+                    .padding(.top, 16)
+
+                toolbarRow
+                    .padding(.horizontal, 28)
+                    .padding(.vertical, 14)
+            }
 
             listingBody
         }
@@ -247,6 +375,9 @@ struct FolderContentView: View {
             await model.refresh()
         }
         .overlay(alignment: .bottom) { degradationBanner }
+        .sheet(isPresented: $showingBatchMove) {
+            MovePickerSheet(items: batchMoveItems, model: model)
+        }
         .sheet(isPresented: $showingNewFolderSheet) {
             NewFolderSheet(model: model)
         }
@@ -260,6 +391,38 @@ struct FolderContentView: View {
                         await model.refresh()
                     }
                 }
+            }
+        }
+        // The + New Import tile: SwiftUI's own document picker, exactly as
+        // `RootCanvasView`'s PDF import presents it — the picked URL's one
+        // read stays in `PickedFileReading`, behind the coordinator.
+        .fileImporter(
+            isPresented: $showingImporter,
+            allowedContentTypes: [.pdf, .image]
+        ) { result in
+            // Cancelling never reaches here; a cancelled picker is not an
+            // error.
+            switch result {
+            case .failure(let error):
+                model.mutationBanner = FolderListingModel.describe(error)
+            case .success(let url):
+                importPicked(url)
+            }
+        }
+    }
+
+    /// One picked file becomes one new document in this folder, opened with
+    /// its contents imported. Failures land in the listing banner — the
+    /// import happens behind the browser, which stays on screen until the
+    /// coordinator presents the opened document.
+    private func importPicked(_ url: URL) {
+        let destination = folderPath
+        Task {
+            do {
+                try await coordinator.importAndOpenDocument(from: url, in: destination)
+            } catch {
+                model.mutationBanner = FolderListingModel.describe(error)
+                await model.refresh()
             }
         }
     }
@@ -401,6 +564,7 @@ struct FolderContentView: View {
                         ? nil
                         : "A document with unsaved changes is still saving.",
                     onNotebook: { showingNewNotebookSheet = true },
+                    onImport: { showingImporter = true },
                     onFolder: { showingNewFolderSheet = true }
                 )
             }
@@ -418,7 +582,9 @@ struct FolderContentView: View {
             .accessibilityLabel("View options")
             .accessibilityIdentifier("library.viewoptions")
             .popover(isPresented: $showingViewOptions, arrowEdge: .top) {
-                LibraryViewOptionsPopover(options: viewOptions)
+                LibraryViewOptionsPopover(options: viewOptions) {
+                    model.enterSelection()
+                }
             }
 
             LibraryToolbarMenu(coordinator: coordinator)
@@ -532,6 +698,12 @@ struct FolderContentView: View {
     }
 
     private func open(_ item: LibraryItem) {
+        // In select mode the cell's tap is the toggle and nothing opens or
+        // pushes — the check overlay is the only meaning a tap has (UX-10).
+        if model.isSelecting {
+            model.toggleSelected(item)
+            return
+        }
         switch item.kind {
         case .document:
             coordinator.openDocument(at: item.id, named: item.name)
@@ -630,6 +802,10 @@ struct FavoritesContentView: View {
 
     @State private var model: FolderListingModel
     @State private var showingViewOptions = false
+    /// Batch move from Favorites: same captured-at-tap selection the folder
+    /// view uses; each item still moves from its own real parent.
+    @State private var batchMoveItems: [LibraryItem] = []
+    @State private var showingBatchMove = false
 
     init(
         coordinator: LibraryCoordinator,
@@ -648,52 +824,76 @@ struct FavoritesContentView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 12) {
-                if sidebarCollapsed {
+            // The same whole-chrome swap the folder view makes (UX-10): the
+            // model machinery is source-agnostic, so Favorites selects too,
+            // and every batch action lands in each item's real parent.
+            if model.isSelecting {
+                LibrarySelectTopBar(model: model, viewOptions: viewOptions)
+                    .padding(.horizontal, 28)
+                    .padding(.top, 16)
+
+                LibrarySelectActionRow(model: model, viewOptions: viewOptions) {
+                    batchMoveItems = model.selectedItems(under: viewOptions.prefs)
+                    showingBatchMove = true
+                }
+                .padding(.horizontal, 28)
+                .padding(.vertical, 14)
+            } else {
+                HStack(spacing: 12) {
+                    if sidebarCollapsed {
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.2)) { sidebarCollapsed = false }
+                        } label: {
+                            Image(systemName: "sidebar.left")
+                                .font(.system(size: 17))
+                                .foregroundStyle(.secondary)
+                                .frame(width: 36, height: 36)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Show sidebar")
+                    }
+                    Text("Favorites")
+                        .font(.system(size: 40, weight: .bold))
+                        .foregroundStyle(.white)
+                    Spacer()
+                }
+                .padding(.horizontal, 28)
+                .padding(.top, 16)
+
+                HStack {
+                    // Favorites carries the same funnel chip as any folder
+                    // (spec §10, UX-15 — Lane F noted its absence).
+                    LibraryFilterChip(model: model)
+                    Spacer()
                     Button {
-                        withAnimation(.easeInOut(duration: 0.2)) { sidebarCollapsed = false }
+                        showingViewOptions = true
                     } label: {
-                        Image(systemName: "sidebar.left")
-                            .font(.system(size: 17))
-                            .foregroundStyle(.secondary)
-                            .frame(width: 36, height: 36)
+                        Image(systemName: "square.grid.2x2")
+                            .font(.system(size: 17, weight: .medium))
+                            .foregroundStyle(.white)
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("Show sidebar")
+                    .accessibilityLabel("View options")
+                    .accessibilityIdentifier("library.viewoptions")
+                    .popover(isPresented: $showingViewOptions, arrowEdge: .top) {
+                        LibraryViewOptionsPopover(options: viewOptions) {
+                            model.enterSelection()
+                        }
+                    }
                 }
-                Text("Favorites")
-                    .font(.system(size: 40, weight: .bold))
-                    .foregroundStyle(.white)
-                Spacer()
+                .padding(.horizontal, 28)
+                .padding(.vertical, 14)
             }
-            .padding(.horizontal, 28)
-            .padding(.top, 16)
-
-            HStack {
-                Spacer()
-                Button {
-                    showingViewOptions = true
-                } label: {
-                    Image(systemName: "square.grid.2x2")
-                        .font(.system(size: 17, weight: .medium))
-                        .foregroundStyle(.white)
-                        .frame(width: 44, height: 44)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("View options")
-                .accessibilityIdentifier("library.viewoptions")
-                .popover(isPresented: $showingViewOptions, arrowEdge: .top) {
-                    LibraryViewOptionsPopover(options: viewOptions)
-                }
-            }
-            .padding(.horizontal, 28)
-            .padding(.vertical, 14)
 
             listingBody
         }
         .background(Color.black)
         .toolbar(.hidden, for: .navigationBar)
+        .sheet(isPresented: $showingBatchMove) {
+            MovePickerSheet(items: batchMoveItems, model: model)
+        }
         .task(id: coordinator.libraryGeneration) {
             await model.refresh()
         }
@@ -751,11 +951,38 @@ struct FavoritesContentView: View {
             emptyView
         case .loaded:
             let displayed = model.displayed(under: viewOptions.prefs)
-            switch viewOptions.prefs.viewMode {
-            case .grid: grid(displayed)
-            case .list: list(displayed)
+            if displayed.isEmpty {
+                // The filter chip can narrow a non-empty collection to
+                // nothing; that is not the designed empty state, and it
+                // says so in the folder view's words.
+                noMatchesView
+            } else {
+                switch viewOptions.prefs.viewMode {
+                case .grid: grid(displayed)
+                case .list: list(displayed)
+                }
             }
         }
+    }
+
+    /// The folder view's no-matches copy, repeated here because Favorites
+    /// now carries the same funnel chip.
+    private var noMatchesView: some View {
+        VStack(spacing: 10) {
+            Spacer()
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 44))
+                .foregroundStyle(Color(white: 0.35))
+                .padding(.bottom, 8)
+            Text("No Matches")
+                .font(.system(size: 20, weight: .bold))
+                .foregroundStyle(.white)
+            Text("Nothing here matches the current filter or search.")
+                .font(.system(size: 15))
+                .foregroundStyle(Color(white: 0.55))
+            Spacer()
+        }
+        .frame(maxWidth: .infinity)
     }
 
     private func grid(_ displayed: [LibraryItem]) -> some View {
@@ -806,6 +1033,10 @@ struct FavoritesContentView: View {
     /// A starred folder opens as a folder listing pushed in this pane; the
     /// sidebar stays on Favorites (choice recorded at `favoritesPath`).
     private func open(_ item: LibraryItem) {
+        if model.isSelecting {
+            model.toggleSelected(item)
+            return
+        }
         switch item.kind {
         case .document:
             coordinator.openDocument(at: item.id, named: item.name)
