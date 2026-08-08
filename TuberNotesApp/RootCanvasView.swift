@@ -14,12 +14,12 @@ struct RootCanvasView: View {
     /// (`Contract.md` — Owners, golden rule 2).
     @State private var shapeKind: ShapeKind?
 
-    /// Import UI state: which picker is up, and the last import failure. View
-    /// state only — the imports themselves are the session's, and both throw
-    /// loudly rather than being swallowed here.
+    /// Page-action UI state: which picker is up, and the last failure. View
+    /// state only — the actions themselves are the session's, and every one of
+    /// them throws loudly rather than being swallowed here.
     @State private var showingImagePicker = false
     @State private var showingPDFImporter = false
-    @State private var importError: String?
+    @State private var actionError: String?
 
     var body: some View {
         ZStack {
@@ -44,7 +44,7 @@ struct RootCanvasView: View {
                     .overlay(alignment: .topTrailing) {
                         VStack(alignment: .trailing, spacing: 8) {
                             shapePicker
-                            importPicker
+                            pageActions
                         }
                         .padding(16)
                     }
@@ -58,7 +58,7 @@ struct RootCanvasView: View {
                 case .cancelled:
                     break
                 case .failed(let message):
-                    importError = message
+                    actionError = message
                 case .picked(let data):
                     importPickedImage(data)
                 }
@@ -71,39 +71,52 @@ struct RootCanvasView: View {
             // Cancelling never reaches here; a cancelled picker is not an error.
             switch result {
             case .failure(let error):
-                importError = String(describing: error)
+                actionError = String(describing: error)
             case .success(let url):
                 importPickedPDF(url)
             }
         }
         .alert(
-            "Import failed",
+            "That did not work",
             isPresented: Binding(
-                get: { importError != nil },
-                set: { if !$0 { importError = nil } }
+                get: { actionError != nil },
+                set: { if !$0 { actionError = nil } }
             )
         ) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text(importError ?? "")
+            Text(actionError ?? "")
         }
     }
 
-    /// The import controls: one image, one PDF. They sit under the shape
-    /// picker in the same floating cluster, because both are user actions on
-    /// the document rather than canvas chrome.
-    private var importPicker: some View {
+    /// The page-level actions: add an image, add a PDF, and throw this page's
+    /// PDF away. They sit under the shape picker in the same floating cluster,
+    /// because all three are user actions on the document rather than canvas
+    /// chrome.
+    ///
+    /// Removing the PDF is here rather than on the layer itself because a
+    /// `pdf` layer is deliberately **not selectable**
+    /// (`LayerEnvelope.isSelectable`) and selection is the only other way to
+    /// name a layer. Without this button a mis-imported PDF could never be
+    /// removed at all; see `EditorSession.deletePDFLayers`.
+    private var pageActions: some View {
         HStack(spacing: 2) {
-            importButton("photo", named: "Add image") { showingImagePicker = true }
-            importButton("doc", named: "Add PDF") { showingPDFImporter = true }
+            actionButton("photo", named: "Add image") { showingImagePicker = true }
+            actionButton("doc", named: "Add PDF") { showingPDFImporter = true }
+            actionButton("trash", named: "Remove this page's PDF", identifier: "remove.pdf") {
+                removePDFFromCurrentPage()
+            }
         }
         .padding(4)
         .background(.regularMaterial, in: Capsule())
-        .accessibilityIdentifier("import.picker")
+        .accessibilityIdentifier("page.actions")
     }
 
-    private func importButton(
-        _ symbol: String, named name: String, action: @escaping () -> Void
+    private func actionButton(
+        _ symbol: String,
+        named name: String,
+        identifier: String? = nil,
+        action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
@@ -112,7 +125,26 @@ struct RootCanvasView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(name)
-        .accessibilityIdentifier("import.\(symbol)")
+        .accessibilityIdentifier("page.action.\(identifier ?? symbol)")
+    }
+
+    /// Throws away the PDF behind the page the user is looking at.
+    ///
+    /// Always enabled, and the refusal is an alert rather than a disabled
+    /// button, deliberately: knowing whether *this* page carries a PDF would
+    /// mean SwiftUI observing which page is visible, and the visible page
+    /// changes as the user scrolls (`Contract.md` — Owners: the chrome does not
+    /// observe pan). The session answers instead, once, when asked.
+    private func removePDFFromCurrentPage() {
+        Task {
+            do {
+                try await session.deletePDFLayers()
+            } catch LayerEditError.noPDFLayerOnPage {
+                actionError = "This page has no PDF behind it."
+            } catch {
+                actionError = String(describing: error)
+            }
+        }
     }
 
     /// One picked image, prepared off the main actor and imported onto the
@@ -132,7 +164,7 @@ struct RootCanvasView: View {
                     sourceHeight: prepared.orientedPixelHeight
                 )
             } catch {
-                importError = String(describing: error)
+                actionError = String(describing: error)
             }
         }
     }
@@ -149,7 +181,7 @@ struct RootCanvasView: View {
                 }.value
                 try await session.importPDF(bytes)
             } catch {
-                importError = String(describing: error)
+                actionError = String(describing: error)
             }
         }
     }

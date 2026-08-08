@@ -543,6 +543,90 @@ struct PDFLayerTests {
         #expect(try scratch.layersOnDisk(ofPage: farPageID).count == 2)
     }
 
+    // MARK: - Throwing the worksheet away
+
+    /// A `pdf` layer is not selectable, and selection is the only other
+    /// producer of a `layerID` — so without `deletePDFLayers` a mis-imported
+    /// PDF is permanent. This is that hole closed: the page the user is
+    /// looking at, named without any spatial hit test.
+    @Test("Deleting the current page's PDF removes it durably")
+    @MainActor
+    func deletingTheCurrentPagesPDFIsDurable() async throws {
+        let scratch = try Scratch()
+        let session = EditorSession(store: scratch.store(), debounce: .milliseconds(20))
+        await session.start()
+        let appended = try await session.importPDF(onePageFixture())
+        let pageID = try #require(appended.first)
+        let layer = try #require(scratch.layersOnDisk(ofPage: pageID).first)
+        let assetID = try PDFLayerRef(payload: layer.payload).assetID
+
+        // No page argument: the button has none either, so the default path is
+        // the one under test. The import appended without navigating — page 0
+        // is the document's own blank first page — so the user turns to it.
+        turn(session, to: 1)
+        #expect(session.currentPageID == pageID)
+        #expect(try await session.deletePDFLayers() == 1)
+        #expect(session.lastSaveError == nil)
+
+        // Durable: a store that has read nothing sees a page with only ink.
+        let reloaded = try await scratch.store().loadPage(pageID)
+        #expect(reloaded.staticLayers.isEmpty)
+        #expect(reloaded.refusedLayers.isEmpty)
+        // And the same two-level reclamation an image delete gets, because it
+        // *is* an image delete — same site, same save, same `reclaim`.
+        #expect(!FileManager.default.fileExists(atPath: scratch.layerURL(layer.layerID).path))
+        #expect(!FileManager.default.fileExists(atPath: scratch.assetURL(assetID, "pdf").path))
+    }
+
+    /// The whole point of deleting by *kind*: it must not become a page-clearing
+    /// button. An image on the same page is untouched, asset and all.
+    @Test("Deleting the page's PDF leaves the page's image layers alone")
+    @MainActor
+    func deletingThePDFLeavesImagesAlone() async throws {
+        let scratch = try Scratch()
+        let session = EditorSession(store: scratch.store(), debounce: .milliseconds(20))
+        await session.start()
+        let appended = try await session.importPDF(onePageFixture())
+        let pageID = try #require(appended.first)
+        try await session.importImage(
+            Data([0x89, 0x50, 0x4E, 0x47]),
+            format: .png,
+            sourceWidth: 100,
+            sourceHeight: 100,
+            onPage: pageID
+        )
+
+        #expect(try await session.deletePDFLayers(onPage: pageID) == 1)
+        #expect(session.lastSaveError == nil)
+
+        let reloaded = try await scratch.store().loadPage(pageID)
+        #expect(reloaded.staticLayers.count == 1)
+        let survivor = try #require(reloaded.staticLayers.first)
+        #expect(survivor.recognizedKind == .image)
+        let imageRef = try ImageLayerRef(payload: survivor.payload)
+        #expect(FileManager.default.fileExists(atPath: scratch.assetURL(imageRef.assetID, "png").path))
+    }
+
+    /// The refusal is typed rather than silent because the caller is a button:
+    /// the chrome cannot know whether the visible page carries a PDF without
+    /// observing which page is visible, so it asks and is told no.
+    @Test("A page with no pdf layer refuses gracefully and changes nothing")
+    @MainActor
+    func aPageWithNoPDFRefuses() async throws {
+        let scratch = try Scratch()
+        let session = EditorSession(store: scratch.store(), debounce: .milliseconds(20))
+        await session.start()
+        let blankPageID = session.currentPageID
+
+        await #expect(throws: LayerEditError.noPDFLayerOnPage(blankPageID)) {
+            _ = try await session.deletePDFLayers()
+        }
+        // Refused, not half-done: the blank page still has its ink layer and
+        // nothing else, and no save was provoked.
+        #expect(session.lastSaveError == nil)
+        #expect(try await scratch.store().loadPage(blankPageID).staticLayers.isEmpty)
+    }
+
     // MARK: - The layer split
 
     @Test("A page file is layer IDs, and each layer is its own file")
