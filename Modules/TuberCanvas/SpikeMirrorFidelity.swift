@@ -21,6 +21,53 @@
 // "sibling" runs A, "inside" runs B; `Tools/device` forwards that variable to
 // the device when it is set in the invoking shell.
 //
+// UNTHREADED — THIS SPIKE DOES NOT RUN AS IT STANDS.
+//
+// `PageCanvasController` used to carry eight `#if TN_SPIKE_MIRROR` sites that
+// owned and drove this class. They came out (Stage 2 item 12,
+// `Docs/Forks/CanvasCompleteTodo.md`): the hooks were dead by default and no
+// device verdict was coming, and two of the hottest files in the project were
+// paying the legibility tax for an experiment nobody was running. Turning
+// TN_SPIKE_MIRROR back on now compiles this file and installs nothing.
+//
+// The hooks cannot honestly live here instead. The mirror measures the *real*
+// canvas's per-tick registration, so it has to be owned by the controller that
+// owns the canvas and driven from that controller's own scroll callbacks;
+// anything else would observe a different scroll view and measure a different
+// thing. So the recipe, not a copy:
+//
+// TO RE-THREAD THIS SPIKE, reinstall these eight hooks in
+// `Modules/TuberCanvas/PageCanvasController.swift`, each wrapped in
+// `#if TN_SPIKE_MIRROR` / `#endif`:
+//
+//   1. A stored property beside the controller's other private state:
+//        private var spikeMirror: SpikeMirror?
+//   2. At the very end of `init(toolPicker:projection:host:staticRenderer:)`,
+//      *after* the backdrop/selection installation — so this spike's
+//      transparency override wins over the canvas's opaque-white assignment:
+//        spikeMirror = SpikeMirror.install(under: canvasView, in: view)
+//   3. Last statement of `viewDidLayoutSubviews`, after
+//      `requestCompositeIfNeeded()` — establishes initial registration and
+//      re-registers after a viewport change; not a frame-frequency path:
+//        spikeMirror?.mirror(offset: canvasView.contentOffset, zoom: canvasView.zoomScale)
+//   4. Last statement of `scrollViewDidZoom`, after the `zoomProbe.sample`
+//      call — after centering, so the mirror reads the settled offset for the
+//      tick:
+//        spikeMirror?.mirror(offset: scrollView.contentOffset, zoom: scrollView.zoomScale)
+//   5. Last statement of `scrollViewDidScroll`, after the `backdrop?.mirror`
+//      call, the same line as #4.
+//   6. Last statement of `scrollViewDidEndZooming`:
+//        spikeMirror?.flushStats("pinch ended;")
+//   7. Last statement of `scrollViewDidEndDecelerating`:
+//        spikeMirror?.flushStats("fling settled;")
+//   8. Inside `scrollViewDidEndDragging`'s `if !willDecelerate` branch, after
+//      `requestLensIfNeeded()`:
+//        spikeMirror?.flushStats("drag ended at rest;")
+//
+// Hooks 4 and 5 are the frame path and must stay last in their callbacks and
+// stay one call; 6–8 are the once-per-gesture flushes. Nothing else in the
+// controller ever named this class.
+//
 // Variant B is expected to crash, and a crash is its answer. The trap will be
 // a `Fatal error:` or a signal, not an NSException, so nothing prints
 // TN[fatal] — `Tools/device`'s digest greps for the trap itself, ahead of any

@@ -17,6 +17,30 @@
 // that phase. Do not combine TN_SPIKE_LENS with TN_SPIKE_MIRROR — the lens
 // scene replaces the scene the mirror instruments.
 //
+// UNTHREADED — THIS SPIKE DOES NOT RUN AS IT STANDS.
+//
+// `TuberNotesApp.swift` used to carry the one `#if TN_SPIKE_LENS` hook that
+// chose this scene over the editor's. It came out (Stage 2 item 12,
+// `Docs/Forks/CanvasCompleteTodo.md`): dead by default, no device verdict
+// coming, and a conditional at the app's entry point is read by everyone.
+// Turning TN_SPIKE_LENS back on now compiles this file and shows nothing —
+// the app still opens the editor.
+//
+// The hook cannot live in this file: only the `@main` App value can decide
+// what the window group hosts. So the recipe, not a copy:
+//
+// TO RE-THREAD THIS SPIKE, reinstall one hook in
+// `TuberNotesApp/TuberNotesApp.swift`, in `TuberNotesApp.body`'s
+// `WindowGroup`, replacing the bare `EditorSceneView()` with:
+//
+//     #if TN_SPIKE_LENS
+//     SpikeLensSceneView()
+//     #else
+//     EditorSceneView()
+//     #endif
+//
+// Nothing else in the app ever named this file's types.
+//
 // The loop under measurement, exactly the fork doc's bullet: during a pinch
 // the compositor scales the existing base texture (no decode is ever
 // triggered by a gesture frame — the only per-tick code here is the scroll

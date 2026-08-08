@@ -215,15 +215,6 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
     /// is phase 3 and needs its own device spike.
     private static let maximumCompositeLongEdge: Double = 2800
 
-    #if TN_SPIKE_MIRROR
-    /// THROWAWAY SPIKE — CanvasFeatureComplete device spike 1, "Mirror
-    /// fidelity". Compiled only under TN_SPIKE_MIRROR; see
-    /// `SpikeMirrorFidelity.swift` for what it measures and why. Every use in
-    /// this file is gated the same way, so with the flag off this controller
-    /// is unchanged.
-    private var spikeMirror: SpikeMirror?
-    #endif
-
     init(
         toolPicker: PKToolPicker,
         projection: PageProjection,
@@ -318,12 +309,6 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
             installSelectionIfNeeded()
             selection?.setLayers(staticLayers)
         }
-
-        #if TN_SPIKE_MIRROR
-        // Installed after the canvas's own setup so the spike's transparency
-        // override wins over the opaque-white assignment above.
-        spikeMirror = SpikeMirror.install(under: canvasView, in: view)
-        #endif
     }
 
     /// Traces the page rect in page space, scaled into content coordinates.
@@ -405,11 +390,6 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         // fit-width — so the composite is re-asked for here and nowhere near a
         // gesture.
         requestCompositeIfNeeded()
-        #if TN_SPIKE_MIRROR
-        // Establishes initial registration and re-registers after a viewport
-        // change; not a frame-frequency path.
-        spikeMirror?.mirror(offset: canvasView.contentOffset, zoom: canvasView.zoomScale)
-        #endif
     }
 
     /// Establishes the zoom range for the current viewport, and re-establishes
@@ -1292,9 +1272,6 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
             modelZoom: scrollView.zoomScale,
             modelOffset: scrollView.contentOffset
         )
-        #if TN_SPIKE_MIRROR
-        spikeMirror?.mirror(offset: scrollView.contentOffset, zoom: scrollView.zoomScale)
-        #endif
     }
 
     /// The pan half of the mirror. One transform assignment per tick, or one
@@ -1307,9 +1284,6 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         // the lens was rendered for.
         invalidateLens()
         backdrop?.mirror(offset: scrollView.contentOffset, zoom: scrollView.zoomScale)
-        #if TN_SPIKE_MIRROR
-        spikeMirror?.mirror(offset: scrollView.contentOffset, zoom: scrollView.zoomScale)
-        #endif
     }
 
     // MARK: The settle callbacks — where the lens is asked for
@@ -1320,9 +1294,6 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         // probe reaches it without touching PencilKit's hierarchy.
         zoomProbe.adopt(view)
         zoomProbe.flush("pinch ended", canvasView: canvasView)
-        #if TN_SPIKE_MIRROR
-        spikeMirror?.flushStats("pinch ended;")
-        #endif
     }
 
     package func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
@@ -1330,17 +1301,11 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         // worksheet would lose sharpness at the first tick and never regain
         // it until the next pinch.
         requestLensIfNeeded()
-        #if TN_SPIKE_MIRROR
-        spikeMirror?.flushStats("fling settled;")
-        #endif
     }
 
     package func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate: Bool) {
         if !willDecelerate {
             requestLensIfNeeded()
-            #if TN_SPIKE_MIRROR
-            spikeMirror?.flushStats("drag ended at rest;")
-            #endif
         }
     }
 }
