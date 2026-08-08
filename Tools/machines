@@ -35,6 +35,15 @@ cd "$REPO_ROOT" || exit 1
 PIN_FILE="$REPO_ROOT/Tools/pinned-simulator"
 SIM_TIMEOUT=300
 
+# Artifacts/ is gitignored, so it does not exist in a clean clone — which is
+# every machine this script was written for. Without it, three probes below
+# redirect into a directory that is not there, bash fails the redirect before
+# the command runs, and each one reports its own subject as broken: "compile
+# failed", "the test run failed", "no iPad paired". The suggested role then
+# reads "nothing yet" on a perfectly healthy Mac. A diagnostic whose first run
+# on an unproven machine blames the machine is worse than no diagnostic.
+mkdir -p "$REPO_ROOT/Artifacts"
+
 yes_()  { printf '  ✓ %-28s %s\n' "$1" "$2"; }
 no_()   { printf '  ✗ %-28s %s\n' "$1" "$2"; }
 note()  { printf '      → %s\n' "$1"; }

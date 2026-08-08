@@ -27,15 +27,20 @@ enum LayerEditError: Error, Equatable {
     /// `PageProjection.smallestDisplayablePagePoints`, which states the
     /// derivation.
     case pageTooSmallToDisplay(width: Double, height: Double, minimum: Double)
+    /// The page carries no `pdf` layer, so there is no worksheet to throw
+    /// away. A refusal rather than a silent success: the caller is a button,
+    /// and a button that does nothing and says nothing reads as broken.
+    case noPDFLayerOnPage(UUID)
 }
 
 /// Coordinates the canvas runtime and the document store (`Contract.md` — Owners).
 ///
 /// It owns page order and identity, per-page ink state, and the active save
 /// policy. Live drawings live in PencilKit and are captured only at save time.
-/// `@Observable` is deliberate and narrow. SwiftUI observes `phase` and
-/// `lastSaveError` — user-action-frequency values. It is forbidden to observe the
-/// drawing, pan, zoom, or Pencil samples.
+/// `@Observable` is deliberate and narrow. SwiftUI observes `phase`,
+/// `lastSaveError`, and `shapeTool` — user-action-frequency values, and the
+/// last of them a read-through of the runtime's own rather than a copy. It is
+/// forbidden to observe the drawing, pan, zoom, or Pencil samples.
 @MainActor
 @Observable
 final class EditorSession {
@@ -402,9 +407,27 @@ final class EditorSession {
     /// (`Contract.md` — Owners), and a copy kept here would be a second writer
     /// of it. This exists only so the root sends an intention to the session
     /// rather than reaching into the runtime, which is the one direction the
-    /// owners diagram allows.
+    /// owners diagram allows. What the root draws afterwards comes back the
+    /// same way, through `shapeTool`.
     func setShapeTool(_ kind: ShapeKind?) {
-        pages.setShapeTool(kind)
+        withMutation(keyPath: \.shapeTool) { pages.setShapeTool(kind) }
+    }
+
+    /// Which shape the Pencil commits right now, as the runtime has it.
+    ///
+    /// A read-through, never storage: the value is `PagedCanvasController`'s
+    /// (`Contract.md` — Owners, the active tool), and the chrome that lights a
+    /// button renders this snapshot rather than keeping its own copy to drift.
+    /// `access`/`withMutation` is Observation's own hook for a computed
+    /// property whose storage lives elsewhere — it is what makes a snapshot of
+    /// someone else's state observable without becoming a second writer of it.
+    ///
+    /// `liveRuntime`, not `pages`: reading the tool must not be what builds a
+    /// canvas. Before the runtime exists there is no shape tool, and `nil` —
+    /// freehand — is the true answer.
+    var shapeTool: ShapeKind? {
+        access(keyPath: \.shapeTool)
+        return liveRuntime?.shapeTool
     }
 
     @ObservationIgnored private var liveRuntime: PagedCanvasController?
@@ -1716,6 +1739,60 @@ final class EditorSession {
             return
         }
         await reclaim(deleted)
+    }
+
+    /// Deletes every `pdf` layer from one page — "throw the worksheet away",
+    /// which is the first half of replacing it (`Contract.proposed.md` A11).
+    ///
+    /// **Why a second producer of layer IDs exists at all.** A11 says a `pdf`
+    /// layer is selectable; the code says image-only
+    /// (`LayerEnvelope.isSelectable`), and the code is right — a worksheet is
+    /// the page's backdrop, not a thing to drag around. But selection is the
+    /// only other producer of a `layerID`, so with no path here a mis-imported
+    /// PDF is *permanent*: fifty pages of the wrong worksheet, undeletable
+    /// from the UI forever. Naming the layers needs no spatial hit test,
+    /// because a page's `pdf` layers are a known set — that is exactly why a
+    /// delete path can exist without making the kind selectable.
+    ///
+    /// This is a producer, **not a second writer**: every deletion goes
+    /// through `deleteLayer`, which stays *the* site that deletes layers, with
+    /// its save, its canvas notification, and its two-level reclamation
+    /// unchanged (`Contract.md` — Owners, golden rule 5). The semantics are an
+    /// image-layer delete's exactly, including that it is not undoable — undo
+    /// is the canvas runtime's per-page `UndoManager`, and no layer deletion
+    /// has ever registered with it.
+    ///
+    /// One page's layers and not the document's: the page is what the user is
+    /// looking at, and deleting on pages they cannot see is not a thing one
+    /// button may do. The pages of a mis-imported PDF stay — nothing removes a
+    /// page yet — so this empties them rather than undoing the import.
+    ///
+    /// Returns how many were deleted.
+    @discardableResult
+    func deletePDFLayers(onPage pageID: UUID? = nil) async throws -> Int {
+        guard phase == .ready else { throw LayerEditError.sessionNotReady }
+        let targetPageID = pageID ?? currentPageID
+        guard index.pageIDs.contains(targetPageID) else {
+            throw LayerEditError.pageNotFound(targetPageID)
+        }
+        let doomed = pageStates[stateIndex(of: targetPageID)].staticLayers
+            .filter { $0.recognizedKind == .pdf }
+            .map(\.layerID)
+        guard !doomed.isEmpty else {
+            throw LayerEditError.noPDFLayerOnPage(targetPageID)
+        }
+
+        // One at a time and through the one delete site, rather than one
+        // list-level edit: each pass re-reads the page's state, so a refusal
+        // partway through leaves the earlier deletions durable and the rest
+        // untouched — the state a hand-run sequence of single deletes would
+        // leave, which is the only state the rest of this file already knows
+        // how to be in. A page carries one `pdf` layer in every import this
+        // build can produce, so the loop is a loop for honesty, not for speed.
+        for layerID in doomed {
+            try await deleteLayer(layerID, fromPage: targetPageID)
+        }
+        return doomed.count
     }
 
     /// Deletes the layer file a just-deleted layer occupied, and then the asset

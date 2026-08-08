@@ -446,6 +446,57 @@ struct PagedCanvasControllerTests {
         #expect(portraitCanvas.maximumZoomScale == landscapeCanvas.maximumZoomScale)
     }
 
+    /// The live route is a Split View or Slide Over resize: the window's width
+    /// changes under a document sitting mid-run. Every offset in the runtime is
+    /// `bounds.width × index`, so the standing `contentOffset` addresses a
+    /// different page the instant the width changes.
+    @Test("A viewport width change keeps the same page centred")
+    func widthChangeRecentresTheCurrentPage() throws {
+        var turns: [Int] = []
+        let controller = hosted { $0.onPageChanged = { turns.append($0) } }
+        controller.setPages(count: 9, currentPageIndex: 0)
+        turn(controller, to: 4)
+        #expect(turns == [4])
+
+        // Typed, not written as literals inside the expectations: bare literal
+        // arithmetic there infers `Int` and compares unequal to any `CGFloat`.
+        let narrow: CGFloat = 500
+        resize(controller, toWidth: narrow)
+
+        let scroll = controller.scrollView
+        #expect(scroll.bounds.width == narrow)
+        #expect(scroll.contentSize.width == narrow * 9)
+        // The page, not the offset, is what survives a resize.
+        #expect(scroll.contentOffset.x == narrow * 4)
+        #expect(controller.currentPageIndex == 4)
+        // A resize is not a page turn, and must not be reported as one.
+        #expect(turns == [4])
+        #expect(try #require(controller.livePage(at: 4)).view.frame
+            == CGRect(x: narrow * 4, y: 0, width: narrow, height: 1180))
+    }
+
+    /// The durable half of the same defect: a stale offset divided by the new
+    /// width rounds to a page the user never turned to, and the settle reports
+    /// it to `EditorSession`, which writes `currentPageIndex` to disk.
+    @Test("A settle after a width change reports no turn the user did not make")
+    func widthChangeCausesNoDurableIndexDrift() {
+        for newWidth in [500.0, 1180.0] as [CGFloat] {
+            var turns: [Int] = []
+            let controller = hosted { $0.onPageChanged = { turns.append($0) } }
+            controller.setPages(count: 9, currentPageIndex: 0)
+            turn(controller, to: 8)
+            turns.removeAll()
+
+            resize(controller, toWidth: newWidth)
+            // The next thing the user does is scroll; this is that scroll coming
+            // to rest without having crossed a page boundary.
+            controller.scrollViewDidEndDecelerating(controller.scrollView)
+
+            #expect(turns.isEmpty, "no turn is reported for a resize at width \(newWidth)")
+            #expect(controller.currentPageIndex == 8)
+        }
+    }
+
     /// A laid-out runtime.
     ///
     /// `configure` runs before the first layout on purpose: the initial window
@@ -462,6 +513,16 @@ struct PagedCanvasControllerTests {
         root.frame = CGRect(x: 0, y: 0, width: 820, height: 1180)
         root.layoutIfNeeded()
         return controller
+    }
+
+    /// Changes the hosted width the way a Split View resize does: the window's
+    /// frame changes and layout runs. No transition coordinator is involved,
+    /// which is the point — a resize is not a rotation.
+    private func resize(_ controller: PagedCanvasController, toWidth width: CGFloat) {
+        let root = controller.view!
+        root.frame = CGRect(x: 0, y: 0, width: width, height: root.frame.height)
+        root.setNeedsLayout()
+        root.layoutIfNeeded()
     }
 
     /// Drives a page turn the way a settled scroll does, without a gesture:
