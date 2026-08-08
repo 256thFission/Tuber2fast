@@ -73,84 +73,196 @@ struct LibraryItemCell: View {
     private var thumbnail: some View {
         switch item.kind {
         case .document:
-            paperCover
+            ZStack(alignment: .topTrailing) {
+                LibraryPaperCover()
+                    .shadow(color: .black.opacity(0.45), radius: 8, y: 4)
+                LibraryFavoriteStar(item: item)
+                    .padding(8)
+            }
         case .folder(let decoration):
-            folderGlyph(decoration)
-        }
-    }
-
-    /// The portrait 'paper' cover: cream face, a subtle page-stack edge on
-    /// the trailing side, a soft shadow — the thumbnail base case until
-    /// ink renders land (a later lane).
-    private var paperCover: some View {
-        ZStack(alignment: .topTrailing) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(LibraryStyle.paperEdge)
-                    .offset(x: 5)
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(LibraryStyle.paperEdge.opacity(0.7))
-                    .offset(x: 2.5)
-                UnevenRoundedRectangle(
-                    topLeadingRadius: 4,
-                    bottomLeadingRadius: 4,
-                    bottomTrailingRadius: 8,
-                    topTrailingRadius: 8
-                )
-                .fill(LibraryStyle.paper)
-            }
-            .aspectRatio(0.76, contentMode: .fit)
-            .shadow(color: .black.opacity(0.45), radius: 8, y: 4)
-
-            star
-                .padding(8)
-        }
-    }
-
-    /// The flat saturated folder: SF `folder.fill` tinted with the
-    /// decoration's color, optional white glyph centered on the body.
-    private func folderGlyph(_ decoration: FolderDecoration) -> some View {
-        ZStack(alignment: .topTrailing) {
-            ZStack {
-                Image(systemName: "folder.fill")
-                    .resizable()
-                    .scaledToFit()
-                    .foregroundStyle(LibraryStyle.folderColor(decoration))
-                if let icon = decoration.icon {
-                    Image(systemName: icon)
-                        .font(.system(size: 34, weight: .medium))
-                        .foregroundStyle(.white)
-                        .offset(y: 8)
-                }
-            }
-            .padding(.vertical, 14)
-            .aspectRatio(0.76, contentMode: .fit)
-
-            star
-                .padding(4)
-
-            if item.decorationDegraded {
-                // The sidecar was missing or set aside: the folder renders
-                // the default and wears the warning rather than refusing.
-                VStack {
-                    Spacer()
-                    HStack {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.system(size: 14))
-                            .foregroundStyle(.yellow)
-                            .padding(6)
+            ZStack(alignment: .topTrailing) {
+                LibraryFolderGlyph(decoration: decoration)
+                    .padding(.vertical, 14)
+                LibraryFavoriteStar(item: item)
+                    .padding(4)
+                if item.decorationDegraded {
+                    // The sidecar was missing or set aside: the folder renders
+                    // the default and wears the warning rather than refusing.
+                    VStack {
                         Spacer()
+                        HStack {
+                            LibraryDegradedBadge()
+                                .padding(6)
+                            Spacer()
+                        }
                     }
                 }
             }
         }
     }
+}
 
-    /// Static tonight: the outline renders so the cell reads GoodNotes; the
-    /// favorites toggle lands with the favorites lane.
-    private var star: some View {
+/// One list row: small cover thumbnail, title with grey date stacked beneath,
+/// spacer, the same chevron menu the grid cell carries, the static star, and
+/// — on folder rows only — a trailing grey disclosure chevron (spec §2.4).
+struct LibraryItemRow: View {
+    let item: LibraryItem
+    let model: FolderListingModel
+    /// Same contract as the grid cell: documents dim and refuse while a
+    /// dirty session drains.
+    let openBlockedReason: String?
+    let onOpen: () -> Void
+
+    @State private var showingMenu = false
+
+    private var isDocument: Bool {
+        if case .document = item.kind { return true }
+        return false
+    }
+
+    private var openDisabled: Bool { isDocument && openBlockedReason != nil }
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Button(action: onOpen) {
+                HStack(spacing: 14) {
+                    thumbnail
+                        .frame(width: 44, height: 52)
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 6) {
+                            Text(item.name)
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            if item.decorationDegraded {
+                                LibraryDegradedBadge()
+                            }
+                        }
+                        Text(LibraryStyle.itemDate.string(from: item.modifiedAt))
+                            .font(.system(size: 12))
+                            .foregroundStyle(Color(white: 0.55))
+                    }
+
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(openDisabled)
+            .opacity(openDisabled ? 0.4 : 1)
+
+            Button {
+                showingMenu = true
+            } label: {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.gray)
+                    .frame(width: 28, height: 28)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Actions for \(item.name)")
+            .accessibilityIdentifier("library.item.menu.\(item.name)")
+            .popover(isPresented: $showingMenu, arrowEdge: .bottom) {
+                LibraryItemMenuPopover(item: item, model: model)
+            }
+
+            LibraryFavoriteStar(item: item, size: 15)
+
+            if !isDocument {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Color(white: 0.45))
+            }
+        }
+        .padding(.vertical, 8)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("library.item.\(item.name)")
+    }
+
+    @ViewBuilder
+    private var thumbnail: some View {
+        switch item.kind {
+        case .document:
+            LibraryPaperCover()
+                .shadow(color: .black.opacity(0.35), radius: 3, y: 1)
+        case .folder(let decoration):
+            LibraryFolderGlyph(decoration: decoration, iconSize: 13)
+        }
+    }
+}
+
+// MARK: - Shared building blocks
+
+/// The portrait 'paper' cover: cream face, a subtle page-stack edge on the
+/// trailing side — the thumbnail base case until ink renders land (a later
+/// lane). Shared by the grid cell and the list row; the caller sizes and
+/// shadows it.
+struct LibraryPaperCover: View {
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 6)
+                .fill(LibraryStyle.paperEdge)
+                .offset(x: 5)
+            RoundedRectangle(cornerRadius: 6)
+                .fill(LibraryStyle.paperEdge.opacity(0.7))
+                .offset(x: 2.5)
+            UnevenRoundedRectangle(
+                topLeadingRadius: 4,
+                bottomLeadingRadius: 4,
+                bottomTrailingRadius: 8,
+                topTrailingRadius: 8
+            )
+            .fill(LibraryStyle.paper)
+        }
+        .aspectRatio(0.76, contentMode: .fit)
+    }
+}
+
+/// The flat saturated folder: SF `folder.fill` tinted with the decoration's
+/// color, optional white glyph centered on the body. Shared by the grid cell
+/// and the list row; the caller sizes it.
+struct LibraryFolderGlyph: View {
+    let decoration: FolderDecoration
+    var iconSize: CGFloat = 34
+
+    var body: some View {
+        ZStack {
+            Image(systemName: "folder.fill")
+                .resizable()
+                .scaledToFit()
+                .foregroundStyle(LibraryStyle.folderColor(decoration))
+            if let icon = decoration.icon {
+                Image(systemName: icon)
+                    .font(.system(size: iconSize, weight: .medium))
+                    .foregroundStyle(.white)
+                    .offset(y: iconSize / 4)
+            }
+        }
+        .aspectRatio(0.76, contentMode: .fit)
+    }
+}
+
+/// Static tonight: the outline renders so the cell reads GoodNotes; the
+/// favorites toggle lands with the favorites lane.
+struct LibraryFavoriteStar: View {
+    let item: LibraryItem
+    var size: CGFloat = 16
+
+    var body: some View {
         Image(systemName: item.isFavorite ? "star.fill" : "star")
-            .font(.system(size: 16, weight: .medium))
+            .font(.system(size: size, weight: .medium))
             .foregroundStyle(item.isFavorite ? Color.red : Color(white: 0.55))
+    }
+}
+
+/// The corrupt-sidecar warning a degraded folder wears.
+struct LibraryDegradedBadge: View {
+    var body: some View {
+        Image(systemName: "exclamationmark.triangle.fill")
+            .font(.system(size: 14))
+            .foregroundStyle(.yellow)
     }
 }

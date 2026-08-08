@@ -11,6 +11,17 @@ struct LibraryBrowserView: View {
     @State private var sidebarCollapsed = false
     @State private var selection: SidebarSelection = .documents
     @State private var path: [String] = []
+    /// One prefs snapshot for the whole browser — sort and view mode are
+    /// global, not per-folder, so every folder view renders from this one
+    /// object and a change anywhere re-orders them all.
+    @State private var viewOptions: LibraryViewOptionsModel
+
+    init(coordinator: LibraryCoordinator) {
+        self.coordinator = coordinator
+        self._viewOptions = State(
+            initialValue: LibraryViewOptionsModel(library: coordinator.library)
+        )
+    }
 
     enum SidebarSelection: Hashable {
         case documents, favorites
@@ -35,6 +46,7 @@ struct LibraryBrowserView: View {
             drainBanner
         }
         .preferredColorScheme(.dark)
+        .task { await viewOptions.load() }
     }
 
     @ViewBuilder
@@ -45,6 +57,7 @@ struct LibraryBrowserView: View {
                 FolderContentView(
                     folderPath: "",
                     coordinator: coordinator,
+                    viewOptions: viewOptions,
                     sidebarCollapsed: $sidebarCollapsed,
                     path: $path
                 )
@@ -52,6 +65,7 @@ struct LibraryBrowserView: View {
                     FolderContentView(
                         folderPath: folderPath,
                         coordinator: coordinator,
+                        viewOptions: viewOptions,
                         sidebarCollapsed: $sidebarCollapsed,
                         path: $path
                     )
@@ -158,23 +172,29 @@ struct LibrarySidebar: View {
 struct FolderContentView: View {
     let folderPath: String
     let coordinator: LibraryCoordinator
+    let viewOptions: LibraryViewOptionsModel
     @Binding var sidebarCollapsed: Bool
     @Binding var path: [String]
 
     @State private var model: FolderListingModel
     @State private var showingNewPopover = false
+    @State private var showingViewOptions = false
     @State private var showingNewFolderSheet = false
     @State private var showingNewNotebookSheet = false
+    @State private var searchExpanded = false
+    @FocusState private var searchFocused: Bool
     @Environment(\.dismiss) private var dismiss
 
     init(
         folderPath: String,
         coordinator: LibraryCoordinator,
+        viewOptions: LibraryViewOptionsModel,
         sidebarCollapsed: Binding<Bool>,
         path: Binding<[String]>
     ) {
         self.folderPath = folderPath
         self.coordinator = coordinator
+        self.viewOptions = viewOptions
         self._sidebarCollapsed = sidebarCollapsed
         self._path = path
         self._model = State(
@@ -233,6 +253,7 @@ struct FolderContentView: View {
                     .font(.system(size: 40, weight: .bold))
                     .foregroundStyle(.white)
                 Spacer()
+                searchControl
             }
         } else {
             ZStack {
@@ -251,11 +272,61 @@ struct FolderContentView: View {
                     .accessibilityLabel("Back")
                     .accessibilityIdentifier("library.folder.back")
                     Spacer()
+                    searchControl
                 }
                 Text(model.displayTitle)
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(.white)
             }
+        }
+    }
+
+    /// The top-right magnifier (spec §8's Gen-2 entry point), expanding into
+    /// a text field in place. A custom field rather than `.searchable`
+    /// because the navigation bar is hidden — this pane draws its own header,
+    /// and `.searchable` would resurrect chrome the layout deliberately cut.
+    @ViewBuilder
+    private var searchControl: some View {
+        if searchExpanded {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 15))
+                    .foregroundStyle(.secondary)
+                TextField("Search", text: Bindable(model).searchText)
+                    .textFieldStyle(.plain)
+                    .foregroundStyle(.white)
+                    .frame(width: 200)
+                    .focused($searchFocused)
+                    .submitLabel(.search)
+                    .accessibilityIdentifier("library.search.field")
+                Button {
+                    model.searchText = ""
+                    searchExpanded = false
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 15))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Clear search")
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+            .background(Color(white: 0.15), in: Capsule())
+        } else {
+            Button {
+                searchExpanded = true
+                searchFocused = true
+            } label: {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 17))
+                    .foregroundStyle(.white)
+                    .frame(width: 44, height: 44)
+                    .background(Color(white: 0.15), in: Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Search this folder")
+            .accessibilityIdentifier("library.search")
         }
     }
 
@@ -279,15 +350,7 @@ struct FolderContentView: View {
 
     private var toolbarRow: some View {
         HStack {
-            // Static tonight: the filter lands with its lane; the chip is
-            // kept so the row reads GoodNotes.
-            HStack(spacing: 8) {
-                Image(systemName: "line.3.horizontal.decrease")
-                    .font(.system(size: 15))
-                Text("All")
-                    .font(.system(size: 17))
-            }
-            .foregroundStyle(.white)
+            LibraryFilterChip(model: model)
 
             Spacer()
 
@@ -317,6 +380,22 @@ struct FolderContentView: View {
                 )
             }
 
+            Button {
+                showingViewOptions = true
+            } label: {
+                Image(systemName: "square.grid.2x2")
+                    .font(.system(size: 17, weight: .medium))
+                    .foregroundStyle(.white)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("View options")
+            .accessibilityIdentifier("library.viewoptions")
+            .popover(isPresented: $showingViewOptions, arrowEdge: .top) {
+                LibraryViewOptionsPopover(options: viewOptions)
+            }
+
             LibraryToolbarMenu(coordinator: coordinator)
                 .padding(.leading, 10)
         }
@@ -340,11 +419,27 @@ struct FolderContentView: View {
         case .loaded where model.items.isEmpty:
             emptyView
         case .loaded:
-            grid
+            // The designed empty state is for a truly empty folder; a filter
+            // or search that hides everything says so in its own words.
+            let displayed = model.displayed(under: viewOptions.prefs)
+            if displayed.isEmpty {
+                noMatchesView
+            } else {
+                switch viewOptions.prefs.viewMode {
+                case .grid: grid(displayed)
+                case .list: list(displayed)
+                }
+            }
         }
     }
 
-    private var grid: some View {
+    private var openBlockedReason: String? {
+        coordinator.canOpenDocuments
+            ? nil
+            : "A document with unsaved changes is still saving."
+    }
+
+    private func grid(_ displayed: [LibraryItem]) -> some View {
         ScrollView {
             LazyVGrid(
                 columns: Array(
@@ -354,13 +449,11 @@ struct FolderContentView: View {
                 alignment: .center,
                 spacing: 44
             ) {
-                ForEach(model.items) { item in
+                ForEach(displayed) { item in
                     LibraryItemCell(
                         item: item,
                         model: model,
-                        openBlockedReason: coordinator.canOpenDocuments
-                            ? nil
-                            : "A document with unsaved changes is still saving.",
+                        openBlockedReason: openBlockedReason,
                         onOpen: { open(item) }
                     )
                 }
@@ -369,6 +462,48 @@ struct FolderContentView: View {
             .padding(.vertical, 20)
         }
         .accessibilityIdentifier("library.grid")
+    }
+
+    /// The list presentation (spec §2.4): full-width rows, thin hairline
+    /// separators, same interleaved order as the grid.
+    private func list(_ displayed: [LibraryItem]) -> some View {
+        ScrollView {
+            LazyVStack(spacing: 0) {
+                ForEach(displayed) { item in
+                    LibraryItemRow(
+                        item: item,
+                        model: model,
+                        openBlockedReason: openBlockedReason,
+                        onOpen: { open(item) }
+                    )
+                    Divider()
+                        .overlay(Color(white: 0.18))
+                }
+            }
+            .padding(.horizontal, 36)
+            .padding(.vertical, 8)
+        }
+        .accessibilityIdentifier("library.list")
+    }
+
+    /// A filter or search narrowed the listing to nothing — distinct from
+    /// the empty-folder state, which only a successful empty listing renders.
+    private var noMatchesView: some View {
+        VStack(spacing: 10) {
+            Spacer()
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 44))
+                .foregroundStyle(Color(white: 0.35))
+                .padding(.bottom, 8)
+            Text("No Matches")
+                .font(.system(size: 20, weight: .bold))
+                .foregroundStyle(.white)
+            Text("Nothing here matches the current filter or search.")
+                .font(.system(size: 15))
+                .foregroundStyle(Color(white: 0.55))
+            Spacer()
+        }
+        .frame(maxWidth: .infinity)
     }
 
     private func open(_ item: LibraryItem) {
