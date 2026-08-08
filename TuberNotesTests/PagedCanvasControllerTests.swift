@@ -110,7 +110,7 @@ struct PagedCanvasControllerTests {
     }
 
     @Test("A page is rebuilt with its ink once the bytes arrive")
-    func reloadInstallsLateArrivingInk() throws {
+    func reloadInstallsLateArrivingInk() async throws {
         var available: Data?
         let controller = hosted {
             $0.content = { _ in
@@ -125,8 +125,67 @@ struct PagedCanvasControllerTests {
         available = strokeAcrossPage().dataRepresentation()
         controller.reloadPage(at: 0)
 
-        let page = try #require(controller.livePage(at: 0))
+        let page = try await requireCanvas(controller, at: 0)
         #expect(page.canvasView.drawing.strokes.count == 1)
+    }
+
+    @Test("Held bytes are decoded off the settle path, and installed on arrival")
+    func inkIsDecodedOffTheSettlePath() async throws {
+        let data = strokeAcrossPage().dataRepresentation()
+        let controller = hosted { $0.content = { _ in .ink(data) } }
+        controller.setPages(count: 3, currentPageIndex: 0)
+        controller.markEditable()
+
+        // The settle returned without decoding: the slot is not a canvas yet.
+        // This is *page-without-bytes-is-not-a-canvas* applied one step later
+        // than it used to be. Bytes the session holds are not ink in a canvas
+        // until they have been decoded into one, and until then the page must
+        // accept no input — a canvas here would be one the user could draw on,
+        // whose empty drawing the save path would write over the page's real
+        // ink, or whose strokes the install would silently overwrite.
+        #expect(controller.livePage(at: 0) == nil)
+        #expect(controller.snapshot(at: 0) == nil)
+        #expect(controller.liveCanvasCount == 0)
+        #expect(controller.pendingInkDecodeCount == 3)
+
+        let page = try await requireCanvas(controller, at: 0)
+        #expect(page.canvasView.drawing.strokes.count == 1)
+        #expect(controller.pendingInkDecodeCount == 0)
+    }
+
+    @Test("A decode for a page the user flicked past stops rather than finishing")
+    func aSupersededDecodeIsCancelled() async throws {
+        let data = strokeAcrossPage().dataRepresentation()
+        let controller = hosted { $0.content = { _ in .ink(data) } }
+        controller.setPages(count: 40, currentPageIndex: 0)
+        controller.markEditable()
+        #expect(controller.pendingInkDecodeCount == 3)
+
+        // A flick clean past the first window, before any of its decodes could
+        // have installed. Nothing they produce can ever be shown.
+        turn(controller, to: 20)
+
+        // Three cancelled, five started: the count is a positive signal that
+        // the abandonment happened, rather than an absence this test would
+        // otherwise have to wait on. Refusing the results at the install site
+        // would leave the same five canvases and the same five entries — and
+        // would have run every superseded decode to completion first, against
+        // the Pencil, which is what `CONTRIBUTING.md` — Cancellation forbids.
+        #expect(controller.pendingInkDecodeCount == 5)
+        for index in 0...2 {
+            #expect(controller.livePage(at: index) == nil)
+        }
+
+        try await waitUntil("the new window's decodes install") {
+            controller.pendingInkDecodeCount == 0
+        }
+        // The abandoned pages are outside the window and stayed gone; a late
+        // decode installing behind the user would be the currency check
+        // failing.
+        for index in 0...2 {
+            #expect(controller.livePage(at: index) == nil)
+        }
+        #expect(controller.liveCanvasCount == 5)
     }
 
     @Test("Reloading a slot that is a live canvas does nothing")
@@ -553,6 +612,35 @@ struct PagedCanvasControllerTests {
         let scroll = controller.scrollView
         scroll.contentOffset = CGPoint(x: scroll.bounds.width * CGFloat(page), y: 0)
         controller.scrollViewDidEndDecelerating(scroll)
+    }
+
+    /// The canvas for a page whose ink is decoding, once it arrives.
+    ///
+    /// Since the settle path stopped decoding on main, a slot fed `.ink` is a
+    /// placeholder first and a canvas a moment later, so a test that wants the
+    /// canvas has to wait for it rather than read it.
+    private func requireCanvas(
+        _ controller: PagedCanvasController,
+        at index: Int,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) async throws -> PageCanvasController {
+        try await waitUntil("page \(index) becomes a canvas", sourceLocation: sourceLocation) {
+            controller.livePage(at: index) != nil
+        }
+        return try #require(controller.livePage(at: index), sourceLocation: sourceLocation)
+    }
+
+    /// Polls until `condition` holds, or fails after a second.
+    private func waitUntil(
+        _ what: String,
+        sourceLocation: SourceLocation = #_sourceLocation,
+        _ condition: () -> Bool
+    ) async throws {
+        for _ in 0..<200 {
+            if condition() { return }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        Issue.record("timed out waiting for \(what)", sourceLocation: sourceLocation)
     }
 
     private func strokeAcrossPage() -> PKDrawing {
