@@ -714,31 +714,6 @@ actor DocumentStore {
         }
     }
 
-    /// One page the store refused to save, and why — carried as text because
-    /// the caller's use is reporting, and the repair is a later edit, not a
-    /// branch on the cause.
-    struct PageRefusal: Sendable, Equatable {
-        let pageID: UUID
-        let reason: String
-    }
-
-    /// Thrown by `save` when at least one page refused its plan. **Every page
-    /// not named here was written and is durable** — the caller acknowledges
-    /// those pages and keeps only the refused ones dirty. `indexWritten` says
-    /// whether the index landed; it is withheld when a refused page has no
-    /// page file on disk yet.
-    struct PageSaveRefusal: Error, Sendable, Equatable, CustomStringConvertible {
-        let refusedPages: [PageRefusal]
-        let indexWritten: Bool
-
-        var description: String {
-            "save refused for \(refusedPages.count) page(s): "
-                + refusedPages
-                    .map { "\($0.pageID) (\($0.reason))" }
-                    .joined(separator: "; ")
-        }
-    }
-
     /// What one page's write will actually touch, decided before anything is
     /// written.
     private struct PagePlan {

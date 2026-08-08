@@ -1261,7 +1261,7 @@ final class EditorSession {
             }
             lastSaveError = nil
             consecutiveSaveFailures = 0
-        } catch let refusal as DocumentStore.PageSaveRefusal {
+        } catch let refusal as PageSaveRefusal {
             // The store's refusal is per page, and so is the acknowledgement:
             // every page the refusal does not name was written and is durable,
             // so it becomes clean exactly as a fully successful pass would

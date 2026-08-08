@@ -830,7 +830,7 @@ struct PDFLayerTests {
             ref: ImageLayerRef(assetID: assetID, format: .heic),
             pageSpaceTransform: .identity
         )
-        let refusal = await #expect(throws: DocumentStore.PageSaveRefusal.self) {
+        let refusal = await #expect(throws: PageSaveRefusal.self) {
             try await scratch.freshStore().save(
                 index: documentIndex,
                 pages: [

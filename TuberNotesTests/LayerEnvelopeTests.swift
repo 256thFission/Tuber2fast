@@ -311,7 +311,7 @@ struct LayerEnvelopeTests {
         // A save of this page would silently drop the refused layer, so the
         // store refuses the save — the chosen preservation mechanism.
         let bytesBefore = try Data(contentsOf: scratch.pageURL(pageID))
-        let refusal = await #expect(throws: DocumentStore.PageSaveRefusal.self) {
+        let refusal = await #expect(throws: PageSaveRefusal.self) {
             try await store.save(
                 index: documentIndex,
                 changedPages: [pageID: [inkEnvelope(layerID: inkID, payload: Data([0x09]))]]
@@ -341,7 +341,7 @@ struct LayerEnvelopeTests {
 
         // A second store on the same directory, with no loadPage first.
         let freshStore = scratch.freshStore()
-        let refusal = await #expect(throws: DocumentStore.PageSaveRefusal.self) {
+        let refusal = await #expect(throws: PageSaveRefusal.self) {
             try await freshStore.save(
                 index: documentIndex,
                 changedPages: [pageID: inkLayer(Data([0x09]))]

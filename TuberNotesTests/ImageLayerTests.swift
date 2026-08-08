@@ -147,7 +147,7 @@ struct ImageLayerTests {
 
         // ...and on the way out — page-scoped, so the refusal names the page.
         let documentIndex = scratch.index(pageIDs: [pageID])
-        let refusal = await #expect(throws: DocumentStore.PageSaveRefusal.self) {
+        let refusal = await #expect(throws: PageSaveRefusal.self) {
             try await scratch.freshStore().save(
                 index: documentIndex,
                 changedPages: [pageID: [ink, image]]
@@ -180,7 +180,7 @@ struct ImageLayerTests {
             ref: ImageLayerRef(assetID: assetID, format: .heic),
             pageSpaceTransform: .identity
         )
-        let refusal = await #expect(throws: DocumentStore.PageSaveRefusal.self) {
+        let refusal = await #expect(throws: PageSaveRefusal.self) {
             try await store.save(
                 index: documentIndex,
                 changedPages: [pageID: [envelope, inkEnvelope(payload: Data([0x01]))]]
@@ -551,7 +551,7 @@ struct ImageLayerTests {
 
         // This build cannot write the layer back, so it may not overwrite the
         // page at all — the same rule an unknown kind gets.
-        let refusal = await #expect(throws: DocumentStore.PageSaveRefusal.self) {
+        let refusal = await #expect(throws: PageSaveRefusal.self) {
             try await scratch.freshStore().save(
                 index: documentIndex,
                 changedPages: [pageID: [inkEnvelope(payload: Data([0x09]))]]

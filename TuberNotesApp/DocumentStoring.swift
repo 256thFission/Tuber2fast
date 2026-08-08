@@ -38,8 +38,8 @@ protocol DocumentStoring: Sendable {
     func loadPage(_ pageID: UUID) async throws -> LoadedPage
 
     /// Writes the named pages and, only if it changed, the index. Throws
-    /// `DocumentStore.PageSaveRefusal` when some pages were refused and the
-    /// rest were written — the caller acknowledges per page.
+    /// `PageSaveRefusal` when some pages were refused and the rest were
+    /// written — the caller acknowledges per page.
     func save(index: DocumentIndex, pages: [PageWrite]) async throws
 
     /// Writes an imported original. Assets are written before the layer that
@@ -76,6 +76,39 @@ extension DocumentStoring {
             index: index,
             pages: changedPages.map { PageWrite(pageID: $0.key, layers: $0.value) }
         )
+    }
+}
+
+/// One page the store refused to save, and why — carried as text because the
+/// caller's use is reporting, and the repair is a later edit, not a branch on
+/// the cause.
+struct PageRefusal: Sendable, Equatable {
+    let pageID: UUID
+    let reason: String
+}
+
+/// Thrown by `save` when at least one page refused its plan. **Every page not
+/// named here was written and is durable** — the caller acknowledges those
+/// pages and keeps only the refused ones dirty. `indexWritten` says whether the
+/// index landed; it is withheld when a refused page has no page file on disk
+/// yet.
+///
+/// It lives beside `DocumentStoring` rather than nested in `DocumentStore`
+/// because it is the *protocol's* vocabulary: `save`'s doc comment promises it,
+/// `EditorSession` catches it by type, and a substitute store has to be able to
+/// throw it. Nested, naming the refusal meant naming the one implementation —
+/// which is exactly the coupling the seam exists to remove, and which would
+/// have made the app target import the store module for a type the protocol
+/// already speaks.
+struct PageSaveRefusal: Error, Sendable, Equatable, CustomStringConvertible {
+    let refusedPages: [PageRefusal]
+    let indexWritten: Bool
+
+    var description: String {
+        "save refused for \(refusedPages.count) page(s): "
+            + refusedPages
+                .map { "\($0.pageID) (\($0.reason))" }
+                .joined(separator: "; ")
     }
 }
 
