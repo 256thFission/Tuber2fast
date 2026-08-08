@@ -51,6 +51,10 @@ struct LibraryBrowserView: View {
             drainBanner
         }
         .preferredColorScheme(.dark)
+        // The one thumbnail store, reachable by every document cell — grid,
+        // list, and anything presented from them — without threading it
+        // through each initializer.
+        .environment(coordinator.thumbnails)
         .task { await viewOptions.load() }
     }
 

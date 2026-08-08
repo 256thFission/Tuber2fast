@@ -80,7 +80,10 @@ struct LibraryItemCell: View {
     private var thumbnail: some View {
         switch item.kind {
         case .document:
-            LibraryPaperCover()
+            // Lane F moved the star to an overlay on the open button (a
+            // nested button's label yields its tap); the cover itself is
+            // Lane G's rendered thumbnail with the paper placeholder inside.
+            LibraryDocumentCover(item: item, library: model.library)
                 .shadow(color: .black.opacity(0.45), radius: 8, y: 4)
         case .folder(let decoration):
             ZStack(alignment: .topTrailing) {
@@ -193,7 +196,7 @@ struct LibraryItemRow: View {
     private var thumbnail: some View {
         switch item.kind {
         case .document:
-            LibraryPaperCover()
+            LibraryDocumentCover(item: item, library: model.library)
                 .shadow(color: .black.opacity(0.35), radius: 3, y: 1)
         case .folder(let decoration):
             LibraryFolderGlyph(decoration: decoration, iconSize: 13)
@@ -203,10 +206,68 @@ struct LibraryItemRow: View {
 
 // MARK: - Shared building blocks
 
+/// The document cover as the browser actually shows it: the cached page-1
+/// ink render when one exists, the paper cover as the placeholder while a
+/// render is in flight, and — when the package refused a render — the paper
+/// cover wearing the degraded badge at the corner-fold.
+///
+/// The render request is this view's `.task(id: key)`: a per-cell structured
+/// task that SwiftUI cancels when the cell scrolls away or the key changes,
+/// which is the cancellation the render's checkpoints depend on
+/// (CONTRIBUTING — Cancellation). The key carries `modifiedAt`, so a saved
+/// document re-renders under a new key with no invalidation machinery.
+struct LibraryDocumentCover: View {
+    let item: LibraryItem
+    let library: LibraryStore
+    @Environment(LibraryThumbnailStore.self) private var thumbnails
+
+    private var key: LibraryThumbnailStore.Key {
+        LibraryThumbnailStore.Key(path: item.id, modifiedAt: item.modifiedAt)
+    }
+
+    var body: some View {
+        cover
+            .task(id: key) {
+                await thumbnails.renderIfNeeded(
+                    for: key,
+                    documentURL: library.documentURL(forItemAt: item.id)
+                )
+            }
+    }
+
+    @ViewBuilder
+    private var cover: some View {
+        switch thumbnails.cached(for: key) {
+        case .image(let image):
+            Image(uiImage: image)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .clipShape(
+                    // The paper cover's own silhouette, so a rendered cell
+                    // keeps the corner-fold the placeholder promised.
+                    UnevenRoundedRectangle(
+                        topLeadingRadius: 4,
+                        bottomLeadingRadius: 4,
+                        bottomTrailingRadius: 8,
+                        topTrailingRadius: 8
+                    )
+                )
+        case .refused:
+            ZStack(alignment: .bottomTrailing) {
+                LibraryPaperCover()
+                LibraryDegradedBadge()
+                    .padding(6)
+            }
+        case nil:
+            LibraryPaperCover()
+        }
+    }
+}
+
 /// The portrait 'paper' cover: cream face, a subtle page-stack edge on the
-/// trailing side — the thumbnail base case until ink renders land (a later
-/// lane). Shared by the grid cell and the list row; the caller sizes and
-/// shadows it.
+/// trailing side — the placeholder a document cell shows until its ink
+/// render lands, and the refused cell's base. Shared by the grid cell and
+/// the list row; the caller sizes and shadows it.
 struct LibraryPaperCover: View {
     var body: some View {
         ZStack {

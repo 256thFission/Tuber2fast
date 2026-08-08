@@ -13,6 +13,8 @@ typealias LibraryItem = TuberStore.LibraryItem
 @MainActor
 enum LibraryStyle {
     /// The cream 'paper' of a document cover — the canonical page's color.
+    /// `LibraryThumbnailStore.paperColor` mirrors these components as a
+    /// `UIColor` for the off-main render; change the two together.
     static let paper = Color(red: 0.973, green: 0.965, blue: 0.925)
     /// The page-stack edge behind the cover's trailing side.
     static let paperEdge = Color(red: 0.85, green: 0.84, blue: 0.79)
