@@ -505,11 +505,14 @@ struct PDFLayerTests {
         let minimum = PageProjection.smallestDisplayablePagePoints(
             zoomCapPagePointsPerPixel: DocumentIndex.canonicalZoomCapPagePointsPerPixel
         )
-        // 104 × 300: past the 103.2-point bound by eight tenths of a point, and
-        // narrower than anything else this suite imports.
-        #expect(minimum > 103 && minimum < 104)
+        // 138 × 300: past the 137.6-point bound by four tenths of a point, and
+        // narrower than anything else this suite imports. (The bound was 103.2
+        // under the portrait pin; lifting the pin widened the widest viewport
+        // and this fixture moved with it — the bracket, not the number, is the
+        // claim.)
+        #expect(minimum > 137 && minimum < 138)
         let appended = try await session.importPDF(
-            pdf(pageSizes: [CGSize(width: 104, height: 300)]) { _, _ in }
+            pdf(pageSizes: [CGSize(width: 138, height: 300)]) { _, _ in }
         )
 
         #expect(session.lastSaveError == nil)
@@ -518,7 +521,7 @@ struct PDFLayerTests {
         let index = try #require(await scratch.freshStore().load())
         let position = try #require(index.pageIDs.firstIndex(of: appended[0]))
         #expect(try #require(index.geometry(ofPageAt: position))
-            == PageGeometry(width: 104, height: 300))
+            == PageGeometry(width: 138, height: 300))
     }
 
     @Test("Deleting one page's pdf layer leaves the asset the other pages still show")

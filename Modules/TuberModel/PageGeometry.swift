@@ -130,21 +130,22 @@ package struct PageProjection: Sendable, Equatable {
     package static let finestReachablePagePointsPerPixel: Double =
         1 / (runtimeMaximumZoomScale * minimumSupportedDisplayScale)
 
-    /// The widest viewport a single page is ever fitted into: the **portrait**
-    /// width of the largest iPad this application supports — the 13-inch iPad
-    /// Pro, at 1032 × 1376 points.
+    /// The widest viewport a single page is ever fitted into: the **long
+    /// edge** of the largest iPad this application supports — the 13-inch
+    /// iPad Pro, at 1032 × 1376 points.
     ///
-    /// Portrait width and not the long edge, because `project.yml` pins
-    /// `UISupportedInterfaceOrientations_iPad` to portrait. Split View and
-    /// Slide Over only ever make the window narrower, so with that pin in force
-    /// nothing presents a page across more than 1032 points, on any iPad.
+    /// The long edge and not the portrait width, because `project.yml` allows
+    /// landscape (the portrait pin was lifted when the library browser
+    /// letterboxed on a rotated iPad). A landscape full-screen window presents
+    /// a page across 1376 points; Split View and Slide Over only ever make the
+    /// window narrower.
     ///
-    /// The pin is one line of a file this constant cannot see, which is exactly
-    /// how a bound rots. `PageGeometryTests` reads `project.yml` and fails if
-    /// the orientations key stops saying portrait-only, naming this constant —
-    /// so lifting the pin cannot quietly leave a bound behind that is 1.33×
-    /// too small.
-    package static let widestSupportedViewportPoints: Double = 1032
+    /// The orientations key is one line of a file this constant cannot see,
+    /// which is exactly how a bound rots. `PageGeometryTests` reads
+    /// `project.yml` and holds the pairing in both directions — orientations
+    /// wider than this bound assumes is the trap; a re-pin to portrait without
+    /// lowering it is merely conservative.
+    package static let widestSupportedViewportPoints: Double = 1376
 
     /// The smallest a page may be, in page points, under a given zoom cap:
     /// below this the page's fit-width scale is *above* the document's own

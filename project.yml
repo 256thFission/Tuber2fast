@@ -202,7 +202,14 @@ targets:
         # Multiple scenes are enabled only after the despiking architecture
         # supplies scene-scoped sessions and serialized document commits.
         INFOPLIST_KEY_UIApplicationSupportsMultipleScenes: NO
-        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: UIInterfaceOrientationPortrait
+        # All four orientations: the library browser letterboxed on a landscape
+        # iPad, and Phillip lifted the portrait pin on 2026-08-08. The coupled
+        # bound moved with it — PageProjection.widestSupportedViewportPoints is
+        # 1376 (the 13-inch iPad Pro's long edge), and PageGeometryTests holds
+        # the pairing: re-pinning portrait without lowering the bound leaves it
+        # safely conservative, but widening support without raising it is the
+        # trap the test names.
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
         GENERATE_INFOPLIST_FILE: YES
         ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS: NO
 

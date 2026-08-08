@@ -90,6 +90,14 @@ Nothing here is a reason not to ship. It is a reason not to be surprised.
   first-contact ink, scroll and zoom against the page, background-flush
   survival, autosave spacing under continuous writing, and the five-second
   retry ceiling.
+- **No rotation has ever been watched, and rotation is now reachable.** The
+  portrait pin was lifted (the library browser letterboxed on a landscape
+  iPad), so a rotation is now an ordinary viewport resize hitting the same
+  re-centre path Split View does — plus the browser re-laying its grid. The
+  paired bound moved (`widestSupportedViewportPoints` 1032 → 1376, smallest
+  displayable page 103.2 → 137.6 points) and the pairing is machine-checked;
+  what no eye has seen is a live rotation over an open canvas, or over the
+  browser, on any device or simulator.
 - **No window has ever been resized.** `PagedCanvasController` now re-centres
   the current page when the viewport width changes, and the tests drive that by
   setting the hosted view's frame and laying out — which proves the arithmetic

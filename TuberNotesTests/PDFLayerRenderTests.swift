@@ -266,7 +266,7 @@ struct PDFLayerRenderTests {
         root.frame = CGRect(x: 0, y: 0, width: 820, height: 1180)
         root.layoutIfNeeded()
 
-        _ = try await session.importPDF(PDFFixture.quadrantPDF(rotate: 0))
+        _ = try await session.importPDF(PDFFixture.quadrantPDF(rotate: 0, scale: 2))
         root.layoutIfNeeded()
 
         // Turn to the imported page the way a settled scroll does.
@@ -293,7 +293,7 @@ struct PDFLayerRenderTests {
         root.frame = CGRect(x: 0, y: 0, width: 820, height: 1180)
         root.layoutIfNeeded()
 
-        let imported = try await session.importPDF(PDFFixture.quadrantPDF(rotate: 0))
+        let imported = try await session.importPDF(PDFFixture.quadrantPDF(rotate: 0, scale: 2))
         let pageID = try #require(imported.first)
         root.layoutIfNeeded()
 

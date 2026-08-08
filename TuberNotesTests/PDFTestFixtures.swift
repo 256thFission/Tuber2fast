@@ -33,10 +33,15 @@ enum PDFFixture {
     /// With a non-zero `cropOrigin` the MediaBox extends 40 points past
     /// the crop on every side and is painted black beneath the quadrants,
     /// so a dropped origin becomes a visibly wrong picture.
-    static func quadrantPDF(rotate: Int, cropOrigin: CGPoint = .zero) -> Data {
+    /// `scale` multiplies the whole geometry: the renderer-level tests keep
+    /// the 120x200 original (they never cross the import bound), while tests
+    /// that import through the session pass `scale: 2` for a 240x400 page —
+    /// the smallest-displayable-page bound rose to 137.6 points when the
+    /// portrait pin was lifted, and 120 is now below it.
+    static func quadrantPDF(rotate: Int, cropOrigin: CGPoint = .zero, scale: Double = 1) -> Data {
         // Deliberately non-square, so a swapped extent is observable in
         // the image's own dimensions.
-        let w = 120.0, h = 200.0
+        let w = 120.0 * scale, h = 200.0 * scale
         let ox = Double(cropOrigin.x), oy = Double(cropOrigin.y)
         let crop = CGRect(x: ox, y: oy, width: w, height: h)
         let media = cropOrigin == .zero
