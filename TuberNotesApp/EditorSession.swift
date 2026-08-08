@@ -292,11 +292,48 @@ final class EditorSession {
     /// the app (`Contract.md` — Saving, retry policy).
     private var consecutiveSaveFailures = 0
 
-    /// How long the last whole-drawing serialization took. The debounce is
-    /// derived from it so that a document large enough to be expensive to
-    /// serialize does not chain back-to-back serializations (`Contract.md` —
-    /// Saving). Zero until the first save, which is the same as no back-off.
-    private var lastSerializeDuration: Duration = .zero
+    /// What one page's serialization costs, as last measured: the **slowest**
+    /// page of the last pass that serialized anything. The debounce is derived
+    /// from it so that a document large enough to be expensive to serialize
+    /// does not chain back-to-back serializations (`Contract.md` — Saving).
+    ///
+    /// Per page rather than per pass, because the next pass is almost always
+    /// one page — the page under the Pencil — and this number is an estimate of
+    /// what that one will cost. Summing across the pass answered a different
+    /// question: a five-page flick that retires four pages at once would have
+    /// widened the quiet before every later single-page save by four pages'
+    /// worth of work that is not going to happen again.
+    ///
+    /// Written only by a pass that actually serialized. A pass made entirely of
+    /// bytes an earlier pass already encoded — a retry after a failed save, an
+    /// index-only write — measures nothing, and recording its zero would throw
+    /// away a real measurement of an expensive document in favour of an
+    /// observation about a pass that did no encoding.
+    ///
+    /// `private(set)`: one writer, and the suite reads it to compare one pass's
+    /// measurement against another's, which is the only way the difference
+    /// between a maximum and a sum is observable at all.
+    private(set) var lastSerializeDuration: Duration = EditorSession.coldSerializeEstimate
+
+    /// What one serialization is assumed to cost before this session has
+    /// measured one.
+    ///
+    /// Not zero. `lastSerializeDuration` is written only by a pass that
+    /// serialized, so a zero start gave the first save of a session no back-off
+    /// at all — and the first serialization of a drawing is the *expensive*
+    /// one: measured at 20,000 strokes / 4.6 MB, 126 ms cold against 48 ms
+    /// warm. The one save most likely to be interrupted was the one estimated
+    /// least well.
+    ///
+    /// A constant, and a single measured one, rather than a model over the
+    /// document's size. There is exactly one data point; a bytes-per-
+    /// millisecond curve fitted through it would be a claim this project has
+    /// not earned, and it would apply to a page whose ink has not been read
+    /// yet. What this buys is honest and small: at the default 500 ms floor
+    /// the first interval of a session becomes 504 ms rather than 500 ms, and
+    /// it is the floor that decides again as soon as one real measurement
+    /// exists.
+    static let coldSerializeEstimate: Duration = .milliseconds(126)
 
     /// Serializing is allowed to widen the debounce by this factor: a save that
     /// costs 200 ms of encoding earns 800 ms of quiet before the next one.
@@ -814,20 +851,9 @@ final class EditorSession {
     /// A fixed interval chains serializations back to back once serialization
     /// is expensive: at 200 ms per serialization a 500 ms debounce spends most
     /// of its time encoding. Small documents measure near zero and stay at
-    /// exactly the floor, so their behavior is unchanged.
-    ///
-    /// KNOWN DEFECT: `lastSerializeDuration` sums across every dirty page, so
-    /// this interval grows with *how many pages changed* rather than with what
-    /// writing a page costs. Pages restored from already-serialized bytes
-    /// contribute zero to that sum, so a save consisting only of retired pages
-    /// records a duration of zero and discards the previous warm measurement.
-    ///
-    /// KNOWN DEFECT: the measurement is warm-only. `lastSerializeDuration`
-    /// starts at zero and is written only in `performOneSave`, so the first
-    /// save of a session gets no backoff at all. Measured at 20,000 strokes /
-    /// 4.6 MB: 126 ms cold against 48 ms warm — so the first save after launch,
-    /// which is also the one most likely to be interrupted, is systematically
-    /// under-estimated.
+    /// exactly the floor from their first save onwards — before it, every
+    /// session starts at `coldSerializeEstimate` and so four milliseconds above
+    /// the floor.
     private var adaptiveDebounce: Duration {
         max(debounce, lastSerializeDuration * Self.serializeBackoffFactor)
     }
@@ -1073,7 +1099,7 @@ final class EditorSession {
         // serialized — a failed save's restored bytes, an appended blank —
         // costs nothing again.
         var changedPages: [UUID: Data] = [:]
-        var totalDuration: Duration = .zero
+        var slowestPage: Duration?
         for capture in captures {
             let data: Data
             switch capture.unsaved {
@@ -1082,14 +1108,16 @@ final class EditorSession {
             case .drawing(let snapshot):
                 let serialized = await snapshot.serialized()
                 data = serialized.data
-                totalDuration += serialized.duration
+                slowestPage = max(slowestPage ?? .zero, serialized.duration)
             }
             changedPages[capture.pageID] = data
             pageStates[stateIndex(of: capture.pageID)].serializedWhileSaving(data)
         }
         // Measured where the work happens rather than timed again here: the next
-        // debounce is derived from this cost (`Contract.md` — Saving).
-        lastSerializeDuration = totalDuration
+        // debounce is derived from this cost (`Contract.md` — Saving). A pass
+        // that encoded nothing leaves the last real measurement standing —
+        // `nil` here is "not measured", which is not the same as "free".
+        if let slowestPage { lastSerializeDuration = slowestPage }
 
         // The session is the one writer of a page's layer list (`Docs/Forks/
         // CanvasFeatureComplete.md` — One value, one writer), so the envelopes

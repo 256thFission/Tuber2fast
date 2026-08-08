@@ -510,7 +510,13 @@ struct EditorSessionTests {
         // device; assigning `drawing` fires the same path here. The debounce
         // is then armed, and nothing but the clock can fire it.
         await clock.waitUntilSleeping("the debounce to be armed by the drawing change")
-        await clock.advance(by: .milliseconds(20))
+        // Past the first interval of the session, whatever sets it: with
+        // nothing serialized yet that is `coldSerializeEstimate`'s back-off
+        // rather than the injected 20 ms. The clock is virtual, so overshooting
+        // costs nothing and asserts nothing about the interval's length —
+        // `debounceFloorHolds` and `firstSaveOfASessionBacksOffWhileCold` own
+        // that.
+        await clock.advance(by: .seconds(1))
 
         try await waitUntil("the debounced save lands") {
             try await savedDrawing(scratch.store) != initial
@@ -560,7 +566,9 @@ struct EditorSessionTests {
 
         canvas(of: session).drawing = strokeAcrossPage()
         await clock.waitUntilSleeping("the debounce to be armed")
-        await clock.advance(by: .milliseconds(20))
+        // Past the session's first interval, which the cold estimate sets, not
+        // the injected 20 ms. Overshooting a virtual clock is free.
+        await clock.advance(by: .seconds(1))
         try await waitUntil("the first autosave fails") { session.lastSaveError != nil }
 
         // Four backed-off retries, each one armed by the failure before it and
@@ -651,9 +659,17 @@ struct EditorSessionTests {
         // The interval the app itself uses, not the tests' short one.
         let session = scratch.session(debounce: .milliseconds(500), clock: clock)
         await session.start()
+
+        // One save first, so the interval under test is a measured one. A
+        // session that has serialized nothing yet assumes
+        // `coldSerializeEstimate` and lands four milliseconds *above* the
+        // floor; the floor is what decides from the first real measurement
+        // onwards, and that is what this test is about.
+        canvas(of: session).drawing = strokeAcrossPage()
+        await session.saveIfNeeded()
         let initial = try await savedDrawing(scratch.store)
 
-        canvas(of: session).drawing = strokeAcrossPage()
+        canvas(of: session).drawing = twoStrokesAcrossPage()
 
         // A three-stroke document serializes in microseconds, so the adaptive
         // term is ~0 and the floor is the whole interval. An interval shorter
@@ -668,7 +684,100 @@ struct EditorSessionTests {
         try await waitUntil("the floor elapses and the save lands") {
             (try await savedDrawing(scratch.store)) != initial
         }
+        let saved = try PKDrawing(data: try #require(await savedDrawing(scratch.store)))
+        #expect(saved.strokes.count == 2)
+    }
+
+    /// The other side of `debounceFloorHolds`: before any measurement exists,
+    /// the interval is the cold estimate's back-off and not the floor.
+    @Test("The first save of a session backs off for a cold serialization")
+    func firstSaveOfASessionBacksOffWhileCold() async throws {
+        let scratch = try TestScratch("session")
+        let clock = TestClock()
+        let session = scratch.session(debounce: .milliseconds(500), clock: clock)
+        await session.start()
+        let initial = try await savedDrawing(scratch.store)
+
+        canvas(of: session).drawing = strokeAcrossPage()
+        await clock.waitUntilSleeping("the session's first interval to be armed")
+
+        // 504 ms — four times 126 ms — rather than the 500 ms floor. The first
+        // serialization of a session is the expensive one and used to be the
+        // one estimated at zero.
+        await clock.advance(by: .milliseconds(500))
+        #expect(
+            try await savedDrawing(scratch.store) == initial,
+            "the first save of a session took the floor rather than the cold estimate"
+        )
+
+        await clock.advance(by: EditorSession.coldSerializeEstimate * 4 - .milliseconds(500))
+        try await waitUntil("the cold interval elapses and the save lands") {
+            (try await savedDrawing(scratch.store)) != initial
+        }
         try expectSavedStroke(in: await savedDrawing(scratch.store))
+    }
+
+    @Test("The serialize measurement is one page's cost, never the pass's total")
+    func serializeMeasurementIsPerPage() async throws {
+        let scratch = try TestScratch("session")
+        // Far-future debounce: every save here is an explicit one, so no timer
+        // can slip a third pass in between the two being compared.
+        let session = scratch.session(debounce: .seconds(30))
+        await session.start()
+
+        canvas(of: session).drawing = manyStrokes(count: 20_000)
+        await session.saveIfNeeded()
+        let onePage = session.lastSerializeDuration
+        #expect(
+            onePage > .milliseconds(20),
+            "fixture serializes in \(onePage), too cheap to tell a maximum from a sum"
+        )
+
+        // Two pages dirty in one pass, each a freshly built drawing of the same
+        // size, so each pays the same first-traversal cost the pass above paid.
+        // Summed, the measurement would be about twice `onePage`; as a maximum
+        // it is about `onePage`.
+        canvas(of: session).drawing = manyStrokes(count: 20_000)
+        pullPastTheEnd(session)
+        canvas(of: session).drawing = manyStrokes(count: 20_000)
+        await session.saveIfNeeded()
+
+        #expect(
+            session.lastSerializeDuration < onePage * 3 / 2,
+            "two pages measured \(session.lastSerializeDuration) against one page's \(onePage)"
+        )
+    }
+
+    @Test("A pass that serialized nothing keeps the last real measurement")
+    func aPassThatEncodesNothingKeepsTheMeasurement() async throws {
+        let scratch = try TestScratch("session")
+        let session = scratch.session(debounce: .seconds(30))
+        await session.start()
+
+        // Break the destination the way `failedSaveStaysDirty` does. The pass
+        // still serializes — the encode happens before the write — so it
+        // measures, and then fails holding the bytes it paid for.
+        try FileManager.default.removeItem(at: scratch.root)
+        try Data().write(to: scratch.root)
+
+        canvas(of: session).drawing = manyStrokes(count: 20_000)
+        await session.saveIfNeeded()
+        #expect(session.lastSaveError != nil)
+        let measured = session.lastSerializeDuration
+        #expect(measured > .milliseconds(20))
+
+        try FileManager.default.removeItem(at: scratch.root)
+        try FileManager.default.createDirectory(
+            at: scratch.root,
+            withIntermediateDirectories: true
+        )
+        await session.saveIfNeeded()
+        #expect(session.lastSaveError == nil)
+
+        // The retry never encodes twice (`Contract.md` — Saving), so it
+        // measured nothing — and a pass that measured nothing must not report
+        // an expensive document as free.
+        #expect(session.lastSerializeDuration == measured)
     }
 
     @Test("An expensive document widens the debounce above the floor")
