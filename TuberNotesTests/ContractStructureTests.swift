@@ -718,6 +718,7 @@ struct ContractStructureTests {
     /// would licence the whole SwiftUI shell.
     static let fileIOAllowlist: Set<String> = [
         "Modules/TuberStore/DocumentStore.swift",
+        "Modules/TuberStore/LibraryStore.swift",
         "TuberNotesApp/ImportPickers.swift",
     ]
 
@@ -740,18 +741,22 @@ struct ContractStructureTests {
         }
     }
 
-    /// `PageCanvasController` never reads or writes files; `DocumentStore` is
-    /// the only writer of durable state. `Docs/Contract.md`, golden rule 4.
-    @Test("Only DocumentStore touches the file system")
-    func onlyDocumentStoreTouchesTheFileSystem() throws {
+    /// File I/O is confined to `TuberStore`'s actors, one per storage domain —
+    /// `DocumentStore` for a document's insides, `LibraryStore` for the
+    /// library tree — plus the import picker's security-scoped read, each
+    /// named individually in the allowlist. `Docs/Contract.md`, golden rules
+    /// 3 and 4; the library rows are staged in `Docs/Contract.proposed.md`,
+    /// L2.
+    @Test("File I/O is confined to TuberStore's actors, one per storage domain")
+    func fileIOIsConfinedToTheStorageActors() throws {
         for source in try Self.appSources() where !Self.fileIOAllowlist.contains(source.path) {
             let hits = ContractChecker.fileIOTokens(in: source.code)
             #expect(
                 hits.isEmpty,
                 """
                 \(source.path) performs file I/O (\(hits.joined(separator: ", "))). \
-                DocumentStore is the one writer of durable state; everything else \
-                receives and returns values.
+                TuberStore's actors are the writers of durable state, one per storage \
+                domain; everything else receives and returns values.
                 """
             )
         }

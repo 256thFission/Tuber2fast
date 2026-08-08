@@ -362,7 +362,7 @@ feels justified. Concretely:
 
 The first is machine-checked by `TuberNotesTests/ContractStructureTests.swift`,
 along with the single `PKCanvasView` construction site and file I/O confined to
-`DocumentStore`. The second is not, and neither is the forbidden-pattern list —
+`TuberStore`'s actors, one per storage domain, plus the import picker. The second is not, and neither is the forbidden-pattern list —
 those hold only as far as review holds them. `Docs/Unproven.md` says which is
 which.
 
