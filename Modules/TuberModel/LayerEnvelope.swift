@@ -323,6 +323,26 @@ package struct LayerEnvelope: Codable, Sendable, Equatable {
         )
     }
 
+    /// This layer under a new identity — the same picture, in a second place.
+    ///
+    /// The one caller is duplicating a page. A layer file is per layer, so two
+    /// pages must never name the same `layerID` or they contend for one file
+    /// and a delete on either takes the other's picture with it. The
+    /// **payload is copied verbatim**, which is what makes the copy share the
+    /// original's asset rather than duplicate it: assets are write-once and
+    /// reference-counted by an on-disk scan, so sharing is what that scan is
+    /// built to answer, and a fifty-megabyte import stays one file however
+    /// many times its page is duplicated.
+    package func withLayerID(_ layerID: UUID) -> LayerEnvelope {
+        LayerEnvelope(
+            layerID: layerID,
+            rawKind: kind,
+            payload: payload,
+            pageSpaceTransform: pageSpaceTransform,
+            locked: locked
+        )
+    }
+
     /// This layer, locked or unlocked.
     package func withLocked(_ locked: Bool) -> LayerEnvelope {
         LayerEnvelope(

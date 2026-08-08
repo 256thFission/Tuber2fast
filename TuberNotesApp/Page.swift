@@ -176,6 +176,35 @@ extension EditorSession {
             self.neverWritten = true
         }
 
+        /// A copy of another page: a fresh identity for the page and for every
+        /// layer of it, the source's ink already captured, and dirty by
+        /// construction so the next pass writes the whole thing.
+        ///
+        /// **Fresh layer identities, shared assets.** A layer file is per
+        /// layer, so two pages naming one `layerID` would contend for a single
+        /// file and a delete on either would take the other's picture. The
+        /// payloads are copied verbatim, so both layers name the same asset —
+        /// which is exactly what the on-disk reference scan is built to
+        /// answer, and what keeps duplicating a page carrying a fifty-megabyte
+        /// import from copying fifty megabytes.
+        ///
+        /// `durable` is `nil` and not the source's bytes: it records what a
+        /// successful save wrote *for this page*, and no save has written this
+        /// page yet. Claiming otherwise would be a cache entry for a file that
+        /// does not exist. Nothing reads it in the meantime — the ink is
+        /// `.held`, which is where the copy's content actually lives.
+        init(duplicating source: Page, id: UUID, capturedInk: UnsavedInk) {
+            self.id = id
+            self.durable = nil
+            self.staticLayers = source.staticLayers.map { $0.withLayerID(UUID()) }
+            // Nothing of this page has reached disk, so there is no record of
+            // what a save wrote for it, and every layer counts as changed.
+            self.savedStaticLayers = [:]
+            self.layersUnsaved = true
+            self.neverWritten = false
+            self.ink = .held(capturedInk)
+        }
+
         // MARK: Transitions
 
         /// The page's saved bytes arrived from the store.

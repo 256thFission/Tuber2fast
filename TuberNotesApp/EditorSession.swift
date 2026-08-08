@@ -1120,6 +1120,121 @@ final class EditorSession {
         await reclaimPage(pageID, layers: ownedLayers, inkLayerID: inkLayerID)
     }
 
+    /// Copies one page, with its ink and everything under it, immediately after
+    /// the original.
+    ///
+    /// **This is the operation that has to suspend between quiescing and
+    /// mutating**, because a page far from the visible one has had its bytes
+    /// pruned and they must be fetched back. So it quiesces *again* after that
+    /// fetch: the drain is what keeps a capture and a list mutation from
+    /// overlapping, and a drain performed before a suspension has not been
+    /// performed at all. Everything else here follows the section's discipline
+    /// unchanged.
+    ///
+    /// Two refusals rather than a narrowed copy:
+    ///
+    /// - **A page carrying a refused layer.** The refusal is held outside the
+    ///   layer list and has no envelope to copy, so the duplicate would save
+    ///   cleanly *without* it — a layer silently dropped, which *Durable form*
+    ///   forbids in the strongest terms it uses.
+    /// - **A page whose own bytes are not here.** There is nothing to copy
+    ///   from, and copying a placeholder would produce a genuinely blank page
+    ///   claiming to be a copy of one that merely had not loaded.
+    @discardableResult
+    func duplicatePage(_ pageID: UUID) async throws -> UUID {
+        guard phase == .ready, !isClosing else { throw PageEditError.sessionNotReady }
+        guard index.pageIDs.contains(pageID) else { throw PageEditError.pageNotFound(pageID) }
+
+        await quiesceSaves()
+
+        // Re-established from scratch, for the reason `deletePage` states.
+        guard phase == .ready, !isClosing else { throw PageEditError.sessionNotReady }
+        guard var source = stateIndexIfPresent(of: pageID).map({ pageStates[$0] }) else {
+            throw PageEditError.pageNotFound(pageID)
+        }
+        guard source.refusedLayers.isEmpty else {
+            throw PageEditError.pageCarriesRefusedLayer(pageID)
+        }
+
+        // The ink, taken from wherever this page's authority currently is.
+        // `.live` is read **synchronously, before any suspension** — the live
+        // canvas is the authority, and the value it yields is the same shape a
+        // retirement hands over.
+        var captured: Page.UnsavedInk
+        switch source.ink {
+        case .loading, .unreadable:
+            throw PageEditError.pageNotReady(pageID)
+        case .live:
+            guard let snapshot = liveRuntime?.snapshot(ofPage: pageID) else {
+                preconditionFailure(
+                    "page \(pageID) is live but its canvas yielded no snapshot"
+                )
+            }
+            captured = .drawing(snapshot)
+        case .held(let unsaved):
+            captured = unsaved
+        case .saving:
+            preconditionFailure(
+                "page \(pageID) is saving after the save machinery was drained"
+            )
+        case .clean:
+            if let durable = source.durable {
+                captured = .serialized(durable)
+            } else {
+                // Pruned: the page is far from the visible one and its bytes
+                // were dropped, which costs a read and never ink.
+                let loaded = try await store.loadPage(pageID)
+
+                // Two suspensions happened above — the fetch, and whatever the
+                // store did inside it — so everything is re-established, and
+                // the save machinery is drained *again*: the first drain is
+                // stale the moment this task yielded.
+                await quiesceSaves()
+                guard phase == .ready, !isClosing else {
+                    throw PageEditError.sessionNotReady
+                }
+                guard let still = stateIndexIfPresent(of: pageID) else {
+                    throw PageEditError.pageNotFound(pageID)
+                }
+                source = pageStates[still]
+                guard source.refusedLayers.isEmpty else {
+                    throw PageEditError.pageCarriesRefusedLayer(pageID)
+                }
+                captured = .serialized(loaded.inkData)
+            }
+        }
+
+        guard let position = index.pageIDs.firstIndex(of: pageID) else {
+            throw PageEditError.pageNotFound(pageID)
+        }
+        let copyID = UUID()
+        // The source's geometry, not the canonical page: a copy of a landscape
+        // worksheet is a landscape page. This is the one place a new page is
+        // *not* canonical, and it does not contradict `appendPage`'s rule —
+        // the shape does not depend on where you were standing, it is the
+        // shape of the thing you asked to copy.
+        let record = PageRecord(id: copyID, geometry: index.pages[position].geometry)
+
+        var records = index.pages
+        records.insert(record, at: position + 1)
+        pageStates.insert(
+            Page(duplicating: source, id: copyID, capturedInk: captured),
+            at: position + 1
+        )
+        index = index.withPages(records, currentPageIndex: position + 1)
+        indexDirty = true
+        alignedWithIndex()
+        restatePageList()
+        CanvasLog.event(
+            .canvas,
+            "duplicated page \(pageID) as \(copyID) at \(position + 1); "
+                + "pages=\(index.pageIDs.count)"
+        )
+
+        await saveIfNeeded()
+        return copyID
+    }
+
     /// Moves one page to a new position in the document.
     ///
     /// `position` is where the page ends up in the finished list, counted after

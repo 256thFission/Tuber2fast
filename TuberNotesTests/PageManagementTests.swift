@@ -1,4 +1,5 @@
 import Foundation
+import PencilKit
 import Testing
 @testable import TuberCanvas
 @testable import TuberModel
@@ -272,6 +273,124 @@ struct PageManagementTests {
         #expect(world.session.pageCount == 3)
     }
 
+    // MARK: - Duplicate
+
+    @Test("A duplicate lands after its source with fresh identities and a shared asset")
+    func duplicateSharesAssetsAndMintsFreshIdentities() async throws {
+        let world = try await threePages()
+        let source = world.pageIDs[1]
+        let sourceLayer = try #require(world.scratch.layersOnDisk(ofPage: source).first)
+        let sourceAsset = try ImageLayerRef(payload: sourceLayer.payload).assetID
+
+        let copyID = try await world.session.duplicatePage(source)
+
+        #expect(world.session.pageCount == 4)
+        #expect(world.session.pageIDForTesting(at: 2) == copyID, "it lands after its source")
+        #expect(copyID != source)
+
+        let copied = try #require(world.scratch.layersOnDisk(ofPage: copyID).first)
+        // A layer file is per layer, so two pages naming one `layerID` would
+        // contend for a single file and a delete on either would take the
+        // other's picture with it.
+        #expect(copied.layerID != sourceLayer.layerID)
+        // The asset is shared, not copied: it is write-once and
+        // reference-counted by an on-disk scan, so a fifty-megabyte import
+        // stays one file however often its page is duplicated.
+        #expect(try ImageLayerRef(payload: copied.payload).assetID == sourceAsset)
+        #expect(copied.pageSpaceTransform == sourceLayer.pageSpaceTransform)
+
+        let onDisk = try #require(await world.scratch.freshStore().load())
+        #expect(onDisk.pageIDs.count == 4)
+    }
+
+    @Test("Deleting one of two pages sharing an asset keeps it; deleting both reclaims it")
+    func sharedAssetOutlivesTheFirstDeleteAndNotTheSecond() async throws {
+        let world = try await threePages()
+        let source = world.pageIDs[1]
+        let assetID = try ImageLayerRef(
+            payload: try #require(world.scratch.layersOnDisk(ofPage: source).first).payload
+        ).assetID
+
+        let copyID = try await world.session.duplicatePage(source)
+        try await world.session.deletePage(copyID)
+
+        // The scan finds the source's layer still naming it.
+        #expect(
+            FileManager.default.fileExists(
+                atPath: world.scratch.assetURL(assetID, "heic").path
+            )
+        )
+
+        try await world.session.deletePage(source)
+
+        // Nothing names it now, so the last delete takes it.
+        #expect(
+            !FileManager.default.fileExists(
+                atPath: world.scratch.assetURL(assetID, "heic").path
+            )
+        )
+    }
+
+    @Test("A duplicate of a page being written on copies the live ink, not the saved bytes")
+    func duplicateOfALivePageCapturesTheCanvas() async throws {
+        let scratch = try TestScratch("pages")
+        let session = scratch.pageSession()
+        await session.start()
+        host(session)
+        let source = session.currentPageID
+
+        // Ink in the canvas and nowhere else: no save has run for it.
+        let canvas = try #require(session.currentCanvas)
+        canvas.canvasView.drawing = strokeAcrossPage()
+
+        let copyID = try await session.duplicatePage(source)
+
+        // The authority for a live page is its canvas, so that is where the
+        // copy's ink comes from. Reading the durable bytes instead would
+        // duplicate the page as it was at its last save — a copy of something
+        // the user is no longer looking at.
+        let copied = try await scratch.freshStore().loadPage(copyID)
+        #expect(!copied.inkData.isEmpty)
+        let original = try await scratch.freshStore().loadPage(source)
+        #expect(copied.inkData == original.inkData)
+    }
+
+    @Test("A page carrying a refused layer is not duplicated")
+    func duplicateRefusesAPageWithARefusedLayer() async throws {
+        let scratch = try TestScratch("pages")
+        let pageID = UUID()
+        // A layer of a kind this build does not know: refused on load, held
+        // outside the layer list, and with no envelope a copy could carry.
+        try scratch.writePage(
+            pageID,
+            layers: [
+                LayerEnvelope(
+                    layerID: UUID(),
+                    rawKind: "hologram",
+                    payload: Data([0x01]),
+                    pageSpaceTransform: .identity
+                ),
+                LayerEnvelope(
+                    layerID: UUID(),
+                    kind: .ink,
+                    payload: Data(),
+                    pageSpaceTransform: .identity
+                ),
+            ]
+        )
+        try scratch.writeIndexFile(scratch.index(pageIDs: [pageID]))
+        let session = scratch.pageSession()
+        await session.start()
+
+        await #expect(throws: PageEditError.pageCarriesRefusedLayer(pageID)) {
+            try await session.duplicatePage(pageID)
+        }
+
+        // Copying it would save cleanly *without* the refused layer, which is
+        // the silent drop `Contract.md` — Durable form forbids outright.
+        #expect(session.pageCount == 1)
+    }
+
     // MARK: - Reorder
 
     @Test("A moved page lands at the position asked for, in the file too")
@@ -519,6 +638,27 @@ struct PageManagementTests {
         )
         session.pages.scrollViewDidEndDragging(scroll, willDecelerate: false)
         session.pages.view.layoutIfNeeded()
+    }
+
+    /// One stroke, enough to make a drawing non-empty.
+    private func strokeAcrossPage() -> PKDrawing {
+        let points = (0..<8).map { step in
+            PKStrokePoint(
+                location: CGPoint(x: 40 + Double(step) * 30, y: 60),
+                timeOffset: Double(step) * 0.01,
+                size: CGSize(width: 3, height: 3),
+                opacity: 1,
+                force: 1,
+                azimuth: 0,
+                altitude: .pi / 2
+            )
+        }
+        return PKDrawing(strokes: [
+            PKStroke(
+                ink: PKInk(.pen, color: .black),
+                path: PKStrokePath(controlPoints: points, creationDate: Date(timeIntervalSince1970: 0))
+            )
+        ])
     }
 
     /// Turns to a page the way a settled scroll does, without a gesture.
