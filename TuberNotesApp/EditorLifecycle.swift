@@ -1,5 +1,4 @@
 import Observation
-import TuberStore
 import UIKit
 
 /// Scene-lifecycle glue for the spike.
@@ -32,14 +31,6 @@ final class EditorLifecycle {
 
     init(session: EditorSession) {
         self.session = session
-    }
-
-    static func makeDefault() -> EditorLifecycle {
-        EditorLifecycle(
-            session: EditorSession(
-                store: DocumentStore(directoryURL: DocumentStore.defaultDirectoryURL())
-            )
-        )
     }
 
     /// Called on `.inactive`, before suspension is imminent. UIKit recommends
