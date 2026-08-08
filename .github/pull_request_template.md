@@ -23,8 +23,8 @@ app feels, and the simulator has no Apple Pencil at all.
 
 **Required** when this PR touches any of:
 
-- `TuberNotesApp/PageCanvasController.swift`
-- `TuberNotesApp/PagedCanvasController.swift`
+- `Modules/TuberCanvas/PageCanvasController.swift`
+- `Modules/TuberCanvas/PagedCanvasController.swift`
 - `TuberNotesApp/EditorSession.swift`
 - `TuberNotesApp/EditorLifecycle.swift`
 

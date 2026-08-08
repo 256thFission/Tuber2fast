@@ -91,7 +91,7 @@ is in [`Docs/Unproven.md`](Docs/Unproven.md).
 or at the code site. There is no decisions log: `git log -p` is the history,
 with dates and authorship no hand-maintained file has. Known defects
 live in the code as `KNOWN DEFECT:` blocks — `grep -rn "KNOWN DEFECT"
-TuberNotesApp/`.
+Modules/ TuberNotesApp/`.
 
 Two rules keep this from rotting:
 
