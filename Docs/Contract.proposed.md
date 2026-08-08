@@ -1013,7 +1013,7 @@ which is the blank-unreadable-page sin promoted to whole documents. Both
 branches were review blockers (B1, B2, B3 in `03-review.md`); this text is
 the post-review draft.
 
-## L5. *Navigation* — the browser exists — **AHEAD (library phase B)**
+## L5. *Navigation* — the browser exists — **FORCED (library lane C, code is written and green; the thumbnail-reader sentence is written ahead of the render code, which is still frontier)**
 
 Add, as its own short paragraph at the end of *Navigation*:
 
