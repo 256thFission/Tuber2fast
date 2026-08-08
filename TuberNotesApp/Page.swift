@@ -57,7 +57,14 @@ extension EditorSession {
         /// second image to a page would rewrite the first image's file, which
         /// is the whole-page rewrite one level down. Refs only — a few dozen
         /// bytes a page, never ink and never asset bytes.
-        private(set) var savedStaticLayers: [LayerEnvelope] = []
+        ///
+        /// **Keyed by layer, deliberately, and not a list like `staticLayers`
+        /// beside it.** The only question ever asked of it is "what did the
+        /// save write for *this* layer", asked once per layer on every save
+        /// pass, and a list answers that by scanning. Order is `staticLayers`'s
+        /// to state and is stated there; a second ordered copy would be a
+        /// second claim about it.
+        private(set) var savedStaticLayers: [UUID: LayerEnvelope] = [:]
 
         /// The layer list differs from what the last successful save wrote.
         /// Ink's own unsaved state is `ink`; this is the same fact for the
@@ -82,11 +89,24 @@ extension EditorSession {
         /// holds are exactly what a save of it would write.
         private(set) var neverWritten = false
 
-        /// The static layers whose durable bytes differ from what the last
+        /// Which of the page's static layers differ from what the last
         /// successful save wrote. Compared by value, because an envelope is a
         /// value: a layer that was moved and moved back has not changed.
-        var changedStaticLayers: [LayerEnvelope] {
-            staticLayers.filter { !savedStaticLayers.contains($0) }
+        ///
+        /// IDs, because that is all the one caller ever wanted — it mapped the
+        /// envelopes straight to their `layerID` and dropped them — and because
+        /// the answer then costs one dictionary lookup and one comparison per
+        /// layer. As a list on both sides this was a linear scan per layer, so
+        /// the cost grew with the square of the layer count: the loop that
+        /// punished the very thing the layer split was built to allow, sitting
+        /// behind a computed property that reads free at its call site and runs
+        /// once per dirty page on every debounced save.
+        var changedStaticLayerIDs: Set<UUID> {
+            var changed: Set<UUID> = []
+            for layer in staticLayers where savedStaticLayers[layer.layerID] != layer {
+                changed.insert(layer.layerID)
+            }
+            return changed
         }
 
         private(set) var ink: Ink
@@ -169,7 +189,7 @@ extension EditorSession {
             durable = loaded.inkData
             inkLayerID = loaded.inkLayerID
             staticLayers = loaded.staticLayers
-            savedStaticLayers = loaded.staticLayers
+            savedStaticLayers = Self.keyed(loaded.staticLayers)
             layersUnsaved = false
             refusedLayers = loaded.refusedLayers
             ink = .clean
@@ -294,8 +314,15 @@ extension EditorSession {
             if case .saving = ink { ink = .clean }
             // The same rule the ink follows, for the list: a list edited since
             // its capture is still unsaved, and says so, with no special case.
-            savedStaticLayers = layersWritten
+            savedStaticLayers = Self.keyed(layersWritten)
             if staticLayers == layersWritten { layersUnsaved = false }
+        }
+
+        /// A written layer list, by identity. `uniqueKeysWithValues` traps on a
+        /// repeated `layerID`, which is the loud answer a page carrying the
+        /// same layer twice deserves.
+        private static func keyed(_ layers: [LayerEnvelope]) -> [UUID: LayerEnvelope] {
+            Dictionary(uniqueKeysWithValues: layers.map { ($0.layerID, $0) })
         }
 
         /// The store threw. The page stays dirty and keeps the bytes the save

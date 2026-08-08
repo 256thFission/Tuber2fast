@@ -955,7 +955,7 @@ final class EditorSession {
             // between rewriting a 50 MB import's envelope on every stroke and
             // rewriting one small ink file.
             let layers = pageStates[pageIndex].staticLayers
-            let changedStatic = Set(pageStates[pageIndex].changedStaticLayers.map(\.layerID))
+            let changedStatic = pageStates[pageIndex].changedStaticLayerIDs
             let inkLayerID = pageStates[pageIndex].inkLayerID
             switch pageStates[pageIndex].ink {
             case .loading, .unreadable:

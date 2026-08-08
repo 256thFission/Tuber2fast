@@ -782,6 +782,84 @@ struct LayerTransformCommitTests {
         #expect(moved.pageSpaceTransform == PageSpaceTransform(a: 10, b: 0, c: 0, d: 10, tx: 0, ty: 0))
     }
 
+    /// What `Page.changedStaticLayerIDs` decides, seen from disk. The page's
+    /// list is written whole, but the *files* under it are written one by one,
+    /// and which ones is this answer.
+    @Test("Moving one layer rewrites that layer's file alone")
+    func onlyTheMovedLayerIsRewritten() async throws {
+        let scratch = try TestScratch("selection")
+        let session = scratch.session()
+        await session.start()
+        let pageID = session.currentPageID
+
+        let still = try await session.importImage(
+            TestScratch.solidHEIC(width: 64, height: 64, color: TestScratch.fixtureGreen),
+            format: .heic,
+            sourceWidth: 400,
+            sourceHeight: 300
+        )
+        let moving = try await session.importImage(
+            TestScratch.solidHEIC(width: 64, height: 64, color: TestScratch.fixtureGreen),
+            format: .heic,
+            sourceWidth: 200,
+            sourceHeight: 200
+        )
+
+        // Backdated rather than waited out: a rewrite cannot hide inside a
+        // timestamp resolution it is twenty-five years away from.
+        try scratch.freezeTimestamps()
+        let placed = try #require(
+            await scratch.store.loadPage(pageID).staticLayers.last
+        ).pageSpaceTransform
+        try session.transformLayer(
+            moving,
+            onPage: pageID,
+            to: placed.concatenating(.translation(x: 21, y: 34))
+        )
+        await session.saveIfNeeded()
+
+        // The page file is rewritten — its list is written whole — but the
+        // untouched image's envelope is not, which is the whole-page rewrite
+        // one level down and the reason the split exists.
+        #expect(try scratch.modificationDate(of: scratch.layerURL(still)) == TestScratch.frozen)
+        #expect(try scratch.modificationDate(of: scratch.layerURL(moving)) != TestScratch.frozen)
+    }
+
+    @Test("A layer moved and moved back is not a change, and writes nothing")
+    func aRoundTripMoveWritesNothing() async throws {
+        let scratch = try TestScratch("selection")
+        let session = scratch.session()
+        await session.start()
+        let pageID = session.currentPageID
+
+        let layerID = try await session.importImage(
+            TestScratch.solidHEIC(width: 64, height: 64, color: TestScratch.fixtureGreen),
+            format: .heic,
+            sourceWidth: 400,
+            sourceHeight: 300
+        )
+        await session.saveIfNeeded()
+        let placed = try #require(
+            await scratch.store.loadPage(pageID).staticLayers.first
+        ).pageSpaceTransform
+
+        try scratch.freezeTimestamps()
+
+        // Two commits inside one debounce window. An envelope is a value, so
+        // the second one leaves the page exactly where the last save found it
+        // — and "changed" is answered by comparing values, never by counting
+        // how many times someone asked.
+        try session.transformLayer(
+            layerID,
+            onPage: pageID,
+            to: placed.concatenating(.translation(x: 90, y: 40))
+        )
+        try session.transformLayer(layerID, onPage: pageID, to: placed)
+        await session.saveIfNeeded()
+
+        #expect(try scratch.filesWrittenSinceFreeze().isEmpty)
+    }
+
     @Test("Transforming a layer that is not there is refused, not guessed at")
     func anAbsentLayerIsRefused() async throws {
         let scratch = try TestScratch("selection")
