@@ -272,6 +272,68 @@ struct PageManagementTests {
         #expect(world.session.pageCount == 3)
     }
 
+    // MARK: - Reorder
+
+    @Test("A moved page lands at the position asked for, in the file too")
+    func moveReordersTheDocument() async throws {
+        let world = try await threePages()
+        let pages = world.pageIDs
+
+        try await world.session.movePage(pages[0], toPosition: 2)
+
+        #expect((0..<3).map(world.session.pageIDForTesting(at:)) == [pages[1], pages[2], pages[0]])
+        let saved = try #require(await world.scratch.freshStore().load())
+        #expect(saved.pageIDs == [pages[1], pages[2], pages[0]])
+    }
+
+    @Test("A reorder keeps you on the page you were reading, not its number")
+    func moveKeepsTheCurrentPageByIdentity() async throws {
+        let world = try await threePages()
+        let pages = world.pageIDs
+        turn(world.session, to: 0)
+        #expect(world.session.currentPageID == pages[0])
+
+        // The page being moved is the one you are standing on.
+        try await world.session.movePage(pages[0], toPosition: 2)
+        #expect(world.session.currentPageID == pages[0])
+        var saved = try #require(await world.scratch.freshStore().load())
+        #expect(saved.currentPageIndex == 2, "the durable index follows the page")
+
+        // And a page moving *past* you leaves you where you were, one position
+        // earlier. A reorder is not navigation.
+        try await world.session.movePage(pages[1], toPosition: 2)
+        #expect(world.session.currentPageID == pages[0])
+        saved = try #require(await world.scratch.freshStore().load())
+        #expect(saved.currentPageIndex == 1)
+    }
+
+    @Test("A reorder writes the index and not one page file")
+    func moveWritesOnlyTheIndex() async throws {
+        let world = try await threePages()
+        let pages = world.pageIDs
+        let before = try pages.map(world.scratch.modificationDate(ofPage:))
+
+        try await world.session.movePage(pages[2], toPosition: 0)
+
+        // No page's *content* changed, and rewriting an unchanged page file is
+        // the whole-document rewrite the durable form exists to prevent — a
+        // defect rather than an inefficiency (`Contract.md` — Durable form).
+        let after = try pages.map(world.scratch.modificationDate(ofPage:))
+        #expect(after == before, "page files are untouched by a reorder")
+        let saved = try #require(await world.scratch.freshStore().load())
+        #expect(saved.pageIDs == [pages[2], pages[0], pages[1]])
+    }
+
+    @Test("A move to a position the document does not have is refused")
+    func moveOutOfRangeIsRefused() async throws {
+        let world = try await threePages()
+
+        await #expect(throws: PageEditError.positionOutOfRange(7)) {
+            try await world.session.movePage(world.pageIDs[0], toPosition: 7)
+        }
+        #expect(world.session.pageCount == 3)
+    }
+
     // MARK: - The structural gate
 
     @Test("Two page edits issued at once each remove the page they named")

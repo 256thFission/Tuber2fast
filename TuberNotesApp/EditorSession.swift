@@ -49,6 +49,8 @@ enum PageEditError: Error, Equatable {
     /// form), refused at intake. `PagedCanvasController.setPages`'s
     /// precondition stays as the loud backstop behind this polite one.
     case lastPage
+    /// A move whose destination is not a position in this document.
+    case positionOutOfRange(Int)
     /// The page carries a layer this build refused to read. A copy of it
     /// would save cleanly *without* that layer, because a refusal is held
     /// outside the layer list and has no envelope to copy — which is the
@@ -1116,6 +1118,75 @@ final class EditorSession {
         // reclaim and nothing to be an orphan.
         guard hadAFile else { return }
         await reclaimPage(pageID, layers: ownedLayers, inkLayerID: inkLayerID)
+    }
+
+    /// Moves one page to a new position in the document.
+    ///
+    /// `position` is where the page ends up in the finished list, counted after
+    /// its own removal — so moving page 0 of three to position 2 puts it last,
+    /// and there is no off-by-one to reason about at the call site.
+    ///
+    /// **The current page is preserved by identity, never by number.** A
+    /// reorder is not navigation: whatever you were looking at before it, you
+    /// are looking at afterwards, wherever it now sits. Its durable
+    /// `currentPageIndex` is recomputed rather than carried, because that field
+    /// is a position by definition (`Contract.md` — Durable form).
+    ///
+    /// Nothing is rebuilt. The reconciler re-frames live canvases from their
+    /// new positions, so a page carrying unsaved ink can be dragged across the
+    /// document without its ink passing through the session at all.
+    ///
+    /// Only the index is written: no page's *content* changed, and rewriting an
+    /// unchanged page file is the whole-document rewrite the durable form
+    /// exists to prevent — a defect rather than an inefficiency.
+    func movePage(_ pageID: UUID, toPosition position: Int) async throws {
+        guard phase == .ready, !isClosing else { throw PageEditError.sessionNotReady }
+        guard index.pageIDs.contains(pageID) else { throw PageEditError.pageNotFound(pageID) }
+        guard index.pages.indices.contains(position) else {
+            throw PageEditError.positionOutOfRange(position)
+        }
+
+        await quiesceSaves()
+
+        // Re-established from scratch, for the reason `deletePage` states.
+        guard phase == .ready, !isClosing else { throw PageEditError.sessionNotReady }
+        guard let from = index.pageIDs.firstIndex(of: pageID) else {
+            throw PageEditError.pageNotFound(pageID)
+        }
+        guard index.pages.indices.contains(position) else {
+            throw PageEditError.positionOutOfRange(position)
+        }
+        guard from != position else { return }
+
+        // The page the user is standing on, taken before the list moves under
+        // it. This is the whole reason a reorder is safe to perform while
+        // somebody is reading: it is the page that is preserved.
+        let standingOn = currentPageID
+
+        var records = index.pages
+        let moved = records.remove(at: from)
+        records.insert(moved, at: position)
+        var states = pageStates
+        states.insert(states.remove(at: from), at: position)
+        pageStates = states
+
+        guard let restated = records.firstIndex(where: { $0.id == standingOn }) else {
+            preconditionFailure(
+                "the current page \(standingOn) left the document during a reorder, "
+                    + "which moves pages and removes none"
+            )
+        }
+        index = index.withPages(records, currentPageIndex: restated)
+        indexDirty = true
+        alignedWithIndex()
+        restatePageList()
+        CanvasLog.event(
+            .canvas,
+            "moved page \(pageID) from \(from) to \(position); "
+                + "current stays \(standingOn)"
+        )
+
+        await saveIfNeeded()
     }
 
     /// Reclaims a deleted page's files, **root to leaf in reference order**:
