@@ -638,6 +638,32 @@ struct EditorSessionTests {
         )
     }
 
+    // MARK: - Shape tool
+
+    /// What the chrome lights a button from is the runtime's tool, read
+    /// through, and never a copy the root or the session keeps.
+    ///
+    /// The last step is the whole point: the tool is changed on the runtime
+    /// *directly*, with no intention passing through the session, and the
+    /// session still reports it. A stored mirror anywhere above
+    /// `PagedCanvasController` would have gone stale there.
+    @Test("The shape tool the chrome renders is the runtime's, not a copy")
+    func shapeToolIsReadThroughFromTheRuntime() async {
+        let scratch = Scratch()
+        let session = scratch.session()
+
+        // Before the runtime exists there is no tool, and reading it must not
+        // be what builds a canvas.
+        #expect(session.shapeTool == nil)
+
+        session.setShapeTool(.rectangle)
+        #expect(session.pages.shapeTool == .rectangle)
+        #expect(session.shapeTool == .rectangle)
+
+        session.pages.setShapeTool(.line)
+        #expect(session.shapeTool == .line)
+    }
+
     // MARK: - Fixtures
 
     /// Polls until `condition` holds. Autosave, its retries, and the debounce are

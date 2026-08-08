@@ -31,14 +31,21 @@ than after them — and the doors-open premise makes them urgent, not last:
 four people cannot share a repository whose home is undecided and whose
 verdict is decorative.
 
-- **Settle where the repository lives.** The `origin` remote is `Tuber2fast`
-  and this branch has never been pushed to it (Queue.md, `prove-ci`'s
-  blocker). Everything else in this track waits on the answer.
-- **`prove-ci`** — run the committed workflow to green *and* red.
-- **`branch-protection`** — a red `main` discovered by whoever pulls next is
-  a day-one hazard of having a second contributor, not a graduation prize.
-- **`tooling-review`** and **`device-branch-builds`** follow as Queue.md
-  sequences them.
+- ~~**Settle where the repository lives.**~~ Settled: `Tuber2fast` is the
+  home, and the work is pushed there.
+- ~~**`prove-ci`**~~ — done to green and to red; the red run put a readable
+  assertion on the run page. What survives is not mechanical: the exit says
+  *a PR from a fork* and the repository is private. Queue.md carries it.
+- ~~**`branch-protection`**~~ — applied to `main`: required check, one
+  approving review, administrators included. Note that `main` is far behind
+  this branch, so these rules are first met by whoever merges it.
+- **`tooling-review`** — one real defect found and fixed (`Tools/machines`
+  blamed a healthy Mac on a clean clone); the review and the questions left
+  for Phillip are in
+  [`ContractPass/00-ToolingReview.md`](ContractPass/00-ToolingReview.md). Its
+  exit needs a person who is not Phillip and is not an agent's to close.
+- **`device-branch-builds`** follows as Queue.md sequences it — untouched,
+  still waiting on the Apple and Firebase setup.
 
 ---
 

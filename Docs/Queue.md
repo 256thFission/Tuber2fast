@@ -272,33 +272,38 @@ round-trips its alpha through import → store → downsample → composite.
 
 
 
-## prove-ci — prove the shared verdict actually runs
+## prove-ci — the verdict runs; only the fork half is left
 
-`.github/workflows/ci.yml` is **written and committed but has never run** — no
-push has exercised it. An unrun workflow is not CI; it is a YAML file that has
-never been contradicted. The same is true of `device.yml`.
+`ci.yml` has run. Green on the real tip
+([31236563458](https://github.com/256thFission/Tuber2fast/actions/runs/31236563458))
+and red on a throwaway branch carrying one planted assertion
+([31236586688](https://github.com/256thFission/Tuber2fast/actions/runs/31236586688),
+branch since deleted). The red run is the one that mattered, and it produced
+what the failure-reporting step was designed for: an annotation on
+`RedProbeTests.swift:9` reading the actual `XCTAssertEqual` message, on the run
+page, in a browser, with no Mac and no zip. The pinned-simulator guard resolved
+the name out of `Tools/pinned-simulator` and found it on `macos-26`; nothing
+was hardcoded. `ci.yml` references no secrets — checked, not assumed.
 
-One job on `macos-26`: generate, build, test, and upload the logs on success
-and failure. There is no separate Linux job: every check that decides runs on
-macOS.
+`device.yml` remains unrun; see `device-branch-builds`.
 
-It references no secrets, so fork pull requests work unchanged and the
-repository can stay public. Verify that stays true before merging it.
+**What is left of the exit:** it says *a PR from a fork*, and `ci.yml`'s design
+note says the no-secrets property "lets the repository stay public".
+`Tuber2fast` is private, so that half cannot be met as written. Either the
+repository goes public, or this exit should be reworded to what a private
+repository can produce — a collaborator's branch, which is what both runs
+above were. Phillip's call; see
+[`Forks/ContractPass/00-ToolingReview.md`](Forks/ContractPass/00-ToolingReview.md).
 
-Run it to **green and to red**. The red run is the more valuable of the two: it
-is the first evidence that the failure-reporting step produces a readable
-answer, and no script in `Tools/` is in the path to confuse the diagnosis.
-
-**Exit:** committed, and a PR from a fork produces a verdict a contributor has
-actually read *on the run page* — not by downloading a zip.
-
-*Blocked by:* the `origin` remote is `Tuber2fast`, and this branch has not been
-pushed to it. Settle where this repository lives before wiring CI to it.
+Also open there: whether to pin an Xcode version alongside the image, and the
+Node 20 deprecation warning both runs emit for `actions/checkout@v4` and
+`actions/upload-artifact@v4`.
 
 ## tooling-review — the tooling has never been used by anyone else
 
-`Tools/` is four files — `pinned-simulator`, `setup`, `device`, and
-`machines`. Everything mechanical about it has been exercised on exactly one
+`Tools/` is five files — `pinned-simulator`, `setup`, `device`,
+`device-tests`, and `machines`. Everything mechanical about it has been
+exercised on exactly one
 Mac and one iPad: the device diagnosis to READY, BLOCKED, and
 MISCONFIGURED; the digest against the fixtures now kept in `Tools/device-tests`;
 the structural tests against a planted violation; the CI log parser against
@@ -314,19 +319,41 @@ None of that is the same as someone else running it. Specifically unproven:
 - **`Tools/setup` has never run on a machine without `Local.xcconfig`.** The
   branch that derives a team from the keychain, and the branch that refuses when
   there are zero or several, are both unexercised here.
-- **Neither workflow has run at all** — see `prove-ci`.
+- **`device.yml` has never run** — `ci.yml` now has; see `prove-ci`.
+
+The premise held on the first outside read. `Tools/machines` never created
+`Artifacts/` before writing into it, and `Artifacts/` is gitignored, so on the
+clean clone this script exists for, three probes redirected into a directory
+that was not there — bash kills the redirect before the command runs — and
+each reported its own subject as broken: "compile failed", "the test run
+failed", "none paired". A healthy Mac was told it could do `nothing yet`.
+Fixed. The shape is the lesson: **a diagnostic whose first run on an unproven
+machine blames the machine** gets disbelieved, and there is no second first
+run. Two smaller unfired observations are recorded in
+[`Forks/ContractPass/00-ToolingReview.md`](Forks/ContractPass/00-ToolingReview.md).
 
 **Exit:** a second contributor reaches a working Xcode from a clean clone with
 `Tools/setup`, and someone completes one `Tools/device` session and pastes its
-identity block into a pull request.
+identity block into a pull request. Nothing yet run here was run by anyone but
+Phillip, which is the whole of what this item is.
 
-## branch-protection — make CI load-bearing
+## branch-protection — applied; one setting is a judgment call
 
-**Exit:** a PR whose CI run is red, or that has no approving review, cannot be
-merged to `main`.
+`main` requires the `build-and-test` check, one approving review, and an
+up-to-date branch; stale reviews are dismissed; force pushes and deletions are
+refused; administrators are included.
 
-*Blocked by:* `prove-ci`. Without this, a red `main` is discovered by whoever
-pulls next.
+Administrator enforcement is the setting to revisit: with one required approval
+and no self-approval on GitHub, **Phillip cannot merge his own pull request
+while he is the only contributor.** It is on because the exit says *cannot be
+merged*, and a protection the owner clicks past is decoration for the same
+reason a verdict that cannot go red is. The two commands that toggle it are in
+[`Forks/ContractPass/00-ToolingReview.md`](Forks/ContractPass/00-ToolingReview.md).
+
+Sharper than the settings: `main` is sixty-odd commits behind
+`canvas-feature-complete`, and `build-and-test` has never run on `main`.
+Whoever lands that branch meets these rules for the first time, on the largest
+merge here so far.
 
 
 ## device-branch-builds — complete the one-time signing setup
@@ -379,3 +406,10 @@ their own iPad.
 six; expect queueing. Every job needs macOS, so no verdict skips the queue.
 `cancel-in-progress` keeps superseded runs from piling up. If queues still hurt,
 restrict `ci.yml` to pull requests and `main` rather than every push.
+
+First measurements, from the `prove-ci` runs: a full green pass is about three
+and a half minutes, and two concurrent runs queued briefly rather than
+serializing. With one contributor that is nothing. The number to watch is the
+`build` step being run twice — `xcodebuild build` then `xcodebuild test` — which
+buys separate logs for compile and assertion failures at the cost of most of the
+wall clock. Worth revisiting only if six people actually make the queue hurt.
