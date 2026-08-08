@@ -10,30 +10,37 @@ struct TuberNotesApp: App {
 
     var body: some Scene {
         WindowGroup {
-            EditorSceneView()
+            AppRoot()
         }
     }
 }
 
-/// Owns the editor lifecycle at the scene boundary rather than in the `App`
-/// value. The spike is explicitly single-scene in `project.yml` because its
-/// fixed document has no same-document commit coordinator; the despiking design
-/// removes that temporary restriction.
-private struct EditorSceneView: View {
+/// The scene root: the library browser, or the open document full-screen —
+/// never both (`02-proposal.md` §4). It owns the coordinator at the scene
+/// boundary, exactly where the old editor-only root owned its lifecycle, and
+/// routes scene-phase events to whichever lifecycles exist; with no document
+/// open there is nothing to flush.
+private struct AppRoot: View {
     @Environment(\.scenePhase) private var scenePhase
-    @State private var lifecycle = EditorLifecycle.makeDefault()
+    @State private var coordinator = LibraryCoordinator()
 
     var body: some View {
-        RootCanvasView(session: lifecycle.session)
-            .onChange(of: scenePhase) { _, phase in
-                switch phase {
-                case .background, .inactive:
-                    lifecycle.sceneWillResignActive()
-                case .active:
-                    lifecycle.sceneDidBecomeActive()
-                @unknown default:
-                    break
-                }
+        Group {
+            if let open = coordinator.openDocument {
+                EditorContainerView(open: open, coordinator: coordinator)
+            } else {
+                LibraryBrowserView(coordinator: coordinator)
             }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            switch phase {
+            case .background, .inactive:
+                coordinator.sceneWillResignActive()
+            case .active:
+                coordinator.sceneDidBecomeActive()
+            @unknown default:
+                break
+            }
+        }
     }
 }
