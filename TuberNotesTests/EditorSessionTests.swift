@@ -42,15 +42,15 @@ struct EditorSessionTests {
 
         let first = scratch.session()
         await first.start()
-        canvas(of: first).drawing = strokeAcrossPage()
+        try await canvas(of: first).drawing = strokeAcrossPage()
         await first.saveIfNeeded()
 
         let second = scratch.session()
         await second.start()
 
         #expect(second.phase == .ready)
-        #expect(canvas(of: second).drawing.strokes.count == 1)
-        #expect(canvas(of: second).drawing.bounds == strokeAcrossPage().bounds)
+        #expect(try await canvas(of: second).drawing.strokes.count == 1)
+        #expect(try await canvas(of: second).drawing.bounds == strokeAcrossPage().bounds)
     }
 
     @Test("Invalid stored data fails loudly and leaves the file untouched")
@@ -74,7 +74,7 @@ struct EditorSessionTests {
         let scratch = try TestScratch("session")
         let first = scratch.session()
         await first.start()
-        canvas(of: first).drawing = strokeAcrossPage()
+        try await canvas(of: first).drawing = strokeAcrossPage()
         await first.saveIfNeeded()
 
         let second = scratch.session()
@@ -85,7 +85,7 @@ struct EditorSessionTests {
         // line the runtime never loads, no canvas is ever built, and the test
         // asserts that a file nothing touched is unchanged — which is what it
         // used to do.
-        _ = canvas(of: second)
+        _ = try await canvas(of: second)
 
         // Deleting the page file makes a rewrite unmissable: a session that
         // believes the loaded page is dirty recreates it, and a clean one leaves
@@ -102,7 +102,7 @@ struct EditorSessionTests {
         let scratch = try TestScratch("session")
         let session = scratch.session()
         await session.start()
-        _ = canvas(of: session)
+        _ = try await canvas(of: session)
         let firstPageID = session.currentPageID
 
         // Three pages, so page 0 leaves the live window once page 2 is visible.
@@ -111,14 +111,14 @@ struct EditorSessionTests {
         await session.saveIfNeeded()
 
         turn(session, to: 0)
-        canvas(of: session).drawing = twoStrokesAcrossPage()
+        try await canvas(of: session).drawing = twoStrokesAcrossPage()
         // Away before the debounce fires: page 0's canvas is released here, and
         // its ink survives only if retirement handed the value over rather than
         // promising to serialize it later.
         turn(session, to: 2)
         turn(session, to: 0)
 
-        #expect(canvas(of: session).drawing.strokes.count == 2)
+        #expect(try await canvas(of: session).drawing.strokes.count == 2)
 
         await session.saveIfNeeded()
         #expect(try PKDrawing(data: await scratch.store.loadPage(firstPageID).inkData).strokes.count == 2)
@@ -129,12 +129,12 @@ struct EditorSessionTests {
         let scratch = try TestScratch("session")
         let session = scratch.session()
         await session.start()
-        canvas(of: session).drawing = strokeAcrossPage()
+        try await canvas(of: session).drawing = strokeAcrossPage()
 
         await session.start()
 
         #expect(session.phase == .ready)
-        #expect(canvas(of: session).drawing.strokes.count == 1)
+        #expect(try await canvas(of: session).drawing.strokes.count == 1)
     }
 
     // MARK: - Pages
@@ -144,7 +144,7 @@ struct EditorSessionTests {
         let scratch = try TestScratch("session")
         let session = scratch.session()
         await session.start()
-        _ = canvas(of: session)
+        _ = try await canvas(of: session)
         #expect(session.pageCount == 1)
 
         pullPastTheEnd(session)
@@ -164,11 +164,11 @@ struct EditorSessionTests {
         let session = scratch.session()
         await session.start()
 
-        canvas(of: session).drawing = strokeAcrossPage()
+        try await canvas(of: session).drawing = strokeAcrossPage()
         let firstPageID = session.currentPageID
 
         pullPastTheEnd(session)
-        canvas(of: session).drawing = twoStrokesAcrossPage()
+        try await canvas(of: session).drawing = twoStrokesAcrossPage()
         let secondPageID = session.currentPageID
         #expect(firstPageID != secondPageID)
 
@@ -184,14 +184,14 @@ struct EditorSessionTests {
         let scratch = try TestScratch("session")
         let first = scratch.session()
         await first.start()
-        canvas(of: first).drawing = strokeAcrossPage()
+        try await canvas(of: first).drawing = strokeAcrossPage()
         pullPastTheEnd(first)
-        canvas(of: first).drawing = twoStrokesAcrossPage()
+        try await canvas(of: first).drawing = twoStrokesAcrossPage()
         await first.saveIfNeeded()
 
         let second = scratch.session()
         await second.start()
-        let restored = canvas(of: second)
+        let restored = try await canvas(of: second)
 
         #expect(second.pageCount == 2)
         #expect(second.pages.currentPageIndex == 1)
@@ -203,17 +203,17 @@ struct EditorSessionTests {
         let scratch = try TestScratch("session")
         let session = scratch.session()
         await session.start()
-        canvas(of: session).drawing = strokeAcrossPage()
+        try await canvas(of: session).drawing = strokeAcrossPage()
         let firstPageID = session.currentPageID
 
         pullPastTheEnd(session)
-        canvas(of: session).drawing = twoStrokesAcrossPage()
+        try await canvas(of: session).drawing = twoStrokesAcrossPage()
         await session.saveIfNeeded()
 
         // Backdated rather than waited out: a rewrite cannot hide inside a
         // timestamp resolution it is twenty-five years away from.
         try scratch.freezeTimestamps()
-        canvas(of: session).drawing = strokeAcrossPage()
+        try await canvas(of: session).drawing = strokeAcrossPage()
         await session.saveIfNeeded()
 
         // The whole point of the format: page one was not touched. Since the
@@ -229,7 +229,7 @@ struct EditorSessionTests {
         let scratch = try TestScratch("session")
         let session = scratch.session()
         await session.start()
-        canvas(of: session).drawing = strokeAcrossPage()
+        try await canvas(of: session).drawing = strokeAcrossPage()
         let firstPageID = session.currentPageID
 
         // Enough pages that page 0 is evicted from the live window *and* its
@@ -266,7 +266,7 @@ struct EditorSessionTests {
         let session = scratch.session(debounce: .seconds(30))
         await session.start()
 
-        canvas(of: session).drawing = strokeAcrossPage()
+        try await canvas(of: session).drawing = strokeAcrossPage()
         let inkedPageID = session.currentPageID
 
         // Four appends put the inked page well outside the live window, so its
@@ -288,7 +288,7 @@ struct EditorSessionTests {
         let held = HeldSaveStore(scratch.store)
         let session = scratch.session(debounce: .seconds(30), store: held)
         await session.start()
-        canvas(of: session).drawing = strokeAcrossPage()
+        try await canvas(of: session).drawing = strokeAcrossPage()
 
         // Hold a save genuinely in flight — the store does not return until
         // this test says so, so nothing below is racing a timer.
@@ -317,7 +317,7 @@ struct EditorSessionTests {
         let held = HeldSaveStore(scratch.store)
         let session = scratch.session(store: held)
         await session.start()
-        canvas(of: session).drawing = strokeAcrossPage()
+        try await canvas(of: session).drawing = strokeAcrossPage()
 
         await held.hold()
         let flush = Task { await session.flushForBackground() }
@@ -328,7 +328,7 @@ struct EditorSessionTests {
         // with no timer, no flush, and no error — parked until the user
         // happened to draw again.
         session.resumeForForeground()
-        canvas(of: session).drawing = twoStrokesAcrossPage()
+        try await canvas(of: session).drawing = twoStrokesAcrossPage()
         await held.release()
         await flush.value
 
@@ -347,7 +347,7 @@ struct EditorSessionTests {
         let held = HeldSaveStore(scratch.store)
         let session = scratch.session(debounce: .seconds(30), store: held)
         await session.start()
-        _ = canvas(of: session)
+        _ = try await canvas(of: session)
 
         // Five pages, all saved, then back to page 0 for the edit under test.
         // Five rather than three because retirement is what this test needs and
@@ -359,7 +359,7 @@ struct EditorSessionTests {
         pullPastTheEnd(session)
         await session.saveIfNeeded()
         turn(session, to: 0)
-        canvas(of: session).drawing = strokeAcrossPage()
+        try await canvas(of: session).drawing = strokeAcrossPage()
         let inkedPageID = session.currentPageID
 
         // Hold the save open, and make it fail: the directory becomes a file
@@ -402,10 +402,10 @@ struct EditorSessionTests {
         let scratch = try TestScratch("session")
         let first = scratch.session()
         await first.start()
-        _ = canvas(of: first)
+        _ = try await canvas(of: first)
         pullPastTheEnd(first)
         pullPastTheEnd(first)
-        canvas(of: first).drawing = strokeAcrossPage()
+        try await canvas(of: first).drawing = strokeAcrossPage()
         await first.saveIfNeeded()
 
         // Corrupt the middle page's file on disk. The file exists — a missing
@@ -420,11 +420,11 @@ struct EditorSessionTests {
         let second = scratch.session()
         await second.start()
         #expect(second.phase == .ready)
-        #expect(canvas(of: second).drawing.strokes.count == 1)
+        #expect(try await canvas(of: second).drawing.strokes.count == 1)
 
         // The document stays editable and savable around the refused page,
         // and saving does not touch it.
-        canvas(of: second).drawing = twoStrokesAcrossPage()
+        try await canvas(of: second).drawing = twoStrokesAcrossPage()
         await second.saveIfNeeded()
         #expect(second.lastSaveError == nil)
         do {
@@ -450,7 +450,7 @@ struct EditorSessionTests {
         await session.start()
         let initial = try await savedDrawing(scratch.store)
 
-        canvas(of: session).drawing = strokeAcrossPage()
+        try await canvas(of: session).drawing = strokeAcrossPage()
         // The change callback comes from PencilKit's delegate on the real
         // device; assigning `drawing` fires the same path here. The debounce
         // is then armed, and nothing but the clock can fire it.
@@ -475,7 +475,7 @@ struct EditorSessionTests {
         try FileManager.default.removeItem(at: scratch.root)
         try Data().write(to: scratch.root)
 
-        canvas(of: session).drawing = strokeAcrossPage()
+        try await canvas(of: session).drawing = strokeAcrossPage()
         await session.saveIfNeeded()
         #expect(session.lastSaveError != nil)
 
@@ -503,7 +503,7 @@ struct EditorSessionTests {
         try FileManager.default.removeItem(at: scratch.root)
         try Data().write(to: scratch.root)
 
-        canvas(of: session).drawing = strokeAcrossPage()
+        try await canvas(of: session).drawing = strokeAcrossPage()
         await clock.waitUntilSleeping("the debounce to be armed")
         await clock.advance(by: .milliseconds(20))
         try await waitUntil("the first autosave fails") { session.lastSaveError != nil }
@@ -550,7 +550,7 @@ struct EditorSessionTests {
         let session = scratch.session(debounce: .seconds(30))
         await session.start()
 
-        canvas(of: session).drawing = strokeAcrossPage()
+        try await canvas(of: session).drawing = strokeAcrossPage()
         // The debounce is far in the future; only the flush can save this.
         await session.flushForBackground()
 
@@ -565,7 +565,7 @@ struct EditorSessionTests {
         let session = scratch.session(debounce: .seconds(30))
         await session.start()
 
-        canvas(of: session).drawing = strokeAcrossPage()
+        try await canvas(of: session).drawing = strokeAcrossPage()
 
         let flush = Task { await session.flushForBackground() }
         // One yield hands the main actor to the flush, which runs as far as its
@@ -573,7 +573,7 @@ struct EditorSessionTests {
         // and the save in flight. It cannot proceed past that without the main
         // actor, which this test holds again from here.
         await Task.yield()
-        canvas(of: session).drawing = twoStrokesAcrossPage()
+        try await canvas(of: session).drawing = twoStrokesAcrossPage()
         await flush.value
 
         // Exactly one save reached the store: the generation captured when the
@@ -598,7 +598,7 @@ struct EditorSessionTests {
         await session.start()
         let initial = try await savedDrawing(scratch.store)
 
-        canvas(of: session).drawing = strokeAcrossPage()
+        try await canvas(of: session).drawing = strokeAcrossPage()
 
         // A three-stroke document serializes in microseconds, so the adaptive
         // term is ~0 and the floor is the whole interval. An interval shorter
@@ -642,7 +642,7 @@ struct EditorSessionTests {
         // One save of the expensive document, which is what teaches the session
         // how much a serialization of it costs. Called directly so that this
         // step's own timing is not part of the measurement below.
-        canvas(of: session).drawing = expensive
+        try await canvas(of: session).drawing = expensive
         await session.saveIfNeeded()
         let taught = scratch.savedAt
 
@@ -656,7 +656,7 @@ struct EditorSessionTests {
         // earlier version of this test pass on a fixed debounce.
         let clock = ContinuousClock()
         let started = clock.now
-        canvas(of: session).drawing = strokeAcrossPage()
+        try await canvas(of: session).drawing = strokeAcrossPage()
         try await waitUntil("the debounced save lands") { scratch.savedAt != taught }
         let scheduled = started.duration(to: clock.now)
 
@@ -749,17 +749,24 @@ struct EditorSessionTests {
     /// has never been laid out has none. Tests that touch ink go through here so
     /// that hosting is one decision in one place rather than a setup step each
     /// test can forget.
+    ///
+    /// `async` since the settle path stopped decoding ink on main: a page with
+    /// saved ink is a placeholder for as long as its decode takes, so the
+    /// canvas has to be waited for rather than read. A page with no saved ink
+    /// is still a canvas the moment it is laid out, and the wait costs it one
+    /// predicate evaluation.
     @MainActor
-    private func canvas(of session: EditorSession) -> PKCanvasView {
+    private func canvas(of session: EditorSession) async throws -> PKCanvasView {
         let root = session.pages.view!
         if root.frame.isEmpty {
             root.frame = CGRect(x: 0, y: 0, width: 820, height: 1180)
         }
         root.layoutIfNeeded()
-        guard let page = session.currentCanvas else {
-            preconditionFailure("the paged runtime built no canvas for the current page")
+        for _ in 0..<200 {
+            if let page = session.currentCanvas { return page.canvasView }
+            try await Task.sleep(for: .milliseconds(5))
         }
-        return page.canvasView
+        preconditionFailure("the paged runtime built no canvas for the current page")
     }
 
     /// The saved ink of the current page, or `nil` if nothing is saved yet.

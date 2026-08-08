@@ -199,6 +199,32 @@ running. `page.canvas`,
 - **No performance baseline exists.** Nothing has been measured on the device,
   so there is no numeric budget for anything, and no evidence about whether
   save cost scales with page count.
+- **The settle-path decode was measured on the simulator only, and that
+  bounds nothing.** `TuberNotesTests/SettleDecodeBenchmark.swift` generates a
+  20k-stroke / 4.64 MB page and reports two medians on the pinned simulator:
+  32 ms for one `PKDrawing(data:)`, and 219 ms for a settle that decoded five
+  such pages on main. The decode moved off main on the strength of those
+  numbers, so **that decision is provisional**. A simulator runs a Mac's CPU
+  with a Mac's memory bandwidth through a PencilKit built for the simulator;
+  it is neither an upper nor a lower bound on an iPad, and no inequality may
+  be inferred from it in either direction.
+
+  What is owed is the same suite against a device destination — the command is
+  in the benchmark's own doc comment. What it can overturn is the *residual*:
+  the settle now costs 0.35 ms on main for those same five pages, and if the
+  iPad's residual is anywhere near a frame budget, the controller construction
+  and `PKCanvasView` setup still left on the settle path are the next thing to
+  measure. What it cannot overturn is the direction: a 32 ms decode is over a
+  16 ms budget on any machine that reports a number like it.
+- **Nobody has seen a page turn while its ink decodes.** A page whose bytes are
+  held but not yet decoded is now a loading placeholder for as long as the
+  decode takes — on the simulator that was 230–340 ms for five heavy pages at
+  once, and on a page of ordinary ink it is too short to time. Whether the
+  brief placeholder reads as responsive or as a stutter is Phillip's verdict on
+  the iPad, and it is the price paid for the 219 ms freeze it replaced. The
+  nearest page is built first so its decode starts first; whether that ordering
+  is enough to make the current page feel immediate is part of the same
+  verdict.
 
 ## The contract is only partly enforced
 
