@@ -22,9 +22,10 @@ enum LayerEditError: Error, Equatable {
 ///
 /// It owns page order and identity, per-page ink state, and the active save
 /// policy. Live drawings live in PencilKit and are captured only at save time.
-/// `@Observable` is deliberate and narrow. SwiftUI observes `phase` and
-/// `lastSaveError` — user-action-frequency values. It is forbidden to observe the
-/// drawing, pan, zoom, or Pencil samples.
+/// `@Observable` is deliberate and narrow. SwiftUI observes `phase`,
+/// `lastSaveError`, and `shapeTool` — user-action-frequency values, and the
+/// last of them a read-through of the runtime's own rather than a copy. It is
+/// forbidden to observe the drawing, pan, zoom, or Pencil samples.
 @MainActor
 @Observable
 final class EditorSession {
@@ -391,9 +392,27 @@ final class EditorSession {
     /// (`Contract.md` — Owners), and a copy kept here would be a second writer
     /// of it. This exists only so the root sends an intention to the session
     /// rather than reaching into the runtime, which is the one direction the
-    /// owners diagram allows.
+    /// owners diagram allows. What the root draws afterwards comes back the
+    /// same way, through `shapeTool`.
     func setShapeTool(_ kind: ShapeKind?) {
-        pages.setShapeTool(kind)
+        withMutation(keyPath: \.shapeTool) { pages.setShapeTool(kind) }
+    }
+
+    /// Which shape the Pencil commits right now, as the runtime has it.
+    ///
+    /// A read-through, never storage: the value is `PagedCanvasController`'s
+    /// (`Contract.md` — Owners, the active tool), and the chrome that lights a
+    /// button renders this snapshot rather than keeping its own copy to drift.
+    /// `access`/`withMutation` is Observation's own hook for a computed
+    /// property whose storage lives elsewhere — it is what makes a snapshot of
+    /// someone else's state observable without becoming a second writer of it.
+    ///
+    /// `liveRuntime`, not `pages`: reading the tool must not be what builds a
+    /// canvas. Before the runtime exists there is no shape tool, and `nil` —
+    /// freehand — is the true answer.
+    var shapeTool: ShapeKind? {
+        access(keyPath: \.shapeTool)
+        return liveRuntime?.shapeTool
     }
 
     @ObservationIgnored private var liveRuntime: PagedCanvasController?

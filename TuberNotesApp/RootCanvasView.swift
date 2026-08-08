@@ -8,12 +8,6 @@ import SwiftUI
 struct RootCanvasView: View {
     let session: EditorSession
 
-    /// Which shape button is lit. View state, and only that: the tool itself
-    /// lives in the canvas runtime, and this is the picture of it the chrome
-    /// draws. Nothing about a Pencil sample or a drawing is mirrored here
-    /// (`Contract.md` — Owners, golden rule 2).
-    @State private var shapeKind: ShapeKind?
-
     /// Import UI state: which picker is up, and the last import failure. View
     /// state only — the imports themselves are the session's, and both throw
     /// loudly rather than being swallowed here.
@@ -177,14 +171,17 @@ struct RootCanvasView: View {
 
     private func shapeButton(_ kind: ShapeKind?, symbol: String, named name: String) -> some View {
         Button {
-            shapeKind = kind
             session.setShapeTool(kind)
         } label: {
             Image(systemName: symbol)
                 .font(.body)
                 .frame(width: 36, height: 36)
                 .background(
-                    shapeKind == kind ? AnyShapeStyle(.tint.opacity(0.25)) : AnyShapeStyle(.clear),
+                    // Lit from the session's read-through of the runtime's own
+                    // tool, never from a copy held here: the active tool is
+                    // `PagedCanvasController`'s (`Contract.md` — Owners), and a
+                    // second writer of it up here could only drift.
+                    session.shapeTool == kind ? AnyShapeStyle(.tint.opacity(0.25)) : AnyShapeStyle(.clear),
                     in: Circle()
                 )
         }
