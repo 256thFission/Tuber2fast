@@ -326,15 +326,18 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
         canvasView.becomeFirstResponder()
         toolPicker.setVisible(true, forFirstResponder: canvasView)
         // After becoming first responder, because that is when PencilKit has
-        // reason to have installed an editing-menu interaction. Once per page
-        // activation, off every frame path.
-        let removed = canvasView.removeEditMenuInteractions()
+        // reason to have installed its menu machinery. Once per page
+        // activation, off every frame path. The *presenter* is deliberately
+        // left in place — the lasso's cut/copy/delete needs it; only the
+        // context-menu bridge that raises it on a tap is taken.
+        let removed = canvasView.removeContextMenuBridge()
         CanvasLog.event(
             .canvas,
             "appeared; firstResponder=\(canvasView.isFirstResponder) "
                 + "policy=\(canvasView.drawingPolicy.rawValue) "
                 + "contentSize=\(canvasView.contentSize) zoom=\(canvasView.zoomScale) "
-                + "editMenuInteractionsRemoved=\(removed)"
+                + "contextMenuBridgesRemoved=\(removed) "
+                + "editMenuPresenterKept=\(canvasView.hasEditMenuPresenter)"
         )
         if !Self.hasLoggedMenuMachinery {
             Self.hasLoggedMenuMachinery = true

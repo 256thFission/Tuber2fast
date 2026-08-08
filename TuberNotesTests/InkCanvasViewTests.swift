@@ -4,30 +4,94 @@ import UIKit
 
 @testable import TuberNotes
 
-/// The ink canvas refuses PencilKit's editing menu.
+/// The ink canvas refuses PencilKit's tap-raised context menu, and keeps its
+/// lasso menu.
 ///
 /// Device finding, 2026-08-07: tapping an image raised a menu offering **Select
-/// All** and **Insert Space**, neither of which means anything in this
-/// application's model of a page — see `InkCanvasView` for why each one is
-/// wrong rather than merely unwanted.
-///
-/// What can be proven here is the refusal, not the absence of the menu: whether
-/// PencilKit still finds some other way to present one is a device question, and
-/// `describeMenuMachinery` is what the next device run reads to answer it.
+/// All** and **Insert Space**. The first fix took the whole editing menu away
+/// and Phillip found the cost the same evening — the lasso lost cut, copy and
+/// delete, which had worked before this project touched anything. So the rule
+/// has two halves now, and both are asserted here: **the bridge goes, the
+/// presenter stays.**
 @Suite("Ink canvas editing menu")
 @MainActor
 struct InkCanvasViewTests {
-    @Test("A hosted, inked, first-responder canvas vends no editing action")
-    func theCanvasVendsNoEditingAction() throws {
-        // Hosted, keyed, first responder, and carrying a stroke — the state the
-        // canvas is actually in when a tap raises the menu, rather than a bare
-        // view that would answer `false` to anything.
-        //
-        // **This passes with `canPerformAction` removed**, which is not a flaw
-        // in the test but its result: it is what established that the menu is
-        // not built from actions this responder vends, and sent the fix to the
-        // interaction instead. Kept as a characterization — if a future
-        // PencilKit starts vending `selectAll:` here, this is what says so.
+    @Test("A live canvas carries PencilKit's context-menu bridge, and the sweep takes it")
+    func theSweepTakesTheContextMenuBridge() throws {
+        let canvas = try Self.hostedCanvas()
+
+        // Not a fixture of the test's own making: this is PencilKit's own
+        // machinery, and the first assertion in this suite is that it is
+        // actually there. If a future PencilKit stops installing it, this fails
+        // here rather than the tap menu silently returning on a device.
+        #expect(canvas.removeContextMenuBridge() == 1)
+        // Idempotent, so a non-zero count in the device log after the first page
+        // activation is a signal rather than noise.
+        #expect(canvas.removeContextMenuBridge() == 0)
+    }
+
+    @Test("The sweep leaves the presenter the lasso menu needs")
+    func theSweepLeavesTheEditMenuPresenter() throws {
+        let canvas = try Self.hostedCanvas()
+        #expect(canvas.hasEditMenuPresenter, "PencilKit installs one before anything is removed")
+
+        canvas.removeContextMenuBridge()
+
+        // The half that was got wrong the first time. `UIEditMenuInteraction`
+        // is what PencilKit presents through when a lasso selection completes;
+        // removing it is what cost cut, copy and delete. Nothing this project
+        // does to suppress a tap menu may take it.
+        #expect(
+            canvas.hasEditMenuPresenter,
+            "the lasso's menu presenter must survive the tap menu's removal"
+        )
+    }
+
+    @Test("The canvas vends the standard editing actions to whatever asks")
+    func theCanvasDoesNotOverrideTheResponderChain() throws {
+        let canvas = try Self.hostedCanvas()
+        canvas.drawing = Self.oneStroke()
+
+        // There was a `canPerformAction` override returning `false` to
+        // everything. It is gone, and this is what says it stays gone: a lasso
+        // selection is exactly the state in which a canvas begins vending
+        // `cut:` and `copy:`, and a blanket refusal would empty the menu this
+        // file exists to protect. What the canvas answers here is PencilKit's
+        // business; that the answer is *PencilKit's* is this project's.
+        let unmodified = PKCanvasView(frame: canvas.frame)
+        for action in [
+            #selector(UIResponder.cut(_:)),
+            #selector(UIResponder.copy(_:)),
+            #selector(UIResponder.selectAll(_:)),
+            #selector(UIResponder.paste(_:)),
+        ] {
+            #expect(
+                canvas.canPerformAction(action, withSender: nil)
+                    == unmodified.canPerformAction(action, withSender: nil),
+                "\(action) must answer exactly as an unmodified PKCanvasView does"
+            )
+        }
+    }
+
+    @Test("The machinery description names what is attached")
+    func theDescriptionNamesWhatIsAttached() throws {
+        let canvas = try Self.hostedCanvas()
+
+        let described = canvas.describeMenuMachinery()
+
+        // The diagnostic that corrected this file's aim. A device log that came
+        // back empty would have been worse than no diagnostic at all, so what
+        // is asserted is that it reports the two names the fix turns on.
+        #expect(described.contains("UIEditMenuInteraction"))
+        #expect(described.contains("PKTiledView"))
+    }
+
+    // MARK: - Fixtures
+
+    /// A canvas in a key window, first responder — the state PencilKit installs
+    /// its menu machinery for. A bare `InkCanvasView()` has none of it, so a
+    /// test built on one would assert nothing.
+    private static func hostedCanvas() throws -> InkCanvasView {
         let scene = try #require(
             UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first,
             "the test host has no window scene, so nothing here can be first responder"
@@ -37,18 +101,13 @@ struct InkCanvasViewTests {
         let canvas = InkCanvasView(frame: window.bounds)
         window.addSubview(canvas)
         window.makeKeyAndVisible()
-        canvas.drawing = Self.oneStroke()
         #expect(canvas.becomeFirstResponder())
-
-        #expect(!canvas.canPerformAction(#selector(UIResponder.selectAll(_:)), withSender: nil))
-        #expect(!canvas.canPerformAction(#selector(UIResponder.paste(_:)), withSender: nil))
-        #expect(!canvas.canPerformAction(#selector(UIResponder.copy(_:)), withSender: nil))
-        #expect(!canvas.canPerformAction(#selector(UIResponder.cut(_:)), withSender: nil))
-        #expect(!canvas.canPerformAction(#selector(UIResponder.delete(_:)), withSender: nil))
+        window.layoutIfNeeded()
+        return canvas
     }
 
     private static func oneStroke() -> PKDrawing {
-        let point = PKStrokePoint(
+        let start = PKStrokePoint(
             location: CGPoint(x: 100, y: 100),
             timeOffset: 0,
             size: CGSize(width: 3, height: 3),
@@ -69,74 +128,11 @@ struct InkCanvasViewTests {
         return PKDrawing(strokes: [
             PKStroke(
                 ink: PKInk(.pen, color: .black),
-                path: PKStrokePath(controlPoints: [point, end], creationDate: Date(timeIntervalSince1970: 0))
+                path: PKStrokePath(
+                    controlPoints: [start, end],
+                    creationDate: Date(timeIntervalSince1970: 0)
+                )
             )
         ])
     }
-
-    @Test("An editing-menu interaction is refused at installation")
-    func anEditMenuInteractionIsRefused() {
-        let canvas = InkCanvasView()
-        let before = canvas.interactions.count
-
-        canvas.addInteraction(UIEditMenuInteraction(delegate: nil))
-
-        #expect(canvas.interactions.count == before)
-        #expect(!canvas.interactions.contains { $0 is UIEditMenuInteraction })
-    }
-
-    @Test("Every other interaction is installed untouched")
-    func otherInteractionsAreUnaffected() {
-        let canvas = InkCanvasView()
-        let drop = UIDropInteraction(delegate: DropDelegate())
-
-        canvas.addInteraction(drop)
-
-        // The refusal is of one type, not of interactions in general: PencilKit
-        // installs its own machinery here, and blanket refusal would break ink
-        // rather than a menu.
-        #expect(canvas.interactions.contains { $0 === drop })
-    }
-
-    @Test("The sweep finds an editing menu installed on a view inside the canvas")
-    func theSweepReachesInsideTheCanvas() {
-        let canvas = InkCanvasView()
-        // `addInteraction` above governs only interactions added to the canvas
-        // itself. PencilKit's content views are its own, so the sweep recurses —
-        // this is that reach, standing in for a view it owns.
-        let inner = UIView()
-        canvas.addSubview(inner)
-
-        // PencilKit installs an editing menu of its own on a view inside the
-        // canvas — that is the defect, and this baseline sweep is the first
-        // proof of it in the suite. It is cleared first so the count below
-        // measures this test's own interaction and not PencilKit's.
-        #expect(canvas.removeEditMenuInteractions() >= 1, "PencilKit installs one to begin with")
-
-        inner.addInteraction(UIEditMenuInteraction(delegate: nil))
-
-        #expect(canvas.removeEditMenuInteractions() == 1)
-        #expect(!inner.interactions.contains { $0 is UIEditMenuInteraction })
-        // Idempotent: a second page activation sweeping again must report
-        // nothing, which is what makes a non-zero count in the device log a
-        // signal rather than noise.
-        #expect(canvas.removeEditMenuInteractions() == 0)
-    }
-
-    @Test("The machinery description names what is attached")
-    func theDescriptionNamesWhatIsAttached() {
-        let canvas = InkCanvasView()
-        let inner = UIView()
-        canvas.addSubview(inner)
-        inner.addGestureRecognizer(UITapGestureRecognizer())
-
-        let described = canvas.describeMenuMachinery()
-
-        // A diagnostic is only worth shipping if it actually reports; this is
-        // the assertion that the device log will not come back empty.
-        #expect(described.contains("UITapGestureRecognizer"))
-        #expect(described.contains("UIView"))
-    }
-
-    private final class DropDelegate: NSObject, UIDropInteractionDelegate {}
 }
