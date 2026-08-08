@@ -381,6 +381,13 @@ struct PDFLayerTests {
         let last = session.pageCount - 1
         scroll.contentOffset = CGPoint(x: scroll.bounds.width * (CGFloat(last) + 0.5), y: 0)
         session.pages.scrollViewDidEndDragging(scroll, willDecelerate: false)
+
+        // Written on, because an unwritten trailing page is deliberately not in
+        // the file (`Contract.md` — Navigation). What is under test here is the
+        // *geometry* an appended page gets, so it has to be a page that is
+        // actually saved.
+        root.layoutIfNeeded()
+        try #require(session.currentCanvas).canvasView.drawing = strokeAcrossPage()
         await session.saveIfNeeded()
 
         let index = try #require(await scratch.freshStore().load())

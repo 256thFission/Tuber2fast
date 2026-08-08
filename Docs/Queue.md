@@ -403,6 +403,26 @@ their own iPad.
 
 ---
 
+## contract-cites-a-section-that-is-gone — *Empty trailing pages*
+
+`Contract.md` — Navigation ends "Whether that page becomes durable is decided
+by *Empty trailing pages*", and no such section exists: it was lost in the docs
+restructure (`1559d2a`). Its last written form, yours, in
+`f9cdbf3:Docs/Architecture/DataContract.md`:
+
+> A page appended by swiping past the end is durable only once it takes ink. At
+> most one never-written trailing page may exist in memory, and it is dropped at
+> save time. This is the only permitted divergence between the pages on screen
+> and the pages in the document.
+
+The code now implements the first and third sentences: an appended page is
+withheld from the index and from the page files until it takes ink, and the
+divergence is exactly the trailing run. It does **not** implement "at most
+one" — nothing stops a thumb from flicking past the end four times, and
+`EditorSession.durableIndex` withholds all four rather than refusing the second.
+Restoring the section is a rule, so it is yours to write; whether the cap is
+part of it is the decision.
+
 ## Known risks
 
 **macOS runner concurrency.** Free tiers cap concurrent macOS jobs well below

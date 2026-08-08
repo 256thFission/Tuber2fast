@@ -64,6 +64,24 @@ extension EditorSession {
         /// list, and a page can carry either, both, or neither.
         private(set) var layersUnsaved = false
 
+        /// The page exists on screen and nowhere else: it was appended and has
+        /// never taken content, so no file was ever written for it.
+        ///
+        /// Swiping past the last page yields a page immediately (`Contract.md`
+        /// — Navigation), and swiping past the last page is something a person
+        /// does by reflex. A page nobody has written on is somewhere to stand,
+        /// not a page of the document, so `EditorSession` withholds the
+        /// trailing run of them from every save: an accidental overswipe cannot
+        /// grow the file, and nothing has to reclaim anything later.
+        ///
+        /// It is cleared by the first thing that makes the page real — ink, or
+        /// a layer — and from that moment the page saves like any other. It is
+        /// a fact about the page's *durable* existence rather than about its
+        /// ink, which is why it sits beside `ink` and not inside it: a
+        /// never-written page's ink is genuinely clean, and the empty bytes it
+        /// holds are exactly what a save of it would write.
+        private(set) var neverWritten = false
+
         /// The static layers whose durable bytes differ from what the last
         /// successful save wrote. Compared by value, because an envelope is a
         /// value: a layer that was moved and moved back has not changed.
@@ -123,12 +141,19 @@ extension EditorSession {
             self.ink = .clean
         }
 
-        /// An appended page. Its unsaved ink is empty bytes, held by the
-        /// session until the first save writes them.
+        /// An appended page: blank, writable, and not yet part of the document.
+        ///
+        /// Its ink is `clean` over the empty bytes — the same empty bytes the
+        /// first launch's page is built with — because there is nothing unsaved
+        /// about a page nobody has written on. That is what keeps an overswipe
+        /// from arming the debounce, scheduling a save, and writing a page file
+        /// the user never asked for; `neverWritten` is what keeps the index
+        /// from naming it in the meantime.
         init(appended id: UUID) {
             self.id = id
-            self.durable = nil
-            self.ink = .held(.serialized(Data()))
+            self.durable = Data()
+            self.ink = .clean
+            self.neverWritten = true
         }
 
         // MARK: Transitions
@@ -162,6 +187,10 @@ extension EditorSession {
                 staticLayers = layers
                 refusedLayers = newRefusals
                 layersUnsaved = true
+                // A layer makes the page real exactly as ink does — this is the
+                // path an imported PDF page arrives by — so it is no longer a
+                // page the document may withhold.
+                neverWritten = false
             case .loading, .unreadable:
                 preconditionFailure(
                     "page \(id) changed its layer list while \(ink); a page whose "
@@ -184,6 +213,9 @@ extension EditorSession {
             switch ink {
             case .clean, .live, .held, .saving:
                 ink = .live
+                // The first stroke on an appended page is what makes it a page
+                // of the document (`Contract.md` — Navigation).
+                neverWritten = false
             case .loading, .unreadable:
                 preconditionFailure(
                     "page \(id) reported an edit while \(ink); "
@@ -224,8 +256,11 @@ extension EditorSession {
                 // written with is the ink already on disk. Without the layer
                 // change there would be nothing to write, which is the
                 // violation the other cases trap.
+                // Or because the page has no file at all yet: a never-written
+                // page stops being withheld the moment a written page lands
+                // behind it, and the pass that discovers that must write it.
                 precondition(
-                    layersUnsaved,
+                    layersUnsaved || neverWritten,
                     "page \(id) captured for saving while clean with nothing unsaved"
                 )
                 ink = .saving(captured)
@@ -253,6 +288,9 @@ extension EditorSession {
         /// stays dirty with no special case (`Contract.md` — Saving).
         mutating func saveSucceeded(written data: Data, layersWritten: [LayerEnvelope]) {
             durable = data
+            // The page has a file now, whatever it had before, so it is no
+            // longer one the document may withhold.
+            neverWritten = false
             if case .saving = ink { ink = .clean }
             // The same rule the ink follows, for the list: a list edited since
             // its capture is still unsaved, and says so, with no special case.
@@ -275,6 +313,11 @@ extension EditorSession {
             // dropping them would leave the page dirty forever with nothing the
             // save path could capture. Unsaved work is never what a prune drops.
             guard !layersUnsaved else { return }
+            // A never-written page keeps its empty bytes for a blunter reason:
+            // there is no file to reload them from. Dropping them would send
+            // the page back to `.loading`, and the fetch it triggers would find
+            // nothing and refuse a page that is merely blank.
+            guard !neverWritten else { return }
             durable = nil
             if case .clean = ink { ink = .loading }
         }

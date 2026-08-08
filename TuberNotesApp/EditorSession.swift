@@ -680,21 +680,19 @@ final class EditorSession {
 
     /// Adds a blank page at the end and turns to it.
     ///
-    /// KNOWN DEFECT: the page is durable immediately here, rather than on first
-    /// ink. Nothing drops a
-    /// never-written trailing page at save time: this holds empty bytes as the
-    /// page's unsaved ink, and `DocumentStore.save` writes every
-    /// entry in `changedPages` with no emptiness check. An accidental swipe
-    /// past the end therefore grows the document permanently.
-    ///
-    /// This is a knowing divergence, and the contract is the side that is
-    /// right. Appending eagerly was the smaller change and loses no ink.
+    /// The page is on screen immediately and durable only once it takes ink
+    /// (`Contract.md` — Navigation). `Page(appended:)` builds it clean over
+    /// empty bytes and flagged `neverWritten`, and `durableIndex` withholds the
+    /// trailing run of such pages from every save, so the swipe that overshot
+    /// the last page costs one entry in `pageStates` until the user either
+    /// writes on it or leaves — never a page file and never a line in the
+    /// index.
     private func appendPage() {
         // Appending during an in-flight save is safe, and refusing it violated
         // Navigation's "immediately": the save holds its captured index by
         // value, `DocumentStore.save` validates its batch against that capture,
-        // and the appended page's dirty state survives the pass untouched —
-        // `performOneSave`'s exit re-arms, so the next pass writes both.
+        // and this page is not in either — it is withheld until it takes ink,
+        // and the ink is what re-arms (`performOneSave`'s exit owns that).
         guard phase == .ready else { return }
 
         // **The canonical geometry, always** — which is what makes mixed
@@ -707,6 +705,10 @@ final class EditorSession {
         let appended = PageRecord(id: UUID(), geometry: .canonical)
         pageStates.append(Page(appended: appended.id))
         index = index.withPages(index.pages + [appended], currentPageIndex: index.pages.count)
+        // The session's own index changed, so it says so. The pass this arms
+        // writes nothing: the index it hands the store is `durableIndex`, which
+        // for an unwritten trailing page is byte for byte the one already on
+        // disk, and the store writes an index only when it differs.
         indexDirty = true
         alignedWithIndex()
 
@@ -866,6 +868,47 @@ final class EditorSession {
         if let save = beginSave() { await save.value }
     }
 
+    /// The document as a save would write it: `index`, minus the trailing run
+    /// of pages nobody has written on.
+    ///
+    /// Swiping past the last page yields a page immediately, because a turn
+    /// that lands on nothing is not a page turn — and an overswipe is something
+    /// a person does by reflex, repeatedly. A page created that way and never
+    /// written on is not a page the user asked for, so it becomes part of the
+    /// saved document at its first ink and not before (`Contract.md` —
+    /// Navigation). Without this, a stray flick grew the file permanently and
+    /// nothing ever reclaimed it.
+    ///
+    /// **Only a trailing run.** A blank page with written pages after it — a
+    /// PDF imported past one — would renumber every page behind it if it
+    /// vanished from the file, so it is durable like any other; only what hangs
+    /// off the end can be withheld, and only until it takes ink.
+    ///
+    /// The current page follows: the user may be standing on a page the
+    /// document does not have, and what the document remembers is the last page
+    /// it does. This is the one deliberate divergence between the pages on
+    /// screen and the pages in the file.
+    private var durableIndex: DocumentIndex {
+        var count = pageStates.count
+        while count > 1, pageStates[count - 1].neverWritten {
+            // A withheld page must have nothing to write, or this pass would
+            // capture ink for a page the index it writes does not name — the
+            // dangling reference `Contract.md` — Durable form calls fatal.
+            // `neverWritten` is cleared by the first ink and the first layer,
+            // so this holds by construction and fails loud if it stops.
+            precondition(
+                !pageStates[count - 1].isDirty,
+                "page \(pageStates[count - 1].id) is unwritten and dirty at once"
+            )
+            count -= 1
+        }
+        guard count < index.pages.count else { return index }
+        return index.withPages(
+            Array(index.pages.prefix(count)),
+            currentPageIndex: min(index.currentPageIndex, count - 1)
+        )
+    }
+
     /// Starts a save if none is running, and returns the task that owns the
     /// pass — the already-running one otherwise, so every caller awaits the
     /// specific pass it observed rather than a broadcast.
@@ -884,17 +927,26 @@ final class EditorSession {
     /// of as it retired. A page that cannot be captured is a violation and
     /// traps at its transition, never a page quietly reported clean while its
     /// ink existed nowhere.
+    ///
+    /// The index it captures is `durableIndex` rather than `index`: a trailing
+    /// page nobody has written on is on screen and not in the document.
     @discardableResult
     private func beginSave() -> Task<Void, Never>? {
         if let currentSave { return currentSave }
         guard phase == .ready, dirty else { return nil }
 
-        let capturedIndex = index
+        let capturedIndex = durableIndex
         let capturedIndexWasDirty = indexDirty
         indexDirty = false
 
+        // A page the captured index does not name has no file to write into:
+        // writing one would be the orphan the write ordering forbids, and
+        // naming it in the index without writing one would be the dangling ref
+        // it forbids harder. The withheld run is exactly this difference.
+        let durablePageIDs = Set(capturedIndex.pageIDs)
+
         var captures: [Capture] = []
-        for pageIndex in pageStates.indices {
+        for pageIndex in pageStates.indices where durablePageIDs.contains(pageStates[pageIndex].id) {
             // Captured with the ink, because a page's generation is one
             // coherent moment: the list this pass writes is the list as it is
             // now, and a later edit to it is a later pass's work, never this
@@ -913,7 +965,15 @@ final class EditorSession {
                 // already holds exactly these bytes, so this pass does not
                 // rewrite it; what changed is the list, and possibly the
                 // envelopes in it.
-                guard pageStates[pageIndex].layersUnsaved else { continue }
+                //
+                // Or clean ink and no file at all: an unwritten page the
+                // captured index *does* name is one a written page landed
+                // behind, so it stopped being withheld and this pass owes it
+                // its first file — blank, but present, because the index about
+                // to name it must not dangle. Its ink layer is written with it
+                // for the same reason: there is nothing on disk to keep.
+                let firstWrite = pageStates[pageIndex].neverWritten
+                guard pageStates[pageIndex].layersUnsaved || firstWrite else { continue }
                 guard let durable = pageStates[pageIndex].durable else {
                     preconditionFailure(
                         "page \(pageStates[pageIndex].id) has an unsaved layer list "
@@ -926,7 +986,7 @@ final class EditorSession {
                         pageStates[pageIndex].id,
                         .serialized(durable),
                         layers,
-                        changedStatic
+                        firstWrite ? changedStatic.union([inkLayerID]) : changedStatic
                     )
                 )
             case .live:

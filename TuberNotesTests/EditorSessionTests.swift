@@ -151,11 +151,61 @@ struct EditorSessionTests {
 
         #expect(session.pageCount == 2)
         #expect(session.pages.currentPageIndex == 1)
+    }
 
+    @Test("An accidental swipe past the end does not grow the saved document")
+    func unwrittenAppendedPageIsNotDurable() async throws {
+        let scratch = try TestScratch("session")
+        let session = scratch.session()
+        await session.start()
+        _ = canvas(of: session)
+
+        // Three flicks past the end, exactly as a thumb does by accident, and
+        // then everything the app would ever do to write: the debounced pass
+        // the append arms, and an explicit flush on top of it.
+        for _ in 0..<3 { pullPastTheEnd(session) }
+        #expect(session.pageCount == 4)
         await session.saveIfNeeded()
+
+        // On screen there are four pages; in the file there is one, and it is
+        // the one the user actually wrote. Nothing has to reclaim anything.
         let saved = try #require(await scratch.store.load())
-        #expect(saved.pageIDs.count == 2)
+        #expect(saved.pageIDs.count == 1)
+        #expect(saved.currentPageIndex == 0)
+
+        // And a relaunch agrees: the blank pages were never there.
+        let second = scratch.session()
+        await second.start()
+        #expect(second.pageCount == 1)
+    }
+
+    @Test("An appended page becomes durable the moment it takes ink")
+    func inkedAppendedPageIsDurable() async throws {
+        let scratch = try TestScratch("session")
+        let session = scratch.session()
+        await session.start()
+        _ = canvas(of: session)
+        let firstPageID = session.currentPageID
+
+        // Two overswipes, and ink on only the second page. The page between
+        // them is written on, so it is a page of the document; the one after
+        // it is not.
+        pullPastTheEnd(session)
+        let inkedPageID = session.currentPageID
+        canvas(of: session).drawing = strokeAcrossPage()
+        pullPastTheEnd(session)
+        await session.saveIfNeeded()
+
+        let saved = try #require(await scratch.store.load())
+        #expect(saved.pageIDs == [firstPageID, inkedPageID])
         #expect(saved.currentPageIndex == 1)
+        #expect(try PKDrawing(data: await scratch.store.loadPage(inkedPageID).inkData)
+            .strokes.count == 1)
+
+        let second = scratch.session()
+        await second.start()
+        #expect(second.pageCount == 2)
+        #expect(second.pages.currentPageIndex == 1)
     }
 
     @Test("Ink on each page is saved to that page and restored there")
@@ -302,6 +352,11 @@ struct EditorSessionTests {
         pullPastTheEnd(session)
         #expect(session.pageCount == 2)
         #expect(session.pages.currentPageIndex == 1)
+
+        // Written on, so the page is one the document keeps — an unwritten one
+        // would prove nothing about the append here, only about the withholding
+        // `unwrittenAppendedPageIsNotDurable` pins.
+        canvas(of: session).drawing = twoStrokesAcrossPage()
 
         await held.release()
         await save.value
