@@ -16,6 +16,17 @@ enum LayerEditError: Error, Equatable {
     /// envelope, not a property of the kind — a locked layer is still
     /// selectable and still deletable.
     case layerIsLocked(layerID: UUID, pageID: UUID)
+    /// A source page smaller than this build can display — a receipt, a ticket,
+    /// a cropped fragment. Its fit-width scale is past the document's own zoom
+    /// ceiling, which `PageCanvasController.establishZoomIfNeeded` traps on.
+    ///
+    /// Refused at import rather than trapped at layout, because geometry is
+    /// persisted before the page is ever laid out: without this the page is
+    /// written, the document is reopened, and the trap fires on **every**
+    /// subsequent open with no way back in. The bound is
+    /// `PageProjection.smallestDisplayablePagePoints`, which states the
+    /// derivation.
+    case pageTooSmallToDisplay(width: Double, height: Double, minimum: Double)
 }
 
 /// Coordinates the canvas runtime and the document store (`Contract.md` — Owners).
@@ -1395,6 +1406,29 @@ final class EditorSession {
         // touched: a PDF this build cannot open imports nothing at all rather
         // than half a document.
         let sourcePages = try await PDFSource.pages(in: bytes)
+
+        // Every source box is judged before the first byte is written. An
+        // imported page *is* its source box (below), and geometry is durable
+        // from that moment — persisted long before any canvas lays the page
+        // out. A box narrower than the document's zoom cap can display would
+        // therefore be written first and only refused later, by the
+        // precondition in `PageCanvasController.establishZoomIfNeeded`, which
+        // is a trap: the document would then crash on every subsequent open,
+        // with no recovery. So it is refused here, where refusing still costs
+        // nothing.
+        //
+        // One bad page refuses the whole import, for the same reason unreadable
+        // bytes do: half a document is worse than none.
+        let minimum = PageProjection.smallestDisplayablePagePoints(
+            zoomCapPagePointsPerPixel: index.zoomCapPagePointsPerPixel
+        )
+        for source in sourcePages where source.width < minimum || source.height < minimum {
+            throw LayerEditError.pageTooSmallToDisplay(
+                width: source.width,
+                height: source.height,
+                minimum: minimum
+            )
+        }
 
         // The leaf, first and on its own: nothing yet references it, so a
         // failure here leaves the document exactly as it was.

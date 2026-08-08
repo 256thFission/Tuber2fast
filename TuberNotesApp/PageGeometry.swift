@@ -117,4 +117,48 @@ struct PageProjection: Sendable, Equatable {
     /// states are named.
     static let finestReachablePagePointsPerPixel: Double =
         1 / (runtimeMaximumZoomScale * minimumSupportedDisplayScale)
+
+    /// The widest viewport a single page is ever fitted into: the long edge of
+    /// the largest iPad this application supports — the 13-inch iPad Pro, at
+    /// 1032 × 1376 points.
+    ///
+    /// The long edge rather than the portrait width, even though
+    /// `UISupportedInterfaceOrientations_iPad` is pinned to portrait
+    /// (`project.yml`). The pin is one line, and a bound that silently becomes
+    /// wrong when someone deletes it is a bound that fails open. Split View and
+    /// Slide Over only ever make the window narrower, so nothing else raises
+    /// this number.
+    static let widestSupportedViewportPoints: Double = 1376
+
+    /// The smallest a page may be, in page points, under a given zoom cap:
+    /// below this the page's fit-width scale is *above* the document's own
+    /// ceiling, and the page cannot be opened at all.
+    ///
+    /// The derivation, which is why it lives here beside the two constants it
+    /// is made of. `PageCanvasController` opens a page at fit-width,
+    /// `viewport / pageWidth`, and refuses to exceed `maximumZoomScale`,
+    /// `1 / (cap × displayScale)`. Fit-width must not pass the ceiling:
+    ///
+    /// ```text
+    /// viewport / pageWidth  <=  1 / (cap × displayScale)
+    /// pageWidth             >=  viewport × cap × displayScale
+    /// ```
+    ///
+    /// Taken at the worst viewport this build can present. `displayScale` is
+    /// `minimumSupportedDisplayScale` — on iPad that is not merely the minimum,
+    /// it is the only value, so the bound is exact rather than conservative on
+    /// that axis; a coarser display already clamps the ceiling *up* to
+    /// `runtimeMaximumZoomScale`, which only makes the page easier to fit.
+    ///
+    /// At the canonical cap of 1/20 this is `1376 × 0.05 × 2` = **137.6 points**
+    /// — about 48 mm. A till receipt at 58 mm (164 pt) and a business card at
+    /// 89 mm (252 pt) both clear it; a page that does not is a fragment of a
+    /// source, not a page.
+    ///
+    /// A document with a coarser cap has a smaller ceiling and therefore needs a
+    /// *wider* page, which is why this takes the cap rather than assuming the
+    /// finest one. Only `EditorSession` knows a document's cap.
+    static func smallestDisplayablePagePoints(zoomCapPagePointsPerPixel: Double) -> Double {
+        widestSupportedViewportPoints * zoomCapPagePointsPerPixel * minimumSupportedDisplayScale
+    }
 }

@@ -127,4 +127,52 @@ struct PageGeometryTests {
             )
         }
     }
+
+    // MARK: - The smallest page that can be opened at all
+
+    /// The bound is not a taste judgement about small pages: it is exactly the
+    /// width at which fit-width in the widest viewport meets the document's own
+    /// zoom ceiling. One point narrower and the page opens *above* its ceiling,
+    /// which is the state `PageCanvasController.establishZoomIfNeeded` traps on.
+    @Test("The smallest displayable page is where fit-width meets the zoom ceiling")
+    func smallestPageIsWhereFitWidthMeetsTheCeiling() {
+        let cap = DocumentIndex.canonicalZoomCapPagePointsPerPixel
+        let minimum = PageProjection.smallestDisplayablePagePoints(
+            zoomCapPagePointsPerPixel: cap
+        )
+        let ceiling = PageProjection(geometry: .canonical, zoomCapPagePointsPerPixel: cap)
+            .maximumZoomScale(displayScale: PageProjection.minimumSupportedDisplayScale)
+
+        let atTheBound = PageProjection.widestSupportedViewportPoints / minimum
+        #expect(abs(atTheBound - ceiling) < 1e-9)
+
+        // A point narrower is past it; a point wider is inside it.
+        #expect(PageProjection.widestSupportedViewportPoints / (minimum - 1) > ceiling)
+        #expect(PageProjection.widestSupportedViewportPoints / (minimum + 1) < ceiling)
+    }
+
+    /// The number itself, pinned so that moving it is deliberate. 137.6 points
+    /// is about 48 mm — narrower than any paper anyone writes on, and wider than
+    /// the receipt and ticket boxes that made this a document-destroying defect.
+    @Test("The smallest displayable page at the canonical cap is 137.6 points")
+    func smallestPageAtTheCanonicalCapIsPinned() {
+        let minimum = PageProjection.smallestDisplayablePagePoints(
+            zoomCapPagePointsPerPixel: DocumentIndex.canonicalZoomCapPagePointsPerPixel
+        )
+        #expect(abs(minimum - 137.6) < 1e-9)
+        #expect(PageGeometry.canonical.width > minimum)
+    }
+
+    /// A coarser cap has a shallower ceiling, so it needs a *wider* page — which
+    /// is why the bound takes the cap rather than assuming the finest one.
+    @Test("A coarser zoom cap demands a wider page")
+    func aCoarserCapDemandsAWiderPage() {
+        let finest = PageProjection.smallestDisplayablePagePoints(
+            zoomCapPagePointsPerPixel: PageProjection.finestReachablePagePointsPerPixel
+        )
+        let coarser = PageProjection.smallestDisplayablePagePoints(
+            zoomCapPagePointsPerPixel: PageProjection.finestReachablePagePointsPerPixel * 2
+        )
+        #expect(coarser == finest * 2)
+    }
 }
