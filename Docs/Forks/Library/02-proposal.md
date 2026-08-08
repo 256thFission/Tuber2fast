@@ -1,6 +1,9 @@
 # The library layer — proposal
 
-Status: written by the overnight managing agent, before code. Phase 1's spec
+Status: written by the overnight managing agent before code, then **revised
+through one full adversarial review cycle** — five reviewers, findings and
+dispositions in `03-review.md`. This is the post-review version; the review
+file is the diff's "why". Phase 1's spec
 (`01-goodnotes-spec.md`) says what GoodNotes does; this says what TuberNotes
 will do, in this codebase, under this contract. Where the two differ, the
 difference is listed in *Deliberately not building* or argued inline.
@@ -68,12 +71,21 @@ document, one level up:
 
 - **A document's display name is its directory name** (`Bayes Exam.tubernotes`
   → "Bayes Exam"). One truth; a rename is one atomic FS rename that never
-  touches document contents. Names are sanitized at the UI (path separators
-  and leading dots refused), and a name collision on create/duplicate/move is
+  touches document contents. Names are sanitized at one gate: path
+  separators and leading dots refused, the reserved suffixes `.tubernotes`
+  and `.origin.plist` refused (a *folder* named `X.tubernotes` would
+  otherwise classify as a document and swallow its contents), and a 255-byte
+  UTF-8 budget enforced with headroom for the package suffix and a collision
+  suffix. A name collision on create/duplicate/move/recover/adopt is
   auto-suffixed (" 2", " 3" — GoodNotes shows the same "(1)" pattern in
-  Phillip's own screenshots). The FS enforces the uniqueness the suffix
-  resolves. `documentID` stays inside `document.plist` and remains the
-  identity durable state uses; the name is presentation.
+  Phillip's own screenshots); **auto-suffixing is a licensed adaptation,
+  staged explicitly in L3**, not an unstated correction. Collision detection
+  asks the file system (the actual rename result), never string-compares
+  listings — the device's data volume is case-sensitive while the pinned
+  simulator's is not, so string comparison would pass CI and lie on device
+  (recorded for `Docs/Unproven.md` and the device checklist). `documentID`
+  stays inside `document.plist` and remains the identity durable state uses;
+  the name is presentation.
 - **A folder's display name is its directory name**, same rules.
   `.folder.plist` carries only what a directory cannot: `color`, `icon`.
   It is orphan-class: a missing or unreadable `.folder.plist` renders the
@@ -98,16 +110,20 @@ document, one level up:
 - **`favorites.plist`** is one small file: an ordered list of library-relative
   paths. Its writer is the library store; its entries are orphan-class — an
   entry whose path no longer exists renders nothing, and is pruned on the
-  next favorites write. Why paths, not IDs: folders have no durable ID and
-  inventing one just for favorites is a new identity scheme for one feature.
-  The cost is honest: **moving or renaming an item drops its favorite** unless
-  the move path rewrites the entry — so the move/rename operations do exactly
-  that, in the same user action, ordered favorites-last so a crash between
-  the two leaves a pruned favorite, never a dangling one. (The alternative —
-  `documentID`-keyed favorites for documents — survives moves for free but
-  cannot cover folders and costs one `document.plist` read per favorite per
-  browse. Rejected for asymmetry; worth overruling if favorites-lost-on-move
-  ever bites a real user.)
+  next favorites write (the pruning is licensed in L3 alongside the suffix).
+  Why paths, not IDs: folders have no durable ID and inventing one just for
+  favorites is a new identity scheme for one feature. Move and rename
+  therefore rewrite favorites in the same user action: **a prefix rewrite** —
+  every entry whose path has the old path as a component prefix is
+  substituted, so renaming a folder carries every starred descendant with it
+  (the review caught the descendant case; the original draft rewrote only
+  the moved item's own entry). The rewrite uses the **post-suffix**
+  destination path. Ordering is favorites-last, so a crash between the move
+  and the rewrite leaves pruned favorites, never dangling ones. (The
+  alternative — `documentID`-keyed favorites for documents — survives moves
+  for free but cannot cover folders and costs one `document.plist` read per
+  favorite per browse. Rejected for asymmetry; worth overruling if
+  favorites-lost-on-a-crash ever bites a real user.)
 - **`library.plist`** holds the browser's presentation preferences: grid/list,
   sort key, sort direction — global, not per-folder, exactly as GoodNotes
   behaves (and is complained about; parity wins over the complaint tonight).
@@ -116,18 +132,42 @@ document, one level up:
   library's own directory.
 - **Trash** is a sibling directory. *Move to Trash* is one directory move plus
   one sidecar write (`<name>.origin.plist`, recording the original
-  library-relative parent path). *Recover* moves it back to that path if it
-  exists, else to the root — GoodNotes' documented behavior. The sidecar is
-  orphan-class: missing sidecar → recover to root. Name collisions inside
-  `Trash/` auto-suffix like anywhere else. There is **no retention window and
-  no auto-empty** — GoodNotes' documented semantics — so nothing ever deletes
-  user data on a timer. *Empty Trash* and per-item *Delete Permanently* are
-  the only permanent deletions in the whole design, and both confirm.
+  library-relative parent path), sidecar strictly after the move. The sidecar
+  is named after the **post-suffix** trash name, so two same-named items
+  trashed from different folders cannot cross origins. *Recover* moves the
+  item back to its origin path if it exists, else to the root — GoodNotes'
+  documented behavior — and deletes the sidecar (a crash between leaves an
+  inert orphan sidecar). *Empty Trash* sweeps sidecars with their items. The
+  sidecar is orphan-class: missing sidecar → recover to root. Name collisions
+  inside `Trash/` auto-suffix like anywhere else. There is **no retention
+  window and no auto-empty** — GoodNotes' documented semantics — so nothing
+  ever deletes user data on a timer. *Empty Trash* and per-item *Delete
+  Permanently* are the only permanent deletions in the whole design, and both
+  confirm.
+- **`.staging/` is where multi-file operations happen.** A library mutation's
+  *structural* step is one atomic directory operation — but Duplicate is
+  inherently a multi-hundred-file copy, so it copies into
+  `TuberLibrary/.staging/<uuid>/` first and lands with one atomic move.
+  Enumeration ignores `.staging/`; the store sweeps it at startup. Crash
+  debris therefore never enumerates as a document — the document format's
+  own temp-and-rename discipline, one level up.
 - **The existing document is adopted, not migrated.** On first run of this
   build, if `<Application Support>/JustACanvas.tubernotes` exists it is moved
-  into `Documents/` (one rename; contents untouched; name "Just a Canvas").
-  This is not a compatibility shim — it is one line of adoption for Phillip's
-  own test data, and it is deletable the day it stops mattering.
+  into `Documents/` (one rename; contents untouched; name "Just a Canvas",
+  suffixed if that name is somehow taken). Adoption runs idempotently inside
+  `LibraryStore`'s first listing of the root — a single same-volume rename,
+  so a crash before it leaves the source to try again and a crash after it
+  leaves nothing to do. It is licensed explicitly in L1 as the one write the
+  store makes outside a user action and outside its tree, and it is deletable
+  the day it stops mattering.
+- **Dates degrade honestly at the edges.** The derived modified date tracks
+  every save shape (including an index-only rewrite, whose atomic replacement
+  refreshes `document.plist`'s own mtime — tested specifically). Missing
+  `layers/`/`assets/` directories on a young document are tolerated (ENOENT
+  is a date that does not participate, not an error). What the derivation
+  does **not** survive: external file transfer and device clock changes,
+  which quietly reorder date sorts — accepted, stated, and no worse than the
+  app being imitated.
 
 ### The failure story
 
@@ -142,9 +182,17 @@ document, one level up:
 - **A corrupt `.folder.plist`** decorates the folder with defaults and
   surfaces the error; navigation and contents are unaffected.
 - **A corrupt `favorites.plist` / `library.plist` / `.origin.plist`** each
-  degrade to their default (no favorites / default sort / recover-to-root),
-  loudly, and are rewritten whole on next write. None of them can dangle into
-  anything.
+  degrade to their stated default (no favorites / default sort /
+  recover-to-root) and are rewritten whole on next write. None of them can
+  dangle into anything. "Loud" is defined, not gestured at: a log line plus
+  the browser's non-modal banner; a lost sort preference does not alert. The
+  corrupt file is **set aside as `<name>.corrupt`**, never overwritten — the
+  evidence survives the recovery.
+- **A folder that fails to enumerate is refused, not emptied.** Listings are
+  Result-shaped; a thrown enumeration renders a distinct refused-folder state
+  (message + retry). The designed empty state renders only on a *successful*
+  empty listing — showing "create your first notebook" over an I/O error is
+  the blank-unreadable-page sin at library scale.
 - **There are no fatal library states.** This is the designed difference from
   the document level, where a dangling page ref *is* fatal because ink is at
   stake. The library level holds no user content of its own — every file it
@@ -161,7 +209,7 @@ New rows, in the shape of the *Owners* table:
 
 | State | Sole writer | Frequency | Lifetime |
 |---|---|---|---|
-| The library tree on disk (folders, package placement, names) | `LibraryStore` | user action | across launches |
+| The library tree on disk (folders, package placement, names) | `LibraryStore` | user action (plus the one licensed adoption move at first listing) | across launches |
 | Folder metadata (`.folder.plist`) | `LibraryStore` | user action | across launches |
 | Favorites (`favorites.plist`), browser prefs (`library.plist`), trash origin sidecars | `LibraryStore` | user action | across launches |
 | The in-memory listing of the folder being shown | `LibraryViewModel` | navigation / store reply | browser session |
@@ -172,10 +220,14 @@ Golden rules, restated one level up:
 
 1. **`LibraryStore` is to the library what `DocumentStore` is to a document**:
    the sole file-system writer at its level, an actor, receiving values and
-   returning values. It never reaches inside a `.tubernotes` package — the
-   package boundary is the boundary between the two stores. It moves, renames,
-   creates, and deletes packages as opaque directories; only `DocumentStore`
-   reads their contents.
+   returning values. It never opens, decodes, or writes a file inside a
+   `.tubernotes` package — the package boundary is the boundary between the
+   two stores. **One stated exception, licensed in L1**: it may *stat* the
+   package's four well-known interior paths (`document.plist`, `pages/`,
+   `layers/`, `assets/`) for the derived modified date. That is layout
+   knowledge leaking one level up, accepted out loud: the path list is one
+   named constant, and a document-format change that adds a directory must
+   update it (A14 is the dependency that created the current four).
 2. **The browser renders snapshots and sends intentions**, exactly as the
    canvas does. `LibraryViewModel` holds the last listing the store returned;
    every mutation is an async store call that returns the new listing (or
@@ -192,21 +244,38 @@ Golden rules, restated one level up:
 
 ### Thumbnails (Forbidden patterns: durable derived artifacts)
 
-The ban stands and nothing needs amending, because **the thumbnail cache is
-in memory only**. `LibraryThumbnailStore` renders page 1 (static composite
-via the existing render path's approach + `PKDrawing` ink render) off-main,
-per visible cell, cancellable on scroll-away, into a cache that states its
-owner (`LibraryThumbnailStore`), its bound (32 MB — a 160×212pt @2x thumbnail
-is ~550 KB; ≈60 cells), and its eviction (LRU) at its declaration — which is
-exactly the cache the *Performance* section already permits. Nothing is ever
-written to disk; a cold launch re-renders. A7's narrowing is **not** invoked:
-that amendment covers *disposable renders of immutable assets on disk*, and a
-page-1 render includes ink, which is mutable — durably caching it is banned
-under both the current rule and A7. The cost is honest: every launch pays a
-decode per visible cell, masked by placeholder cells (GoodNotes masks its own
-loading the same way). If that cost is ever measured to matter on device, the
-*then*-needed amendment is a new argument for a new narrowing — deliberately
-not staged tonight, because no code needs it.
+The ban stands for the *cache*, because **the thumbnail cache is in memory
+only**. `LibraryThumbnailStore` renders page 1 off-main, per visible cell,
+cancellable on scroll-away, into a cache that states its owner
+(`LibraryThumbnailStore`), its bound (32 MB — a 160×212pt @2x thumbnail is
+~550 KB; ≈60 cells), and its eviction (LRU) at its declaration — exactly the
+cache the *Performance* section already permits. Nothing is ever written to
+disk; a cold launch re-renders. A7's narrowing is **not** invoked: a page-1
+render includes ink, which is mutable — durably caching it is banned under
+both the current rule and A7.
+
+**The read that fills the cache needed its own license, and the review
+caught its absence.** Rendering page 1 of a closed document reads the index,
+the page file, its layer files, and possibly a large asset — outside any
+editor session. The reader is now named: **a read-only, per-package
+`DocumentStore`**, constructed for the render and discarded — the only type
+allowed to read a package's insides, doing exactly that. L5 licenses the
+read and scopes *Lifecycle*'s "the document index loads once, when the
+editor session is created" to the editor session it was written about. So
+§1's enumeration claim is stated precisely: building a cell's *facts* never
+opens the package; rendering its *thumbnail* does, asynchronously, through
+`DocumentStore`, and the cell is complete without it. Refusals are
+negative-cached under the same bound, so a corrupt package costs one failed
+decode, not one per scroll-past.
+
+Costs, priced: an ink-only render is one small `loadPage` + `PKDrawing`
+decode; a PDF-backed page-1 is a per-cell asset decode that can reach tens
+of MB — which is why the build order ships **paper-colored cover cells
+first** (directory facts only — also the failure story's base case),
+ink-only renders on the frontier, and static-composite thumbnails not
+tonight at all. If a launch-time re-render cost is ever *measured* to matter
+on device, the then-needed disk-cache amendment is a new argument — not
+staged tonight, because no code needs it.
 
 The render needs `PKDrawing` (PencilKit) and image contexts (UIKit), so it
 lives **in the app target**, not `TuberRender` — `TuberRender`'s import policy
@@ -278,47 +347,123 @@ AppRoot (SwiftUI)
   Scene-phase events route to the open lifecycle exactly as today; with no
   document open there is nothing to flush — library writes are synchronous
   with their user action (await-complete before the UI proceeds), never
-  debounced.
+  debounced. The NavigationStack is **scoped to the content column**; the
+  sidebar is a sibling outside it, carrying its own collapse toggle — so a
+  folder push moves the pane, never the sidebar (hand-walk check: the
+  sidebar does not move on push).
 - **Opening a document** = `EditorLifecycle(session: EditorSession(store:
   DocumentStore(directoryURL: tappedPackage)))` — the codebase map confirms
-  the session needs nothing else. `RootCanvasView` is reused as-is.
-- **Closing needs the teardown that does not exist yet.** New:
-  `EditorSession.close() async` — cancel the debounce, await any in-flight
-  save, run one final `saveIfNeeded` pass, and refuse further edits. `AppRoot`
-  awaits `close()` before releasing the lifecycle (a brief "Saving…" state on
-  the Back transition). This is `flushForBackground` with finality; the
-  save-path protections (protected tasks, single save in flight) are reused,
-  not duplicated. Releasing the session releases the runtime graph — the map
-  confirms ownership is session-rooted, so the canvas count returns to zero.
-- **Back does not lose ink by construction**: close() completing is the same
-  guarantee backgrounding gives, made synchronous with the transition.
+  the session needs nothing else. `RootCanvasView` is reused as-is. **The
+  open path never creates**: a library-enumerated package whose `load()`
+  returns nil is a *damaged document* (index gone, siblings possibly alive),
+  not a first launch — the session refuses it (`.failed`, "this document has
+  no index") and the package is left byte-identical. Create-on-nil survives
+  only on the New Notebook path, which creates the directory itself. This
+  closes the review's second blocker: without it, tapping a torn package
+  would silently save a fresh empty document into the wreckage.
+- **Closing is a real teardown with a specified failure branch.** New:
+  `EditorSession.close() async` — **first awaits the protected `startTask`**
+  (awaiting protected work is legal; cancelling it is not — without this, a
+  Back during `.loading` races the never-cancelled start against the
+  browser's mutations: the review's first blocker), then cancels the
+  debounce, awaits any save in flight, runs one final `saveIfNeeded` pass,
+  and refuses further edits (a private flag checked at the edit/save guards
+  — no new `Phase` case, so no view churn). `AppRoot` releases the lifecycle
+  only after `close()` returns clean.
+- **A session is released only when nothing is dirty.** If the final pass
+  fails, `close()` does not return success: the browser is shown but the
+  dirty lifecycle is retained off-screen, its existing backoff/retry
+  machinery keeps draining, the `save.error` banner pattern surfaces it in
+  the browser, and opening another document is blocked until it drains.
+  Backgrounding's guarantee is honest because the session survives to retry;
+  close() earns the same guarantee the same way — by not destroying the
+  retrier while it holds ink. The library never mutates a package whose
+  session has not closed clean.
 - Accessibility identifiers follow the existing convention: `library.grid`,
   `library.item.<name>`, `library.new`, `library.back`, `library.trash`, etc.
   — these are what the morning's hand-walk (and any future XCUITest) grips.
 
 ## 5. Building / deliberately not building
 
-**Building (spine first, then breadth in this order):**
+**Building — the reviewed build order.** Three parallel lanes, one
+integration choke, then a strictly ordered frontier. Every increment is
+independently green and leaves the app tappable if work stops there. No
+`project.yml` change is needed anywhere (new files land in existing target
+directories — the review confirmed this removes the worst merge choke).
 
-1. `LibraryStore` + durable form above; multiple documents enumerated,
-   persisting across launch; adoption of the existing document.
-2. Browser grid; tap-to-open into the existing editor; Back with real close.
-3. Create notebook (modal shell: name; canonical geometry), create folder
-   (name, color, icon subset); rename (inline, in the chevron popover, per
-   the observed GoodNotes menu); delete → Trash.
-4. Folders: enter/leave (push, small centered title, back chevron, no
-   breadcrumb — matching observed GoodNotes); nesting unbounded; contextual
-   + New creating into the current folder.
-5. Move: the expandable-tree destination picker.
-6. Then: list view; sort menu (Date Created / Last Modified / Name / Type,
-   direction toggle, global persistence); All/Documents/Folders filter;
-   multi-select (Select All / Done, action bar: Duplicate / Move / Trash);
-   duplicate (fresh `documentID`); Trash screen (Recover / Delete
-   Permanently / Empty, confirmations on the permanent ones); favorites
-   (star on cell, Favorites collection: flat, cross-parent, no + New);
-   thumbnails (in-memory, placeholders first); title search; empty states
-   (designed empty-folder state, first-run state); drag & drop if the night
-   allows (UIKit spring-loading is INFERRED-FROM-PLATFORM, lowest priority).
+- **Lane A — `Modules/TuberStore/LibraryStore.swift`** + the durable form
+  above + adoption + the one `fileIOAllowlist` entry + the honest test set:
+  create/list round-trip, rename-collision suffix (via the FS, not string
+  compare), move with favorites prefix-rewrite, trash→recover with and
+  without origin sidecar, corrupt-sidecar set-aside, derived-date-moves on
+  every save shape including index-only, adoption idempotence, `.staging`
+  sweep.
+- **Lane B — `EditorSession.close()`** per §4 (await startTask → flush →
+  refuse edits; retain-if-dirty policy), tested on the `HeldSaveStore`
+  precedent: close awaits an in-flight save; edits refused after close;
+  a failing final save leaves the session alive and dirty.
+- **Lane C — `AppRoot` + the browser spine**: grid of paper-cover cells
+  (directory facts only — name, date; the thumbnail base case), tap-to-open
+  reusing `EditorLifecycle`/`RootCanvasView` unchanged, Back wired to
+  close(), New Notebook / New Folder sheets in the observed modal shell,
+  rename + Move to Trash via the chevron popover, folder push navigation,
+  contextual + New, a11y identifiers throughout.
+- **Integration choke** (serialized): merge, full suite, hand-tap in the
+  pinned simulator.
+- **Then, in order, each independently green**: Trash screen (Recover /
+  Delete Permanently / Empty, confirmations on the permanent ones) → Move
+  via **drill-down sheet** (same semantics as the observed picker; the
+  expandable tree is a follow-up) → sort menu + grid/list toggle +
+  `library.plist` persistence → All/Documents/Folders filter → title search
+  as a **filter of the current folder's listing** (recursive search would
+  walk the tree the design promises not to walk — a later argument) →
+  duplicate via `.staging` (same `documentID` tonight, `KNOWN DEFECT:` at
+  the copy site; fresh-ID rewrite is a follow-up through `DocumentStore`) →
+  favorites (star on cell; flat cross-parent collection; no + New there) →
+  ink-only thumbnails (renders behind placeholders, negative-cached
+  refusals) → multi-select (Select All / title / Done bar, check-circle
+  overlays, Duplicate/Move/Trash actions) → empty-state and fidelity
+  polish.
+- **Not tonight, at all** (the review's line, adopted): drag & drop,
+  static-composite thumbnails, the expandable-tree picker, fresh-ID
+  duplicate.
+
+**Fidelity commitments** (the review found the pixels under-specified;
+these are now commitments, not vibes — sources are the first-party shots):
+
+- One grid, one comparator: folders and documents **interleave** under the
+  active sort key; only the Type sort groups (folders first, per spec §7.1).
+- Cell anatomy: portrait thumbnail (paper-colored cover until renders land),
+  favorite star top-right **on the thumbnail** (grey outline / red filled),
+  title centered below with the grey chevron-down menu affordance
+  immediately right, grey date line beneath; titles wrap to two lines,
+  middle-truncated, row heights vary; the refusal badge sits in the observed
+  corner-fold position.
+- Dates: absolute always, `MMM d, yyyy 'at' h:mm a` — every first-party
+  cell uses it, even 18-month-old ones; relative forms are not built.
+- The + New popover keeps the observed three-band grammar at reduced
+  cardinality: Notebook as a square tile, Import as a wide tile, **Folder in
+  its own card at the bottom**.
+- New Folder sheet: the observed sheet verbatim — X left / centered title /
+  blue check right shell, large live preview tracking selection, centered
+  "Untitled" field, Color|Icon segmented control, **26 swatches + custom
+  wheel in the 9×3 layout**; the Icon tab ships a chosen SF-symbol glyph set
+  (contents unobserved in GoodNotes; our decision, flagged as such).
+- New Notebook sheet: the same shell; left paper preview panel, Name row,
+  Size row showing the canonical size with its chevron (the size popover
+  can defer; the row cannot). Language and Cover rows are cut and declared.
+- View options: **one** four-squares menu in the observed order — Select
+  Items · Grid/List · four sort keys — with the direction chevron on the
+  active key only.
+- Select mode: Select All / collection title / Done top bar, blue
+  check-circle overlays on cells.
+- Trash screen: Empty (red) / Select / Done trio.
+- Empty folder: the illustration slot, bold "This Folder is Empty", grey
+  "Create a new document or move existing ones here." — and **no button**.
+- Grid metrics: 4 columns landscape with sidebar open; cell sizing, gutters,
+  and type sizes measured from `images/01` at build time.
+- Search entry: a top-right magnifier (the capsule's one earned element —
+  bell and avatar have nothing behind them and are cut, declared below).
 
 **Not building, deliberately:**
 
@@ -340,6 +485,8 @@ AppRoot (SwiftUI)
 
 ## 6. Deviations from GoodNotes, deliberate
 
+Behavioral:
+
 - **Move preserves the modified date** (GoodNotes bumps it; its users file
   that as a bug; parity with the complaint, not the defect).
 - **Folders sort by their own activity** (directory mtime), not created date.
@@ -347,8 +494,20 @@ AppRoot (SwiftUI)
   (pruned, never dangling) — GoodNotes' behavior here is unknown.
 - **No starter document on first run** — the empty-state illustration and
   copy carry first-run (web GoodNotes ships empty too).
-- **Trash lives behind the browser's toolbar menu**, matching iPad GoodNotes
-  (gear/menu → Trash), not the web's sidebar row.
+- **Trash lives behind the browser's toolbar menu.** iPad GoodNotes reaches
+  Trash from its top-right gear/avatar menu; TuberNotes has no avatar or
+  gear, so the toolbar menu is the honest nearest home. A knock-on, not a
+  whim.
+
+Chrome (equally spec-visible, so equally declared):
+
+- **No sync cloud icon** — there is no sync.
+- **No Shared or Marketplace sidebar rows** — nothing behind them; the
+  sidebar shows Documents and Favorites.
+- **No bell, no avatar** — the top-right carries only the search magnifier.
+- **The + New menu offers Notebook, Import, Folder** — the document types
+  TuberNotes does not have would be lying chrome as disabled tiles; omission
+  is the honest form (the fidelity reviewer concurred).
 
 ## 7. Amendments this forces (staged, not adopted — see Contract.proposed.md)
 
