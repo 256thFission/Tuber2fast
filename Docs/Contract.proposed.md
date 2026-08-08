@@ -840,7 +840,7 @@ amendments reviewer demanded is applied below, and the review file records
 what changed and why. Statuses follow this file's convention and are flipped
 as code lands.
 
-## L1. *Owners* — the library rows and the two-store boundary — **AHEAD (library phase A)**
+## L1. *Owners* — the library rows and the two-store boundary — **FORCED (library lane A, code is written and green)**
 
 The table in *Owners* governs one document's insides; a library adds state
 above the document. Add rows:
@@ -884,7 +884,7 @@ hole stops meaning anything; the adoption sentence exists because the
 contract says no legacy shims land without a human saying so, and adopting
 this amendment is the saying-so.
 
-## L2. *Owners* — file-I/O confinement stated in the contract — **AHEAD (library phase A)**
+## L2. *Owners* — file-I/O confinement stated in the contract — **FORCED (library lane A; the allowlist entry, the test rename, and the CONTRIBUTING line are all in the diff)**
 
 **Redrafted after review: the first draft said "replace the confinement's
 governing sentence", and `Contract.md` contains no such sentence** — the
@@ -909,7 +909,7 @@ a reviewable diff. This is that diff. The alternative — putting tree
 operations inside `DocumentStore.swift` to avoid the entry — obeys the test
 while defeating the table above.
 
-## L3. *Durable form* — the library level — **AHEAD (library phase A)**
+## L3. *Durable form* — the library level — **FORCED (library lane A, code is written and green)**
 
 Add a section above the document diagram:
 
@@ -980,7 +980,7 @@ level names content that exists nowhere else. The defaults are enumerated
 here rather than left in the proposal because a licensed default that is
 stated nowhere normative is a default nobody licensed.
 
-## L4. *Lifecycle* — the session gains a close — **AHEAD (library phase B)**
+## L4. *Lifecycle* — the session gains a close — **FORCED (library lane B, code is written and green)**
 
 *Lifecycle* opens one document and never closes it, because until now there
 was nowhere to go. Add:
