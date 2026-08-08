@@ -475,8 +475,23 @@ final class PageCanvasController: UIViewController, PKCanvasViewDelegate {
         // zoom the document allows. It is an invalid state rather than a range
         // to reorder: the page would open above its own ceiling, and both the
         // floor and the cap would be describing something that is not a page.
-        // Reachable only from a source whose box is a few dozen points across,
-        // which is a page this build refuses rather than rounds.
+        //
+        // This traps — it crashes the app, it does not refuse the page. That is
+        // deliberate and it is not the guard. The guard is upstream:
+        // `EditorSession.importPDF` refuses a source box below
+        // `PageProjection.smallestDisplayablePagePoints` before anything is
+        // written, so no such page ever reaches a canvas. What is left here is
+        // the assertion of that invariant at the one place it could be observed
+        // failing, and a trap is the right shape for an invariant somebody else
+        // upholds: by the time a page this small is being laid out, it is
+        // already durable, and continuing would mean the page opens above its
+        // own ceiling rather than merely failing to import.
+        //
+        // What is left open is a page already on disk: a document written
+        // before the import guard existed, or edited outside this build, can
+        // still carry one, and whether that should crash the document or be
+        // refused the way unreadable bytes are is the error taxonomy's
+        // question, not this trap's.
         precondition(
             CGFloat(ceiling) >= fitWidth,
             "page \(geometry.width)x\(geometry.height) is smaller than the "

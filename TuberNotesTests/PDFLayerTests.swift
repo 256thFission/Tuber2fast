@@ -434,6 +434,83 @@ struct PDFLayerTests {
         #expect(try scratch.assetFileCount() == 0)
     }
 
+    // MARK: - A page too small to display is refused before anything is written
+
+    /// The one defect that destroyed a document with no recovery. An imported
+    /// page *is* its source box, geometry is durable from the moment the import
+    /// saves, and `PageCanvasController.establishZoomIfNeeded` traps on a page
+    /// whose fit-width scale is past the document's zoom ceiling — so a receipt
+    /// used to import cleanly and then crash the app on every subsequent open.
+    ///
+    /// The refusal has to land before `writeAsset`, not merely before the page
+    /// is appended: an orphan asset would be inert, but the point of the test is
+    /// that the disk is untouched.
+    @Test("A source page narrower than the zoom cap allows is refused, and nothing is written")
+    @MainActor
+    func aPageTooSmallToDisplayIsRefusedAtImport() async throws {
+        let scratch = try Scratch()
+        let session = EditorSession(store: scratch.store(), debounce: .milliseconds(20))
+        await session.start()
+        let pagesBefore = session.pageCount
+        let onDiskBefore = try #require(await scratch.store().load()).pageIDs
+
+        let minimum = PageProjection.smallestDisplayablePagePoints(
+            zoomCapPagePointsPerPixel: DocumentIndex.canonicalZoomCapPagePointsPerPixel
+        )
+        // A till receipt, and one ordinary page ahead of it: one bad box refuses
+        // the whole import, so a half-imported worksheet is not a state.
+        let receipt = pdf(
+            pageSizes: [
+                CGSize(width: 612, height: 792),
+                CGSize(width: 103, height: 800),
+            ]
+        ) { _, _ in }
+
+        await #expect(throws: LayerEditError.pageTooSmallToDisplay(
+            width: 103,
+            height: 800,
+            minimum: minimum
+        )) {
+            _ = try await session.importPDF(receipt)
+        }
+
+        #expect(session.pageCount == pagesBefore)
+        #expect(session.lastSaveError == nil)
+        // Nothing durable moved: no asset, and the index still names exactly the
+        // pages it named before.
+        #expect(try scratch.assetFileCount() == 0)
+        #expect(try #require(await scratch.store().load()).pageIDs == onDiskBefore)
+    }
+
+    /// The other side of the bound, so the guard is a bound rather than a
+    /// blanket refusal of small pages: a hair above it imports like any other
+    /// source, at its own size.
+    @Test("A source page at the minimum imports at its own size")
+    @MainActor
+    func aPageAtTheMinimumImportsNormally() async throws {
+        let scratch = try Scratch()
+        let session = EditorSession(store: scratch.store(), debounce: .milliseconds(20))
+        await session.start()
+
+        let minimum = PageProjection.smallestDisplayablePagePoints(
+            zoomCapPagePointsPerPixel: DocumentIndex.canonicalZoomCapPagePointsPerPixel
+        )
+        // 104 × 300: past the 103.2-point bound by eight tenths of a point, and
+        // narrower than anything else this suite imports.
+        #expect(minimum > 103 && minimum < 104)
+        let appended = try await session.importPDF(
+            pdf(pageSizes: [CGSize(width: 104, height: 300)]) { _, _ in }
+        )
+
+        #expect(session.lastSaveError == nil)
+        #expect(appended.count == 1)
+
+        let index = try #require(await scratch.store().load())
+        let position = try #require(index.pageIDs.firstIndex(of: appended[0]))
+        #expect(try #require(index.geometry(ofPageAt: position))
+            == PageGeometry(width: 104, height: 300))
+    }
+
     @Test("Deleting one page's pdf layer leaves the asset the other pages still show")
     @MainActor
     func deletingOnePDFLayerKeepsTheSharedAsset() async throws {
