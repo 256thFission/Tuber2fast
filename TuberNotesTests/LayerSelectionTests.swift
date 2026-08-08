@@ -673,13 +673,13 @@ struct LayerTransformCommitTests {
 
     @Test("A committed transform reaches disk, and the prior value comes back")
     func aCommitIsDurableAndReturnsThePriorValue() async throws {
-        let scratch = Scratch()
+        let scratch = try TestScratch("selection")
         let session = scratch.session()
         await session.start()
         let pageID = session.currentPageID
 
         let layerID = try await session.importImage(
-            Scratch.solidHEIC(width: 64, height: 64),
+            TestScratch.solidHEIC(width: 64, height: 64, color: TestScratch.fixtureGreen),
             format: .heic,
             sourceWidth: 400,
             sourceHeight: 300
@@ -704,13 +704,13 @@ struct LayerTransformCommitTests {
 
     @Test("Undoing a transform is re-committing the prior value")
     func theInverseIsAnOrdinaryCommit() async throws {
-        let scratch = Scratch()
+        let scratch = try TestScratch("selection")
         let session = scratch.session()
         await session.start()
         let pageID = session.currentPageID
 
         let layerID = try await session.importImage(
-            Scratch.solidHEIC(width: 64, height: 64),
+            TestScratch.solidHEIC(width: 64, height: 64, color: TestScratch.fixtureGreen),
             format: .heic,
             sourceWidth: 400,
             sourceHeight: 300
@@ -738,13 +738,13 @@ struct LayerTransformCommitTests {
 
     @Test("A locked layer refuses a transform, and disk does not move")
     func aLockedLayerRefusesATransform() async throws {
-        let scratch = Scratch()
+        let scratch = try TestScratch("selection")
         let session = scratch.session()
         await session.start()
         let pageID = session.currentPageID
 
         let layerID = try await session.importImage(
-            Scratch.solidHEIC(width: 64, height: 64),
+            TestScratch.solidHEIC(width: 64, height: 64, color: TestScratch.fixtureGreen),
             format: .heic,
             sourceWidth: 400,
             sourceHeight: 300
@@ -782,7 +782,7 @@ struct LayerTransformCommitTests {
 
     @Test("Transforming a layer that is not there is refused, not guessed at")
     func anAbsentLayerIsRefused() async throws {
-        let scratch = Scratch()
+        let scratch = try TestScratch("selection")
         let session = scratch.session()
         await session.start()
         let pageID = session.currentPageID
@@ -797,49 +797,6 @@ struct LayerTransformCommitTests {
         }
     }
 
-    private final class Scratch {
-        let directory: URL
-        let store: DocumentStore
-
-        init() {
-            directory = URL(fileURLWithPath: NSTemporaryDirectory())
-                .appendingPathComponent("tubernotes-transform-\(UUID().uuidString)")
-            try? FileManager.default.createDirectory(
-                at: directory, withIntermediateDirectories: true
-            )
-            store = DocumentStore(
-                directoryURL: directory.appendingPathComponent("JustACanvas.tubernotes")
-            )
-        }
-
-        deinit { try? FileManager.default.removeItem(at: directory) }
-
-        @MainActor
-        func session() -> EditorSession {
-            EditorSession(store: store, debounce: .milliseconds(20))
-        }
-
-        static func solidHEIC(width: Int, height: Int) -> Data {
-            guard let context = CGContext(
-                data: nil, width: width, height: height,
-                bitsPerComponent: 8, bytesPerRow: 0,
-                space: CGColorSpaceCreateDeviceRGB(),
-                bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue
-                    | CGBitmapInfo.byteOrder32Little.rawValue
-            ) else {
-                preconditionFailure("could not build a \(width)x\(height) context")
-            }
-            context.setFillColor(CGColor(srgbRed: 0, green: 0.6, blue: 0.2, alpha: 1))
-            context.fill(CGRect(x: 0, y: 0, width: width, height: height))
-            guard let image = context.makeImage() else {
-                preconditionFailure("the context yielded no image")
-            }
-            guard let encoded = ImageImportPreparation.heicEncoded(image) else {
-                preconditionFailure("HEIC encoding failed")
-            }
-            return encoded
-        }
-    }
 }
 
 // MARK: - Minus-one recompositing
@@ -850,19 +807,19 @@ struct MinusOneCompositeTests {
 
     @Test("The composite drops the selected layer, as a second cache entry")
     func theCompositeExcludesTheSelectedLayer() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("minusone")
         let renderer = StaticLayerRenderer(store: scratch.store)
 
         // Red under the whole page, green over its top half. Excluding the
         // green one must show red where the green was.
         let background = try await scratch.imageLayer(
-            colour: CGColor(srgbRed: 1, green: 0, blue: 0, alpha: 1),
+            color: CGColor(srgbRed: 1, green: 0, blue: 0, alpha: 1),
             transform: PageSpaceTransform(
                 a: PageGeometry.canonical.width, b: 0, c: 0, d: PageGeometry.canonical.height, tx: 0, ty: 0
             )
         )
         let overlay = try await scratch.imageLayer(
-            colour: CGColor(srgbRed: 0, green: 1, blue: 0, alpha: 1),
+            color: CGColor(srgbRed: 0, green: 1, blue: 0, alpha: 1),
             transform: PageSpaceTransform(
                 a: PageGeometry.canonical.width, b: 0, c: 0, d: PageGeometry.canonical.height / 2, tx: 0, ty: 0
             )
@@ -903,13 +860,13 @@ struct MinusOneCompositeTests {
 
     @Test("A lifted source decodes for where the layer lands, not for the source")
     func aLiftedSourceIsBoundedByItsPlacement() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("minusone")
         let renderer = StaticLayerRenderer(store: scratch.store)
 
         // A 512-pixel source placed 100 x 50 page points across, at one
         // composite pixel per page point.
         let layer = try await scratch.imageLayer(
-            colour: CGColor(srgbRed: 0, green: 0, blue: 1, alpha: 1),
+            color: CGColor(srgbRed: 0, green: 0, blue: 1, alpha: 1),
             size: 512,
             transform: PageSpaceTransform(a: 100, b: 0, c: 0, d: 50, tx: 40, ty: 60)
         )
@@ -925,7 +882,7 @@ struct MinusOneCompositeTests {
 
     @Test("A layer whose asset is gone cannot be lifted, and says nil")
     func anUnreadableLayerCannotBeLifted() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("minusone")
         let renderer = StaticLayerRenderer(store: scratch.store)
         let orphan = try LayerEnvelope.image(
             layerID: UUID(),
@@ -972,57 +929,6 @@ struct MinusOneCompositeTests {
         return [Int(bytes[0]), Int(bytes[1]), Int(bytes[2])]
     }
 
-    private final class Scratch {
-        let root: URL
-        let store: DocumentStore
-
-        init() throws {
-            root = URL(fileURLWithPath: NSTemporaryDirectory())
-                .appendingPathComponent("tubernotes-minusone-\(UUID().uuidString)")
-            try FileManager.default.createDirectory(
-                at: root.appendingPathComponent("JustACanvas.tubernotes/pages"),
-                withIntermediateDirectories: true
-            )
-            store = DocumentStore(directoryURL: root.appendingPathComponent("JustACanvas.tubernotes"))
-        }
-
-        deinit { try? FileManager.default.removeItem(at: root) }
-
-        func imageLayer(
-            colour: CGColor,
-            size: Int = 64,
-            transform: PageSpaceTransform
-        ) async throws -> LayerEnvelope {
-            let assetID = UUID()
-            try await store.writeAsset(Self.heic(size: size, colour: colour), assetID: assetID, format: .heic)
-            return try LayerEnvelope.image(
-                layerID: UUID(),
-                ref: ImageLayerRef(assetID: assetID, format: .heic),
-                pageSpaceTransform: transform
-            )
-        }
-
-        static func heic(size: Int, colour: CGColor) -> Data {
-            guard let context = CGContext(
-                data: nil, width: size, height: size,
-                bitsPerComponent: 8, bytesPerRow: 0,
-                space: CGColorSpaceCreateDeviceRGB(),
-                bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue
-                    | CGBitmapInfo.byteOrder32Little.rawValue
-            ) else {
-                preconditionFailure("could not build a \(size)x\(size) context")
-            }
-            context.setFillColor(colour)
-            context.fill(CGRect(x: 0, y: 0, width: size, height: size))
-            guard let image = context.makeImage() else {
-                preconditionFailure("the context yielded no image")
-            }
-            guard let encoded = ImageImportPreparation.heicEncoded(image) else {
-                preconditionFailure("HEIC encoding failed")
-            }
-            return encoded
-        }
-    }
 }
 
 // MARK: - Selection never reaches SwiftUI
@@ -1104,4 +1010,17 @@ struct SelectionOwnershipTests {
         let url = ContractStructureTests.appDirectory.appendingPathComponent(name)
         return ContractChecker.codeOnly(try String(contentsOf: url, encoding: .utf8))
     }
+}
+
+/// One session over one scratch document — every test in this file wants the
+/// same one.
+private extension TestScratch {
+    @MainActor
+    func session() -> EditorSession {
+        EditorSession(store: store, debounce: .milliseconds(20))
+    }
+
+    /// The colour these suites' fixtures are filled with. Named because two
+    /// suites sample it and a literal in each is two things that can disagree.
+    static var fixtureGreen: CGColor { CGColor(srgbRed: 0, green: 0.6, blue: 0.2, alpha: 1) }
 }

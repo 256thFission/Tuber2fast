@@ -23,7 +23,7 @@ struct PrefetchWarmTests {
     @Test("A settled turn warms a prefetch-distance page's composite; its canvas later hits it")
     @MainActor
     func aSettledTurnWarmsTheNeighbour() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("warm")
 
         // Five pages; page 4 carries an image layer. From page 1, page 4 is at
         // prefetch distance 3 — inside the session's radius, outside the
@@ -94,7 +94,7 @@ struct PrefetchWarmTests {
 
     @Test("Warming never evicts the visible page's composite at the byte bound")
     func warmingCannotEvictTheVisiblePage() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("warm")
         // One byte: every insert overruns the bound, so without protection the
         // second composite would evict the first.
         let renderer = StaticLayerRenderer(store: scratch.store, byteBound: 1)
@@ -130,7 +130,7 @@ struct PrefetchWarmTests {
 
     @Test("A warm of a composite already cached is a no-op that does not touch recency")
     func aWarmHitLeavesRecencyAlone() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("warm")
         // A bound that fits two of these composites but not three, so LRU
         // order decides who dies on the third insert.
         let renderer = StaticLayerRenderer(store: scratch.store, byteBound: 3_700_000)
@@ -179,67 +179,17 @@ struct PrefetchWarmTests {
         }
         Issue.record("timed out waiting for \(what)", sourceLocation: sourceLocation)
     }
+}
 
-    private final class Scratch {
-        let root: URL
-        let store: DocumentStore
-
-        init() throws {
-            root = URL(fileURLWithPath: NSTemporaryDirectory())
-                .appendingPathComponent("tubernotes-warm-\(UUID().uuidString)")
-            try FileManager.default.createDirectory(
-                at: root.appendingPathComponent("JustACanvas.tubernotes/pages"),
-                withIntermediateDirectories: true
+private extension TestScratch {
+    /// A full-page image layer — the only shape this suite's fixtures take.
+    func imageLayer(color: UIColor) async throws -> LayerEnvelope {
+        try await imageLayer(
+            color: color,
+            transform: PageSpaceTransform(
+                a: PageGeometry.canonical.width, b: 0,
+                c: 0, d: PageGeometry.canonical.height, tx: 0, ty: 0
             )
-            store = DocumentStore(directoryURL: root.appendingPathComponent("JustACanvas.tubernotes"))
-        }
-
-        func index(pageIDs: [UUID]) -> DocumentIndex {
-            DocumentIndex(
-                formatVersion: DocumentIndex.currentFormatVersion,
-                documentID: UUID(),
-                pages: pageIDs.map { PageRecord(id: $0, geometry: .canonical) },
-                currentPageIndex: 0
-            )
-        }
-
-        func imageLayer(color: UIColor) async throws -> LayerEnvelope {
-            let assetID = UUID()
-            try await store.writeAsset(
-                Self.solidHEIC(width: 64, height: 64, color: color), assetID: assetID, format: .heic
-            )
-            return try LayerEnvelope.image(
-                layerID: UUID(),
-                ref: ImageLayerRef(assetID: assetID, format: .heic),
-                pageSpaceTransform: PageSpaceTransform(
-                    a: PageGeometry.canonical.width, b: 0,
-                    c: 0, d: PageGeometry.canonical.height, tx: 0, ty: 0
-                )
-            )
-        }
-
-        static func solidHEIC(width: Int, height: Int, color: UIColor) -> Data {
-            guard let context = CGContext(
-                data: nil,
-                width: width,
-                height: height,
-                bitsPerComponent: 8,
-                bytesPerRow: 0,
-                space: CGColorSpaceCreateDeviceRGB(),
-                bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue
-                    | CGBitmapInfo.byteOrder32Little.rawValue
-            ) else {
-                preconditionFailure("could not build a \(width)x\(height) context")
-            }
-            context.setFillColor(color.cgColor)
-            context.fill(CGRect(x: 0, y: 0, width: width, height: height))
-            guard let image = context.makeImage() else {
-                preconditionFailure("the context yielded no image")
-            }
-            guard let encoded = ImageImportPreparation.heicEncoded(image) else {
-                preconditionFailure("HEIC encoding failed")
-            }
-            return encoded
-        }
+        )
     }
 }

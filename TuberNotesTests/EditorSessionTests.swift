@@ -16,7 +16,7 @@ struct EditorSessionTests {
 
     @Test("First launch creates and saves one valid document")
     func firstLaunchCreatesDocument() async throws {
-        let scratch = Scratch()
+        let scratch = try TestScratch("session")
         let session = scratch.session()
 
         await session.start()
@@ -36,7 +36,7 @@ struct EditorSessionTests {
 
     @Test("A later launch restores the saved drawing")
     func relaunchRestoresDocument() async throws {
-        let scratch = Scratch()
+        let scratch = try TestScratch("session")
 
         let first = scratch.session()
         await first.start()
@@ -53,7 +53,7 @@ struct EditorSessionTests {
 
     @Test("Invalid stored data fails loudly and leaves the file untouched")
     func invalidDocumentFailsWithoutOverwriting() async throws {
-        let scratch = Scratch()
+        let scratch = try TestScratch("session")
         let garbage = Data("not a canvas".utf8)
         try scratch.writeGarbageIndex(garbage)
 
@@ -69,7 +69,7 @@ struct EditorSessionTests {
 
     @Test("Loading a document does not mark it dirty")
     func loadingDoesNotDirtyTheDocument() async throws {
-        let scratch = Scratch()
+        let scratch = try TestScratch("session")
         let first = scratch.session()
         await first.start()
         canvas(of: first).drawing = strokeAcrossPage()
@@ -97,7 +97,7 @@ struct EditorSessionTests {
 
     @Test("A page that retires with unsaved ink keeps it, on screen and on disk")
     func retiredPageKeepsItsInk() async throws {
-        let scratch = Scratch()
+        let scratch = try TestScratch("session")
         let session = scratch.session()
         await session.start()
         _ = canvas(of: session)
@@ -124,7 +124,7 @@ struct EditorSessionTests {
 
     @Test("Restarting the view task does not reload over live ink")
     func repeatedStartIsIdempotent() async throws {
-        let scratch = Scratch()
+        let scratch = try TestScratch("session")
         let session = scratch.session()
         await session.start()
         canvas(of: session).drawing = strokeAcrossPage()
@@ -139,7 +139,7 @@ struct EditorSessionTests {
 
     @Test("Pulling past the last page appends one and turns to it")
     func appendPastTheEndAddsAPage() async throws {
-        let scratch = Scratch()
+        let scratch = try TestScratch("session")
         let session = scratch.session()
         await session.start()
         _ = canvas(of: session)
@@ -158,7 +158,7 @@ struct EditorSessionTests {
 
     @Test("Ink on each page is saved to that page and restored there")
     func inkStaysOnItsOwnPage() async throws {
-        let scratch = Scratch()
+        let scratch = try TestScratch("session")
         let session = scratch.session()
         await session.start()
 
@@ -179,7 +179,7 @@ struct EditorSessionTests {
 
     @Test("A relaunch restores the page list and the page the user left on")
     func relaunchRestoresPagesAndPosition() async throws {
-        let scratch = Scratch()
+        let scratch = try TestScratch("session")
         let first = scratch.session()
         await first.start()
         canvas(of: first).drawing = strokeAcrossPage()
@@ -198,7 +198,7 @@ struct EditorSessionTests {
 
     @Test("Editing one page rewrites that page's file alone")
     func savingOnePageDoesNotRewriteTheOther() async throws {
-        let scratch = Scratch()
+        let scratch = try TestScratch("session")
         let session = scratch.session()
         await session.start()
         canvas(of: session).drawing = strokeAcrossPage()
@@ -208,7 +208,7 @@ struct EditorSessionTests {
         canvas(of: session).drawing = twoStrokesAcrossPage()
         await session.saveIfNeeded()
 
-        let firstPageWrittenAt = try #require(scratch.modificationDate(ofPage: firstPageID))
+        let firstPageWrittenAt = try scratch.modificationDate(ofPage: firstPageID)
         let firstInkWrittenAt = try #require(try scratch.inkWrittenAt(ofPage: firstPageID))
 
         // Far enough apart that an unwanted rewrite cannot hide inside the
@@ -221,13 +221,13 @@ struct EditorSessionTests {
         // layer split the page file alone proves less than it used to — an ink
         // save never rewrites a page file — so the ink layer's own file is
         // checked, which is where page one's bytes actually are.
-        #expect(scratch.modificationDate(ofPage: firstPageID) == firstPageWrittenAt)
+        #expect(try scratch.modificationDate(ofPage: firstPageID) == firstPageWrittenAt)
         #expect(try scratch.inkWrittenAt(ofPage: firstPageID) == firstInkWrittenAt)
     }
 
     @Test("Turning away from a page and back does not rewrite its file")
     func turningAwayAndBackDoesNotRewriteThePage() async throws {
-        let scratch = Scratch()
+        let scratch = try TestScratch("session")
         let session = scratch.session()
         await session.start()
         canvas(of: session).drawing = strokeAcrossPage()
@@ -240,7 +240,7 @@ struct EditorSessionTests {
         // path is never exercised.
         for _ in 0..<4 { pullPastTheEnd(session) }
         await session.saveIfNeeded()
-        let firstPageWrittenAt = try #require(scratch.modificationDate(ofPage: firstPageID))
+        let firstPageWrittenAt = try scratch.modificationDate(ofPage: firstPageID)
         let firstInkWrittenAt = try #require(try scratch.inkWrittenAt(ofPage: firstPageID))
 
         // Far enough apart that an unwanted rewrite cannot hide inside the
@@ -261,13 +261,13 @@ struct EditorSessionTests {
         // Installing ink is never reported as an edit (`Contract.md` —
         // Lifecycle): a turn that changed nothing writes nothing — neither the
         // page file nor the layer file its ink actually lives in.
-        #expect(scratch.modificationDate(ofPage: firstPageID) == firstPageWrittenAt)
+        #expect(try scratch.modificationDate(ofPage: firstPageID) == firstPageWrittenAt)
         #expect(try scratch.inkWrittenAt(ofPage: firstPageID) == firstInkWrittenAt)
     }
 
     @Test("Ink drawn on a page that then scrolls out of the window is still saved")
     func inkSurvivesItsPageLeavingTheWindow() async throws {
-        let scratch = Scratch()
+        let scratch = try TestScratch("session")
         let session = scratch.session(debounce: .seconds(30))
         await session.start()
 
@@ -289,7 +289,7 @@ struct EditorSessionTests {
 
     @Test("Pulling past the last page during an in-flight save appends immediately")
     func appendDuringAnInFlightSaveGrowsTheDocument() async throws {
-        let scratch = Scratch()
+        let scratch = try TestScratch("session")
         let session = scratch.session(debounce: .seconds(30))
         await session.start()
         canvas(of: session).drawing = strokeAcrossPage()
@@ -316,7 +316,7 @@ struct EditorSessionTests {
 
     @Test("Work arriving during a background flush is saved with no user action")
     func workDuringAFlushIsRearmed() async throws {
-        let scratch = Scratch()
+        let scratch = try TestScratch("session")
         let session = scratch.session()
         await session.start()
         canvas(of: session).drawing = strokeAcrossPage()
@@ -345,7 +345,7 @@ struct EditorSessionTests {
 
     @Test("A page that retires during a save that then fails keeps its ink")
     func retirementDuringAFailedSaveKeepsInk() async throws {
-        let scratch = Scratch()
+        let scratch = try TestScratch("session")
         let session = scratch.session(debounce: .seconds(30))
         await session.start()
         _ = canvas(of: session)
@@ -365,8 +365,8 @@ struct EditorSessionTests {
 
         // Hold the save open, and make it fail: the directory becomes a file.
         session.serializationDelayForTesting = .milliseconds(200)
-        try FileManager.default.removeItem(at: scratch.directory)
-        try Data().write(to: scratch.directory)
+        try FileManager.default.removeItem(at: scratch.root)
+        try Data().write(to: scratch.root)
 
         let save = Task { await session.saveIfNeeded() }
         // One yield lets the save capture its generation and suspend. The
@@ -386,9 +386,9 @@ struct EditorSessionTests {
 
         // The store starts working again; the retry must write the real ink.
         session.serializationDelayForTesting = nil
-        try FileManager.default.removeItem(at: scratch.directory)
+        try FileManager.default.removeItem(at: scratch.root)
         try FileManager.default.createDirectory(
-            at: scratch.directory,
+            at: scratch.root,
             withIntermediateDirectories: true
         )
         await session.saveIfNeeded()
@@ -399,7 +399,7 @@ struct EditorSessionTests {
 
     @Test("One unreadable page neither fails the launch nor stalls its neighbours")
     func oneUnreadablePageDoesNotStallTheWindow() async throws {
-        let scratch = Scratch()
+        let scratch = try TestScratch("session")
         let first = scratch.session()
         await first.start()
         _ = canvas(of: first)
@@ -444,7 +444,7 @@ struct EditorSessionTests {
 
     @Test("A drawing change is debounced and then saved")
     func drawingChangeIsDebouncedAndSaved() async throws {
-        let scratch = Scratch()
+        let scratch = try TestScratch("session")
         let session = scratch.session()
         await session.start()
         let initial = try await savedDrawing(scratch.store)
@@ -461,22 +461,22 @@ struct EditorSessionTests {
 
     @Test("A failed save leaves the document dirty and retryable")
     func failedSaveStaysDirty() async throws {
-        let scratch = Scratch()
+        let scratch = try TestScratch("session")
         let session = scratch.session()
         await session.start()
 
         // Make the destination unwritable by replacing the directory with a file.
-        try FileManager.default.removeItem(at: scratch.directory)
-        try Data().write(to: scratch.directory)
+        try FileManager.default.removeItem(at: scratch.root)
+        try Data().write(to: scratch.root)
 
         canvas(of: session).drawing = strokeAcrossPage()
         await session.saveIfNeeded()
         #expect(session.lastSaveError != nil)
 
         // Restore the directory; the retry must succeed with the live ink.
-        try FileManager.default.removeItem(at: scratch.directory)
+        try FileManager.default.removeItem(at: scratch.root)
         try FileManager.default.createDirectory(
-            at: scratch.directory,
+            at: scratch.root,
             withIntermediateDirectories: true
         )
         await session.saveIfNeeded()
@@ -487,14 +487,14 @@ struct EditorSessionTests {
 
     @Test("A transient save failure retries itself with no user action")
     func failedSaveRetriesItself() async throws {
-        let scratch = Scratch()
+        let scratch = try TestScratch("session")
         let session = scratch.session()
         await session.start()
 
         // Break the destination the way `failedSaveStaysDirty` does: the
         // containing directory becomes a file, so every save throws.
-        try FileManager.default.removeItem(at: scratch.directory)
-        try Data().write(to: scratch.directory)
+        try FileManager.default.removeItem(at: scratch.root)
+        try Data().write(to: scratch.root)
 
         canvas(of: session).drawing = strokeAcrossPage()
         try await waitUntil("the first autosave fails") { session.lastSaveError != nil }
@@ -506,9 +506,9 @@ struct EditorSessionTests {
 
         // Nothing below touches the session: no Retry tap, no further drawing,
         // no scene transition. Only the store starts working again.
-        try FileManager.default.removeItem(at: scratch.directory)
+        try FileManager.default.removeItem(at: scratch.root)
         try FileManager.default.createDirectory(
-            at: scratch.directory,
+            at: scratch.root,
             withIntermediateDirectories: true
         )
 
@@ -521,7 +521,7 @@ struct EditorSessionTests {
 
     @Test("Backgrounding flushes pending ink")
     func backgroundFlushSaves() async throws {
-        let scratch = Scratch()
+        let scratch = try TestScratch("session")
         let session = scratch.session(debounce: .seconds(30))
         await session.start()
 
@@ -534,7 +534,7 @@ struct EditorSessionTests {
 
     @Test("Backgrounding performs one save pass, never a loop")
     func backgroundFlushIsASinglePass() async throws {
-        let scratch = Scratch()
+        let scratch = try TestScratch("session")
         // A far-future debounce, so a timer cannot account for any save observed
         // here and the flush is the only thing that can write.
         let session = scratch.session(debounce: .seconds(30))
@@ -566,7 +566,7 @@ struct EditorSessionTests {
 
     @Test("The debounce never drops below the default 500 ms floor")
     func debounceFloorHolds() async throws {
-        let scratch = Scratch()
+        let scratch = try TestScratch("session")
         // The interval the app itself uses, not the tests' short one.
         let session = scratch.session(debounce: .milliseconds(500))
         await session.start()
@@ -587,7 +587,7 @@ struct EditorSessionTests {
 
     @Test("An expensive document widens the debounce above the floor")
     func debounceWidensWithSerializeCost() async throws {
-        let scratch = Scratch()
+        let scratch = try TestScratch("session")
         // A negligible floor, so what is measured here is the adaptive term and
         // nothing else.
         let session = scratch.session(debounce: .milliseconds(1))
@@ -648,8 +648,8 @@ struct EditorSessionTests {
     /// session still reports it. A stored mirror anywhere above
     /// `PagedCanvasController` would have gone stale there.
     @Test("The shape tool the chrome renders is the runtime's, not a copy")
-    func shapeToolIsReadThroughFromTheRuntime() async {
-        let scratch = Scratch()
+    func shapeToolIsReadThroughFromTheRuntime() async throws {
+        let scratch = try TestScratch("session")
         let session = scratch.session()
 
         // Before the runtime exists there is no tool, and reading it must not
@@ -801,103 +801,33 @@ struct EditorSessionTests {
         }
         return PKDrawing(strokes: strokes)
     }
+}
 
-    private final class Scratch {
-        let directory: URL
-        let store: DocumentStore
+/// What only this suite does to a document: break it, and ask which page file
+/// the editor is on.
+private extension TestScratch {
+    /// A short debounce by default: these tests assert the debounce fires, not
+    /// that it waits 500 ms.
+    @MainActor
+    func session(debounce: Duration = .milliseconds(20)) -> EditorSession {
+        EditorSession(store: store, debounce: debounce)
+    }
 
-        var documentURL: URL { directory.appendingPathComponent("JustACanvas.tubernotes") }
-        var indexURL: URL { documentURL.appendingPathComponent("document.plist") }
-        var pagesURL: URL { documentURL.appendingPathComponent("pages") }
-        var layersURL: URL { documentURL.appendingPathComponent("layers") }
+    /// Overwrites one page's file with bytes that cannot decode. The file still
+    /// exists — a missing file is a dangling reference and fatal — but reading
+    /// it fails.
+    func corruptPageFile(pageID: UUID) throws {
+        try Data("not a page".utf8).write(to: pageURL(pageID))
+    }
 
-        func modificationDate(ofPage pageID: UUID) -> Date? {
-            let url = pagesURL.appendingPathComponent("\(pageID.uuidString).plist")
-            return try? url.resourceValues(forKeys: [.contentModificationDateKey])
-                .contentModificationDate
-        }
+    func writeGarbageIndex(_ data: Data) throws {
+        try createDirectories()
+        try data.write(to: indexURL)
+    }
 
-        /// When a page's ink last reached disk. Since the split that is the ink
-        /// layer's file, not the page file — a page whose ink changes but whose
-        /// layer list does not never rewrites its page file at all.
-        func inkWrittenAt(ofPage pageID: UUID) throws -> Date? {
-            let page = try PropertyListDecoder().decode(
-                PageFile.self,
-                from: Data(contentsOf: pagesURL.appendingPathComponent("\(pageID.uuidString).plist"))
-            )
-            guard let inkLayerID = page.layerIDs.last else { return nil }
-            return try? layersURL.appendingPathComponent("\(inkLayerID.uuidString).plist")
-                .resourceValues(forKeys: [.contentModificationDateKey])
-                .contentModificationDate
-        }
-
-        /// When anything durable was last written, or `nil` if nothing has been
-        /// yet.
-        ///
-        /// Timing tests poll this rather than `store.load()`: decoding a megabyte
-        /// of property list on every poll would cost more than the intervals
-        /// being measured and would show up inside them.
-        ///
-        /// It watches `layers/` as well as `pages/`, and that is not belt and
-        /// braces — since the layer split an ordinary ink save writes **only** a
-        /// layer file, so a probe that watched page files alone would see
-        /// nothing land and wait forever. The first save of a page still writes
-        /// both, which is why this went unnoticed until a test measured a
-        /// *second* save's timing.
-        var savedAt: Date? {
-            [pagesURL, layersURL].flatMap { directory in
-                (try? FileManager.default.contentsOfDirectory(
-                    at: directory,
-                    includingPropertiesForKeys: [.contentModificationDateKey]
-                )) ?? []
-            }.compactMap {
-                try? $0.resourceValues(forKeys: [.contentModificationDateKey])
-                    .contentModificationDate
-            }.max()
-        }
-
-        /// Overwrites one page's file with bytes that cannot decode. The file
-        /// still exists — a missing file is a dangling reference and fatal —
-        /// but reading it fails.
-        func corruptPageFile(pageID: UUID) throws {
-            try Data("not a page".utf8).write(
-                to: pagesURL.appendingPathComponent("\(pageID.uuidString).plist")
-            )
-        }
-
-        func writeGarbageIndex(_ data: Data) throws {
-            try FileManager.default.createDirectory(at: pagesURL, withIntermediateDirectories: true)
-            try data.write(to: indexURL)
-        }
-
-        /// The page file backing whatever page the session currently shows.
-        @MainActor
-        func currentPageURL(of session: EditorSession) -> URL {
-            pagesURL.appendingPathComponent("\(session.currentPageID.uuidString).plist")
-        }
-
-
-        init() {
-            directory = URL(fileURLWithPath: NSTemporaryDirectory())
-                .appendingPathComponent("tubernotes-session-\(UUID().uuidString)")
-            try? FileManager.default.createDirectory(
-                at: directory,
-                withIntermediateDirectories: true
-            )
-            store = DocumentStore(
-                directoryURL: directory.appendingPathComponent("JustACanvas.tubernotes")
-            )
-        }
-
-        /// A short debounce by default: these tests assert the debounce fires,
-        /// not that it waits 500 ms.
-        @MainActor
-        func session(debounce: Duration = .milliseconds(20)) -> EditorSession {
-            EditorSession(store: store, debounce: debounce)
-        }
-
-        deinit {
-            try? FileManager.default.removeItem(at: directory)
-        }
+    /// The page file backing whatever page the editor currently shows.
+    @MainActor
+    func currentPageURL(of session: EditorSession) -> URL {
+        pageURL(session.currentPageID)
     }
 }

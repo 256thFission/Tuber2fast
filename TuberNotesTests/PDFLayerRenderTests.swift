@@ -26,7 +26,7 @@ struct PDFLayerRenderTests {
 
     @Test("A pdf layer composites: the quadrants land where the display shows them")
     func aPDFLayerComposites() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("pdfrender")
         let renderer = StaticLayerRenderer(store: scratch.store)
         let layer = try await scratch.pdfLayer(
             bytes: PDFFixture.quadrantPDF(rotate: 0),
@@ -52,7 +52,7 @@ struct PDFLayerRenderTests {
 
     @Test("A rotated source page composites the way it displays")
     func aRotatedSourceComposites() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("pdfrender")
         let renderer = StaticLayerRenderer(store: scratch.store)
         // /Rotate 90 displays the 120x200 crop as 200x120, turned clockwise:
         // the unrotated bottom-left (blue) lands top-left.
@@ -78,7 +78,7 @@ struct PDFLayerRenderTests {
 
     @Test("A pdf layer is placed by its transform, not stretched to the page")
     func placementFollowsTheTransform() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("pdfrender")
         let renderer = StaticLayerRenderer(store: scratch.store)
         // The 120x200 source placed at (100, 200) as a 120x200 patch on the
         // canonical page.
@@ -100,7 +100,7 @@ struct PDFLayerRenderTests {
 
     @Test("An image layer over a pdf layer composites; neither poisons the other")
     func anImageOverAPDFComposites() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("pdfrender")
         let renderer = StaticLayerRenderer(store: scratch.store)
         let worksheet = try await scratch.pdfLayer(
             bytes: PDFFixture.quadrantPDF(rotate: 0),
@@ -128,7 +128,7 @@ struct PDFLayerRenderTests {
 
     @Test("A pdf composite's bytes count against the cache bound")
     func pdfCompositeBytesAreCounted() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("pdfrender")
         let renderer = StaticLayerRenderer(store: scratch.store)
         let layer = try await scratch.pdfLayer(
             bytes: PDFFixture.quadrantPDF(rotate: 0),
@@ -150,7 +150,7 @@ struct PDFLayerRenderTests {
 
     @Test("A pdf layer whose asset is missing refuses the composite")
     func aMissingAssetRefuses() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("pdfrender")
         let renderer = StaticLayerRenderer(store: scratch.store)
         let layer = LayerEnvelope(
             layerID: UUID(),
@@ -171,7 +171,7 @@ struct PDFLayerRenderTests {
 
     @Test("An asset that is not a PDF refuses, never a plausible wrong picture")
     func unreadableAssetBytesRefuse() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("pdfrender")
         let renderer = StaticLayerRenderer(store: scratch.store)
         let layer = try await scratch.pdfLayer(
             bytes: Data("not a pdf".utf8),
@@ -192,7 +192,7 @@ struct PDFLayerRenderTests {
 
     @Test("A source page index outside the document refuses")
     func anOutOfRangeSourcePageRefuses() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("pdfrender")
         let renderer = StaticLayerRenderer(store: scratch.store)
         let layer = try await scratch.pdfLayer(
             bytes: PDFFixture.quadrantPDF(rotate: 0),
@@ -212,7 +212,7 @@ struct PDFLayerRenderTests {
 
     @Test("A pdf payload that will not decode refuses")
     func anUndecodablePayloadRefuses() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("pdfrender")
         let renderer = StaticLayerRenderer(store: scratch.store)
         let layer = LayerEnvelope(
             layerID: UUID(),
@@ -233,7 +233,7 @@ struct PDFLayerRenderTests {
 
     @Test("An unrecognized kind still refuses the whole composite")
     func anUnknownKindStillRefuses() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("pdfrender")
         let renderer = StaticLayerRenderer(store: scratch.store)
         let stranger = LayerEnvelope(
             layerID: UUID(),
@@ -256,7 +256,7 @@ struct PDFLayerRenderTests {
     @Test("An imported PDF page shows its worksheet, not the refusal tint")
     @MainActor
     func anImportedPDFPageComposites() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("pdfrender")
         let session = EditorSession(store: scratch.store, debounce: .milliseconds(10))
         await session.start()
 
@@ -283,7 +283,7 @@ struct PDFLayerRenderTests {
     @Test("An image imported onto a pdf-backed page composites with it")
     @MainActor
     func anImageOnAPDFPageComposites() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("pdfrender")
         let session = EditorSession(store: scratch.store, debounce: .milliseconds(10))
         await session.start()
 
@@ -307,7 +307,7 @@ struct PDFLayerRenderTests {
         let before = page.contents as! CGImage
 
         _ = try await session.importImage(
-            Scratch.solidHEIC(width: 64, height: 64, color: .green),
+            TestScratch.solidHEIC(width: 64, height: 64, color: .green),
             format: .heic,
             sourceWidth: 64,
             sourceHeight: 64,
@@ -386,73 +386,5 @@ struct PDFLayerRenderTests {
     }
     private func isWhite(_ p: (r: Int, g: Int, b: Int)) -> Bool {
         near(p.r, 255) && near(p.g, 255) && near(p.b, 255)
-    }
-
-    // MARK: A scratch document
-
-    private final class Scratch {
-        let root: URL
-        let store: DocumentStore
-
-        init() throws {
-            root = URL(fileURLWithPath: NSTemporaryDirectory())
-                .appendingPathComponent("tubernotes-pdfrender-\(UUID().uuidString)")
-            try FileManager.default.createDirectory(
-                at: root.appendingPathComponent("JustACanvas.tubernotes/pages"),
-                withIntermediateDirectories: true
-            )
-            store = DocumentStore(directoryURL: root.appendingPathComponent("JustACanvas.tubernotes"))
-        }
-
-        /// Writes PDF bytes as an asset and returns the pdf layer naming it.
-        func pdfLayer(
-            bytes: Data,
-            sourcePageIndex: Int,
-            transform: PageSpaceTransform
-        ) async throws -> LayerEnvelope {
-            let assetID = UUID()
-            try await store.writeAsset(bytes, assetID: assetID, format: .pdf)
-            return try LayerEnvelope.pdf(
-                layerID: UUID(),
-                ref: PDFLayerRef(assetID: assetID, sourcePageIndex: sourcePageIndex),
-                pageSpaceTransform: transform
-            )
-        }
-
-        func imageLayer(color: UIColor, transform: PageSpaceTransform) async throws -> LayerEnvelope {
-            let assetID = UUID()
-            try await store.writeAsset(
-                Self.solidHEIC(width: 64, height: 64, color: color), assetID: assetID, format: .heic
-            )
-            return try LayerEnvelope.image(
-                layerID: UUID(),
-                ref: ImageLayerRef(assetID: assetID, format: .heic),
-                pageSpaceTransform: transform
-            )
-        }
-
-        static func solidHEIC(width: Int, height: Int, color: UIColor) -> Data {
-            guard let context = CGContext(
-                data: nil,
-                width: width,
-                height: height,
-                bitsPerComponent: 8,
-                bytesPerRow: 0,
-                space: CGColorSpaceCreateDeviceRGB(),
-                bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue
-                    | CGBitmapInfo.byteOrder32Little.rawValue
-            ) else {
-                preconditionFailure("could not build a \(width)x\(height) context")
-            }
-            context.setFillColor(color.cgColor)
-            context.fill(CGRect(x: 0, y: 0, width: width, height: height))
-            guard let image = context.makeImage() else {
-                preconditionFailure("the context yielded no image")
-            }
-            guard let encoded = ImageImportPreparation.heicEncoded(image) else {
-                preconditionFailure("HEIC encoding failed")
-            }
-            return encoded
-        }
     }
 }

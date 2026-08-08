@@ -29,7 +29,7 @@ struct StaticLayerRenderTests {
 
     @Test("The composite stacks layers in list order, lower ones beneath")
     func compositeStacksInListOrder() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("render")
         let store = scratch.store
         let renderer = StaticLayerRenderer(store: store)
 
@@ -63,7 +63,7 @@ struct StaticLayerRenderTests {
 
     @Test("An image lands the right way up in page space")
     func imagesAreNotFlipped() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("render")
         let store = scratch.store
         let renderer = StaticLayerRenderer(store: store)
 
@@ -72,7 +72,7 @@ struct StaticLayerRenderTests {
         // flip anywhere in the chain shows here as an upside-down page.
         let layer = try await scratch.imageLayer(
             store: store,
-            image: Scratch.twoToneHEIC(top: .blue, bottom: .yellow),
+            image: TestScratch.twoToneHEIC(top: .blue, bottom: .yellow),
             transform: PageSpaceTransform(
                 a: PageGeometry.canonical.width, b: 0, c: 0, d: PageGeometry.canonical.height, tx: 0, ty: 0
             )
@@ -85,7 +85,7 @@ struct StaticLayerRenderTests {
 
     @Test("A layer is placed by its own transform, not stretched to the page")
     func placementFollowsTheTransform() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("render")
         let store = scratch.store
         let renderer = StaticLayerRenderer(store: store)
 
@@ -105,7 +105,7 @@ struct StaticLayerRenderTests {
 
     @Test("A page with no static layers renders nothing at all")
     func noLayersIsNotAComposite() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("render")
         let renderer = StaticLayerRenderer(store: scratch.store)
         let render = await renderer.composite(
             for: StaticLayerRequest(layers: [], geometry: .canonical, pixelsPerPagePoint: 1)
@@ -121,7 +121,7 @@ struct StaticLayerRenderTests {
 
     @Test("Downsampling decodes no larger than the bound it is given")
     func downsamplingHonoursItsBound() throws {
-        let source = Scratch.solidHEIC(width: 1600, height: 1000, color: .red)
+        let source = TestScratch.solidHEIC(width: 1600, height: 1000, color: .red)
 
         // The source, undiminished, for a comparison the assertion below needs.
         let full = try #require(StaticLayerRenderer.downsample(source, maxPixelSize: 4000))
@@ -165,14 +165,14 @@ struct StaticLayerRenderTests {
 
     @Test("A large source placed small never materializes at full size")
     func aLargeSourcePlacedSmallDecodesSmall() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("render")
         let store = scratch.store
         let renderer = StaticLayerRenderer(store: store)
 
         // 1600x1000 of source, placed 60 page points wide.
         let layer = try await scratch.imageLayer(
             store: store,
-            image: Scratch.solidHEIC(width: 1600, height: 1000, color: .red),
+            image: TestScratch.solidHEIC(width: 1600, height: 1000, color: .red),
             transform: PageSpaceTransform(a: 60, b: 0, c: 0, d: 37.5, tx: 10, ty: 10)
         )
         let request = StaticLayerRequest(layers: [layer], geometry: .canonical, pixelsPerPagePoint: 2)
@@ -198,7 +198,7 @@ struct StaticLayerRenderTests {
 
     @Test("The cache evicts at its byte bound, and never the entry just made")
     func theCacheEvictsAtItsByteBound() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("render")
         let store = scratch.store
         // One byte: every insert overruns it, so the trim runs on every insert
         // and the protection of the newest entry is what is being watched.
@@ -232,7 +232,7 @@ struct StaticLayerRenderTests {
 
     @Test("At a bound between two and three composites, exactly the least recently used entry goes")
     func trimEvictsInLeastRecentlyUsedOrder() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("render")
         let store = scratch.store
         // Three composites of distinct sizes — roughly 1.94, 1.57, and 1.26 MB
         // at these levels of detail on the canonical page — and a bound that
@@ -264,7 +264,7 @@ struct StaticLayerRenderTests {
 
     @Test("The trim loops until under the bound, protecting only the entry just made")
     func trimLoopsUntilUnderTheBound() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("render")
         let store = scratch.store
         let renderer = StaticLayerRenderer(store: store, byteBound: 3_700_000)
 
@@ -289,7 +289,7 @@ struct StaticLayerRenderTests {
 
     @Test("Under its bound, the cache holds both composites and re-serves them")
     func theCacheServesRepeatedRequests() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("render")
         let store = scratch.store
         let renderer = StaticLayerRenderer(store: store)
 
@@ -306,7 +306,7 @@ struct StaticLayerRenderTests {
 
     @Test("A different level of detail is a different composite, not a reused one")
     func levelOfDetailIsPartOfTheIdentity() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("render")
         let store = scratch.store
         let renderer = StaticLayerRenderer(store: store)
         let layer = try await scratch.imageLayer(store: store, color: .red, transform: .fullPage)
@@ -323,7 +323,7 @@ struct StaticLayerRenderTests {
 
     @Test("Composites whose pages left the live window are evicted")
     func retainDropsCompositesOutsideTheLiveWindow() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("render")
         let store = scratch.store
         let renderer = StaticLayerRenderer(store: store)
 
@@ -357,7 +357,7 @@ struct StaticLayerRenderTests {
 
     @Test("An in-flight composite is not served to a request for a moved layer")
     func inFlightDedupIsTransformAware() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("render")
         let store = scratch.store
         let renderer = StaticLayerRenderer(store: store)
         let gate = RenderGate()
@@ -445,7 +445,7 @@ struct StaticLayerRenderTests {
 
     @Test("An asset that will not decode refuses the whole composite")
     func anUndecodableAssetRefusesTheComposite() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("render")
         let store = scratch.store
         let renderer = StaticLayerRenderer(store: store)
 
@@ -470,7 +470,7 @@ struct StaticLayerRenderTests {
 
     @Test("An asset format this build cannot read refuses the composite")
     func anUnsupportedFormatRefusesTheComposite() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("render")
         let renderer = StaticLayerRenderer(store: scratch.store)
 
         // The shape a pre-narrowing PNG asset takes to this build: a format
@@ -493,7 +493,7 @@ struct StaticLayerRenderTests {
 
     @Test("An asset that is not on disk refuses the composite")
     func aMissingAssetRefusesTheComposite() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("render")
         let renderer = StaticLayerRenderer(store: scratch.store)
 
         let layer = LayerEnvelope(
@@ -516,7 +516,7 @@ struct StaticLayerRenderTests {
     @Test("The decode and the composite do not run on the main thread")
     @MainActor
     func theCompositeIsBuiltOffMain() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("render")
         let store = scratch.store
         let renderer = StaticLayerRenderer(store: store)
         let layer = try await scratch.imageLayer(store: store, color: .red, transform: .fullPage)
@@ -537,7 +537,7 @@ struct StaticLayerRenderTests {
     @Test("A page with static layers gets a layer stack beneath a transparent canvas")
     @MainActor
     func theBackdropIsASiblingLayerBeneathTheCanvas() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("render")
         let store = scratch.store
         let renderer = StaticLayerRenderer(store: store)
         let layer = try await scratch.imageLayer(store: store, color: .red, transform: .fullPage)
@@ -607,7 +607,7 @@ struct StaticLayerRenderTests {
     @Test("The mirror registers the stack with the scroll view's own geometry")
     @MainActor
     func theMirrorRegistersWithTheScroll() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("render")
         let store = scratch.store
         let layer = try await scratch.imageLayer(
             store: store, color: .red, transform: .fullPage
@@ -651,7 +651,7 @@ struct StaticLayerRenderTests {
     @Test("The stack shows the composite once it lands, and the placeholder until then")
     @MainActor
     func theStackShowsThePlaceholderThenTheComposite() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("render")
         let store = scratch.store
         let layer = try await scratch.imageLayer(store: store, color: .red, transform: .fullPage)
 
@@ -676,7 +676,7 @@ struct StaticLayerRenderTests {
     @Test("A stack that refuses shows a refusal, not a partial picture")
     @MainActor
     func aRefusedStackShowsARefusal() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("render")
         let store = scratch.store
         let good = try await scratch.imageLayer(store: store, color: .red, transform: .fullPage)
         let broken = try await scratch.imageLayer(
@@ -704,7 +704,7 @@ struct StaticLayerRenderTests {
     @Test("An imported image becomes visible under the ink of a live page")
     @MainActor
     func anImportedImageRendersUnderTheInk() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("render")
         let session = EditorSession(store: scratch.store, debounce: .milliseconds(10))
         await session.start()
 
@@ -715,7 +715,7 @@ struct StaticLayerRenderTests {
         let canvasPage = try #require(session.currentCanvas)
         #expect(canvasPage.backdrop == nil, "a blank page starts with nothing beneath its ink")
 
-        let image = Scratch.solidHEIC(width: 400, height: 300, color: .green)
+        let image = TestScratch.solidHEIC(width: 400, height: 300, color: .green)
         _ = try await session.importImage(image, format: .heic, sourceWidth: 400, sourceHeight: 300)
         root.layoutIfNeeded()
 
@@ -730,7 +730,7 @@ struct StaticLayerRenderTests {
     @Test("A page carrying a refused layer offers no static layers to render")
     @MainActor
     func aRefusedPageRendersNothing() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("render")
         let pageID = UUID()
         let assetID = UUID()
 
@@ -854,112 +854,6 @@ struct StaticLayerRenderTests {
     private func isWhite(_ p: (r: Int, g: Int, b: Int)) -> Bool {
         near(p.r, 255) && near(p.g, 255) && near(p.b, 255)
     }
-
-    // MARK: A scratch document
-
-    /// A unique directory per test, with a store over it. A class, not a
-    /// struct, because the assertions above capture it.
-    private final class Scratch {
-        let root: URL
-        let store: DocumentStore
-
-        var documentURL: URL { root.appendingPathComponent("JustACanvas.tubernotes") }
-
-        init() throws {
-            root = URL(fileURLWithPath: NSTemporaryDirectory())
-                .appendingPathComponent("tubernotes-render-\(UUID().uuidString)")
-            try FileManager.default.createDirectory(
-                at: root.appendingPathComponent("JustACanvas.tubernotes/pages"),
-                withIntermediateDirectories: true
-            )
-            store = DocumentStore(directoryURL: root.appendingPathComponent("JustACanvas.tubernotes"))
-        }
-
-        func index(pageIDs: [UUID]) -> DocumentIndex {
-            DocumentIndex(
-                formatVersion: DocumentIndex.currentFormatVersion,
-                documentID: UUID(),
-                pages: pageIDs.map { PageRecord(id: $0, geometry: .canonical) },
-                currentPageIndex: 0
-            )
-        }
-
-        func removeAsset(_ assetID: UUID) throws {
-            try FileManager.default.removeItem(
-                at: documentURL.appendingPathComponent("assets/\(assetID.uuidString).heic")
-            )
-        }
-
-        /// Writes an asset and returns the layer envelope naming it.
-        func imageLayer(
-            store: DocumentStore,
-            color: UIColor,
-            transform: PageSpaceTransform
-        ) async throws -> LayerEnvelope {
-            try await imageLayer(
-                store: store,
-                image: Self.solidHEIC(width: 64, height: 64, color: color),
-                transform: transform
-            )
-        }
-
-        func imageLayer(
-            store: DocumentStore,
-            image: Data,
-            transform: PageSpaceTransform
-        ) async throws -> LayerEnvelope {
-            let assetID = UUID()
-            try await store.writeAsset(image, assetID: assetID, format: .heic)
-            return try LayerEnvelope.image(
-                layerID: UUID(),
-                ref: ImageLayerRef(assetID: assetID, format: .heic),
-                pageSpaceTransform: transform
-            )
-        }
-
-        /// HEIC bytes for a solid rectangle. Built in memory through ImageIO —
-        /// the same decoder the renderer uses, from the other end.
-        static func solidHEIC(width: Int, height: Int, color: UIColor) -> Data {
-            heic(width: width, height: height) { context in
-                context.setFillColor(color.cgColor)
-                context.fill(CGRect(x: 0, y: 0, width: width, height: height))
-            }
-        }
-
-        /// HEIC bytes whose top half is one colour and bottom half another, so
-        /// orientation is observable rather than assumed.
-        static func twoToneHEIC(top: UIColor, bottom: UIColor) -> Data {
-            heic(width: 64, height: 64) { context in
-                context.setFillColor(bottom.cgColor)
-                context.fill(CGRect(x: 0, y: 0, width: 64, height: 32))
-                context.setFillColor(top.cgColor)
-                context.fill(CGRect(x: 0, y: 32, width: 64, height: 32))
-            }
-        }
-
-        private static func heic(width: Int, height: Int, _ draw: (CGContext) -> Void) -> Data {
-            guard let context = CGContext(
-                data: nil,
-                width: width,
-                height: height,
-                bitsPerComponent: 8,
-                bytesPerRow: 0,
-                space: CGColorSpaceCreateDeviceRGB(),
-                bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue
-                    | CGBitmapInfo.byteOrder32Little.rawValue
-            ) else {
-                preconditionFailure("could not build a \(width)x\(height) context")
-            }
-            draw(context)
-            guard let image = context.makeImage() else {
-                preconditionFailure("the context yielded no image")
-            }
-            guard let encoded = ImageImportPreparation.heicEncoded(image) else {
-                preconditionFailure("HEIC encoding failed")
-            }
-            return encoded
-        }
-    }
 }
 
 private extension PageSpaceTransform {
@@ -968,4 +862,63 @@ private extension PageSpaceTransform {
     static let fullPage = PageSpaceTransform(
         a: PageGeometry.canonical.width, b: 0, c: 0, d: PageGeometry.canonical.height, tx: 0, ty: 0
     )
+}
+
+/// The fixtures this suite composites from, and the one call shape it uses:
+/// the store is named first because half these tests build a second store to
+/// watch a cache miss reach disk.
+private extension TestScratch {
+    func imageLayer(
+        store: any DocumentStoring,
+        color: UIColor,
+        transform: PageSpaceTransform
+    ) async throws -> LayerEnvelope {
+        try await imageLayer(color: color, transform: transform, store: store)
+    }
+
+    func imageLayer(
+        store: any DocumentStoring,
+        image: Data,
+        transform: PageSpaceTransform
+    ) async throws -> LayerEnvelope {
+        let assetID = UUID()
+        try await store.writeAsset(image, assetID: assetID, format: .heic)
+        return try LayerEnvelope.image(
+            layerID: UUID(),
+            ref: ImageLayerRef(assetID: assetID, format: .heic),
+            pageSpaceTransform: transform
+        )
+    }
+
+    func removeAsset(_ assetID: UUID) throws {
+        try FileManager.default.removeItem(at: assetURL(assetID, "heic"))
+    }
+
+    /// HEIC bytes whose top half is one colour and bottom half another, so
+    /// orientation is observable rather than assumed.
+    static func twoToneHEIC(top: UIColor, bottom: UIColor) -> Data {
+        guard let context = CGContext(
+            data: nil,
+            width: 64,
+            height: 64,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue
+                | CGBitmapInfo.byteOrder32Little.rawValue
+        ) else {
+            preconditionFailure("could not build a 64x64 context")
+        }
+        context.setFillColor(bottom.cgColor)
+        context.fill(CGRect(x: 0, y: 0, width: 64, height: 32))
+        context.setFillColor(top.cgColor)
+        context.fill(CGRect(x: 0, y: 32, width: 64, height: 32))
+        guard let image = context.makeImage() else {
+            preconditionFailure("the context yielded no image")
+        }
+        guard let encoded = ImageImportPreparation.heicEncoded(image) else {
+            preconditionFailure("HEIC encoding failed")
+        }
+        return encoded
+    }
 }

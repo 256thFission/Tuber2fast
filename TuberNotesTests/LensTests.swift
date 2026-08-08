@@ -32,7 +32,7 @@ struct LensTests {
 
     @Test("The lens at depth resolves detail the scaled base cannot")
     func theLensIsSharperThanTheBase() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("lens")
         let renderer = StaticLayerRenderer(store: scratch.store)
         let layer = try await scratch.pdfLayer(
             bytes: PDFFixture.stripePDF(side: 400),
@@ -75,7 +75,7 @@ struct LensTests {
 
     @Test("The lens renders the rect it was asked about, not the page origin")
     func theLensIsTheVisibleRect() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("lens")
         let renderer = StaticLayerRenderer(store: scratch.store)
         // The quadrant fixture: distinct colors per region make "which rect"
         // observable.
@@ -101,7 +101,7 @@ struct LensTests {
 
     @Test("An image layer on a pdf page is present in the lens, above the worksheet")
     func anImageRidesInTheLens() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("lens")
         let renderer = StaticLayerRenderer(store: scratch.store)
         let worksheet = try await scratch.pdfLayer(
             bytes: PDFFixture.stripePDF(side: 400),
@@ -129,7 +129,7 @@ struct LensTests {
 
     @Test("A pdf layer partly outside the visible rect contributes its overlap only")
     func partialOverlapIsClipped() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("lens")
         let renderer = StaticLayerRenderer(store: scratch.store)
         // The quadrant source placed in the page's lower-right; the lens looks
         // at the upper-left, overlapping only the source's top-left (red).
@@ -154,7 +154,8 @@ struct LensTests {
     @Test("A gesture frame never requests a lens; the settle callbacks do")
     @MainActor
     func theLensIsAskedForAtSettleOnly() async throws {
-        let (controller, _) = try await hostedStripePage()
+        let hosted = try await hostedStripePage()
+        let controller = hosted.controller
         let canvas = controller.canvasView
 
         canvas.zoomScale = 4
@@ -177,7 +178,8 @@ struct LensTests {
     @Test("A settle at or near the base's own detail asks for nothing")
     @MainActor
     func aShallowSettleAsksForNothing() async throws {
-        let (controller, _) = try await hostedStripePage()
+        let hosted = try await hostedStripePage()
+        let controller = hosted.controller
         let canvas = controller.canvasView
         // fit-width for a 400pt page in an 820pt viewport is ~2.05; the base
         // composite already carries that detail, so settling there is not a
@@ -189,7 +191,8 @@ struct LensTests {
     @Test("The lens lands above the base and shows at the settled rect")
     @MainActor
     func theLensLands() async throws {
-        let (controller, _) = try await hostedStripePage()
+        let hosted = try await hostedStripePage()
+        let controller = hosted.controller
         let canvas = controller.canvasView
         let backdrop = try #require(controller.backdrop)
 
@@ -211,7 +214,9 @@ struct LensTests {
     @Test("A stale lens is dropped: zooming again while one is in flight")
     @MainActor
     func aStaleLensIsDropped() async throws {
-        let (controller, renderer) = try await hostedStripePage()
+        let hosted = try await hostedStripePage()
+        let controller = hosted.controller
+        let renderer = hosted.renderer
         let canvas = controller.canvasView
         let backdrop = try #require(controller.backdrop)
 
@@ -238,7 +243,8 @@ struct LensTests {
     @Test("The visible rect is clamped to the page before the rasterizer sees it")
     @MainActor
     func theVisibleRectIsClamped() async throws {
-        let (controller, _) = try await hostedStripePage()
+        let hosted = try await hostedStripePage()
+        let controller = hosted.controller
         let canvas = controller.canvasView
         let backdrop = try #require(controller.backdrop)
 
@@ -261,7 +267,8 @@ struct LensTests {
     @Test("The moment the view transforms away, the lens is gone")
     @MainActor
     func theLensDiesOnTheFirstGestureFrame() async throws {
-        let (controller, _) = try await hostedStripePage()
+        let hosted = try await hostedStripePage()
+        let controller = hosted.controller
         let canvas = controller.canvasView
         let backdrop = try #require(controller.backdrop)
 
@@ -281,8 +288,8 @@ struct LensTests {
     /// A hosted page carrying one full-page stripe pdf layer, laid out and
     /// with its base composite requested.
     @MainActor
-    private func hostedStripePage() async throws -> (PageCanvasController, StaticLayerRenderer) {
-        let scratch = try Scratch()
+    private func hostedStripePage() async throws -> HostedPage {
+        let scratch = try TestScratch("lens")
         let renderer = StaticLayerRenderer(store: scratch.store)
         let layer = try await scratch.pdfLayer(
             bytes: PDFFixture.stripePDF(side: 400),
@@ -300,10 +307,20 @@ struct LensTests {
         root.frame = CGRect(x: 0, y: 0, width: 820, height: 1180)
         controller.setStaticLayers([layer])
         root.layoutIfNeeded()
-        // Nothing deletes the scratch directory on deinit, so the store's
-        // files outlive this reference; the controller retains the renderer,
-        // and the renderer retains the store.
-        return (controller, renderer)
+        // The scratch travels with the page: its `deinit` removes the
+        // document, and the renderer reads the pdf asset from it on every
+        // lens render, so a scratch that died here would take the fixture
+        // with it.
+        return HostedPage(controller: controller, renderer: renderer, scratch: scratch)
+    }
+
+    /// A laid-out page and everything that has to outlive the call that built
+    /// it.
+    @MainActor
+    private struct HostedPage {
+        let controller: PageCanvasController
+        let renderer: StaticLayerRenderer
+        let scratch: TestScratch
     }
 
     /// Releases every waiter at once; order does not matter to these tests.
@@ -369,72 +386,5 @@ struct LensTests {
     }
     private func isWhite(_ p: (r: Int, g: Int, b: Int)) -> Bool {
         near(p.r, 255) && near(p.g, 255) && near(p.b, 255)
-    }
-
-    // MARK: A scratch document
-
-    private final class Scratch {
-        let root: URL
-        let store: DocumentStore
-
-        init() throws {
-            root = URL(fileURLWithPath: NSTemporaryDirectory())
-                .appendingPathComponent("tubernotes-lens-\(UUID().uuidString)")
-            try FileManager.default.createDirectory(
-                at: root.appendingPathComponent("JustACanvas.tubernotes/pages"),
-                withIntermediateDirectories: true
-            )
-            store = DocumentStore(directoryURL: root.appendingPathComponent("JustACanvas.tubernotes"))
-        }
-
-        func pdfLayer(
-            bytes: Data,
-            sourcePageIndex: Int = 0,
-            transform: PageSpaceTransform
-        ) async throws -> LayerEnvelope {
-            let assetID = UUID()
-            try await store.writeAsset(bytes, assetID: assetID, format: .pdf)
-            return try LayerEnvelope.pdf(
-                layerID: UUID(),
-                ref: PDFLayerRef(assetID: assetID, sourcePageIndex: sourcePageIndex),
-                pageSpaceTransform: transform
-            )
-        }
-
-        func imageLayer(color: UIColor, transform: PageSpaceTransform) async throws -> LayerEnvelope {
-            let assetID = UUID()
-            try await store.writeAsset(
-                Self.solidHEIC(width: 64, height: 64, color: color), assetID: assetID, format: .heic
-            )
-            return try LayerEnvelope.image(
-                layerID: UUID(),
-                ref: ImageLayerRef(assetID: assetID, format: .heic),
-                pageSpaceTransform: transform
-            )
-        }
-
-        static func solidHEIC(width: Int, height: Int, color: UIColor) -> Data {
-            guard let context = CGContext(
-                data: nil,
-                width: width,
-                height: height,
-                bitsPerComponent: 8,
-                bytesPerRow: 0,
-                space: CGColorSpaceCreateDeviceRGB(),
-                bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue
-                    | CGBitmapInfo.byteOrder32Little.rawValue
-            ) else {
-                preconditionFailure("could not build a \(width)x\(height) context")
-            }
-            context.setFillColor(color.cgColor)
-            context.fill(CGRect(x: 0, y: 0, width: width, height: height))
-            guard let image = context.makeImage() else {
-                preconditionFailure("the context yielded no image")
-            }
-            guard let encoded = ImageImportPreparation.heicEncoded(image) else {
-                preconditionFailure("HEIC encoding failed")
-            }
-            return encoded
-        }
     }
 }

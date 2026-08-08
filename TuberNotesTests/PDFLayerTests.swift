@@ -22,8 +22,8 @@ struct PDFLayerTests {
 
     @Test("A pdf layer round trips: asset, source page, and placement")
     func pdfLayerRoundTrips() async throws {
-        let scratch = try Scratch()
-        let store = scratch.store()
+        let scratch = try TestScratch("pdf")
+        let store = scratch.freshStore()
         let pageID = UUID()
         let assetID = UUID()
         let layerID = UUID()
@@ -40,7 +40,7 @@ struct PDFLayerTests {
             changedPages: [pageID: [envelope, inkEnvelope(payload: Data([0x07]))]]
         )
 
-        let loaded = try await scratch.store().loadPage(pageID)
+        let loaded = try await scratch.freshStore().loadPage(pageID)
         #expect(loaded.refusedLayers.isEmpty)
         #expect(loaded.staticLayers.count == 1)
         let static0 = try #require(loaded.staticLayers.first)
@@ -69,11 +69,11 @@ struct PDFLayerTests {
 
     @Test("A pdf layer's transform must be invertible")
     func nonInvertiblePDFTransformFailsLoud() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("pdf")
         let assetID = UUID()
         let layerID = UUID()
         let pageID = UUID()
-        try await scratch.store().writeAsset(onePageFixture(), assetID: assetID, format: .pdf)
+        try await scratch.freshStore().writeAsset(onePageFixture(), assetID: assetID, format: .pdf)
 
         let singular = PageSpaceTransform(a: 200, b: 100, c: 400, d: 200, tx: 0, ty: 0)
         try scratch.writePage(
@@ -89,17 +89,17 @@ struct PDFLayerTests {
         )
 
         await #expect(throws: LayerError.nonInvertibleLayerTransform(layerID: layerID)) {
-            _ = try await scratch.store().loadPage(pageID)
+            _ = try await scratch.freshStore().loadPage(pageID)
         }
     }
 
     @Test("A negative source page index is an invalid state, not a clamp")
     func negativeSourcePageIndexFailsLoud() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("pdf")
         let assetID = UUID()
         let layerID = UUID()
         let pageID = UUID()
-        try await scratch.store().writeAsset(onePageFixture(), assetID: assetID, format: .pdf)
+        try await scratch.freshStore().writeAsset(onePageFixture(), assetID: assetID, format: .pdf)
 
         try scratch.writePage(
             pageID,
@@ -116,13 +116,13 @@ struct PDFLayerTests {
         await #expect(
             throws: LayerError.negativeSourcePageIndex(layerID: layerID, index: -1)
         ) {
-            _ = try await scratch.store().loadPage(pageID)
+            _ = try await scratch.freshStore().loadPage(pageID)
         }
     }
 
     @Test("A pdf layer whose asset is missing refuses the layer, and the document opens")
     func aMissingPDFAssetRefusesTheLayerOnly() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("pdf")
         let missing = UUID()
         let layerID = UUID()
         let pageID = UUID()
@@ -141,7 +141,7 @@ struct PDFLayerTests {
         try scratch.writeIndexFile(scratch.index(pageIDs: [pageID]))
 
         // The document opens, and the page loads: the refusal is the layer's.
-        let loaded = try await scratch.store().loadPage(pageID)
+        let loaded = try await scratch.freshStore().loadPage(pageID)
         #expect(loaded.refusedLayers.map(\.reason) == [.missingAsset(missing)])
         #expect(loaded.inkData == Data([0x01]))
         // Preserved as well as refused: dropping it is the one repair, and a
@@ -151,7 +151,7 @@ struct PDFLayerTests {
 
     @Test("A pdf layer whose payload will not decode refuses the layer")
     func anUnreadablePDFPayloadRefusesTheLayer() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("pdf")
         let layerID = UUID()
         let pageID = UUID()
 
@@ -168,7 +168,7 @@ struct PDFLayerTests {
             ]
         )
 
-        let loaded = try await scratch.store().loadPage(pageID)
+        let loaded = try await scratch.freshStore().loadPage(pageID)
         #expect(loaded.refusedLayers.map(\.reason) == [.unreadablePayload])
     }
 
@@ -177,11 +177,11 @@ struct PDFLayerTests {
     /// and takes the same refusal rather than being handed to an image decoder.
     @Test("An image layer may not name a pdf asset")
     func anImageLayerMayNotNameAPDFAsset() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("pdf")
         let assetID = UUID()
         let layerID = UUID()
         let pageID = UUID()
-        try await scratch.store().writeAsset(onePageFixture(), assetID: assetID, format: .pdf)
+        try await scratch.freshStore().writeAsset(onePageFixture(), assetID: assetID, format: .pdf)
 
         try scratch.writePage(
             pageID,
@@ -197,7 +197,7 @@ struct PDFLayerTests {
             ]
         )
 
-        let loaded = try await scratch.store().loadPage(pageID)
+        let loaded = try await scratch.freshStore().loadPage(pageID)
         #expect(
             loaded.refusedLayers.map(\.reason)
                 == [.unsupportedAssetFormat(assetID: assetID, format: "pdf")]
@@ -206,8 +206,8 @@ struct PDFLayerTests {
 
     @Test("A pdf asset is never rewritten: writing its ID again is refused")
     func pdfAssetsAreWriteOnce() async throws {
-        let scratch = try Scratch()
-        let store = scratch.store()
+        let scratch = try TestScratch("pdf")
+        let store = scratch.freshStore()
         let assetID = UUID()
         let original = onePageFixture()
 
@@ -245,8 +245,8 @@ struct PDFLayerTests {
     @Test("Importing a PDF appends one page per source page, each with a pdf layer under ink")
     @MainActor
     func importAppendsOnePagePerSourcePage() async throws {
-        let scratch = try Scratch()
-        let session = EditorSession(store: scratch.store(), debounce: .milliseconds(20))
+        let scratch = try TestScratch("pdf")
+        let session = EditorSession(store: scratch.freshStore(), debounce: .milliseconds(20))
         await session.start()
         let pagesBefore = session.pageCount
 
@@ -291,8 +291,8 @@ struct PDFLayerTests {
     @Test("An imported page carries its source's size rather than being letterboxed")
     @MainActor
     func importedPagesCarryTheirSourceSize() async throws {
-        let scratch = try Scratch()
-        let session = EditorSession(store: scratch.store(), debounce: .milliseconds(20))
+        let scratch = try TestScratch("pdf")
+        let session = EditorSession(store: scratch.freshStore(), debounce: .milliseconds(20))
         await session.start()
 
         let sizes = [
@@ -304,7 +304,7 @@ struct PDFLayerTests {
         #expect(session.lastSaveError == nil)
         #expect(appended.count == sizes.count)
 
-        let index = try #require(await scratch.store().load())
+        let index = try #require(await scratch.freshStore().load())
         for (offset, pageID) in appended.enumerated() {
             let position = try #require(index.pageIDs.firstIndex(of: pageID))
             let geometry = try #require(index.geometry(ofPageAt: position))
@@ -334,17 +334,17 @@ struct PDFLayerTests {
     @Test("Per-page geometry round trips through a save and a relaunch")
     @MainActor
     func perPageGeometryRoundTrips() async throws {
-        let scratch = try Scratch()
-        let first = EditorSession(store: scratch.store(), debounce: .milliseconds(20))
+        let scratch = try TestScratch("pdf")
+        let first = EditorSession(store: scratch.freshStore(), debounce: .milliseconds(20))
         await first.start()
         let appended = try await first.importPDF(twoPageFixture())
         await first.saveIfNeeded()
 
-        let second = EditorSession(store: scratch.store(), debounce: .milliseconds(20))
+        let second = EditorSession(store: scratch.freshStore(), debounce: .milliseconds(20))
         await second.start()
         #expect(second.phase == .ready)
 
-        let index = try #require(await scratch.store().load())
+        let index = try #require(await scratch.freshStore().load())
         #expect(index.pageIDs.suffix(2) == ArraySlice(appended))
         #expect(
             index.pages.map(\.geometry) == [
@@ -364,8 +364,8 @@ struct PDFLayerTests {
     @Test("A page appended past a landscape import is canonical portrait")
     @MainActor
     func appendingPastALandscapeImportGivesACanonicalPage() async throws {
-        let scratch = try Scratch()
-        let session = EditorSession(store: scratch.store(), debounce: .milliseconds(20))
+        let scratch = try TestScratch("pdf")
+        let session = EditorSession(store: scratch.freshStore(), debounce: .milliseconds(20))
         await session.start()
         try await session.importPDF(pdf(pageSizes: [CGSize(width: 842, height: 595)]) { _, _ in })
 
@@ -380,7 +380,7 @@ struct PDFLayerTests {
         session.pages.scrollViewDidEndDragging(scroll, willDecelerate: false)
         await session.saveIfNeeded()
 
-        let index = try #require(await scratch.store().load())
+        let index = try #require(await scratch.freshStore().load())
         #expect(index.pages.count == 3)
         #expect(index.pages[1].geometry == PageGeometry(width: 842, height: 595))
         #expect(index.pages[2].geometry == .canonical)
@@ -391,8 +391,8 @@ struct PDFLayerTests {
     @Test("An image import fits the page it lands on, not a document-wide page")
     @MainActor
     func imageImportFitsItsOwnPage() async throws {
-        let scratch = try Scratch()
-        let session = EditorSession(store: scratch.store(), debounce: .milliseconds(20))
+        let scratch = try TestScratch("pdf")
+        let session = EditorSession(store: scratch.freshStore(), debounce: .milliseconds(20))
         await session.start()
         let landscapePage = try await session.importPDF(
             pdf(pageSizes: [CGSize(width: 842, height: 595)]) { _, _ in }
@@ -421,8 +421,8 @@ struct PDFLayerTests {
     @Test("A PDF this build cannot open imports nothing")
     @MainActor
     func anUnreadablePDFImportsNothing() async throws {
-        let scratch = try Scratch()
-        let session = EditorSession(store: scratch.store(), debounce: .milliseconds(20))
+        let scratch = try TestScratch("pdf")
+        let session = EditorSession(store: scratch.freshStore(), debounce: .milliseconds(20))
         await session.start()
         let pagesBefore = session.pageCount
 
@@ -448,11 +448,11 @@ struct PDFLayerTests {
     @Test("A source page narrower than the zoom cap allows is refused, and nothing is written")
     @MainActor
     func aPageTooSmallToDisplayIsRefusedAtImport() async throws {
-        let scratch = try Scratch()
-        let session = EditorSession(store: scratch.store(), debounce: .milliseconds(20))
+        let scratch = try TestScratch("pdf")
+        let session = EditorSession(store: scratch.freshStore(), debounce: .milliseconds(20))
         await session.start()
         let pagesBefore = session.pageCount
-        let onDiskBefore = try #require(await scratch.store().load()).pageIDs
+        let onDiskBefore = try #require(await scratch.freshStore().load()).pageIDs
 
         let minimum = PageProjection.smallestDisplayablePagePoints(
             zoomCapPagePointsPerPixel: DocumentIndex.canonicalZoomCapPagePointsPerPixel
@@ -479,7 +479,7 @@ struct PDFLayerTests {
         // Nothing durable moved: no asset, and the index still names exactly the
         // pages it named before.
         #expect(try scratch.assetFileCount() == 0)
-        #expect(try #require(await scratch.store().load()).pageIDs == onDiskBefore)
+        #expect(try #require(await scratch.freshStore().load()).pageIDs == onDiskBefore)
     }
 
     /// The other side of the bound, so the guard is a bound rather than a
@@ -488,8 +488,8 @@ struct PDFLayerTests {
     @Test("A source page at the minimum imports at its own size")
     @MainActor
     func aPageAtTheMinimumImportsNormally() async throws {
-        let scratch = try Scratch()
-        let session = EditorSession(store: scratch.store(), debounce: .milliseconds(20))
+        let scratch = try TestScratch("pdf")
+        let session = EditorSession(store: scratch.freshStore(), debounce: .milliseconds(20))
         await session.start()
 
         let minimum = PageProjection.smallestDisplayablePagePoints(
@@ -505,7 +505,7 @@ struct PDFLayerTests {
         #expect(session.lastSaveError == nil)
         #expect(appended.count == 1)
 
-        let index = try #require(await scratch.store().load())
+        let index = try #require(await scratch.freshStore().load())
         let position = try #require(index.pageIDs.firstIndex(of: appended[0]))
         #expect(try #require(index.geometry(ofPageAt: position))
             == PageGeometry(width: 104, height: 300))
@@ -514,8 +514,8 @@ struct PDFLayerTests {
     @Test("Deleting one page's pdf layer leaves the asset the other pages still show")
     @MainActor
     func deletingOnePDFLayerKeepsTheSharedAsset() async throws {
-        let scratch = try Scratch()
-        let session = EditorSession(store: scratch.store(), debounce: .milliseconds(20))
+        let scratch = try TestScratch("pdf")
+        let session = EditorSession(store: scratch.freshStore(), debounce: .milliseconds(20))
         await session.start()
         let appended = try await session.importPDF(twoPageFixture())
 
@@ -525,7 +525,7 @@ struct PDFLayerTests {
         try await session.deleteLayer(firstLayer.layerID, fromPage: appended[0])
 
         // The page dropped its ref and the layer file died with it...
-        #expect(try await scratch.store().loadPage(appended[0]).staticLayers.isEmpty)
+        #expect(try await scratch.freshStore().loadPage(appended[0]).staticLayers.isEmpty)
         #expect(!FileManager.default.fileExists(atPath: scratch.layerURL(firstLayer.layerID).path))
         // ...but page two is still showing the same file, so it lives.
         #expect(FileManager.default.fileExists(atPath: scratch.assetURL(assetID, "pdf").path))
@@ -544,8 +544,8 @@ struct PDFLayerTests {
     @Test("A failed save plus a delete never destroys a write-once asset")
     @MainActor
     func aFailedSavePlusADeleteDoesNotDestroyTheAsset() async throws {
-        let scratch = try Scratch()
-        let session = EditorSession(store: scratch.store(), debounce: .milliseconds(20))
+        let scratch = try TestScratch("pdf")
+        let session = EditorSession(store: scratch.freshStore(), debounce: .milliseconds(20))
         await session.start()
 
         // Layer writes fail while asset writes still succeed: the import's
@@ -578,10 +578,10 @@ struct PDFLayerTests {
         )
         await session.saveIfNeeded()
         #expect(session.lastSaveError == nil)
-        let survivor = try await scratch.store().loadPage(appended[1])
+        let survivor = try await scratch.freshStore().loadPage(appended[1])
         #expect(survivor.refusedLayers.isEmpty)
         #expect(survivor.staticLayers.count == 1)
-        #expect(try await scratch.store().loadPage(appended[0]).staticLayers.isEmpty)
+        #expect(try await scratch.freshStore().loadPage(appended[0]).staticLayers.isEmpty)
         #expect(FileManager.default.fileExists(atPath: scratch.assetURL(assetID, "pdf").path))
     }
 
@@ -592,8 +592,8 @@ struct PDFLayerTests {
     @Test("Deleting a layer on an evicted page refuses with a typed error, never traps")
     @MainActor
     func deleteLayerOnAnEvictedPageRefusesLoudly() async throws {
-        let scratch = try Scratch()
-        let session = EditorSession(store: scratch.store(), debounce: .milliseconds(20))
+        let scratch = try TestScratch("pdf")
+        let session = EditorSession(store: scratch.freshStore(), debounce: .milliseconds(20))
         await session.start()
 
         // Six imported pages, so the last sits one page outside the prune
@@ -629,8 +629,8 @@ struct PDFLayerTests {
     @Test("Deleting the current page's PDF removes it durably")
     @MainActor
     func deletingTheCurrentPagesPDFIsDurable() async throws {
-        let scratch = try Scratch()
-        let session = EditorSession(store: scratch.store(), debounce: .milliseconds(20))
+        let scratch = try TestScratch("pdf")
+        let session = EditorSession(store: scratch.freshStore(), debounce: .milliseconds(20))
         await session.start()
         let appended = try await session.importPDF(onePageFixture())
         let pageID = try #require(appended.first)
@@ -646,7 +646,7 @@ struct PDFLayerTests {
         #expect(session.lastSaveError == nil)
 
         // Durable: a store that has read nothing sees a page with only ink.
-        let reloaded = try await scratch.store().loadPage(pageID)
+        let reloaded = try await scratch.freshStore().loadPage(pageID)
         #expect(reloaded.staticLayers.isEmpty)
         #expect(reloaded.refusedLayers.isEmpty)
         // And the same two-level reclamation an image delete gets, because it
@@ -660,8 +660,8 @@ struct PDFLayerTests {
     @Test("Deleting the page's PDF leaves the page's image layers alone")
     @MainActor
     func deletingThePDFLeavesImagesAlone() async throws {
-        let scratch = try Scratch()
-        let session = EditorSession(store: scratch.store(), debounce: .milliseconds(20))
+        let scratch = try TestScratch("pdf")
+        let session = EditorSession(store: scratch.freshStore(), debounce: .milliseconds(20))
         await session.start()
         let appended = try await session.importPDF(onePageFixture())
         let pageID = try #require(appended.first)
@@ -676,7 +676,7 @@ struct PDFLayerTests {
         #expect(try await session.deletePDFLayers(onPage: pageID) == 1)
         #expect(session.lastSaveError == nil)
 
-        let reloaded = try await scratch.store().loadPage(pageID)
+        let reloaded = try await scratch.freshStore().loadPage(pageID)
         #expect(reloaded.staticLayers.count == 1)
         let survivor = try #require(reloaded.staticLayers.first)
         #expect(survivor.recognizedKind == .image)
@@ -690,8 +690,8 @@ struct PDFLayerTests {
     @Test("A page with no pdf layer refuses gracefully and changes nothing")
     @MainActor
     func aPageWithNoPDFRefuses() async throws {
-        let scratch = try Scratch()
-        let session = EditorSession(store: scratch.store(), debounce: .milliseconds(20))
+        let scratch = try TestScratch("pdf")
+        let session = EditorSession(store: scratch.freshStore(), debounce: .milliseconds(20))
         await session.start()
         let blankPageID = session.currentPageID
 
@@ -701,15 +701,15 @@ struct PDFLayerTests {
         // Refused, not half-done: the blank page still has its ink layer and
         // nothing else, and no save was provoked.
         #expect(session.lastSaveError == nil)
-        #expect(try await scratch.store().loadPage(blankPageID).staticLayers.isEmpty)
+        #expect(try await scratch.freshStore().loadPage(blankPageID).staticLayers.isEmpty)
     }
 
     // MARK: - The layer split
 
     @Test("A page file is layer IDs, and each layer is its own file")
     func aPageFileNamesLayerFiles() async throws {
-        let scratch = try Scratch()
-        let store = scratch.store()
+        let scratch = try TestScratch("pdf")
+        let store = scratch.freshStore()
         let pageID = UUID()
         let assetID = UUID()
         let pdfLayerID = UUID()
@@ -746,7 +746,7 @@ struct PDFLayerTests {
 
     @Test("A page naming a layer file that is not there is fatal to the page")
     func aDanglingLayerRefIsFatal() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("pdf")
         let pageID = UUID()
         let ink = inkEnvelope(payload: Data([0x01]))
         try scratch.writePage(pageID, layers: [ink])
@@ -755,14 +755,14 @@ struct PDFLayerTests {
         await #expect(
             throws: LayerError.missingLayerFile(pageID: pageID, layerID: ink.layerID)
         ) {
-            _ = try await scratch.store().loadPage(pageID)
+            _ = try await scratch.freshStore().loadPage(pageID)
         }
     }
 
     @Test("An orphan layer file is inert")
     func anOrphanLayerFileIsInert() async throws {
-        let scratch = try Scratch()
-        let store = scratch.store()
+        let scratch = try TestScratch("pdf")
+        let store = scratch.freshStore()
         let pageID = UUID()
         let index = scratch.index(pageIDs: [pageID])
         try await store.save(
@@ -774,13 +774,13 @@ struct PDFLayerTests {
         // leaves behind.
         try scratch.writeLayerFile(inkEnvelope(payload: Data([0x09])))
 
-        #expect(try await scratch.store().load() == index)
-        #expect(try await scratch.store().loadPage(pageID).inkData == Data([0x01]))
+        #expect(try await scratch.freshStore().load() == index)
+        #expect(try await scratch.freshStore().loadPage(pageID).inkData == Data([0x01]))
     }
 
     @Test("A layer file filed under the wrong name is refused")
     func aMisfiledLayerFileIsRefused() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("pdf")
         let pageID = UUID()
         let named = UUID()
         let envelope = inkEnvelope(payload: Data([0x01]))
@@ -791,7 +791,7 @@ struct PDFLayerTests {
         await #expect(
             throws: LayerError.layerFileIDMismatch(expected: named, found: envelope.layerID)
         ) {
-            _ = try await scratch.store().loadPage(pageID)
+            _ = try await scratch.freshStore().loadPage(pageID)
         }
     }
 
@@ -806,14 +806,14 @@ struct PDFLayerTests {
     /// refused — which is itself worth pinning, in the second half here.
     @Test("A write naming a layer with no file and none being written is refused")
     func aWriteThatWouldDangleIsRefused() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("pdf")
         let pageID = UUID()
         let documentIndex = scratch.index(pageIDs: [pageID])
         let ink = inkEnvelope(payload: Data([0x01]))
 
         // A page with no file yet writes everything, so an understated claim
         // is harmless and accepted.
-        try await scratch.store().save(
+        try await scratch.freshStore().save(
             index: documentIndex,
             pages: [PageWrite(pageID: pageID, layers: [ink], changedLayerIDs: [])]
         )
@@ -824,14 +824,14 @@ struct PDFLayerTests {
         // on disk is refused before anything is written. Its asset is durable,
         // so the only thing wrong with it is the missing layer file.
         let assetID = UUID()
-        try await scratch.store().writeAsset(Data([0x89]), assetID: assetID, format: .heic)
+        try await scratch.freshStore().writeAsset(Data([0x89]), assetID: assetID, format: .heic)
         let unwritten = try LayerEnvelope.image(
             layerID: UUID(),
             ref: ImageLayerRef(assetID: assetID, format: .heic),
             pageSpaceTransform: .identity
         )
         let refusal = await #expect(throws: DocumentStore.PageSaveRefusal.self) {
-            try await scratch.store().save(
+            try await scratch.freshStore().save(
                 index: documentIndex,
                 pages: [
                     PageWrite(
@@ -852,8 +852,8 @@ struct PDFLayerTests {
 
     @Test("A phase 2 page file with an image layer loads, then splits on its next save")
     func aPhase2PageSplitsOnItsNextSave() async throws {
-        let scratch = try Scratch()
-        let store = scratch.store()
+        let scratch = try TestScratch("pdf")
+        let store = scratch.freshStore()
         let pageID = UUID()
         let assetID = UUID()
         try await store.writeAsset(Data([0x89, 0x50]), assetID: assetID, format: .heic)
@@ -872,7 +872,7 @@ struct PDFLayerTests {
         try scratch.writeIndexFile(documentIndex)
 
         // It loads in the old form, with no layers/ files at all.
-        let loaded = try await scratch.store().loadPage(pageID)
+        let loaded = try await scratch.freshStore().loadPage(pageID)
         #expect(loaded.staticLayers.map(\.layerID) == [image.layerID])
         #expect(!FileManager.default.fileExists(atPath: scratch.layerURL(ink.layerID).path))
 
@@ -880,7 +880,7 @@ struct PDFLayerTests {
         // that has never been split writes *all* of its layers forward — none
         // of them has a file yet, so a minimal write would dangle.
         let newInk = inkEnvelope(layerID: ink.layerID, payload: Data([0x02]))
-        try await scratch.store().save(
+        try await scratch.freshStore().save(
             index: documentIndex,
             pages: [
                 PageWrite(
@@ -893,7 +893,7 @@ struct PDFLayerTests {
 
         #expect(FileManager.default.fileExists(atPath: scratch.layerURL(image.layerID).path))
         #expect(FileManager.default.fileExists(atPath: scratch.layerURL(ink.layerID).path))
-        let reloaded = try await scratch.store().loadPage(pageID)
+        let reloaded = try await scratch.freshStore().loadPage(pageID)
         #expect(reloaded.inkData == Data([0x02]))
         #expect(reloaded.staticLayers.map(\.layerID) == [image.layerID])
     }
@@ -923,14 +923,14 @@ struct PDFLayerTests {
     /// what the write costs in time. It is a statement about which bytes moved.
     ///
     /// The comparison is whole-package and by identity, not a list of files the
-    /// test remembered to check — `Scratch.snapshot()` walks everything under
+    /// test remembered to check — `TestScratch.snapshot()` walks everything under
     /// the document directory, so a file this change did not anticipate cannot
     /// slip through by not being named.
     @Test("Ink on one page of a large import writes exactly that page's ink layer")
     @MainActor
     func inkOnOnePageWritesOnlyThatPagesInkLayer() async throws {
-        let scratch = try Scratch()
-        let session = EditorSession(store: scratch.store(), debounce: .milliseconds(20))
+        let scratch = try TestScratch("pdf")
+        let session = EditorSession(store: scratch.freshStore(), debounce: .milliseconds(20))
         await session.start()
 
         let source = heavyFixture(pages: 5)
@@ -984,7 +984,7 @@ struct PDFLayerTests {
 
         // And the ink genuinely landed, so this is not a save that did nothing.
         #expect(
-            try PKDrawing(data: await scratch.store().loadPage(inkedPageID).inkData)
+            try PKDrawing(data: await scratch.freshStore().loadPage(inkedPageID).inkData)
                 .strokes.count == 1
         )
     }
@@ -1124,161 +1124,28 @@ struct PDFLayerTests {
             return state
         }
     }
+}
 
-    /// A unique directory per test, removed afterwards.
-    private final class Scratch {
-        let root: URL
-
-        var documentURL: URL { root.appendingPathComponent("JustACanvas.tubernotes") }
-        var pagesURL: URL { documentURL.appendingPathComponent("pages") }
-        var layersURL: URL { documentURL.appendingPathComponent("layers") }
-        var assetsURL: URL { documentURL.appendingPathComponent("assets") }
-
-        func pageURL(_ pageID: UUID) -> URL {
-            pagesURL.appendingPathComponent("\(pageID.uuidString).plist")
+/// The fixtures only this suite needs: the superseded inline page form, an
+/// index written without the store, and a count of the assets on disk.
+private extension TestScratch {
+    /// The phase 1–2 form: envelopes inline in the page file. Production code
+    /// can read it and can never write it, so the fixture lives here.
+    func writeInlinePageFile(_ pageID: UUID, layers: [LayerEnvelope]) throws {
+        struct InlinePageFile: Encodable {
+            let pageID: UUID
+            let layers: [LayerEnvelope]
         }
+        try TestScratch.binaryEncoder()
+            .encode(InlinePageFile(pageID: pageID, layers: layers))
+            .write(to: pageURL(pageID), options: .atomic)
+    }
 
-        func layerURL(_ layerID: UUID) -> URL {
-            layersURL.appendingPathComponent("\(layerID.uuidString).plist")
-        }
-
-        func assetURL(_ assetID: UUID, _ ext: String) -> URL {
-            assetsURL.appendingPathComponent("\(assetID.uuidString).\(ext)")
-        }
-
-        init() throws {
-            root = URL(fileURLWithPath: NSTemporaryDirectory())
-                .appendingPathComponent("tubernotes-pdf-tests-\(UUID().uuidString)")
-            for directory in [pagesURL, layersURL] {
-                try FileManager.default.createDirectory(
-                    at: directory,
-                    withIntermediateDirectories: true
-                )
-            }
-        }
-
-        /// A fresh store each time, deliberately: it defeats any in-memory
-        /// record the store keeps of its own reads and writes, so assertions
-        /// about what is on disk are about disk.
-        func store() -> DocumentStore {
-            DocumentStore(directoryURL: documentURL)
-        }
-
-        func index(pageIDs: [UUID]) -> DocumentIndex {
-            DocumentIndex(
-                formatVersion: DocumentIndex.currentFormatVersion,
-                documentID: UUID(),
-                pages: pageIDs.map { PageRecord(id: $0, geometry: .canonical) },
-                currentPageIndex: 0
-            )
-        }
-
-        static func binaryEncoder() -> PropertyListEncoder {
-            let encoder = PropertyListEncoder()
-            encoder.outputFormat = .binary
-            return encoder
-        }
-
-        /// Writes a page and its layers directly, bypassing the store — the
-        /// only way to put on disk what the store refuses to write.
-        func writePage(_ pageID: UUID, layers: [LayerEnvelope]) throws {
-            for layer in layers { try writeLayerFile(layer) }
-            try writePageFileOnly(pageID, layerIDs: layers.map(\.layerID))
-        }
-
-        func writePageFileOnly(_ pageID: UUID, layerIDs: [UUID]) throws {
-            let page = PageFile(pageID: pageID, layerIDs: layerIDs)
-            try Self.binaryEncoder().encode(page).write(to: pageURL(pageID), options: .atomic)
-        }
-
-        func writeLayerFile(_ layer: LayerEnvelope, under name: UUID? = nil) throws {
-            try Self.binaryEncoder().encode(layer).write(
-                to: layerURL(name ?? layer.layerID),
-                options: .atomic
-            )
-        }
-
-        /// The phase 1–2 form: envelopes inline in the page file. Production
-        /// code can read it and can never write it, so the fixture lives here.
-        func writeInlinePageFile(_ pageID: UUID, layers: [LayerEnvelope]) throws {
-            struct InlinePageFile: Encodable {
-                let pageID: UUID
-                let layers: [LayerEnvelope]
-            }
-            try Self.binaryEncoder()
-                .encode(InlinePageFile(pageID: pageID, layers: layers))
-                .write(to: pageURL(pageID), options: .atomic)
-        }
-
-        func writeIndexFile(_ index: DocumentIndex) throws {
-            try Self.binaryEncoder().encode(index).write(
-                to: documentURL.appendingPathComponent("document.plist"),
-                options: .atomic
-            )
-        }
-
-        /// One page's layer envelopes as they are on disk, read the way the
-        /// store reads them.
-        func layersOnDisk(ofPage pageID: UUID) throws -> [LayerEnvelope] {
-            let page = try PropertyListDecoder().decode(
-                PageFile.self,
-                from: Data(contentsOf: pageURL(pageID))
-            )
-            if let inline = page.inlineLayers { return inline }
-            return try page.layerIDs.map { layerID in
-                try PropertyListDecoder().decode(
-                    LayerEnvelope.self,
-                    from: Data(contentsOf: layerURL(layerID))
-                )
-            }
-        }
-
-        func assetFileCount() throws -> Int {
-            guard FileManager.default.fileExists(atPath: assetsURL.path) else { return 0 }
-            return try FileManager.default.contentsOfDirectory(
-                at: assetsURL,
-                includingPropertiesForKeys: nil
-            ).count
-        }
-
-        /// Every file in the document package, by path relative to it, with
-        /// enough to notice any rewrite: when it was last written and what it
-        /// contains.
-        ///
-        /// Content as well as mtime deliberately. An mtime comparison alone
-        /// would miss a rewrite that landed inside the filesystem's timestamp
-        /// resolution, and a content comparison alone would miss a rewrite of
-        /// identical bytes — which is still the whole-file write this format
-        /// exists to avoid. Together, neither kind of rewrite can hide.
-        func snapshot() throws -> [String: FileState] {
-            var out: [String: FileState] = [:]
-            let base = documentURL.standardizedFileURL.path
-            guard let walk = FileManager.default.enumerator(
-                at: documentURL,
-                includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey]
-            ) else { return out }
-
-            for case let url as URL in walk {
-                let values = try url.resourceValues(
-                    forKeys: [.contentModificationDateKey, .isRegularFileKey]
-                )
-                guard values.isRegularFile == true else { continue }
-                let path = String(url.standardizedFileURL.path.dropFirst(base.count + 1))
-                out[path] = FileState(
-                    modified: values.contentModificationDate,
-                    bytes: try Data(contentsOf: url)
-                )
-            }
-            return out
-        }
-
-        struct FileState: Equatable {
-            let modified: Date?
-            let bytes: Data
-        }
-
-        deinit {
-            try? FileManager.default.removeItem(at: root)
-        }
+    func assetFileCount() throws -> Int {
+        guard FileManager.default.fileExists(atPath: assetsURL.path) else { return 0 }
+        return try FileManager.default.contentsOfDirectory(
+            at: assetsURL,
+            includingPropertiesForKeys: nil
+        ).count
     }
 }

@@ -122,8 +122,8 @@ struct ImportPreparationTests {
     @Test("The orientation-applied extent reaches the saved transform, at the import seam")
     @MainActor
     func exifExtentReachesTheSavedTransform() async throws {
-        let scratch = try Scratch()
-        let session = EditorSession(store: scratch.store(), debounce: .milliseconds(20))
+        let scratch = try TestScratch("import")
+        let session = EditorSession(store: scratch.freshStore(), debounce: .milliseconds(20))
         await session.start()
         let pageID = session.currentPageID
 
@@ -229,48 +229,6 @@ struct ImportPreparationTests {
     func garbageIsRefused() {
         #expect(throws: ImageImportError.undecodableImage) {
             _ = try ImageImportPreparation.prepare(Data([0x00, 0x01, 0x02, 0x03]))
-        }
-    }
-
-    // MARK: - Scratch
-
-    /// A unique document directory per test, the same shape the other suites
-    /// use, holding only what these tests read.
-    private final class Scratch {
-        let root: URL
-
-        var documentURL: URL { root.appendingPathComponent("JustACanvas.tubernotes") }
-        var pagesURL: URL { documentURL.appendingPathComponent("pages") }
-        var layersURL: URL { documentURL.appendingPathComponent("layers") }
-
-        init() throws {
-            root = URL(fileURLWithPath: NSTemporaryDirectory())
-                .appendingPathComponent("tubernotes-import-tests-\(UUID().uuidString)")
-            try FileManager.default.createDirectory(
-                at: pagesURL, withIntermediateDirectories: true
-            )
-        }
-
-        deinit { try? FileManager.default.removeItem(at: root) }
-
-        func store() -> DocumentStore { DocumentStore(directoryURL: documentURL) }
-
-        /// One page's layer envelopes as they are on disk, read the way the
-        /// store reads them.
-        func layersOnDisk(ofPage pageID: UUID) throws -> [LayerEnvelope] {
-            let page = try PropertyListDecoder().decode(
-                PageFile.self,
-                from: Data(contentsOf: pagesURL.appendingPathComponent("\(pageID.uuidString).plist"))
-            )
-            if let inline = page.inlineLayers { return inline }
-            return try page.layerIDs.map { layerID in
-                try PropertyListDecoder().decode(
-                    LayerEnvelope.self,
-                    from: Data(
-                        contentsOf: layersURL.appendingPathComponent("\(layerID.uuidString).plist")
-                    )
-                )
-            }
         }
     }
 }

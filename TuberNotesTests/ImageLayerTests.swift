@@ -19,8 +19,8 @@ struct ImageLayerTests {
 
     @Test("An asset round trips, and writing its ID again is refused")
     func assetsAreWriteOnce() async throws {
-        let scratch = try Scratch()
-        let store = scratch.store()
+        let scratch = try TestScratch("image")
+        let store = scratch.freshStore()
         let assetID = UUID()
         let original = Data((0..<2048).map { UInt8($0 % 251) })
 
@@ -36,15 +36,15 @@ struct ImageLayerTests {
         // Write-once is per asset, not per store instance: a store that never
         // wrote this one still refuses.
         await #expect(throws: AssetError.assetAlreadyExists(assetID: assetID)) {
-            try await scratch.store().writeAsset(Data([0xFE]), assetID: assetID, format: .heic)
+            try await scratch.freshStore().writeAsset(Data([0xFE]), assetID: assetID, format: .heic)
         }
         #expect(try Data(contentsOf: scratch.assetURL(assetID, "heic")) == original)
     }
 
     @Test("The same bytes under a new ID are a new asset, never a mutation")
     func replacingAnImageIsANewAsset() async throws {
-        let scratch = try Scratch()
-        let store = scratch.store()
+        let scratch = try TestScratch("image")
+        let store = scratch.freshStore()
         let first = UUID()
         let second = UUID()
 
@@ -59,8 +59,8 @@ struct ImageLayerTests {
 
     @Test("An image layer round trips with a non-identity transform")
     func imageLayerRoundTripsWithANonIdentityTransform() async throws {
-        let scratch = try Scratch()
-        let store = scratch.store()
+        let scratch = try TestScratch("image")
+        let store = scratch.freshStore()
         let pageID = UUID()
         let assetID = UUID()
         let layerID = UUID()
@@ -80,7 +80,7 @@ struct ImageLayerTests {
             changedPages: [pageID: [envelope, inkEnvelope(payload: Data([0x07]))]]
         )
 
-        let loaded = try await scratch.store().loadPage(pageID)
+        let loaded = try await scratch.freshStore().loadPage(pageID)
         #expect(loaded.refusedLayers.isEmpty)
         #expect(loaded.inkData == Data([0x07]))
         #expect(loaded.staticLayers.count == 1)
@@ -94,16 +94,16 @@ struct ImageLayerTests {
 
     @Test("An image layer's transform must be invertible")
     func nonInvertibleImageTransformFailsLoud() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("image")
         let assetID = UUID()
         let layerID = UUID()
         let pageID = UUID()
-        try await scratch.store().writeAsset(Data([0x01]), assetID: assetID, format: .heic)
+        try await scratch.freshStore().writeAsset(Data([0x01]), assetID: assetID, format: .heic)
 
         // Determinant zero: the layer collapses to a line, and no inverse maps
         // a page point back into it.
         let singular = PageSpaceTransform(a: 200, b: 100, c: 400, d: 200, tx: 0, ty: 0)
-        try scratch.writePageFile(
+        try scratch.writePage(
             pageID,
             layers: [
                 try LayerEnvelope.image(
@@ -116,7 +116,7 @@ struct ImageLayerTests {
         )
 
         await #expect(throws: LayerError.nonInvertibleLayerTransform(layerID: layerID)) {
-            _ = try await scratch.store().loadPage(pageID)
+            _ = try await scratch.freshStore().loadPage(pageID)
         }
     }
 
@@ -124,8 +124,8 @@ struct ImageLayerTests {
 
     @Test("Ink stays last with an image layer present, on load and on save")
     func inkStaysLastWithAnImagePresent() async throws {
-        let scratch = try Scratch()
-        let store = scratch.store()
+        let scratch = try TestScratch("image")
+        let store = scratch.freshStore()
         let pageID = UUID()
         let assetID = UUID()
         try await store.writeAsset(Data([0x01]), assetID: assetID, format: .heic)
@@ -140,15 +140,15 @@ struct ImageLayerTests {
         let ink = inkEnvelope(payload: Data([0x01]))
 
         // Buried ink is refused on the way in...
-        try scratch.writePageFile(pageID, layers: [ink, image])
+        try scratch.writePage(pageID, layers: [ink, image])
         await #expect(throws: LayerError.inkLayerNotLast(pageID: pageID)) {
-            _ = try await scratch.store().loadPage(pageID)
+            _ = try await scratch.freshStore().loadPage(pageID)
         }
 
         // ...and on the way out — page-scoped, so the refusal names the page.
         let documentIndex = scratch.index(pageIDs: [pageID])
         let refusal = await #expect(throws: DocumentStore.PageSaveRefusal.self) {
-            try await scratch.store().save(
+            try await scratch.freshStore().save(
                 index: documentIndex,
                 changedPages: [pageID: [ink, image]]
             )
@@ -157,19 +157,19 @@ struct ImageLayerTests {
         #expect(refusal?.refusedPages.first?.reason.contains("inkLayerNotLast") == true)
 
         // Ink last, image beneath it: accepted.
-        try await scratch.store().save(
+        try await scratch.freshStore().save(
             index: documentIndex,
             changedPages: [pageID: [image, ink]]
         )
-        #expect(try await scratch.store().loadPage(pageID).staticLayers.count == 1)
+        #expect(try await scratch.freshStore().loadPage(pageID).staticLayers.count == 1)
     }
 
     // MARK: - Write order is leaf to root
 
     @Test("A page naming an asset that is not there is refused before any write")
     func aSaveNamingAMissingAssetIsRefused() async throws {
-        let scratch = try Scratch()
-        let store = scratch.store()
+        let scratch = try TestScratch("image")
+        let store = scratch.freshStore()
         let pageID = UUID()
         let assetID = UUID()
         let layerID = UUID()
@@ -191,7 +191,7 @@ struct ImageLayerTests {
 
         // Validation happens before any write, so nothing at all landed.
         #expect(!FileManager.default.fileExists(atPath: scratch.pageURL(pageID).path))
-        #expect(try await scratch.store().load() == nil)
+        #expect(try await scratch.freshStore().load() == nil)
     }
 
     /// The observable consequence of leaf-to-root: interrupt an import anywhere
@@ -199,8 +199,8 @@ struct ImageLayerTests {
     /// file naming an asset that is not there.
     @Test("An interrupted import leaves an orphan asset, never a dangling ref")
     func anInterruptedImportLeavesAnOrphanAsset() async throws {
-        let scratch = try Scratch()
-        let store = scratch.store()
+        let scratch = try TestScratch("image")
+        let store = scratch.freshStore()
         let pageID = UUID()
         let documentIndex = scratch.index(pageIDs: [pageID])
         try await store.save(
@@ -213,7 +213,7 @@ struct ImageLayerTests {
         try await store.writeAsset(Data([0x0A, 0x0B]), assetID: orphan, format: .heic)
 
         // The document opens and the page reads normally: an orphan is inert.
-        let reopened = scratch.store()
+        let reopened = scratch.freshStore()
         #expect(try await reopened.load() == documentIndex)
         let loaded = try await reopened.loadPage(pageID)
         #expect(loaded.refusedLayers.isEmpty)
@@ -223,8 +223,8 @@ struct ImageLayerTests {
 
     @Test("A save with an image layer still touches only changed pages")
     func aSaveWithAnImageTouchesOnlyChangedPages() async throws {
-        let scratch = try Scratch()
-        let store = scratch.store()
+        let scratch = try TestScratch("image")
+        let store = scratch.freshStore()
         let withImage = UUID()
         let plain = UUID()
         let assetID = UUID()
@@ -257,18 +257,18 @@ struct ImageLayerTests {
         )
 
         #expect(try scratch.modificationDate(ofPage: withImage) == before)
-        #expect(try await scratch.store().loadPage(withImage).staticLayers.count == 1)
+        #expect(try await scratch.freshStore().loadPage(withImage).staticLayers.count == 1)
     }
 
     // MARK: - A dangling asset ref refuses the layer, not the document
 
     @Test("A missing asset refuses its layer as a typed state; the document opens")
     func aMissingAssetRefusesItsLayer() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("image")
         let pageID = UUID()
         let assetID = UUID()
         let layerID = UUID()
-        try scratch.writePageFile(
+        try scratch.writePage(
             pageID,
             layers: [
                 try LayerEnvelope.image(
@@ -281,7 +281,7 @@ struct ImageLayerTests {
         )
         try scratch.writeIndexFile(scratch.index(pageIDs: [pageID]))
 
-        let loaded = try await scratch.store().loadPage(pageID)
+        let loaded = try await scratch.freshStore().loadPage(pageID)
         #expect(
             loaded.refusedLayers == [
                 RefusedLayer(layerID: layerID, kind: "image", reason: .missingAsset(assetID))
@@ -296,9 +296,9 @@ struct ImageLayerTests {
     @Test("A page with a dangling asset ref refuses input")
     @MainActor
     func aPageWithADanglingAssetRefRefusesInput() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("image")
         let pageID = UUID()
-        try scratch.writePageFile(
+        try scratch.writePage(
             pageID,
             layers: [
                 try LayerEnvelope.image(
@@ -312,7 +312,7 @@ struct ImageLayerTests {
         try scratch.writeIndexFile(scratch.index(pageIDs: [pageID]))
         let bytesBefore = try Data(contentsOf: scratch.pageURL(pageID))
 
-        let session = EditorSession(store: scratch.store(), debounce: .milliseconds(20))
+        let session = EditorSession(store: scratch.freshStore(), debounce: .milliseconds(20))
         await session.start()
 
         // The refusal is the layer's: the document opens.
@@ -338,10 +338,10 @@ struct ImageLayerTests {
     @Test("Deleting the broken layer repairs the page")
     @MainActor
     func deletingTheBrokenLayerRepairsThePage() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("image")
         let pageID = UUID()
         let layerID = UUID()
-        try scratch.writePageFile(
+        try scratch.writePage(
             pageID,
             layers: [
                 try LayerEnvelope.image(
@@ -354,12 +354,12 @@ struct ImageLayerTests {
         )
         try scratch.writeIndexFile(scratch.index(pageIDs: [pageID]))
 
-        let session = EditorSession(store: scratch.store(), debounce: .milliseconds(20))
+        let session = EditorSession(store: scratch.freshStore(), debounce: .milliseconds(20))
         await session.start()
         try await session.deleteLayer(layerID, fromPage: pageID)
 
         // The page file dropped the ref, so the page opens clean now.
-        let loaded = try await scratch.store().loadPage(pageID)
+        let loaded = try await scratch.freshStore().loadPage(pageID)
         #expect(loaded.refusedLayers.isEmpty)
         #expect(loaded.staticLayers.isEmpty)
         #expect(loaded.inkData == Data([0x01]))
@@ -371,8 +371,8 @@ struct ImageLayerTests {
     @Test("An import writes the asset, inserts the layer under the ink, and saves")
     @MainActor
     func importWritesTheAssetAndInsertsTheLayerUnderTheInk() async throws {
-        let scratch = try Scratch()
-        let session = EditorSession(store: scratch.store(), debounce: .milliseconds(20))
+        let scratch = try TestScratch("image")
+        let session = EditorSession(store: scratch.freshStore(), debounce: .milliseconds(20))
         await session.start()
         let pageID = session.currentPageID
 
@@ -406,8 +406,8 @@ struct ImageLayerTests {
     @Test("An ordinary ink save preserves the page's image layer")
     @MainActor
     func anInkSavePreservesTheImageLayer() async throws {
-        let scratch = try Scratch()
-        let session = EditorSession(store: scratch.store(), debounce: .milliseconds(20))
+        let scratch = try TestScratch("image")
+        let session = EditorSession(store: scratch.freshStore(), debounce: .milliseconds(20))
         await session.start()
         let pageID = session.currentPageID
         let layerID = try await session.importImage(
@@ -424,7 +424,7 @@ struct ImageLayerTests {
         await session.saveIfNeeded()
         #expect(session.lastSaveError == nil)
 
-        let loaded = try await scratch.store().loadPage(pageID)
+        let loaded = try await scratch.freshStore().loadPage(pageID)
         #expect(loaded.staticLayers.map(\.layerID) == [layerID])
         #expect(!loaded.inkData.isEmpty, "the stroke was saved")
     }
@@ -434,8 +434,8 @@ struct ImageLayerTests {
     @Test("Deleting the last layer referencing an asset deletes the asset")
     @MainActor
     func deletingTheLastReferenceReclaimsTheAsset() async throws {
-        let scratch = try Scratch()
-        let session = EditorSession(store: scratch.store(), debounce: .milliseconds(20))
+        let scratch = try TestScratch("image")
+        let session = EditorSession(store: scratch.freshStore(), debounce: .milliseconds(20))
         await session.start()
         let pageID = session.currentPageID
         let layerID = try await session.importImage(
@@ -451,7 +451,7 @@ struct ImageLayerTests {
 
         // Root to leaf, now at three levels: the page file dropped the ref
         // first...
-        #expect(try await scratch.store().loadPage(pageID).staticLayers.isEmpty)
+        #expect(try await scratch.freshStore().loadPage(pageID).staticLayers.isEmpty)
         // ...the layer file died second...
         #expect(!FileManager.default.fileExists(atPath: scratch.layerURL(layerID).path))
         // ...and the asset died third.
@@ -460,12 +460,12 @@ struct ImageLayerTests {
 
     @Test("An asset another page still references is not reclaimed")
     func aStillReferencedAssetIsNotReclaimed() async throws {
-        let scratch = try Scratch()
-        let store = scratch.store()
+        let scratch = try TestScratch("image")
+        let store = scratch.freshStore()
         let keeper = UUID()
         let assetID = UUID()
         try await store.writeAsset(Data([0x01]), assetID: assetID, format: .heic)
-        try scratch.writePageFile(
+        try scratch.writePage(
             keeper,
             layers: [
                 try LayerEnvelope.image(
@@ -486,11 +486,11 @@ struct ImageLayerTests {
     /// Deleting the wrong file is a durability failure; an orphan is heavy.
     @Test("A layer this build cannot read suspends reclamation entirely")
     func anUnreadableLayerSuspendsReclamation() async throws {
-        let scratch = try Scratch()
-        let store = scratch.store()
+        let scratch = try TestScratch("image")
+        let store = scratch.freshStore()
         let assetID = UUID()
         try await store.writeAsset(Data([0x01]), assetID: assetID, format: .heic)
-        try scratch.writePageFile(
+        try scratch.writePage(
             UUID(),
             layers: [
                 LayerEnvelope(
@@ -511,7 +511,7 @@ struct ImageLayerTests {
 
     @Test("A format this build cannot decode refuses the layer, not the document")
     func anUnknownAssetFormatRefusesTheLayer() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("image")
         let pageID = UUID()
         let layerID = UUID()
         let assetID = UUID()
@@ -523,7 +523,7 @@ struct ImageLayerTests {
         // production needs migrating rests on this refusing cleanly rather than
         // on the case never arising.
         let payload = try ImageLayerRef(assetID: assetID, rawFormat: "png").encodedPayload()
-        try scratch.writePageFile(
+        try scratch.writePage(
             pageID,
             layers: [
                 LayerEnvelope(
@@ -539,7 +539,7 @@ struct ImageLayerTests {
         try scratch.writeIndexFile(documentIndex)
         let bytesBefore = try Data(contentsOf: scratch.pageURL(pageID))
 
-        let loaded = try await scratch.store().loadPage(pageID)
+        let loaded = try await scratch.freshStore().loadPage(pageID)
         #expect(
             loaded.refusedLayers == [
                 RefusedLayer(
@@ -554,7 +554,7 @@ struct ImageLayerTests {
         // This build cannot write the layer back, so it may not overwrite the
         // page at all — the same rule an unknown kind gets.
         let refusal = await #expect(throws: DocumentStore.PageSaveRefusal.self) {
-            try await scratch.store().save(
+            try await scratch.freshStore().save(
                 index: documentIndex,
                 changedPages: [pageID: [inkEnvelope(payload: Data([0x09]))]]
             )
@@ -575,14 +575,14 @@ struct ImageLayerTests {
     @Test("A page that cannot drop an unknown-kind layer refuses only its own save")
     @MainActor
     func aPoisonedPageDoesNotHaltDurabilityDocumentWide() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("image")
         let inkPageID = UUID()
         let poisonedPageID = UUID()
         let unknownLayerID = UUID()
         let imageLayerID = UUID()
 
-        try scratch.writePageFile(inkPageID, layers: [inkEnvelope(payload: Data())])
-        try scratch.writePageFile(
+        try scratch.writePage(inkPageID, layers: [inkEnvelope(payload: Data())])
+        try scratch.writePage(
             poisonedPageID,
             layers: [
                 LayerEnvelope(
@@ -601,7 +601,7 @@ struct ImageLayerTests {
         )
         try scratch.writeIndexFile(scratch.index(pageIDs: [inkPageID, poisonedPageID]))
 
-        let session = EditorSession(store: scratch.store(), debounce: .milliseconds(20))
+        let session = EditorSession(store: scratch.freshStore(), debounce: .milliseconds(20))
         await session.start()
         #expect(session.phase == .ready)
 
@@ -625,7 +625,7 @@ struct ImageLayerTests {
         // ...the unknown layer was never dropped from disk...
         #expect(FileManager.default.fileExists(atPath: scratch.layerURL(unknownLayerID).path))
         // ...and the clean page's ink is durable despite its neighbour.
-        let saved = try await scratch.store().loadPage(inkPageID)
+        let saved = try await scratch.freshStore().loadPage(inkPageID)
         #expect(try PKDrawing(data: saved.inkData).strokes.count == 1)
     }
 
@@ -636,14 +636,14 @@ struct ImageLayerTests {
     @Test("Two missing-asset layers refuse per page, and deleting both repairs the page")
     @MainActor
     func twoMissingAssetLayersRefusePerPageAndAreRepairable() async throws {
-        let scratch = try Scratch()
+        let scratch = try TestScratch("image")
         let inkPageID = UUID()
         let poisonedPageID = UUID()
         let firstImageID = UUID()
         let secondImageID = UUID()
 
-        try scratch.writePageFile(inkPageID, layers: [inkEnvelope(payload: Data())])
-        try scratch.writePageFile(
+        try scratch.writePage(inkPageID, layers: [inkEnvelope(payload: Data())])
+        try scratch.writePage(
             poisonedPageID,
             layers: [
                 try LayerEnvelope.image(
@@ -661,7 +661,7 @@ struct ImageLayerTests {
         )
         try scratch.writeIndexFile(scratch.index(pageIDs: [inkPageID, poisonedPageID]))
 
-        let session = EditorSession(store: scratch.store(), debounce: .milliseconds(20))
+        let session = EditorSession(store: scratch.freshStore(), debounce: .milliseconds(20))
         await session.start()
 
         // Deleting one layer still writes the other, whose asset is missing:
@@ -677,7 +677,7 @@ struct ImageLayerTests {
         try #require(session.currentCanvas).canvasView.drawing = strokeAcrossPage()
         await session.saveIfNeeded()
         #expect(session.lastSaveError != nil)
-        let saved = try await scratch.store().loadPage(inkPageID)
+        let saved = try await scratch.freshStore().loadPage(inkPageID)
         #expect(try PKDrawing(data: saved.inkData).strokes.count == 1)
 
         // Deleting the second layer is the repair: dropping a missing-asset
@@ -685,7 +685,7 @@ struct ImageLayerTests {
         try await session.deleteLayer(secondImageID, fromPage: poisonedPageID)
         await session.saveIfNeeded()
         #expect(session.lastSaveError == nil)
-        let repaired = try await scratch.store().loadPage(poisonedPageID)
+        let repaired = try await scratch.freshStore().loadPage(poisonedPageID)
         #expect(repaired.staticLayers.isEmpty)
         #expect(repaired.refusedLayers.isEmpty)
     }
@@ -725,112 +725,11 @@ struct ImageLayerTests {
 
     /// A unique directory per test, removed afterwards. A class, not a
     /// noncopyable struct, because the assertion closures above capture it.
-    private final class Scratch {
-        let root: URL
+}
 
-        var documentURL: URL { root.appendingPathComponent("JustACanvas.tubernotes") }
-        var pagesURL: URL { documentURL.appendingPathComponent("pages") }
-        var layersURL: URL { documentURL.appendingPathComponent("layers") }
-        var assetsURL: URL { documentURL.appendingPathComponent("assets") }
-
-        func pageURL(_ pageID: UUID) -> URL {
-            pagesURL.appendingPathComponent("\(pageID.uuidString).plist")
-        }
-
-        func layerURL(_ layerID: UUID) -> URL {
-            layersURL.appendingPathComponent("\(layerID.uuidString).plist")
-        }
-
-        /// One page's layer envelopes as they are on disk, read the way the
-        /// store reads them: the page file names the layers, each layer is its
-        /// own file. Tests that want to assert about durable bytes rather than
-        /// about `loadPage`'s interpretation of them go through here.
-        func layersOnDisk(ofPage pageID: UUID) throws -> [LayerEnvelope] {
-            let page = try PropertyListDecoder().decode(
-                PageFile.self,
-                from: Data(contentsOf: pageURL(pageID))
-            )
-            if let inline = page.inlineLayers { return inline }
-            return try page.layerIDs.map { layerID in
-                try PropertyListDecoder().decode(
-                    LayerEnvelope.self,
-                    from: Data(contentsOf: layerURL(layerID))
-                )
-            }
-        }
-
-        func assetURL(_ assetID: UUID, _ ext: String) -> URL {
-            assetsURL.appendingPathComponent("\(assetID.uuidString).\(ext)")
-        }
-
-        init() throws {
-            root = URL(fileURLWithPath: NSTemporaryDirectory())
-                .appendingPathComponent("tubernotes-image-tests-\(UUID().uuidString)")
-            try FileManager.default.createDirectory(
-                at: pagesURL,
-                withIntermediateDirectories: true
-            )
-            try FileManager.default.createDirectory(
-                at: layersURL,
-                withIntermediateDirectories: true
-            )
-        }
-
-        /// A fresh store each time, deliberately: it defeats any in-memory
-        /// record the store keeps of its own reads and writes, so assertions
-        /// about what is on disk are about disk.
-        func store() -> DocumentStore {
-            DocumentStore(directoryURL: documentURL)
-        }
-
-        func index(pageIDs: [UUID]) -> DocumentIndex {
-            DocumentIndex(
-                formatVersion: DocumentIndex.currentFormatVersion,
-                documentID: UUID(),
-                pages: pageIDs.map { PageRecord(id: $0, geometry: .canonical) },
-                currentPageIndex: 0
-            )
-        }
-
-        static func binaryEncoder() -> PropertyListEncoder {
-            let encoder = PropertyListEncoder()
-            encoder.outputFormat = .binary
-            return encoder
-        }
-
-        /// Writes a page and its layers directly, bypassing the store — the only
-        /// way to put on disk what the store refuses to write, including a page
-        /// whose asset was never imported.
-        func writePageFile(_ pageID: UUID, layers: [LayerEnvelope]) throws {
-            for layer in layers {
-                try Self.binaryEncoder().encode(layer).write(
-                    to: layerURL(layer.layerID),
-                    options: .atomic
-                )
-            }
-            let page = PageFile(pageID: pageID, layerIDs: layers.map(\.layerID))
-            try Self.binaryEncoder().encode(page).write(to: pageURL(pageID), options: .atomic)
-        }
-
-        func writeIndexFile(_ index: DocumentIndex) throws {
-            try Self.binaryEncoder().encode(index).write(
-                to: documentURL.appendingPathComponent("document.plist"),
-                options: .atomic
-            )
-        }
-
-        func modificationDate(ofPage pageID: UUID) throws -> Date {
-            let values = try pageURL(pageID).resourceValues(
-                forKeys: [.contentModificationDateKey]
-            )
-            guard let date = values.contentModificationDate else {
-                throw CocoaError(.fileReadUnknown)
-            }
-            return date
-        }
-
-        deinit {
-            try? FileManager.default.removeItem(at: root)
-        }
+/// The one fixture only this suite needs: a solid HEIC of a given size.
+private extension TestScratch {
+    static func solidHEIC(size: Int) -> Data {
+        solidHEIC(width: size, height: size, color: UIColor.red)
     }
 }
