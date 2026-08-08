@@ -494,21 +494,27 @@ struct PageCanvasControllerTests {
         return DocumentStore(directoryURL: root.appendingPathComponent("JustACanvas.tubernotes"))
     }
 
-    /// Writes a solid PNG asset and returns the layer envelope naming it.
+    /// Writes a solid HEIC asset and returns the layer envelope naming it.
     private func imageLayer(
         store: DocumentStore,
         color: UIColor,
         transform: PageSpaceTransform
     ) async throws -> LayerEnvelope {
-        let png = UIGraphicsImageRenderer(size: CGSize(width: 64, height: 64)).pngData { context in
+        let drawn = UIGraphicsImageRenderer(size: CGSize(width: 64, height: 64)).image { context in
             color.setFill()
             context.fill(CGRect(x: 0, y: 0, width: 64, height: 64))
         }
+        guard
+            let cgImage = drawn.cgImage,
+            let bytes = ImageImportPreparation.heicEncoded(cgImage)
+        else {
+            preconditionFailure("HEIC encoding failed")
+        }
         let assetID = UUID()
-        try await store.writeAsset(png, assetID: assetID, format: .png)
+        try await store.writeAsset(bytes, assetID: assetID, format: .heic)
         return try LayerEnvelope.image(
             layerID: UUID(),
-            ref: ImageLayerRef(assetID: assetID, format: .png),
+            ref: ImageLayerRef(assetID: assetID, format: .heic),
             pageSpaceTransform: transform
         )
     }

@@ -11,16 +11,40 @@ import Foundation
 /// The closed set of asset encodings this build can name on disk.
 ///
 /// Closed for the same reason `LayerKind` is: a format this enum does not name
-/// is not guessed at, it is refused at the layer's own scope. The milestone's
-/// own experimental normalization flag would add HEIC as a new case plus a
-/// `CONTRACT:` amendment, which is exactly the cost the closed set is for.
+/// is not guessed at, it is refused at the layer's own scope. What the closed
+/// set bought is visible in this enum's own history: it was `png` and `jpeg`,
+/// and the cost of changing that was one amendment, paid deliberately.
+///
+/// **There is exactly one image encoding, and it is HEIC** (Phillip,
+/// 2026-08-07; `Docs/Queue.md` — `image-format-is-heic`). Not an addition — a
+/// narrowing, and the narrowing is the point. Two image formats meant an
+/// import path that chose between them, and the one that could not carry alpha
+/// was the one everything unfamiliar got transcoded into: a TIFF or a GIF with
+/// transparency came out of the Files picker with its transparent regions
+/// baked into a JPEG, durably, because assets are write-once. One
+/// alpha-carrying format removes that class by construction rather than by
+/// care. HEIC pays for it with hardware decode and roughly a fifth of PNG's
+/// bytes at photo sizes, and it costs a slight softening when a lossless
+/// source is transcoded — accepted, eyes open.
+///
+/// The alpha claim is pinned by `HEICAlphaTests`, in the simulator, before the
+/// import path was allowed to depend on it.
 enum AssetFormat: String, Sendable, Equatable, CaseIterable {
-    case png
-    case jpeg
+    /// The one image encoding. Every image asset this build writes is one of
+    /// these, whatever the user picked.
+    case heic
     /// A source PDF, byte for byte. **A `pdf` asset is never normalized and
     /// never rewritten** — the original bytes are the entire small-export
     /// story, and any re-encode would make the file the user gets back
     /// something other than the file they imported.
+    ///
+    /// This is now the *only* place that story holds, and it is deliberate
+    /// rather than leftover. Consolidating images on HEIC gave up small export
+    /// for them: import a PNG screenshot and what a future export hands back is
+    /// a HEIC, not the file that went in. A PDF is not an image, its bytes are
+    /// frequently a document the user cares about as a file, and re-encoding
+    /// one is not a transcode but a rewrite of someone else's document — so the
+    /// argument that lost for images does not even arise here.
     case pdf
 
     /// The extension in `assets/<assetID>.<ext>`. It is the raw value, and the
@@ -46,6 +70,21 @@ enum AssetFormat: String, Sendable, Equatable, CaseIterable {
 /// is: a file written by a newer build must decode as a ref whose format this
 /// build refuses — refusing the layer, never the page or the document. A
 /// format-typed field would turn an unknown format into a decode failure.
+///
+/// ## Why the field survived the narrowing to one image format
+///
+/// With `heic` the only image encoding, `format` looks like the restatement
+/// this file refuses everywhere else — `PDFLayerRef` gives up its format field
+/// on exactly that argument. It is not the same case. `pdf` is a kind whose
+/// name *is* its encoding; `image` is a category, and which encoding a
+/// particular image asset was written in is a fact about the asset that the
+/// kind does not state. Dropping the field would assume every `image` ref on
+/// disk is HEIC, which turns the one thing the closed set exists for — a
+/// format string this build cannot open refusing its layer and nothing else —
+/// into a decode failure somewhere further down, and would make a second image
+/// format a payload migration rather than one amendment. The field is one
+/// short string per image layer, and it is what keeps "the set is closed" a
+/// mechanism instead of a sentence.
 struct ImageLayerRef: Codable, Sendable, Equatable {
     let assetID: UUID
     let format: String
@@ -72,10 +111,17 @@ struct ImageLayerRef: Codable, Sendable, Equatable {
     /// not — a PDF is not a bitmap, and an `image` layer pointing at one is the
     /// same invalid state as one pointing at an encoding this build has no
     /// decoder for, so it takes the same refusal.
+    ///
+    /// The set narrowing to one image format did not make this method
+    /// redundant, and that is worth saying because it now looks like it maps
+    /// `heic` to `heic`. What it decides is the *refusal*: `pdf`, and every
+    /// format string this build does not know — including `png` and `jpeg`,
+    /// which a build older than 2026-08-07 could write and this one cannot
+    /// read. Those refuse the layer, not the page and not the document, which
+    /// is exactly how the next image format would land safely too.
     var recognizedFormat: AssetFormat? {
         switch AssetFormat(rawValue: format) {
-        case .png: .png
-        case .jpeg: .jpeg
+        case .heic: .heic
         case .pdf: nil
         case nil: nil
         }
@@ -117,8 +163,12 @@ struct ImageLayerRef: Codable, Sendable, Equatable {
 ///
 /// ## Why there is no `format` field here, unlike `ImageLayerRef`
 ///
-/// An `image` layer genuinely needs one: `png` and `jpeg` are both images, and
-/// the format is what completes `assets/<assetID>.<ext>`. A `pdf` layer's asset
+/// An `image` layer genuinely needs one: `image` is a category rather than an
+/// encoding, so which encoding an asset was written in is a fact the kind does
+/// not state, and it is what completes `assets/<assetID>.<ext>`. That stays
+/// true now that HEIC is the only image encoding this build writes — see
+/// `ImageLayerRef` for why the narrowing did not collapse the field. A `pdf`
+/// layer's asset
 /// is a PDF by definition of the kind, so a stored format could only ever
 /// repeat the kind — and a value stored twice is a value that can disagree with
 /// itself. The file name comes from `AssetFormat.pdf`, chosen by the kind.

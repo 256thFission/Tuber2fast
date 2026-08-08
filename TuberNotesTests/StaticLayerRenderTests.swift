@@ -72,7 +72,7 @@ struct StaticLayerRenderTests {
         // flip anywhere in the chain shows here as an upside-down page.
         let layer = try await scratch.imageLayer(
             store: store,
-            image: Scratch.twoTonePNG(top: .blue, bottom: .yellow),
+            image: Scratch.twoToneHEIC(top: .blue, bottom: .yellow),
             transform: PageSpaceTransform(
                 a: PageGeometry.canonical.width, b: 0, c: 0, d: PageGeometry.canonical.height, tx: 0, ty: 0
             )
@@ -121,7 +121,7 @@ struct StaticLayerRenderTests {
 
     @Test("Downsampling decodes no larger than the bound it is given")
     func downsamplingHonoursItsBound() throws {
-        let source = Scratch.solidPNG(width: 1600, height: 1000, color: .red)
+        let source = Scratch.solidHEIC(width: 1600, height: 1000, color: .red)
 
         // The source, undiminished, for a comparison the assertion below needs.
         let full = try #require(StaticLayerRenderer.downsample(source, maxPixelSize: 4000))
@@ -172,7 +172,7 @@ struct StaticLayerRenderTests {
         // 1600x1000 of source, placed 60 page points wide.
         let layer = try await scratch.imageLayer(
             store: store,
-            image: Scratch.solidPNG(width: 1600, height: 1000, color: .red),
+            image: Scratch.solidHEIC(width: 1600, height: 1000, color: .red),
             transform: PageSpaceTransform(a: 60, b: 0, c: 0, d: 37.5, tx: 10, ty: 10)
         )
         let request = StaticLayerRequest(layers: [layer], geometry: .canonical, pixelsPerPagePoint: 2)
@@ -186,7 +186,7 @@ struct StaticLayerRenderTests {
             StaticLayerRenderer.downsample(
                 try await store.loadAsset(
                     assetID: try ImageLayerRef(payload: layer.payload).assetID,
-                    format: .png
+                    format: .heic
                 ),
                 maxPixelSize: bound
             )
@@ -450,7 +450,7 @@ struct StaticLayerRenderTests {
         let renderer = StaticLayerRenderer(store: store)
 
         let good = try await scratch.imageLayer(store: store, color: .red, transform: .fullPage)
-        // A file that exists, is named `.png`, and is not an image. The durable
+        // A file that exists, is named `.heic`, and is not an image. The durable
         // half cannot catch this: it checks that the asset is *there*.
         let broken = try await scratch.imageLayer(
             store: store, image: Data("not a picture".utf8), transform: .fullPage
@@ -473,11 +473,12 @@ struct StaticLayerRenderTests {
         let scratch = try Scratch()
         let renderer = StaticLayerRenderer(store: scratch.store)
 
-        // The shape a future HEIC asset takes to this build.
+        // The shape a pre-narrowing PNG asset takes to this build: a format
+        // string that is not `heic`, refused rather than guessed at.
         let layer = LayerEnvelope(
             layerID: UUID(),
             kind: .image,
-            payload: try ImageLayerRef(assetID: UUID(), rawFormat: "heic").encodedPayload(),
+            payload: try ImageLayerRef(assetID: UUID(), rawFormat: "png").encodedPayload(),
             pageSpaceTransform: .fullPage
         )
         let render = await renderer.composite(
@@ -487,7 +488,7 @@ struct StaticLayerRenderTests {
             Issue.record("an unreadable format rendered as \(render)")
             return
         }
-        #expect(why.contains("heic"))
+        #expect(why.contains("png"))
     }
 
     @Test("An asset that is not on disk refuses the composite")
@@ -498,7 +499,7 @@ struct StaticLayerRenderTests {
         let layer = LayerEnvelope(
             layerID: UUID(),
             kind: .image,
-            payload: try ImageLayerRef(assetID: UUID(), format: .png).encodedPayload(),
+            payload: try ImageLayerRef(assetID: UUID(), format: .heic).encodedPayload(),
             pageSpaceTransform: .fullPage
         )
         let render = await renderer.composite(
@@ -714,8 +715,8 @@ struct StaticLayerRenderTests {
         let canvasPage = try #require(session.currentCanvas)
         #expect(canvasPage.backdrop == nil, "a blank page starts with nothing beneath its ink")
 
-        let png = Scratch.solidPNG(width: 400, height: 300, color: .green)
-        _ = try await session.importImage(png, format: .png, sourceWidth: 400, sourceHeight: 300)
+        let image = Scratch.solidHEIC(width: 400, height: 300, color: .green)
+        _ = try await session.importImage(image, format: .heic, sourceWidth: 400, sourceHeight: 300)
         root.layoutIfNeeded()
 
         // The same canvas, told rather than rebuilt: an import must not touch
@@ -738,13 +739,13 @@ struct StaticLayerRenderTests {
         let missing = LayerEnvelope(
             layerID: UUID(),
             kind: .image,
-            payload: try ImageLayerRef(assetID: assetID, format: .png).encodedPayload(),
+            payload: try ImageLayerRef(assetID: assetID, format: .heic).encodedPayload(),
             pageSpaceTransform: .fullPage
         )
         let ink = LayerEnvelope(
             layerID: UUID(), kind: .ink, payload: Data(), pageSpaceTransform: .identity
         )
-        try await scratch.store.writeAsset(Data([0x01]), assetID: assetID, format: .png)
+        try await scratch.store.writeAsset(Data([0x01]), assetID: assetID, format: .heic)
         try await scratch.store.save(
             index: scratch.index(pageIDs: [pageID]), changedPages: [pageID: [missing, ink]]
         )
@@ -885,7 +886,7 @@ struct StaticLayerRenderTests {
 
         func removeAsset(_ assetID: UUID) throws {
             try FileManager.default.removeItem(
-                at: documentURL.appendingPathComponent("assets/\(assetID.uuidString).png")
+                at: documentURL.appendingPathComponent("assets/\(assetID.uuidString).heic")
             )
         }
 
@@ -897,7 +898,7 @@ struct StaticLayerRenderTests {
         ) async throws -> LayerEnvelope {
             try await imageLayer(
                 store: store,
-                image: Self.solidPNG(width: 64, height: 64, color: color),
+                image: Self.solidHEIC(width: 64, height: 64, color: color),
                 transform: transform
             )
         }
@@ -908,27 +909,27 @@ struct StaticLayerRenderTests {
             transform: PageSpaceTransform
         ) async throws -> LayerEnvelope {
             let assetID = UUID()
-            try await store.writeAsset(image, assetID: assetID, format: .png)
+            try await store.writeAsset(image, assetID: assetID, format: .heic)
             return try LayerEnvelope.image(
                 layerID: UUID(),
-                ref: ImageLayerRef(assetID: assetID, format: .png),
+                ref: ImageLayerRef(assetID: assetID, format: .heic),
                 pageSpaceTransform: transform
             )
         }
 
-        /// PNG bytes for a solid rectangle. Built in memory through ImageIO —
+        /// HEIC bytes for a solid rectangle. Built in memory through ImageIO —
         /// the same decoder the renderer uses, from the other end.
-        static func solidPNG(width: Int, height: Int, color: UIColor) -> Data {
-            png(width: width, height: height) { context in
+        static func solidHEIC(width: Int, height: Int, color: UIColor) -> Data {
+            heic(width: width, height: height) { context in
                 context.setFillColor(color.cgColor)
                 context.fill(CGRect(x: 0, y: 0, width: width, height: height))
             }
         }
 
-        /// PNG bytes whose top half is one colour and bottom half another, so
+        /// HEIC bytes whose top half is one colour and bottom half another, so
         /// orientation is observable rather than assumed.
-        static func twoTonePNG(top: UIColor, bottom: UIColor) -> Data {
-            png(width: 64, height: 64) { context in
+        static func twoToneHEIC(top: UIColor, bottom: UIColor) -> Data {
+            heic(width: 64, height: 64) { context in
                 context.setFillColor(bottom.cgColor)
                 context.fill(CGRect(x: 0, y: 0, width: 64, height: 32))
                 context.setFillColor(top.cgColor)
@@ -936,7 +937,7 @@ struct StaticLayerRenderTests {
             }
         }
 
-        private static func png(width: Int, height: Int, _ draw: (CGContext) -> Void) -> Data {
+        private static func heic(width: Int, height: Int, _ draw: (CGContext) -> Void) -> Data {
             guard let context = CGContext(
                 data: nil,
                 width: width,
@@ -953,15 +954,10 @@ struct StaticLayerRenderTests {
             guard let image = context.makeImage() else {
                 preconditionFailure("the context yielded no image")
             }
-            let out = NSMutableData()
-            guard let destination = CGImageDestinationCreateWithData(
-                out, UTType.png.identifier as CFString, 1, nil
-            ) else {
-                preconditionFailure("no PNG destination")
+            guard let encoded = ImageImportPreparation.heicEncoded(image) else {
+                preconditionFailure("HEIC encoding failed")
             }
-            CGImageDestinationAddImage(destination, image, nil)
-            precondition(CGImageDestinationFinalize(destination), "PNG encoding failed")
-            return out as Data
+            return encoded
         }
     }
 }

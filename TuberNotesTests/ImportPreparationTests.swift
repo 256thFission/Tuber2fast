@@ -54,6 +54,35 @@ struct ImportPreparationTests {
         return encoded as Data
     }
 
+    /// A PNG whose left half is opaque and whose right half is fully
+    /// transparent — a cut-out, the shape of source the old transcode-to-JPEG
+    /// path destroyed.
+    private func halfTransparentPNG(width: Int, height: Int) throws -> Data {
+        let context = try #require(
+            CGContext(
+                data: nil,
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: 0,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )
+        )
+        context.clear(CGRect(x: 0, y: 0, width: width, height: height))
+        context.setFillColor(CGColor(red: 0.2, green: 0.5, blue: 0.9, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: width / 2, height: height))
+        let image = try #require(context.makeImage())
+
+        let encoded = NSMutableData()
+        let destination = try #require(
+            CGImageDestinationCreateWithData(encoded, UTType.png.identifier as CFString, 1, nil)
+        )
+        CGImageDestinationAddImage(destination, image, nil)
+        #expect(CGImageDestinationFinalize(destination))
+        return encoded as Data
+    }
+
     /// What ImageIO reports about encoded bytes: pixel extent as stored, and
     /// the orientation tag if any.
     private func reported(_ bytes: Data) throws -> (width: Int, height: Int, orientation: Int?) {
@@ -70,17 +99,22 @@ struct ImportPreparationTests {
 
     // MARK: - The EXIF hole
 
-    @Test("A JPEG with EXIF orientation 6 reports the rotated extent and keeps its bytes")
+    @Test("A HEIC with EXIF orientation 6 reports the rotated extent and keeps its bytes")
     func exifOrientation6ReportsTheRotatedExtent() throws {
         // 100 × 50 as stored; orientation 6 (90° CW) means it *displays* as
         // 50 × 100. The renderer decodes with the transform applied, so the
         // prepared extent must be the displayed one.
-        let jpeg = try encodedImage(width: 100, height: 50, type: .jpeg, orientation: 6)
-        #expect(try reported(jpeg).orientation == 6, "the fixture must genuinely carry EXIF 6")
+        //
+        // A HEIC source, because that is now the one source kind whose bytes
+        // pass through: the orientation must be read out of metadata rather
+        // than baked by a re-encode, which is the case that can go wrong
+        // silently.
+        let heic = try encodedImage(width: 100, height: 50, type: .heic, orientation: 6)
+        #expect(try reported(heic).orientation == 6, "the fixture must genuinely carry EXIF 6")
 
-        let prepared = try ImageImportPreparation.prepare(jpeg)
-        #expect(prepared.format == .jpeg)
-        #expect(prepared.bytes == jpeg, "a jpeg source keeps its original bytes")
+        let prepared = try ImageImportPreparation.prepare(heic)
+        #expect(prepared.format == .heic)
+        #expect(prepared.bytes == heic, "a heic source keeps its original bytes")
         #expect(prepared.orientedPixelWidth == 50)
         #expect(prepared.orientedPixelHeight == 100)
     }
@@ -94,8 +128,8 @@ struct ImportPreparationTests {
         let pageID = session.currentPageID
 
         // The full path the import UI takes: prepared extent in, transform out.
-        let jpeg = try encodedImage(width: 100, height: 50, type: .jpeg, orientation: 6)
-        let prepared = try ImageImportPreparation.prepare(jpeg)
+        let heic = try encodedImage(width: 100, height: 50, type: .heic, orientation: 6)
+        let prepared = try ImageImportPreparation.prepare(heic)
         let layerID = try await session.importImage(
             prepared.bytes,
             format: prepared.format,
@@ -116,29 +150,30 @@ struct ImportPreparationTests {
         #expect(placed.a > 0)
     }
 
-    // MARK: - The closed format set
+    // MARK: - One image format
 
-    @Test("A PNG passes through untouched with its raw extent")
-    func pngPassesThrough() throws {
-        let png = try encodedImage(width: 64, height: 32, type: .png)
-        let prepared = try ImageImportPreparation.prepare(png)
-        #expect(prepared.format == .png)
-        #expect(prepared.bytes == png)
+    @Test("A HEIC passes through untouched with its raw extent")
+    func heicPassesThrough() throws {
+        let heic = try encodedImage(width: 64, height: 32, type: .heic)
+        let prepared = try ImageImportPreparation.prepare(heic)
+        #expect(prepared.format == .heic)
+        #expect(prepared.bytes == heic, "already in the one durable format: no lossy generation")
         #expect(prepared.orientedPixelWidth == 64)
         #expect(prepared.orientedPixelHeight == 32)
     }
 
-    @Test("A format outside the closed set transcodes to an upright JPEG")
-    func otherFormatsTranscodeToUprightJPEG() throws {
-        // TIFF stands in for HEIC: the simulator has no HEIC hardware
-        // encoder, and the path under test is "decodable but not png/jpeg",
-        // which both take. Orientation 6 as well, so the transcode must both
-        // re-encode and apply the transform.
-        let tiff = try encodedImage(width: 100, height: 50, type: .tiff, orientation: 6)
+    @Test("Every other format transcodes to an upright HEIC", arguments: [UTType.png, .jpeg, .tiff])
+    func otherFormatsTranscodeToUprightHEIC(_ type: UTType) throws {
+        // Three sources, one destination — that is the whole of
+        // `image-format-is-heic` at this seam. PNG and JPEG are in the list
+        // because they used to be pass-throughs: the narrowing is only real if
+        // they now transcode like anything else. Orientation 6 as well, so the
+        // transcode must both re-encode and apply the transform.
+        let source = try encodedImage(width: 100, height: 50, type: type, orientation: 6)
 
-        let prepared = try ImageImportPreparation.prepare(tiff)
-        #expect(prepared.format == .jpeg)
-        #expect(prepared.bytes != tiff)
+        let prepared = try ImageImportPreparation.prepare(source)
+        #expect(prepared.format == .heic)
+        #expect(prepared.bytes != source)
         #expect(prepared.orientedPixelWidth == 50)
         #expect(prepared.orientedPixelHeight == 100)
 
@@ -153,7 +188,41 @@ struct ImportPreparationTests {
         let outputType = CGImageSourceCreateWithData(prepared.bytes as CFData, nil)
             .flatMap(CGImageSourceGetType)
             .flatMap { UTType($0 as String) }
-        #expect(outputType?.conforms(to: .jpeg) == true)
+        #expect(outputType?.conforms(to: .heic) == true)
+    }
+
+    // MARK: - The defect the narrowing closes
+
+    @Test("A transparent PNG keeps its transparency through the transcode")
+    func transparencySurvivesTheImportTranscode() throws {
+        // The alpha-flattening defect, at the seam it used to happen at: this
+        // path transcoded everything unfamiliar to JPEG, and assets are
+        // write-once, so a cut-out imported through the Files picker lost its
+        // transparent regions permanently. `HEICAlphaTests` pins the codec;
+        // this pins that the *import path* actually reaches it.
+        let png = try halfTransparentPNG(width: 64, height: 64)
+        let prepared = try ImageImportPreparation.prepare(png)
+        #expect(prepared.format == .heic)
+
+        let decoded = try #require(
+            StaticLayerRenderer.downsample(prepared.bytes, maxPixelSize: 64)
+        )
+        var bytes = [UInt8](repeating: 0, count: 4)
+        let context = try #require(
+            CGContext(
+                data: &bytes, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )
+        )
+        context.clear(CGRect(x: 0, y: 0, width: 1, height: 1))
+        // The transparent half, sampled away from the seam.
+        context.translateBy(x: -CGFloat(decoded.width - 8), y: CGFloat(1 - decoded.height / 2))
+        context.draw(
+            decoded,
+            in: CGRect(x: 0, y: 0, width: decoded.width, height: decoded.height)
+        )
+        #expect(bytes[3] == 0, "the imported asset baked the transparency into opaque pixels")
     }
 
     @Test("Bytes that are not an image are refused, not defaulted")

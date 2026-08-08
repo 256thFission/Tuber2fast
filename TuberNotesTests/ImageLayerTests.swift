@@ -24,21 +24,21 @@ struct ImageLayerTests {
         let assetID = UUID()
         let original = Data((0..<2048).map { UInt8($0 % 251) })
 
-        try await store.writeAsset(original, assetID: assetID, format: .png)
-        #expect(try await store.loadAsset(assetID: assetID, format: .png) == original)
+        try await store.writeAsset(original, assetID: assetID, format: .heic)
+        #expect(try await store.loadAsset(assetID: assetID, format: .heic) == original)
 
         // There is no update entry point at all; this is the only way to try.
         await #expect(throws: AssetError.assetAlreadyExists(assetID: assetID)) {
-            try await store.writeAsset(Data([0xFF]), assetID: assetID, format: .png)
+            try await store.writeAsset(Data([0xFF]), assetID: assetID, format: .heic)
         }
-        #expect(try Data(contentsOf: scratch.assetURL(assetID, "png")) == original)
+        #expect(try Data(contentsOf: scratch.assetURL(assetID, "heic")) == original)
 
         // Write-once is per asset, not per store instance: a store that never
         // wrote this one still refuses.
         await #expect(throws: AssetError.assetAlreadyExists(assetID: assetID)) {
-            try await scratch.store().writeAsset(Data([0xFE]), assetID: assetID, format: .png)
+            try await scratch.store().writeAsset(Data([0xFE]), assetID: assetID, format: .heic)
         }
-        #expect(try Data(contentsOf: scratch.assetURL(assetID, "png")) == original)
+        #expect(try Data(contentsOf: scratch.assetURL(assetID, "heic")) == original)
     }
 
     @Test("The same bytes under a new ID are a new asset, never a mutation")
@@ -48,11 +48,11 @@ struct ImageLayerTests {
         let first = UUID()
         let second = UUID()
 
-        try await store.writeAsset(Data([0x01]), assetID: first, format: .png)
-        try await store.writeAsset(Data([0x02]), assetID: second, format: .jpeg)
+        try await store.writeAsset(Data([0x01]), assetID: first, format: .heic)
+        try await store.writeAsset(Data([0x02]), assetID: second, format: .heic)
 
-        #expect(try await store.loadAsset(assetID: first, format: .png) == Data([0x01]))
-        #expect(try await store.loadAsset(assetID: second, format: .jpeg) == Data([0x02]))
+        #expect(try await store.loadAsset(assetID: first, format: .heic) == Data([0x01]))
+        #expect(try await store.loadAsset(assetID: second, format: .heic) == Data([0x02]))
     }
 
     // MARK: - The envelope round trip
@@ -68,10 +68,10 @@ struct ImageLayerTests {
         // every coefficient has to survive.
         let placed = PageSpaceTransform(a: 240.5, b: 12.25, c: -8.5, d: 310.75, tx: 41, ty: 96.5)
 
-        try await store.writeAsset(Data([0x89, 0x50, 0x4E, 0x47]), assetID: assetID, format: .png)
+        try await store.writeAsset(Data([0x89, 0x50, 0x4E, 0x47]), assetID: assetID, format: .heic)
         let envelope = try LayerEnvelope.image(
             layerID: layerID,
-            ref: ImageLayerRef(assetID: assetID, format: .png),
+            ref: ImageLayerRef(assetID: assetID, format: .heic),
             pageSpaceTransform: placed
         )
         let documentIndex = scratch.index(pageIDs: [pageID])
@@ -89,7 +89,7 @@ struct ImageLayerTests {
 
         let ref = try ImageLayerRef(payload: #require(loaded.staticLayers.first).payload)
         #expect(ref.assetID == assetID)
-        #expect(ref.recognizedFormat == .png)
+        #expect(ref.recognizedFormat == .heic)
     }
 
     @Test("An image layer's transform must be invertible")
@@ -98,7 +98,7 @@ struct ImageLayerTests {
         let assetID = UUID()
         let layerID = UUID()
         let pageID = UUID()
-        try await scratch.store().writeAsset(Data([0x01]), assetID: assetID, format: .png)
+        try await scratch.store().writeAsset(Data([0x01]), assetID: assetID, format: .heic)
 
         // Determinant zero: the layer collapses to a line, and no inverse maps
         // a page point back into it.
@@ -108,7 +108,7 @@ struct ImageLayerTests {
             layers: [
                 try LayerEnvelope.image(
                     layerID: layerID,
-                    ref: ImageLayerRef(assetID: assetID, format: .png),
+                    ref: ImageLayerRef(assetID: assetID, format: .heic),
                     pageSpaceTransform: singular
                 ),
                 inkEnvelope(payload: Data([0x01])),
@@ -128,10 +128,10 @@ struct ImageLayerTests {
         let store = scratch.store()
         let pageID = UUID()
         let assetID = UUID()
-        try await store.writeAsset(Data([0x01]), assetID: assetID, format: .png)
+        try await store.writeAsset(Data([0x01]), assetID: assetID, format: .heic)
         let image = try LayerEnvelope.image(
             layerID: UUID(),
-            ref: ImageLayerRef(assetID: assetID, format: .png),
+            ref: ImageLayerRef(assetID: assetID, format: .heic),
             pageSpaceTransform: .fittingSource(
                 width: 100, height: 50,
                 inPageOfWidth: PageGeometry.canonical.width, height: PageGeometry.canonical.height
@@ -177,7 +177,7 @@ struct ImageLayerTests {
 
         let envelope = try LayerEnvelope.image(
             layerID: layerID,
-            ref: ImageLayerRef(assetID: assetID, format: .png),
+            ref: ImageLayerRef(assetID: assetID, format: .heic),
             pageSpaceTransform: .identity
         )
         let refusal = await #expect(throws: DocumentStore.PageSaveRefusal.self) {
@@ -210,7 +210,7 @@ struct ImageLayerTests {
 
         // The leaf lands; the process dies before the page write.
         let orphan = UUID()
-        try await store.writeAsset(Data([0x0A, 0x0B]), assetID: orphan, format: .jpeg)
+        try await store.writeAsset(Data([0x0A, 0x0B]), assetID: orphan, format: .heic)
 
         // The document opens and the page reads normally: an orphan is inert.
         let reopened = scratch.store()
@@ -218,7 +218,7 @@ struct ImageLayerTests {
         let loaded = try await reopened.loadPage(pageID)
         #expect(loaded.refusedLayers.isEmpty)
         #expect(loaded.staticLayers.isEmpty)
-        #expect(FileManager.default.fileExists(atPath: scratch.assetURL(orphan, "jpeg").path))
+        #expect(FileManager.default.fileExists(atPath: scratch.assetURL(orphan, "heic").path))
     }
 
     @Test("A save with an image layer still touches only changed pages")
@@ -230,10 +230,10 @@ struct ImageLayerTests {
         let assetID = UUID()
         let documentIndex = scratch.index(pageIDs: [withImage, plain])
 
-        try await store.writeAsset(Data([0x01]), assetID: assetID, format: .png)
+        try await store.writeAsset(Data([0x01]), assetID: assetID, format: .heic)
         let image = try LayerEnvelope.image(
             layerID: UUID(),
-            ref: ImageLayerRef(assetID: assetID, format: .png),
+            ref: ImageLayerRef(assetID: assetID, format: .heic),
             pageSpaceTransform: .fittingSource(
                 width: 640, height: 480,
                 inPageOfWidth: PageGeometry.canonical.width, height: PageGeometry.canonical.height
@@ -273,7 +273,7 @@ struct ImageLayerTests {
             layers: [
                 try LayerEnvelope.image(
                     layerID: layerID,
-                    ref: ImageLayerRef(assetID: assetID, format: .png),
+                    ref: ImageLayerRef(assetID: assetID, format: .heic),
                     pageSpaceTransform: .identity
                 ),
                 inkEnvelope(payload: Data([0x01])),
@@ -303,7 +303,7 @@ struct ImageLayerTests {
             layers: [
                 try LayerEnvelope.image(
                     layerID: UUID(),
-                    ref: ImageLayerRef(assetID: UUID(), format: .png),
+                    ref: ImageLayerRef(assetID: UUID(), format: .heic),
                     pageSpaceTransform: .identity
                 ),
                 inkEnvelope(payload: Data([0x01])),
@@ -328,7 +328,7 @@ struct ImageLayerTests {
         // An import onto such a page is refused too, and nothing is rewritten.
         await #expect(throws: LayerEditError.pageRefusesInput(pageID)) {
             try await session.importImage(
-                Data([0x01]), format: .png, sourceWidth: 10, sourceHeight: 10
+                Data([0x01]), format: .heic, sourceWidth: 10, sourceHeight: 10
             )
         }
         await session.saveIfNeeded()
@@ -346,7 +346,7 @@ struct ImageLayerTests {
             layers: [
                 try LayerEnvelope.image(
                     layerID: layerID,
-                    ref: ImageLayerRef(assetID: UUID(), format: .png),
+                    ref: ImageLayerRef(assetID: UUID(), format: .heic),
                     pageSpaceTransform: .identity
                 ),
                 inkEnvelope(payload: Data([0x01])),
@@ -378,7 +378,7 @@ struct ImageLayerTests {
 
         let bytes = Data((0..<1024).map { UInt8($0 % 251) })
         let layerID = try await session.importImage(
-            bytes, format: .png, sourceWidth: 1000, sourceHeight: 500
+            bytes, format: .heic, sourceWidth: 1000, sourceHeight: 500
         )
         #expect(session.lastSaveError == nil)
 
@@ -400,7 +400,7 @@ struct ImageLayerTests {
 
         // The asset is where the ref says, byte for byte.
         let ref = try ImageLayerRef(payload: layers[0].payload)
-        #expect(try Data(contentsOf: scratch.assetURL(ref.assetID, "png")) == bytes)
+        #expect(try Data(contentsOf: scratch.assetURL(ref.assetID, "heic")) == bytes)
     }
 
     @Test("An ordinary ink save preserves the page's image layer")
@@ -411,7 +411,7 @@ struct ImageLayerTests {
         await session.start()
         let pageID = session.currentPageID
         let layerID = try await session.importImage(
-            Data([0x01, 0x02]), format: .jpeg, sourceWidth: 400, sourceHeight: 400
+            Data([0x01, 0x02]), format: .heic, sourceWidth: 400, sourceHeight: 400
         )
 
         // Ink arrives afterwards and the page is written again. Without the
@@ -439,13 +439,13 @@ struct ImageLayerTests {
         await session.start()
         let pageID = session.currentPageID
         let layerID = try await session.importImage(
-            Data([0x01]), format: .png, sourceWidth: 200, sourceHeight: 100
+            Data([0x01]), format: .heic, sourceWidth: 200, sourceHeight: 100
         )
 
         let ref = try ImageLayerRef(
             payload: try #require(scratch.layersOnDisk(ofPage: pageID).first).payload
         )
-        #expect(FileManager.default.fileExists(atPath: scratch.assetURL(ref.assetID, "png").path))
+        #expect(FileManager.default.fileExists(atPath: scratch.assetURL(ref.assetID, "heic").path))
 
         try await session.deleteLayer(layerID, fromPage: pageID)
 
@@ -455,7 +455,7 @@ struct ImageLayerTests {
         // ...the layer file died second...
         #expect(!FileManager.default.fileExists(atPath: scratch.layerURL(layerID).path))
         // ...and the asset died third.
-        #expect(!FileManager.default.fileExists(atPath: scratch.assetURL(ref.assetID, "png").path))
+        #expect(!FileManager.default.fileExists(atPath: scratch.assetURL(ref.assetID, "heic").path))
     }
 
     @Test("An asset another page still references is not reclaimed")
@@ -464,21 +464,21 @@ struct ImageLayerTests {
         let store = scratch.store()
         let keeper = UUID()
         let assetID = UUID()
-        try await store.writeAsset(Data([0x01]), assetID: assetID, format: .png)
+        try await store.writeAsset(Data([0x01]), assetID: assetID, format: .heic)
         try scratch.writePageFile(
             keeper,
             layers: [
                 try LayerEnvelope.image(
                     layerID: UUID(),
-                    ref: ImageLayerRef(assetID: assetID, format: .png),
+                    ref: ImageLayerRef(assetID: assetID, format: .heic),
                     pageSpaceTransform: .identity
                 ),
                 inkEnvelope(payload: Data([0x01])),
             ]
         )
 
-        #expect(try await store.deleteAssetIfUnreferenced(assetID: assetID, format: .png) == false)
-        #expect(FileManager.default.fileExists(atPath: scratch.assetURL(assetID, "png").path))
+        #expect(try await store.deleteAssetIfUnreferenced(assetID: assetID, format: .heic) == false)
+        #expect(FileManager.default.fileExists(atPath: scratch.assetURL(assetID, "heic").path))
     }
 
     /// The conservative half of reclamation: a layer this build cannot open
@@ -489,7 +489,7 @@ struct ImageLayerTests {
         let scratch = try Scratch()
         let store = scratch.store()
         let assetID = UUID()
-        try await store.writeAsset(Data([0x01]), assetID: assetID, format: .png)
+        try await store.writeAsset(Data([0x01]), assetID: assetID, format: .heic)
         try scratch.writePageFile(
             UUID(),
             layers: [
@@ -503,8 +503,8 @@ struct ImageLayerTests {
             ]
         )
 
-        #expect(try await store.deleteAssetIfUnreferenced(assetID: assetID, format: .png) == false)
-        #expect(FileManager.default.fileExists(atPath: scratch.assetURL(assetID, "png").path))
+        #expect(try await store.deleteAssetIfUnreferenced(assetID: assetID, format: .heic) == false)
+        #expect(FileManager.default.fileExists(atPath: scratch.assetURL(assetID, "heic").path))
     }
 
     // MARK: - An unknown asset format refuses the layer
@@ -515,9 +515,14 @@ struct ImageLayerTests {
         let pageID = UUID()
         let layerID = UUID()
         let assetID = UUID()
-        // What a build that shipped the normalization flag's HEIC assets looks
-        // like to this one.
-        let payload = try ImageLayerRef(assetID: assetID, rawFormat: "heic").encodedPayload()
+        // A PNG asset, which is what a build older than the narrowing to HEIC
+        // wrote and this one cannot open (`Docs/Queue.md` —
+        // `image-format-is-heic`). The fixture is deliberately a format that
+        // once *was* legal rather than an invented future one: it is the exact
+        // shape the narrowing leaves behind, and the decision that nothing in
+        // production needs migrating rests on this refusing cleanly rather than
+        // on the case never arising.
+        let payload = try ImageLayerRef(assetID: assetID, rawFormat: "png").encodedPayload()
         try scratch.writePageFile(
             pageID,
             layers: [
@@ -540,7 +545,7 @@ struct ImageLayerTests {
                 RefusedLayer(
                     layerID: layerID,
                     kind: "image",
-                    reason: .unsupportedAssetFormat(assetID: assetID, format: "heic")
+                    reason: .unsupportedAssetFormat(assetID: assetID, format: "png")
                 )
             ]
         )
@@ -588,7 +593,7 @@ struct ImageLayerTests {
                 ),
                 try LayerEnvelope.image(
                     layerID: imageLayerID,
-                    ref: ImageLayerRef(assetID: UUID(), format: .png),
+                    ref: ImageLayerRef(assetID: UUID(), format: .heic),
                     pageSpaceTransform: .identity
                 ),
                 inkEnvelope(payload: Data([0x01])),
@@ -643,12 +648,12 @@ struct ImageLayerTests {
             layers: [
                 try LayerEnvelope.image(
                     layerID: firstImageID,
-                    ref: ImageLayerRef(assetID: UUID(), format: .png),
+                    ref: ImageLayerRef(assetID: UUID(), format: .heic),
                     pageSpaceTransform: .identity
                 ),
                 try LayerEnvelope.image(
                     layerID: secondImageID,
-                    ref: ImageLayerRef(assetID: UUID(), format: .png),
+                    ref: ImageLayerRef(assetID: UUID(), format: .heic),
                     pageSpaceTransform: .identity
                 ),
                 inkEnvelope(payload: Data([0x01])),

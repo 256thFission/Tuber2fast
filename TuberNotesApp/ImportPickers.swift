@@ -23,8 +23,11 @@ import UniformTypeIdentifiers
 enum ImageImportError: Error, CustomStringConvertible {
     /// The picked bytes are not an image this device can decode at all.
     case undecodableImage
-    /// The image decoded, but re-encoding it into the durable form's closed
-    /// set (`AssetFormat`) failed.
+    /// The image decoded, but re-encoding it as HEIC — the durable form's one
+    /// image encoding (`AssetFormat`) — failed. There is no second format to
+    /// fall back to, by design: falling back is how a closed set stops being
+    /// one, and a refused import is recoverable where a wrongly stored asset is
+    /// not.
     case transcodeFailed
 
     var description: String {
@@ -38,7 +41,7 @@ enum ImageImportError: Error, CustomStringConvertible {
 /// A picked image, ready for `EditorSession.importImage`.
 struct PreparedImageImport: Sendable, Equatable {
     /// The bytes to write as the asset. The original bytes when the source is
-    /// already `png` or `jpeg`; a JPEG re-encode otherwise.
+    /// already HEIC; a HEIC re-encode otherwise.
     let bytes: Data
     let format: AssetFormat
     /// The image's extent **with its orientation metadata applied** — for a
@@ -104,15 +107,21 @@ enum ImageImportPreparation {
 
     /// Turns picked bytes into what `importImage` needs.
     ///
-    /// `png` and `jpeg` sources keep their original bytes — the asset store is
-    /// write-once and the small-export story is the user's own file — and only
-    /// their *reported* extent is corrected for orientation, via the ImageIO
+    /// A **HEIC** source keeps its original bytes — the asset store is
+    /// write-once, and re-encoding bytes that are already in the one durable
+    /// format would spend a lossy generation to arrive where it started — and
+    /// only its *reported* extent is corrected for orientation, via the ImageIO
     /// properties (`kCGImagePropertyPixelWidth`/`Height` swapped when
-    /// `kCGImagePropertyOrientation` is 5–8). Everything else — HEIC above
-    /// all — is re-encoded to JPEG, because `AssetFormat` is a closed set and
-    /// a format it does not name is refused at load. The re-encode decodes
-    /// with the orientation transform applied, so the output is upright with
-    /// orientation 1 and its own pixel extent is the oriented extent.
+    /// `kCGImagePropertyOrientation` is 5–8). Everything else — PNG, JPEG,
+    /// TIFF, GIF — is re-encoded to HEIC, because `AssetFormat` names one image
+    /// encoding and a format it does not name is refused at load. The re-encode
+    /// decodes with the orientation transform applied, so the output is upright
+    /// with orientation 1 and its own pixel extent is the oriented extent.
+    ///
+    /// A PNG loses a little to that transcode, and the alpha it may be carrying
+    /// does not: the whole reason the one format is HEIC and not JPEG is that
+    /// this path used to bake transparency into an opaque asset, permanently,
+    /// since assets are write-once (`Docs/Queue.md` — `image-format-is-heic`).
     ///
     /// Pure bytes to values, no file and no UI, so it may run anywhere;
     /// callers run it off the main actor because a decode is not interaction
@@ -138,29 +147,25 @@ enum ImageImportPreparation {
         let orientedHeight = transposed ? pixelWidth : pixelHeight
 
         let sourceType = CGImageSourceGetType(source).flatMap { UTType($0 as String) }
-        if let sourceType, sourceType.conforms(to: .png) {
+        if let sourceType, sourceType.conforms(to: .heic) {
             return PreparedImageImport(
                 bytes: bytes,
-                format: .png,
-                orientedPixelWidth: orientedWidth,
-                orientedPixelHeight: orientedHeight
-            )
-        }
-        if let sourceType, sourceType.conforms(to: .jpeg) {
-            return PreparedImageImport(
-                bytes: bytes,
-                format: .jpeg,
+                format: .heic,
                 orientedPixelWidth: orientedWidth,
                 orientedPixelHeight: orientedHeight
             )
         }
 
-        // Any other decodable format — HEIC, TIFF, GIF — is re-encoded to
-        // JPEG. `kCGImageSourceCreateThumbnailWithTransform` applies the
+        // Every other decodable format — PNG, JPEG, TIFF, GIF — is re-encoded
+        // to HEIC. `kCGImageSourceCreateThumbnailWithTransform` applies the
         // orientation while decoding, exactly as the renderer's `downsample`
         // does, so the written pixels are upright and the extent below is the
         // oriented one by construction. The max pixel size is the source's own
         // long edge: a transcode, never a downsample.
+        //
+        // The decode keeps whatever alpha the source had — the thumbnail
+        // inherits the source's alpha info — and `heicEncoded` carries it into
+        // the written bytes. `HEICAlphaTests` is what says so.
         let decodeOptions: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceCreateThumbnailWithTransform: true,
@@ -175,26 +180,13 @@ enum ImageImportPreparation {
             throw ImageImportError.undecodableImage
         }
 
-        let encoded = NSMutableData()
-        guard
-            let destination = CGImageDestinationCreateWithData(
-                encoded, UTType.jpeg.identifier as CFString, 1, nil
-            )
-        else {
-            throw ImageImportError.transcodeFailed
-        }
-        CGImageDestinationAddImage(
-            destination,
-            decoded,
-            [kCGImageDestinationLossyCompressionQuality: 0.9] as CFDictionary
-        )
-        guard CGImageDestinationFinalize(destination) else {
+        guard let encoded = heicEncoded(decoded) else {
             throw ImageImportError.transcodeFailed
         }
 
         return PreparedImageImport(
-            bytes: encoded as Data,
-            format: .jpeg,
+            bytes: encoded,
+            format: .heic,
             orientedPixelWidth: Double(decoded.width),
             orientedPixelHeight: Double(decoded.height)
         )

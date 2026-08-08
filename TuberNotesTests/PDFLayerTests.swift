@@ -401,7 +401,7 @@ struct PDFLayerTests {
         // A square source, so the fit is decided entirely by the page.
         try await session.importImage(
             Data([0x89, 0x50, 0x4E, 0x47]),
-            format: .png,
+            format: .heic,
             sourceWidth: 100,
             sourceHeight: 100,
             onPage: landscapePage
@@ -663,10 +663,10 @@ struct PDFLayerTests {
         // on disk is refused before anything is written. Its asset is durable,
         // so the only thing wrong with it is the missing layer file.
         let assetID = UUID()
-        try await scratch.store().writeAsset(Data([0x89]), assetID: assetID, format: .png)
+        try await scratch.store().writeAsset(Data([0x89]), assetID: assetID, format: .heic)
         let unwritten = try LayerEnvelope.image(
             layerID: UUID(),
-            ref: ImageLayerRef(assetID: assetID, format: .png),
+            ref: ImageLayerRef(assetID: assetID, format: .heic),
             pageSpaceTransform: .identity
         )
         let refusal = await #expect(throws: DocumentStore.PageSaveRefusal.self) {
@@ -695,11 +695,11 @@ struct PDFLayerTests {
         let store = scratch.store()
         let pageID = UUID()
         let assetID = UUID()
-        try await store.writeAsset(Data([0x89, 0x50]), assetID: assetID, format: .png)
+        try await store.writeAsset(Data([0x89, 0x50]), assetID: assetID, format: .heic)
 
         let image = try LayerEnvelope.image(
             layerID: UUID(),
-            ref: ImageLayerRef(assetID: assetID, format: .png),
+            ref: ImageLayerRef(assetID: assetID, format: .heic),
             pageSpaceTransform: .fittingSource(
                 width: 100, height: 50,
                 inPageOfWidth: PageGeometry.canonical.width, height: PageGeometry.canonical.height

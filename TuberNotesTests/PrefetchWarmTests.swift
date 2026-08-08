@@ -206,11 +206,11 @@ struct PrefetchWarmTests {
         func imageLayer(color: UIColor) async throws -> LayerEnvelope {
             let assetID = UUID()
             try await store.writeAsset(
-                Self.solidPNG(width: 64, height: 64, color: color), assetID: assetID, format: .png
+                Self.solidHEIC(width: 64, height: 64, color: color), assetID: assetID, format: .heic
             )
             return try LayerEnvelope.image(
                 layerID: UUID(),
-                ref: ImageLayerRef(assetID: assetID, format: .png),
+                ref: ImageLayerRef(assetID: assetID, format: .heic),
                 pageSpaceTransform: PageSpaceTransform(
                     a: PageGeometry.canonical.width, b: 0,
                     c: 0, d: PageGeometry.canonical.height, tx: 0, ty: 0
@@ -218,7 +218,7 @@ struct PrefetchWarmTests {
             )
         }
 
-        static func solidPNG(width: Int, height: Int, color: UIColor) -> Data {
+        static func solidHEIC(width: Int, height: Int, color: UIColor) -> Data {
             guard let context = CGContext(
                 data: nil,
                 width: width,
@@ -236,15 +236,10 @@ struct PrefetchWarmTests {
             guard let image = context.makeImage() else {
                 preconditionFailure("the context yielded no image")
             }
-            let out = NSMutableData()
-            guard let destination = CGImageDestinationCreateWithData(
-                out, "public.png" as CFString, 1, nil
-            ) else {
-                preconditionFailure("no PNG destination")
+            guard let encoded = ImageImportPreparation.heicEncoded(image) else {
+                preconditionFailure("HEIC encoding failed")
             }
-            CGImageDestinationAddImage(destination, image, nil)
-            precondition(CGImageDestinationFinalize(destination), "PNG encoding failed")
-            return out as Data
+            return encoded
         }
     }
 }

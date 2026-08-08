@@ -585,7 +585,7 @@ struct LayerSelectionTests {
     func lockedRoundTripsThroughTheEnvelope() throws {
         let envelope = try LayerEnvelope.image(
             layerID: UUID(),
-            ref: ImageLayerRef(assetID: UUID(), format: .png),
+            ref: ImageLayerRef(assetID: UUID(), format: .heic),
             pageSpaceTransform: PageSpaceTransform(a: 2, b: 0, c: 0, d: 3, tx: 4, ty: 5),
             locked: true
         )
@@ -605,7 +605,7 @@ struct LayerSelectionTests {
     func withPageSpaceTransformIsAValue() throws {
         let original = try LayerEnvelope.image(
             layerID: UUID(),
-            ref: ImageLayerRef(assetID: UUID(), format: .jpeg),
+            ref: ImageLayerRef(assetID: UUID(), format: .heic),
             pageSpaceTransform: .identity,
             locked: true
         )
@@ -644,7 +644,7 @@ struct LayerSelectionTests {
         // does not exist is enough.
         guard let envelope = try? LayerEnvelope.image(
             layerID: UUID(),
-            ref: ImageLayerRef(assetID: UUID(), format: .png),
+            ref: ImageLayerRef(assetID: UUID(), format: .heic),
             pageSpaceTransform: transform,
             locked: locked
         ) else {
@@ -679,8 +679,8 @@ struct LayerTransformCommitTests {
         let pageID = session.currentPageID
 
         let layerID = try await session.importImage(
-            Scratch.solidPNG(width: 64, height: 64),
-            format: .png,
+            Scratch.solidHEIC(width: 64, height: 64),
+            format: .heic,
             sourceWidth: 400,
             sourceHeight: 300
         )
@@ -710,8 +710,8 @@ struct LayerTransformCommitTests {
         let pageID = session.currentPageID
 
         let layerID = try await session.importImage(
-            Scratch.solidPNG(width: 64, height: 64),
-            format: .png,
+            Scratch.solidHEIC(width: 64, height: 64),
+            format: .heic,
             sourceWidth: 400,
             sourceHeight: 300
         )
@@ -744,8 +744,8 @@ struct LayerTransformCommitTests {
         let pageID = session.currentPageID
 
         let layerID = try await session.importImage(
-            Scratch.solidPNG(width: 64, height: 64),
-            format: .png,
+            Scratch.solidHEIC(width: 64, height: 64),
+            format: .heic,
             sourceWidth: 400,
             sourceHeight: 300
         )
@@ -819,7 +819,7 @@ struct LayerTransformCommitTests {
             EditorSession(store: store, debounce: .milliseconds(20))
         }
 
-        static func solidPNG(width: Int, height: Int) -> Data {
+        static func solidHEIC(width: Int, height: Int) -> Data {
             guard let context = CGContext(
                 data: nil, width: width, height: height,
                 bitsPerComponent: 8, bytesPerRow: 0,
@@ -834,15 +834,10 @@ struct LayerTransformCommitTests {
             guard let image = context.makeImage() else {
                 preconditionFailure("the context yielded no image")
             }
-            let out = NSMutableData()
-            guard let destination = CGImageDestinationCreateWithData(
-                out, UTType.png.identifier as CFString, 1, nil
-            ) else {
-                preconditionFailure("no PNG destination")
+            guard let encoded = ImageImportPreparation.heicEncoded(image) else {
+                preconditionFailure("HEIC encoding failed")
             }
-            CGImageDestinationAddImage(destination, image, nil)
-            precondition(CGImageDestinationFinalize(destination), "PNG encoding failed")
-            return out as Data
+            return encoded
         }
     }
 }
@@ -934,7 +929,7 @@ struct MinusOneCompositeTests {
         let renderer = StaticLayerRenderer(store: scratch.store)
         let orphan = try LayerEnvelope.image(
             layerID: UUID(),
-            ref: ImageLayerRef(assetID: UUID(), format: .png),
+            ref: ImageLayerRef(assetID: UUID(), format: .heic),
             pageSpaceTransform: PageSpaceTransform(a: 100, b: 0, c: 0, d: 50, tx: 0, ty: 0)
         )
         #expect(await renderer.sourceImage(for: orphan, at: 1) == nil)
@@ -999,15 +994,15 @@ struct MinusOneCompositeTests {
             transform: PageSpaceTransform
         ) async throws -> LayerEnvelope {
             let assetID = UUID()
-            try await store.writeAsset(Self.png(size: size, colour: colour), assetID: assetID, format: .png)
+            try await store.writeAsset(Self.heic(size: size, colour: colour), assetID: assetID, format: .heic)
             return try LayerEnvelope.image(
                 layerID: UUID(),
-                ref: ImageLayerRef(assetID: assetID, format: .png),
+                ref: ImageLayerRef(assetID: assetID, format: .heic),
                 pageSpaceTransform: transform
             )
         }
 
-        static func png(size: Int, colour: CGColor) -> Data {
+        static func heic(size: Int, colour: CGColor) -> Data {
             guard let context = CGContext(
                 data: nil, width: size, height: size,
                 bitsPerComponent: 8, bytesPerRow: 0,
@@ -1022,15 +1017,10 @@ struct MinusOneCompositeTests {
             guard let image = context.makeImage() else {
                 preconditionFailure("the context yielded no image")
             }
-            let out = NSMutableData()
-            guard let destination = CGImageDestinationCreateWithData(
-                out, UTType.png.identifier as CFString, 1, nil
-            ) else {
-                preconditionFailure("no PNG destination")
+            guard let encoded = ImageImportPreparation.heicEncoded(image) else {
+                preconditionFailure("HEIC encoding failed")
             }
-            CGImageDestinationAddImage(destination, image, nil)
-            precondition(CGImageDestinationFinalize(destination), "PNG encoding failed")
-            return out as Data
+            return encoded
         }
     }
 }
