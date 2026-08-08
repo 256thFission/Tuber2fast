@@ -60,7 +60,8 @@ package actor StaticLayerRenderer {
     //   radius — that is the policy, and the session calls it on every turn.
     //   The byte bound is the backstop: after an insert, least-recently-used
     //   entries are dropped until the total is under it, never including the
-    //   entry just inserted.
+    //   entry just inserted. Recency is kept as an order (`recency` below),
+    //   so the backstop reads it rather than reconstructing it.
     //
     // A refusal is cached too, at zero bytes. Without that, a page whose asset
     // will not decode re-attempts the decode on every layout pass. Assets are
@@ -72,9 +73,29 @@ package actor StaticLayerRenderer {
     private var cache: [CompositeKey: Entry] = [:]
     private var cachedBytes = 0
 
-    /// A monotonic stamp, so "least recently used" is an ordering rather than a
-    /// wall clock that can go backwards.
-    private var useCounter = 0
+    /// Every cached key, least recently used first. This *is* the recency
+    /// order, held rather than derived: a per-entry stamp only becomes an
+    /// order once somebody sorts it, and the only place that needed the order
+    /// was the byte-bound trim — which runs precisely when memory is tight, so
+    /// it was the one path paying to reconstruct what every cheap path already
+    /// knew.
+    ///
+    /// An array rather than a heap because the two questions this cache asks
+    /// of recency are "who is oldest" and "skip that one, who is next", and a
+    /// heap answers the second only by popping and re-pushing entries the trim
+    /// is protecting. The array is also small by construction — the byte bound
+    /// is stated in page-sized composites, so it holds a handful — which makes
+    /// the linear touch below cheaper than the bookkeeping either alternative
+    /// would need.
+    ///
+    /// A lens is not in here because a lens is not cached at all, and a warm
+    /// hit deliberately does not touch it: the only thing that counts as a use
+    /// is a `composite` call served from the cache, plus the insert itself.
+    ///
+    /// INVARIANT: `recency` holds exactly the keys of `cache`, once each. Every
+    /// site that adds to or removes from `cache` maintains it in the same step,
+    /// and `trimToByteBound` fails loud if it ever finds otherwise.
+    private var recency: [CompositeKey] = []
 
     /// Requests being served right now, so two canvases asking for the same
     /// composite decode it once. The same idea as `EditorSession`'s
@@ -139,7 +160,6 @@ package actor StaticLayerRenderer {
         let render: StaticLayerRender
         let byteCount: Int
         let layerIDs: Set<UUID>
-        var lastUsed: Int
     }
 
     /// The identity of one cached composite: which layers, at what level of
@@ -198,10 +218,8 @@ package actor StaticLayerRenderer {
         )
 
         let key = CompositeKey(request)
-        if var entry = cache[key], entry.request == request {
-            useCounter += 1
-            entry.lastUsed = useCounter
-            cache[key] = entry
+        if let entry = cache[key], entry.request == request {
+            touch(key)
             return entry.render
         }
 
@@ -656,6 +674,9 @@ package actor StaticLayerRenderer {
             dropped += 1
         }
         if dropped > 0 {
+            // The recency order names exactly what the cache holds, so the
+            // keys just dropped leave it in the same step.
+            recency.removeAll { cache[$0] == nil }
             CanvasLog.event(
                 .canvas,
                 "render cache: dropped \(dropped) composite(s) that left the live window; "
@@ -677,45 +698,77 @@ package actor StaticLayerRenderer {
         if case .composited(let composite) = render { bytes = composite.byteCount } else { bytes = 0 }
 
         if let existing = cache[key] { cachedBytes -= existing.byteCount }
-        useCounter += 1
         cache[key] = Entry(
             request: request,
             render: render,
             byteCount: bytes,
-            layerIDs: Set(request.layers.map(\.layerID)),
-            lastUsed: useCounter
+            layerIDs: Set(request.layers.map(\.layerID))
         )
         cachedBytes += bytes
+        // An insert is a use: what was just rendered is what a caller is about
+        // to show.
+        touch(key)
         trimToByteBound(protecting: key)
     }
 
-    /// Drops least-recently-used entries until the cache is under its bound.
-    /// The entry just inserted is never a candidate: a composite bigger than
-    /// the whole bound would otherwise be evicted before it was ever shown, and
-    /// the page would re-render it on the next layout pass forever.
     /// The layers of the visible page, exempt from the byte-bound trim. Set
     /// by `retain(layerIDs:protecting:)` — the session, which is the one
     /// place that knows which page is visible — and empty until it says.
     private var protectedLayerIDs: Set<UUID> = []
 
+    /// Records that `key` was just used, which is what makes it the last thing
+    /// the trim below would drop.
+    ///
+    /// A `warm` hit does not come through here, deliberately: speculation must
+    /// not displace what a user actually looked at.
+    private func touch(_ key: CompositeKey) {
+        if let existing = recency.firstIndex(of: key) { recency.remove(at: existing) }
+        recency.append(key)
+    }
+
+    /// The byte-bound backstop, and its whole policy in one sentence:
+    ///
+    /// **walk the cache oldest use first and drop entries until the total is
+    /// under the bound, passing over exactly two — the entry just inserted,
+    /// and any composite of the visible page.**
+    ///
+    /// The entry just inserted is passed over because a composite bigger than
+    /// the whole bound would otherwise be evicted before it was ever shown, and
+    /// the page would re-render it on the next layout pass forever. The visible
+    /// page's is passed over because its composite is never traded for
+    /// speculation. When everything left is passed over the walk simply
+    /// finishes over-bound — a bounded overshoot of one page's composites,
+    /// corrected by the next `retain`.
+    ///
+    /// The walk reads `recency` rather than ordering the cache itself. This is
+    /// the path that runs under memory pressure, so it is the last place that
+    /// should be sorting `cache.count` entries and copying their requests to do
+    /// it; the order it needs is maintained by `touch`, at page-turn frequency,
+    /// where nothing is competing for the CPU.
     private func trimToByteBound(protecting key: CompositeKey) {
         guard cachedBytes > byteBound else { return }
-        for candidate in cache.sorted(by: { $0.value.lastUsed < $1.value.lastUsed }) {
-            guard cachedBytes > byteBound else { break }
-            guard candidate.key != key else { continue }
-            // The visible page's composite is never traded for speculation.
-            // The loop simply finishes over-bound if everything left is
-            // protected — a bounded overshoot of one page's composites,
-            // corrected by the next retain.
-            guard candidate.value.layerIDs.isDisjoint(with: protectedLayerIDs) else { continue }
-            cachedBytes -= candidate.value.byteCount
-            cache[candidate.key] = nil
+        var kept: [CompositeKey] = []
+        kept.reserveCapacity(recency.count)
+        for candidate in recency {
+            guard let entry = cache[candidate] else {
+                preconditionFailure("the recency order names a composite the cache does not hold")
+            }
+            guard cachedBytes > byteBound,
+                  candidate != key,
+                  entry.layerIDs.isDisjoint(with: protectedLayerIDs)
+            else {
+                kept.append(candidate)
+                continue
+            }
+            cachedBytes -= entry.byteCount
+            cache[candidate] = nil
             CanvasLog.event(
                 .canvas,
-                "render cache: evicted a composite of \(candidate.value.byteCount) bytes at the "
+                "render cache: evicted a composite of \(entry.byteCount) bytes at the "
                     + "\(byteBound)-byte bound; holding \(cache.count) at \(cachedBytes) bytes"
             )
         }
+        recency = kept
     }
 
     /// Read only by tests, which is how `Contract.md` — Performance's "a cache
