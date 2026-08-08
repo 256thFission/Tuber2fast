@@ -38,6 +38,34 @@ enum LayerEditError: Error, Equatable {
     case noPDFLayerOnPage(UUID)
 }
 
+/// What a session does when `load()` answers `nil`: whether nobody has ever
+/// created this document, or somebody has and its index is gone.
+///
+/// The distinction is the caller's to state, because the store cannot tell the
+/// two apart and the wrong default destroys data — see `performStart()`.
+package enum OpenIntent {
+    /// A `nil` load is a refusal. For a package something enumerated — a
+    /// library row, a picked directory — "no index" means damaged, not new.
+    case openExisting
+    /// A `nil` load is first launch: create and save an empty one-page
+    /// document. The pre-library default, and the only intent the explicit
+    /// new-document path may carry, because that path creates the directory
+    /// itself and nothing else has ever named it.
+    case createIfAbsent
+}
+
+/// What `close()` hands back: whether the session's ink is all on disk.
+package enum CloseOutcome: Equatable {
+    /// Nothing is dirty. The session is dead — it refuses every edit from
+    /// here on and is never restarted; reopening builds a new session.
+    case clean
+    /// The final pass failed or pages remain dirty. The session is still
+    /// fully alive and its retry machinery keeps draining; the string is the
+    /// failure a caller may surface. Releasing a dirty session is never an
+    /// outcome (`Docs/Contract.proposed.md` L4).
+    case dirty(String)
+}
+
 /// Coordinates the canvas runtime and the document store (`Contract.md` — Owners).
 ///
 /// It owns page order and identity, per-page ink state, and the active save
@@ -217,6 +245,7 @@ final class EditorSession {
     @ObservationIgnored private var liveRuntime: PagedCanvasController?
 
     private let store: any DocumentStoring
+    private let intent: OpenIntent
     private let debounce: Duration
 
     /// What the debounce waits on. `ContinuousClock` in the app; see `init`.
@@ -361,6 +390,23 @@ final class EditorSession {
     /// attempt, because this handle is what makes the attempt singular.
     private var startTask: Task<Void, Never>?
 
+    /// Set synchronously the moment `close()` is entered, before its first
+    /// suspension, and never cleared: from that instant the session refuses
+    /// *new* work — edits, turns, appends, imports — while the save path's own
+    /// machinery keeps running, because a dirty closing session survives
+    /// precisely to drain (`Docs/Contract.proposed.md` L4). The refusals live
+    /// at the intake sites, not in `scheduleSave` or `performOneSave`, whose
+    /// retry rearm must keep working under this flag.
+    private var isClosing = false
+
+    /// The one teardown. A second `close()` awaits this rather than starting
+    /// another; `nil` iff `close()` has never been called.
+    private var closeTask: Task<CloseOutcome, Never>?
+
+    /// The teardown concluded with nothing dirty. Terminal: such a session is
+    /// dead and refuses everything, including `resumeForForeground`.
+    private var isClosedClean = false
+
     /// `debounce` is injectable only so tests need not wait 500 ms of real time.
     /// The default is the only interval the app uses. It is a hard floor and
     /// never a ceiling: the adaptive debounce may widen it for a document that
@@ -376,10 +422,12 @@ final class EditorSession {
     /// Builds no UIKit object. See `canvas` for why that matters.
     init(
         store: any DocumentStoring,
+        intent: OpenIntent = .createIfAbsent,
         debounce: Duration = .milliseconds(500),
         clock: any Clock<Duration> = ContinuousClock()
     ) {
         self.store = store
+        self.intent = intent
         self.debounce = debounce
         self.clock = clock
         self.staticRenderer = StaticLayerRenderer(store: store)
@@ -395,6 +443,13 @@ final class EditorSession {
     func start() async {
         if let startTask {
             await startTask.value
+            return
+        }
+        // A session that has begun closing never starts. Without this a
+        // never-started session that closed clean would still take the one
+        // load — and its create branch — after the caller was told it is dead.
+        if isClosing {
+            CanvasLog.event(.lifecycle, "start() on a closing or closed session; ignored")
             return
         }
         guard phase == .loading else { return }
@@ -416,6 +471,18 @@ final class EditorSession {
                 // first pages are built with their ink rather than as blanks
                 // that have to be reloaded.
                 await fetchPageData(forPagesAround: loaded.currentPageIndex)
+            } else if intent == .openExisting {
+                // A `nil` load on a package something enumerated is a damaged
+                // document — its index gone, its pages possibly alive — and
+                // is refused, byte-identical afterward. Falling through to
+                // the create branch would save a fresh empty document into
+                // the wreckage: the blank-unreadable-page sin at document
+                // scale (`Docs/Forks/Library/03-review.md` B2). "nil means no
+                // document exists" stays true only where nothing enumerated
+                // one, which is what `OpenIntent` states.
+                phase = .failed("This document has no index.")
+                CanvasLog.event(.lifecycle, "open refused: the package has no index")
+                return
             } else {
                 index = DocumentIndex.newDocument(documentID: UUID(), pageID: UUID())
                 // Empty bytes are the blank page. Serializing an empty
@@ -730,6 +797,10 @@ final class EditorSession {
         // value, `DocumentStore.save` validates its batch against that capture,
         // and this page is not in either — it is withheld until it takes ink,
         // and the ink is what re-arms (`performOneSave`'s exit owns that).
+        if isClosing {
+            CanvasLog.event(.lifecycle, "page append after close; ignored")
+            return
+        }
         guard phase == .ready else { return }
 
         // **The canonical geometry, always** — which is what makes mixed
@@ -770,6 +841,20 @@ final class EditorSession {
     /// document that could not be read, and for `.loading`, where no page should
     /// be reporting anything yet.
     private func drawingChanged(atPageIndex pageIndex: Int) {
+        if isClosing {
+            // After close no canvas should exist to send this; one arriving is
+            // a caller holding a released editor. Ignored rather than trapped
+            // — UIKit can race a change notification against the Back that
+            // triggered the close — but loud, because losing it is losing the
+            // invariant, not the ink: a closing session's ink was captured by
+            // the final pass or is still live in the canvas that sent this.
+            CanvasLog.event(
+                .lifecycle,
+                "drawing change on page \(pageIndex) after close; ignored — "
+                    + "no canvas should exist to send one"
+            )
+            return
+        }
         guard phase == .ready, pageStates.indices.contains(pageIndex) else { return }
         // A page whose bytes are not held has no canvas — it is a placeholder
         // in the runtime — so `edited()`'s trap for `.loading` and
@@ -798,6 +883,10 @@ final class EditorSession {
 
     /// The visible page settled on a new index.
     private func currentPageChanged(to pageIndex: Int) {
+        if isClosing {
+            CanvasLog.event(.lifecycle, "page turn to \(pageIndex) after close; ignored")
+            return
+        }
         guard phase == .ready, index.pageIDs.indices.contains(pageIndex) else { return }
         guard pageIndex != index.currentPageIndex else { return }
 
@@ -818,6 +907,11 @@ final class EditorSession {
     }
 
     private func markDirty() {
+        // New work arms no debounce on a closing session — the intakes above
+        // this are each refused already; this is the backstop. The save
+        // path's own rearm is `performOneSave`'s exit, not here, so the
+        // retry that drains a dirty close keeps running under the flag.
+        guard !isClosing else { return }
         // The debounce is not reset while a save is in flight;
         // `performOneSave`'s exit re-arms for anything that changed during it
         // (`Contract.md` — Saving: "Work arriving during a save receives a
@@ -1251,7 +1345,11 @@ final class EditorSession {
         sourceHeight: Double,
         onPage pageID: UUID? = nil
     ) async throws -> UUID {
-        guard phase == .ready else { throw LayerEditError.sessionNotReady }
+        // `isClosing` on every layer entry point: an edit arriving after
+        // `close()` is a caller violating the lifecycle, and the refusal is
+        // the thrown kind the entry already speaks — before the asset write,
+        // so a refused import leaves no orphan.
+        guard phase == .ready, !isClosing else { throw LayerEditError.sessionNotReady }
         let targetPageID = pageID ?? currentPageID
         try requireLayerListIsEditable(targetPageID)
 
@@ -1260,7 +1358,11 @@ final class EditorSession {
         let assetID = UUID()
         try await store.writeAsset(bytes, assetID: assetID, format: format)
 
-        // The page may have moved through states while that write ran.
+        // The page may have moved through states while that write ran — and so
+        // may the session: a close that landed inside the asset write refuses
+        // the layer, leaving the asset an inert orphan rather than the page
+        // list a closed session swore it would not touch.
+        guard !isClosing else { throw LayerEditError.sessionNotReady }
         try requireLayerListIsEditable(targetPageID)
 
         let layerID = UUID()
@@ -1339,7 +1441,7 @@ final class EditorSession {
     /// testable through, and the one the import UI will call when it exists.
     @discardableResult
     func importPDF(_ bytes: Data) async throws -> [UUID] {
-        guard phase == .ready else { throw LayerEditError.sessionNotReady }
+        guard phase == .ready, !isClosing else { throw LayerEditError.sessionNotReady }
 
         // Off the main thread by construction, before anything durable is
         // touched: a PDF this build cannot open imports nothing at all rather
@@ -1375,7 +1477,7 @@ final class EditorSession {
         try await store.writeAsset(bytes, assetID: assetID, format: .pdf)
 
         // The session may have moved on while that write ran.
-        guard phase == .ready else { throw LayerEditError.sessionNotReady }
+        guard phase == .ready, !isClosing else { throw LayerEditError.sessionNotReady }
 
         var appended: [PageRecord] = []
         for source in sourcePages {
@@ -1527,7 +1629,10 @@ final class EditorSession {
         onPage pageID: UUID,
         with replacement: (LayerEnvelope) throws -> LayerEnvelope
     ) throws -> LayerEnvelope {
-        guard phase == .ready else { throw LayerEditError.sessionNotReady }
+        // Covers `transformLayer` and `setLayerLocked`. The gesture path
+        // (`layerTransformed`) catches the throw and logs it, which is the
+        // loud-but-uncrashed refusal an input UIKit can race deserves.
+        guard phase == .ready, !isClosing else { throw LayerEditError.sessionNotReady }
         try requireLayerListIsEditable(pageID)
 
         let page = stateIndex(of: pageID)
@@ -1581,7 +1686,7 @@ final class EditorSession {
     /// a durability failure and needs the taxonomy to say what it does when it
     /// cannot tell. An orphan is inert and merely heavy.
     func deleteLayer(_ layerID: UUID, fromPage pageID: UUID) async throws {
-        guard phase == .ready else { throw LayerEditError.sessionNotReady }
+        guard phase == .ready, !isClosing else { throw LayerEditError.sessionNotReady }
         guard index.pageIDs.contains(pageID) else {
             throw LayerEditError.pageNotFound(pageID)
         }
@@ -1800,6 +1905,10 @@ final class EditorSession {
     /// stays dirty — the pass's own exit arms a timer and `resumeForForeground`
     /// retries, which is exactly what
     /// `Contract.md` — Lifecycle promises ("no promised flush duration").
+    ///
+    /// Legal during and after `close()` without a guard: it is a subset of the
+    /// teardown — drop the timer, await the save, one pass — and on a session
+    /// closed clean every step finds nothing to do.
     func flushForBackground() async {
         debounceTask?.cancel()
         debounceTask = nil
@@ -1817,8 +1926,82 @@ final class EditorSession {
     /// loaded drawing onto newer live ink — nothing is loaded here. A save
     /// still in flight re-arms at its own exit, so nothing is dropped by
     /// returning early here.
+    ///
+    /// On a session that closed clean this is a programmer error — the caller
+    /// is holding a dead session — and is refused loud. On a session closing
+    /// dirty it works as ever: the retained lifecycle still receives scene
+    /// events, and arming the drain is exactly what retain-if-dirty is for.
     func resumeForForeground() {
+        if isClosedClean {
+            CanvasLog.event(
+                .lifecycle,
+                "resumeForForeground on a session that closed clean; ignored — "
+                    + "a clean-closed session is dead and is never restarted"
+            )
+            return
+        }
         guard phase == .ready, dirty, currentSave == nil else { return }
         scheduleSave()
     }
+
+    /// The real teardown behind Back: after this returns `.clean` the session
+    /// is dead and the package may be released to library mutations; after
+    /// `.dirty` it must not be — the session stays alive and drains
+    /// (`Docs/Contract.proposed.md` L4).
+    ///
+    /// Idempotent: a second call awaits the one teardown and reports the
+    /// session as it stands, never running a second one. New edits are refused
+    /// from the first call's entry, synchronously — the flag is set before the
+    /// teardown's first suspension.
+    package func close() async -> CloseOutcome {
+        if let closeTask {
+            let outcome = await closeTask.value
+            guard case .dirty = outcome else { return outcome }
+            // A dirty close left the retry machinery draining; report what is
+            // true *now* rather than then. Reading state and awaiting the
+            // protected save is not a second teardown — no pass is started.
+            await currentSave?.value
+            guard !dirty else { return .dirty(lastSaveError ?? Self.stillDirtyDescription) }
+            concludeCleanClose()
+            return .clean
+        }
+
+        isClosing = true
+        let teardown = Task { await self.performClose() }
+        closeTask = teardown
+        return await teardown.value
+    }
+
+    /// The sequence L4 states, in its order. Protected work is awaited and
+    /// never cancelled: a Back during `.loading` must not race the start's
+    /// save against library mutations (`Docs/Forks/Library/03-review.md` B1),
+    /// and `currentSave` owns pages marked `.saving`. Only the debounce — a
+    /// timer, never a capture — is cancellable here.
+    private func performClose() async -> CloseOutcome {
+        await startTask?.value
+        debounceTask?.cancel()
+        debounceTask = nil
+        // Awaits the in-flight save, then one final pass through the ordinary
+        // machinery — the same capture, the same acknowledgement, and on
+        // failure the same retry rearm at `performOneSave`'s exit, which is
+        // the mechanical half of retain-if-dirty (B3).
+        await saveIfNeeded()
+
+        guard !dirty else {
+            return .dirty(lastSaveError ?? Self.stillDirtyDescription)
+        }
+        concludeCleanClose()
+        return .clean
+    }
+
+    private func concludeCleanClose() {
+        isClosedClean = true
+        debounceTask?.cancel()
+        debounceTask = nil
+        CanvasLog.event(.lifecycle, "session closed clean")
+    }
+
+    /// Total-ness, not a message anyone should see: a final pass that leaves
+    /// the session dirty records why in `lastSaveError` on every path known.
+    private static let stillDirtyDescription = "This document has unsaved changes."
 }
