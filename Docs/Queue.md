@@ -119,8 +119,11 @@ Three consequences, all violated today:
   `DocumentStore.deleteOrphanedPages`,
   which has no caller at all — delete it rather than fix it, since an orphan is
   inert by *Durable form* and nothing has ever needed pruning. Ban `try?` with an
-  empty-allowlist structural test; the one real use, `Task.sleep` cancellation,
-  is a two-line `do`/`catch`.
+  empty-allowlist structural test. The `Task.sleep` cancellations are already
+  gone: one became the two-line `do`/`catch` when the debounce moved onto an
+  injected clock, and the other went with the test-only save delay it guarded.
+  What is left for the ban is `deleteOrphanedPages` and the lens image path's
+  stacked `try?`.
 - ~~`fetchPageData` throws out of its loop~~ — fixed: one unreadable page marks
   itself unreadable, is surfaced at the session boundary, renders as a refusing
   placeholder, and stalls neither its neighbours nor the launch. What remains
