@@ -152,6 +152,11 @@ final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
     private var isEditable = false
     private var hasSettledInitialPage = false
 
+    /// The viewport width the slots were last laid out at, or `nil` before the
+    /// first layout with a width. Held so a *change* in width is distinguishable
+    /// from a re-layout at the same width — see `viewDidLayoutSubviews`.
+    private var laidOutViewportWidth: CGFloat?
+
     /// The shape the Pencil draws, or `nil` for freehand ink.
     ///
     /// It lives here for the same reason the tool picker does: the active tool
@@ -203,9 +208,37 @@ final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
         ])
     }
 
+    /// Lays the slots out, and — the reason this is the viewport-change hook —
+    /// re-centres the visible page whenever the viewport width changed.
+    ///
+    /// Every offset in this runtime is `bounds.width × index`, so a width change
+    /// invalidates the standing `contentOffset`. Left alone, a resize shows the
+    /// wrong page immediately and then writes one durably: the user's next
+    /// settle divides the stale offset by the new width, rounds, and reports a
+    /// page the user never turned to — and `EditorSession` writes that index.
+    /// A resize is not a page turn, so nothing here reports one; the offset is
+    /// simply restated for the page that was already current.
+    ///
+    /// This hook rather than `viewWillTransition(to:with:)` or a trait
+    /// observation: rotation is pinned to portrait and multi-scene is off
+    /// (`project.yml`), so the live routes are Split View and Slide Over
+    /// resizes, which change bounds without necessarily changing a trait and
+    /// without a transition coordinator. Bounds are what the arithmetic
+    /// actually depends on, and this is where bounds arrive.
+    ///
+    /// The offset is restated from `currentPageIndex` rather than scaled from
+    /// the standing offset by the width ratio, which at rest is the same number
+    /// and under a *widening* viewport is not: `UIScrollView` clamps
+    /// `contentOffset` against the still-old `contentSize` before this runs, so
+    /// the offset read here has already lost the last page's position. The
+    /// index has not.
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        guard scrollView.bounds.width > 0 else { return }
+        let width = scrollView.bounds.width
+        guard width > 0 else { return }
+
+        let previousWidth = laidOutViewportWidth
+        laidOutViewportWidth = width
 
         updateContentSize()
         layoutSlots()
@@ -215,6 +248,10 @@ final class PagedCanvasController: UIViewController, UIScrollViewDelegate {
             scrollTo(page: currentPageIndex, animated: false)
             refreshWindow()
             livePage(at: currentPageIndex)?.becomeActivePage()
+        } else if let previousWidth, previousWidth != width {
+            // A non-animated programmatic set fires no settle callback, so this
+            // cannot be mistaken for a turn — and there is none to report.
+            scrollTo(page: currentPageIndex, animated: false)
         }
     }
 
