@@ -114,6 +114,7 @@ struct LibraryItemRow: View {
     let onOpen: () -> Void
 
     @State private var showingMenu = false
+    @State private var showingMovePicker = false
 
     private var isDocument: Bool {
         if case .document = item.kind { return true }
@@ -166,7 +167,12 @@ struct LibraryItemRow: View {
             .accessibilityLabel("Actions for \(item.name)")
             .accessibilityIdentifier("library.item.menu.\(item.name)")
             .popover(isPresented: $showingMenu, arrowEdge: .bottom) {
-                LibraryItemMenuPopover(item: item, model: model)
+                LibraryItemMenuPopover(item: item, model: model) {
+                    showingMovePicker = true
+                }
+            }
+            .sheet(isPresented: $showingMovePicker) {
+                MovePickerSheet(item: item, model: model)
             }
 
             LibraryFavoriteStar(item: item, size: 15)
