@@ -170,26 +170,39 @@ Nothing here is a reason not to ship. It is a reason not to be surprised.
   bound is derived from the fork doc's estimate of 22 MB per fit-width
   composite, which is itself unmeasured. The eviction *mechanism* is tested;
   the *number* is arithmetic on an estimate.
-- **No `image` layer has ever been seen.** The kind is durable — it saves,
-  loads, round-trips a transform, and reclaims its asset — and nothing renders
-  it, so every claim here is about files. Whether the payload the durable half
-  chose (an asset ref plus a transform of the image's unit square, with the
-  source's pixel size deliberately not stored) is the shape the compositor
-  actually wants is unproven until phase 2's rendering half lands against it.
-  No image has been imported through any UI, because there is none.
-- **No `pdf` layer has ever been seen either, and the same doubt is larger.**
+- **No `pdf` layer has ever been seen by an eye, and the same doubt is larger.**
   The kind is durable — one import becomes one page per source page, the asset
   is written once and never rewritten, refs round-trip with their source page
-  index and their placement — and **nothing rasterizes a PDF page anywhere in
-  this build**. `PDFSource` counts pages and measures boxes; that is all. The
-  decision most exposed by the absence is the unit-square payload: whether a
-  renderer, a lens, and hit-testing want the source page's point size durably
-  is exactly what phase 3's rendering half will find out, and the argument for
-  storing it is stronger for PDF than it was for images (a PDF page has an
-  intrinsic size; a bitmap does not). It is one field and one migration to
-  reverse. **Also unproven: that CropBox-with-`/Rotate` is the rectangle users
-  mean** — no PDF with a CropBox smaller than its MediaBox, and no rotated
-  page, has been imported from the wild; both are simulator fixtures.
+  index and their placement — and since phase 3c the rendering half exists
+  too: `PDFPageRasterizer` turns a source page into pixels, `StaticLayerRenderer`
+  draws those pixels into the base composite and into the lens, and
+  `PageCanvasController` asks for the lens at settle. `PDFPageRasterizerTests`,
+  `PDFLayerRenderTests`, `LensTests`, and `PrefetchWarmTests` hold it.
+  - **The unit-square payload is no longer unproven — it is decided, by the
+    renderer that was supposed to decide it.** This entry used to say the
+    source page's point size might have to become durable and that phase 3's
+    rendering half would find out. It found out, and the answer is no. The
+    composite's pdf case needs the display size and needs the `CGPDFPage`
+    itself two lines later, so a durable size saves no read; the lens derives
+    the same geometry from the same document; hit-testing never asks
+    (`PageSpaceTransform.containsUnitSquarePoint` touches no asset, and `pdf`
+    layers are not selectable anyway); and paging and layout read
+    `PageRecord.geometry`, which for an imported page already *is* the
+    source's point size. A payload field would be a third copy of a number
+    two places already hold. **Recorded as settled by evidence rather than by
+    argument**, which is what this file asks of a claim before it stops being
+    listed here.
+  - **What is still owed to an eye is everything between those pixels and a
+    person.** No PDF has been rendered on a physical iPad. Whether an imported
+    worksheet reads as paper, whether the soft-base-to-sharp-lens swap at
+    settle is visible as a flash, and what the lens costs in latency on a
+    dense textbook page are all unmeasured — spike 2 is scaffolded and
+    unthreaded and still owes a number.
+  - **Also unproven: that CropBox-with-`/Rotate` is the rectangle users mean**
+    — no PDF with a CropBox smaller than its MediaBox, and no rotated page,
+    has been imported from the wild; both are simulator fixtures. The
+    arithmetic is asserted; the judgment is not.
+  - No PDF has been imported through any UI, because there is none.
 - **Mixed geometry has never been swiped through.** Per-page geometry landed
   in phase 3b, so the letterboxing is gone: an imported landscape worksheet is
   a landscape page, and the blank page a swipe past the end appends is
