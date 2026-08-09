@@ -703,6 +703,52 @@ struct ContractStructureTests {
         "TuberNotesApp": ["UIKit", "PencilKit", "CoreGraphics"],
     ]
 
+    /// Files whose **module** is the claim, not merely their imports.
+    ///
+    /// The per-module policy above cannot express this. It permits `TuberCanvas`
+    /// UIKit, so `PaperTemplateRenderer.swift` moved into the canvas runtime
+    /// would satisfy every other rule in this file while being exactly what the
+    /// design forbids: paper drawn where frame-frequency work lives, one
+    /// refactor from a `CAShapeLayer` on the main thread. And `PageTemplate` is
+    /// a durable value — `Contract.md` — Owners: "Durable value types import
+    /// Foundation only" — so the vocabulary it may not acquire is *all* of it,
+    /// CoreGraphics included, however `TuberModel`'s row above reads.
+    ///
+    /// Two entries rather than a rule, because two files is what there is; a
+    /// third would be the moment to ask what the rule really is. Neither can
+    /// outlive its file: the test below requires **exactly one** match per
+    /// name, so a rename fails here rather than passing over nothing.
+    static let filesPlacedByDesign: [String: (module: String, forbidden: Set<String>)] = [
+        "PageTemplate.swift": ("TuberModel", ["UIKit", "PencilKit", "CoreGraphics"]),
+        "PaperTemplateRenderer.swift": ("TuberRender", ["UIKit", "PencilKit"]),
+    ]
+
+    @Test("A template is a name in the model and marks in the renderer, and nowhere else")
+    func templateFilesArePlacedByDesign() throws {
+        let sources = try Self.appSources()
+        for (name, rule) in Self.filesPlacedByDesign {
+            let matches = sources.filter { $0.path.hasSuffix("/" + name) }
+            #expect(
+                matches.count == 1,
+                "expected exactly one \(name) in the source tree, found \(matches.map(\.path))"
+            )
+            guard let source = matches.first else { continue }
+            #expect(
+                Self.module(of: source.path) == rule.module,
+                """
+                \(source.path) must live in \(rule.module). Moving it changes which frameworks it \
+                may import and, for the renderer, whether paper can be drawn on a frame path.
+                """
+            )
+            let forbidden = Set(ContractChecker.importedUIFrameworks(in: source.code))
+                .intersection(rule.forbidden)
+            #expect(
+                forbidden.isEmpty,
+                "\(source.path) imports \(forbidden.sorted().joined(separator: ", ")), which it may not."
+            )
+        }
+    }
+
     /// `DocumentStore` is the only writer of durable state.
     ///
     /// `ImportPickers.swift` is here for one read, not a write: a document
