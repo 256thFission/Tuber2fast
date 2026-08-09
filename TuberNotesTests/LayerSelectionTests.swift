@@ -859,6 +859,11 @@ struct LayerTransformCommitTests {
 @Suite("Minus-one recompositing")
 struct MinusOneCompositeTests {
 
+    /// The page every request in this suite is for. One document page, so two
+    /// composites of it differ by their layer lists — the minus-one and the
+    /// full stack — and never by identity.
+    private static let pageID = UUID()
+
     @Test("The composite drops the selected layer, as a second cache entry")
     func theCompositeExcludesTheSelectedLayer() async throws {
         let scratch = try TestScratch("minusone")
@@ -953,7 +958,12 @@ struct MinusOneCompositeTests {
         layers: [LayerEnvelope]
     ) async throws -> CGImage {
         let render = await renderer.composite(
-            for: StaticLayerRequest(layers: layers, geometry: .canonical, pixelsPerPagePoint: 1)
+            for: StaticLayerRequest(
+                pageID: Self.pageID,
+                layers: layers,
+                geometry: .canonical,
+                pixelsPerPagePoint: 1
+            )
         )
         guard case .composited(let composite) = render else {
             Issue.record("the stack rendered as \(render)")

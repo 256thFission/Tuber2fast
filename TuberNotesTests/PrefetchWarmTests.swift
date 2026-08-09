@@ -65,8 +65,12 @@ struct PrefetchWarmTests {
         }
 
         // The identity the cache holds, taken now, before any canvas exists.
+        // The page's own ID, because that is part of the identity now: the
+        // canvas built below asks under the same one, which is what makes the
+        // hit below a hit.
         let detail = try #require(session.pages.compositeDetail(forPage: session.pageIDForTesting(at: 4)))
         let request = StaticLayerRequest(
+            pageID: session.pageIDForTesting(at: 4),
             layers: [decorated],
             geometry: .canonical,
             pixelsPerPagePoint: detail
@@ -101,12 +105,18 @@ struct PrefetchWarmTests {
         // second composite would evict the first.
         let renderer = StaticLayerRenderer(store: scratch.store, byteBound: 1)
 
+        // Two pages, because that is what the protection is about: the one on
+        // screen and the neighbour a warm speculates on.
+        let visiblePage = UUID()
+        let neighbourPage = UUID()
         let visible = try await scratch.imageLayer(color: .red)
         let neighbour = try await scratch.imageLayer(color: .green)
         let visibleRequest = StaticLayerRequest(
+            pageID: visiblePage,
             layers: [visible], geometry: .canonical, pixelsPerPagePoint: 1
         )
         let neighbourRequest = StaticLayerRequest(
+            pageID: neighbourPage,
             layers: [neighbour], geometry: .canonical, pixelsPerPagePoint: 1
         )
 
@@ -115,8 +125,8 @@ struct PrefetchWarmTests {
             return
         }
         await renderer.retain(
-            layerIDs: [visible.layerID, neighbour.layerID],
-            protecting: [visible.layerID]
+            pageIDs: [visiblePage, neighbourPage],
+            protecting: [visiblePage]
         )
         await renderer.warm(neighbourRequest)
 
@@ -137,9 +147,27 @@ struct PrefetchWarmTests {
         // order decides who dies on the third insert.
         let renderer = StaticLayerRenderer(store: scratch.store, byteBound: 3_700_000)
         let layer = try await scratch.imageLayer(color: .red)
-        let a = StaticLayerRequest(layers: [layer], geometry: .canonical, pixelsPerPagePoint: 1.0)
-        let b = StaticLayerRequest(layers: [layer], geometry: .canonical, pixelsPerPagePoint: 0.9)
-        let c = StaticLayerRequest(layers: [layer], geometry: .canonical, pixelsPerPagePoint: 0.8)
+        // One page at three levels of detail: what is under test is the
+        // recency order, so nothing here may differ by page.
+        let pageID = UUID()
+        let a = StaticLayerRequest(
+            pageID: pageID,
+            layers: [layer],
+            geometry: .canonical,
+            pixelsPerPagePoint: 1.0
+        )
+        let b = StaticLayerRequest(
+            pageID: pageID,
+            layers: [layer],
+            geometry: .canonical,
+            pixelsPerPagePoint: 0.9
+        )
+        let c = StaticLayerRequest(
+            pageID: pageID,
+            layers: [layer],
+            geometry: .canonical,
+            pixelsPerPagePoint: 0.8
+        )
 
         guard case .composited(let first) = await renderer.composite(for: a) else { return }
         _ = await renderer.composite(for: b)

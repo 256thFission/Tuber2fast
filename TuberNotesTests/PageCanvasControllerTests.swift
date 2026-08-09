@@ -14,6 +14,7 @@ struct PageCanvasControllerTests {
     @Test("The canvas owner configures page space, input policy, and fit zoom")
     func canvasInvariants() {
         let controller = PageCanvasController(
+            pageID: UUID(),
             toolPicker: PKToolPicker(),
             projection: .canonical,
             host: TestPageHost()
@@ -75,6 +76,7 @@ struct PageCanvasControllerTests {
     @Test("The zoom floor is fit-page: a landscape viewport can pull back to the whole page, centred")
     func zoomFloorIsFitPageInLandscape() {
         let controller = PageCanvasController(
+            pageID: UUID(),
             toolPicker: PKToolPicker(),
             projection: .canonical,
             host: TestPageHost()
@@ -117,6 +119,7 @@ struct PageCanvasControllerTests {
     func landscapePageIsLandscape() {
         let landscape = PageGeometry(width: 842, height: 595)
         let controller = PageCanvasController(
+            pageID: UUID(),
             toolPicker: PKToolPicker(),
             projection: PageProjection(
                 geometry: landscape,
@@ -168,6 +171,7 @@ struct PageCanvasControllerTests {
     @Test("The zoom ceiling is the durable cap and does not move with the viewport")
     func zoomCeilingIsDurableAndViewportIndependent() {
         let controller = PageCanvasController(
+            pageID: UUID(),
             toolPicker: PKToolPicker(),
             projection: .canonical,
             host: TestPageHost()
@@ -230,6 +234,7 @@ struct PageCanvasControllerTests {
     @Test("A viewport resize re-fits the zoom range and keeps the user's scale")
     func viewportResizeReestablishesZoomRange() {
         let controller = PageCanvasController(
+            pageID: UUID(),
             toolPicker: PKToolPicker(),
             projection: .canonical,
             host: TestPageHost()
@@ -264,6 +269,7 @@ struct PageCanvasControllerTests {
     @Test("A page shorter than the viewport is centred vertically; fit-width leaves no horizontal room")
     func pageIsCentredWhenSmallerThanViewport() {
         let controller = PageCanvasController(
+            pageID: UUID(),
             toolPicker: PKToolPicker(),
             projection: .canonical,
             host: TestPageHost()
@@ -300,6 +306,7 @@ struct PageCanvasControllerTests {
     @Test("Ink stays in page space through zoom and pan")
     func inkIsAuthoredInPageSpace() {
         let controller = PageCanvasController(
+            pageID: UUID(),
             toolPicker: PKToolPicker(),
             projection: .canonical,
             host: TestPageHost()
@@ -335,6 +342,7 @@ struct PageCanvasControllerTests {
     func installingInkIsNotReportedAsAnEdit() {
         let host = TestPageHost()
         let controller = PageCanvasController(
+            pageID: UUID(),
             toolPicker: PKToolPicker(),
             projection: .canonical,
             host: host
@@ -366,6 +374,7 @@ struct PageCanvasControllerTests {
         let host = TestPageHost()
         host.onDrawingChanged = { deliveries += 1 }
         let controller = PageCanvasController(
+            pageID: UUID(),
             toolPicker: PKToolPicker(),
             projection: .canonical,
             host: host
@@ -389,6 +398,7 @@ struct PageCanvasControllerTests {
     @Test("A copied drawing snapshot serializes without consulting the live canvas")
     func drawingSnapshotIsIndependent() async throws {
         let controller = PageCanvasController(
+            pageID: UUID(),
             toolPicker: PKToolPicker(),
             projection: .canonical,
             host: TestPageHost()
@@ -414,6 +424,7 @@ struct PageCanvasControllerTests {
     @Test("A display below the supported scale clamps the zoom ceiling instead of trapping")
     func subMinimumDisplayScaleClampsInsteadOfTrapping() {
         let controller = PageCanvasController(
+            pageID: UUID(),
             toolPicker: PKToolPicker(),
             projection: .canonical,
             host: TestPageHost()
@@ -444,6 +455,7 @@ struct PageCanvasControllerTests {
         )
 
         let controller = PageCanvasController(
+            pageID: UUID(),
             toolPicker: PKToolPicker(), projection: .canonical,
             host: TestPageHost(),
             staticRenderer: StaticLayerRenderer(store: store)
@@ -484,6 +496,7 @@ struct PageCanvasControllerTests {
 
         let renderer = StaticLayerRenderer(store: store)
         let controller = PageCanvasController(
+            pageID: UUID(),
             toolPicker: PKToolPicker(), projection: .canonical,
             host: TestPageHost(),
             staticRenderer: renderer
@@ -565,6 +578,7 @@ struct PageCanvasControllerTests {
         )
         let renderer = StaticLayerRenderer(store: store)
         let controller = PageCanvasController(
+            pageID: UUID(),
             toolPicker: PKToolPicker(), projection: .canonical,
             host: TestPageHost(),
             staticRenderer: renderer
@@ -682,6 +696,7 @@ struct PageCanvasControllerTests {
         zoomCap: Double = DocumentIndex.canonicalZoomCapPagePointsPerPixel
     ) -> PKCanvasView {
         let controller = PageCanvasController(
+            pageID: UUID(),
             toolPicker: PKToolPicker(),
             projection: PageProjection(
                 geometry: geometry,

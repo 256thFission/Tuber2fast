@@ -15,12 +15,15 @@ import TuberStore
 /// list is a durable and editing structure; it is never a compositing
 /// structure.
 ///
-/// Not a second owner. It writes nothing durable, holds no page identity, and
-/// answers questions: given a layer list and a level of detail, here is the
-/// texture, or here is a refusal. `EditorSession` remains the one writer of the
-/// list (`Contract.md` — Owners, golden rule 5) and `DocumentStore` remains the
-/// only thing that touches files — this actor reads asset bytes *through* the
-/// store's own entry point and never opens a file itself.
+/// Not a second owner. It writes nothing durable, owns no page state, and
+/// answers questions: given a page's layer list and a level of detail, here is
+/// the texture, or here is a refusal. It is *told* which page a request is for
+/// — that is the cache's key and the unit its eviction is stated in — and it
+/// asks nothing about page order, page numbers, or turns. `EditorSession`
+/// remains the one writer of the list (`Contract.md` — Owners, golden rule 5)
+/// and `DocumentStore` remains the only thing that touches files — this actor
+/// reads asset bytes *through* the store's own entry point and never opens a
+/// file itself.
 ///
 /// It is an `actor` for the reason `DocumentStore` is one: decoding and
 /// compositing are off the main actor by construction rather than by
@@ -55,9 +58,9 @@ package actor StaticLayerRenderer {
     //   22 MB is the fork doc's estimate and nobody has measured it on a
     //   device**; if it is wrong, this number is wrong with it.
     //
-    // EVICTION: two rules, in this order. `retain(layerIDs:)` drops every
-    //   entry whose layers have all left the live window plus the prefetch
-    //   radius — that is the policy, and the session calls it on every turn.
+    // EVICTION: two rules, in this order. `retain(pageIDs:)` drops every
+    //   entry whose page has left the live window plus the prefetch radius —
+    //   that is the policy, and the session calls it on every turn.
     //   The byte bound is the backstop: after an insert, least-recently-used
     //   entries are dropped until the total is under it, never including the
     //   entry just inserted. Recency is kept as an order (`recency` below),
@@ -159,18 +162,31 @@ package actor StaticLayerRenderer {
         let request: StaticLayerRequest
         let render: StaticLayerRender
         let byteCount: Int
-        let layerIDs: Set<UUID>
+        let pageID: UUID
     }
 
-    /// The identity of one cached composite: which layers, at what level of
-    /// detail. Layer IDs are unique within a page and minted as UUIDs, so this
-    /// needs no page identity — which is what lets `PageCanvasController` stay
-    /// blind to which page it is (`Contract.md` — Owners, golden rule 7).
+    /// The identity of one cached composite: whose page, which layers, at what
+    /// level of detail.
+    ///
+    /// **The page ID is load-bearing and it used to be absent.** The claim it
+    /// replaces was that layer IDs are unique within a page and minted as
+    /// UUIDs, so the key needed no page identity — true only while every
+    /// cached composite had at least one layer, which is a property of what
+    /// this renderer happened to be asked for and never a property of the
+    /// design. A layer-less page keyed on an empty list, and the empty set is
+    /// disjoint with every set, so eviction dropped its composite on every
+    /// turn including while it was the page on screen. Page identity makes
+    /// both the key and the eviction a question about a page.
+    ///
+    /// It costs `PageCanvasController` nothing that golden rule 7 protects: it
+    /// is *told* its page ID at construction, and remains blind to page
+    /// numbers and to turns. Being told a UUID is telling, not asking.
     ///
     /// The key is not the whole request: transforms are compared by the stored
     /// `Entry.request` on lookup, so a layer that moved is a miss rather than a
     /// wrong picture.
     private struct CompositeKey: Hashable {
+        let pageID: UUID
         let layerIDs: [UUID]
         let scaleMilli: Int
         /// Geometry is per page since phase 3b, so it belongs in the key: the
@@ -181,6 +197,7 @@ package actor StaticLayerRenderer {
         let heightMilli: Int
 
         init(_ request: StaticLayerRequest) {
+            pageID = request.pageID
             layerIDs = request.layers.map(\.layerID)
             scaleMilli = Int((request.pixelsPerPagePoint * 1000).rounded())
             widthMilli = Int((request.geometry.width * 1000).rounded())
@@ -229,7 +246,7 @@ package actor StaticLayerRenderer {
             return await join(running.task, key: key)
         }
 
-        // KNOWN DEFECT: a `retain(layerIDs:)` that lands while this render is
+        // KNOWN DEFECT: a `retain(pageIDs:)` that lands while this render is
         // in flight is undone by the `remember` below, so a page that left the
         // live window mid-render keeps its composite until the next turn. One
         // entry, bounded by the byte bound, dropped by the next `retain`. The
@@ -653,24 +670,28 @@ package actor StaticLayerRenderer {
 
     // MARK: - Eviction
 
-    /// Drops every composite none of whose layers is still in the live window
-    /// plus the prefetch radius. **This is the eviction policy**; the byte
-    /// bound below is only the backstop.
+    /// Drops every composite whose page has left the live window plus the
+    /// prefetch radius. **This is the eviction policy**; the byte bound below
+    /// is only the backstop.
     ///
-    /// Keyed on layer IDs rather than page IDs so that this actor never learns
-    /// page identity. `EditorSession` — which owns page order — computes the
-    /// live set.
-    /// `protecting` names the layers of the page the user is looking at:
-    /// composites containing any of them are exempt from the byte-bound trim,
-    /// though never from this window eviction itself. It exists for the
-    /// prefetch warm (phase 3c) — five pages of warmed composites can
-    /// legitimately exceed the byte bound, and without this the LRU backstop
-    /// could answer that pressure by evicting the one composite that is on
-    /// screen, which is speculation costing the user a visible re-render.
-    package func retain(layerIDs live: Set<UUID>, protecting visible: Set<UUID> = []) {
-        protectedLayerIDs = visible
+    /// Keyed on page IDs, and it was keyed on layer IDs until a layer-less page
+    /// could exist. A page with no static layers has no layer ID to be live by,
+    /// and the empty set is disjoint with every set, so its composite was
+    /// dropped by every turn — including the turn that landed on it. `EditorSession`
+    /// — which owns page order — computes the live set either way; what changed
+    /// is that eviction is now a question with an answer for every page.
+    ///
+    /// `protecting` names the page the user is looking at: its composite is
+    /// exempt from the byte-bound trim, though never from this window eviction
+    /// itself. It exists for the prefetch warm (phase 3c) — five pages of
+    /// warmed composites can legitimately exceed the byte bound, and without
+    /// this the LRU backstop could answer that pressure by evicting the one
+    /// composite that is on screen, which is speculation costing the user a
+    /// visible re-render.
+    package func retain(pageIDs live: Set<UUID>, protecting visible: Set<UUID> = []) {
+        protectedPageIDs = visible
         var dropped = 0
-        for (key, entry) in cache where entry.layerIDs.isDisjoint(with: live) {
+        for (key, entry) in cache where !live.contains(entry.pageID) {
             cachedBytes -= entry.byteCount
             cache[key] = nil
             dropped += 1
@@ -704,7 +725,7 @@ package actor StaticLayerRenderer {
             request: request,
             render: render,
             byteCount: bytes,
-            layerIDs: Set(request.layers.map(\.layerID))
+            pageID: request.pageID
         )
         cachedBytes += bytes
         // An insert is a use: what was just rendered is what a caller is about
@@ -713,10 +734,13 @@ package actor StaticLayerRenderer {
         trimToByteBound(protecting: key)
     }
 
-    /// The layers of the visible page, exempt from the byte-bound trim. Set
-    /// by `retain(layerIDs:protecting:)` — the session, which is the one
+    /// The visible page, whose composite is exempt from the byte-bound trim.
+    /// Set by `retain(pageIDs:protecting:)` — the session, which is the one
     /// place that knows which page is visible — and empty until it says.
-    private var protectedLayerIDs: Set<UUID> = []
+    ///
+    /// A set rather than one ID because the visible *window* is what the
+    /// session protects, and it is more than one page on a wide layout.
+    private var protectedPageIDs: Set<UUID> = []
 
     /// Records that `key` was just used, which is what makes it the last thing
     /// the trim below would drop.
@@ -757,7 +781,7 @@ package actor StaticLayerRenderer {
             }
             guard cachedBytes > byteBound,
                   candidate != key,
-                  entry.layerIDs.isDisjoint(with: protectedLayerIDs)
+                  !protectedPageIDs.contains(entry.pageID)
             else {
                 kept.append(candidate)
                 continue
@@ -1048,6 +1072,12 @@ package actor StaticLayerRenderer {
 ///
 /// Carries no page identity, by design — see `StaticLayerRenderer.CompositeKey`.
 package struct StaticLayerRequest: Sendable, Equatable {
+    /// Whose page this is. Not used to *find* anything on disk — this renderer
+    /// still reads only the assets its layers name — but it is the identity
+    /// the cache is keyed and evicted by, and it is the only reason a page
+    /// with no static layers can be cached at all.
+    let pageID: UUID
+
     /// The page's recognized layers below the ink, in order. The ink layer is
     /// never here: PencilKit renders ink, above this texture, and a composite
     /// containing ink would be a derived artifact restating what the ink
@@ -1068,7 +1098,13 @@ package struct StaticLayerRequest: Sendable, Equatable {
 
     // Spelled out because a memberwise initializer is `internal` however
     // visible its type is, and the canvas runtime builds the request.
-    package init(layers: [LayerEnvelope], geometry: PageGeometry, pixelsPerPagePoint: Double) {
+    package init(
+        pageID: UUID,
+        layers: [LayerEnvelope],
+        geometry: PageGeometry,
+        pixelsPerPagePoint: Double
+    ) {
+        self.pageID = pageID
         self.layers = layers
         self.geometry = geometry
         self.pixelsPerPagePoint = pixelsPerPagePoint

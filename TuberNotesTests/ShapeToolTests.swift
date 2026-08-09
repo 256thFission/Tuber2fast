@@ -345,6 +345,7 @@ struct ShapeToolRuntimeTests {
     @Test("Committing appends the shape and leaves earlier ink untouched")
     func commitAppendsWithoutDisturbingExistingInk() {
         let controller = PageCanvasController(
+            pageID: UUID(),
             toolPicker: PKToolPicker(),
             projection: .canonical,
             host: TestPageHost()
@@ -388,6 +389,7 @@ struct ShapeToolRuntimeTests {
     @Test("Committing nothing changes nothing")
     func committingNoStrokesIsANoOp() {
         let controller = PageCanvasController(
+            pageID: UUID(),
             toolPicker: PKToolPicker(),
             projection: .canonical,
             host: TestPageHost()
@@ -402,6 +404,7 @@ struct ShapeToolRuntimeTests {
     @Test("The shape tool switches PencilKit's own inking off, and finger behaviour is untouched")
     func theToolModeArbitratesOnlyThePencil() {
         let controller = PageCanvasController(
+            pageID: UUID(),
             toolPicker: PKToolPicker(),
             projection: .canonical,
             host: TestPageHost()
@@ -430,6 +433,7 @@ struct ShapeToolRuntimeTests {
     @Test("The shape recognizer accepts the Pencil and nothing else")
     func theRecognizerIsPencilOnly() {
         let controller = PageCanvasController(
+            pageID: UUID(),
             toolPicker: PKToolPicker(),
             projection: .canonical,
             host: TestPageHost()

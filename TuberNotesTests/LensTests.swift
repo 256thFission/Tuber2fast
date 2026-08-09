@@ -26,6 +26,12 @@ import UIKit
 @Suite("The lens: sharp content at zoom settle")
 struct LensTests {
 
+    /// The page every request in this suite is for. One document page, so two
+    /// composites of it differ by level of detail or by layer list and never
+    /// by identity — and the cache's page-scoped eviction has one page to be
+    /// about.
+    private static let pageID = UUID()
+
     /// The stripe fixture's page: 400 points square, so a viewport-sized test
     /// host reaches lens-worthy zooms inside PKCanvasView's own ceiling.
     private static let stripeGeometry = PageGeometry(width: 400, height: 400)
@@ -45,7 +51,12 @@ struct LensTests {
         // black and half a white stripe and lands mid-grey. This is what deep
         // zoom shows scaled up — soft by construction.
         let base = await renderer.composite(
-            for: StaticLayerRequest(layers: [layer], geometry: Self.stripeGeometry, pixelsPerPagePoint: 1)
+            for: StaticLayerRequest(
+                pageID: Self.pageID,
+                layers: [layer],
+                geometry: Self.stripeGeometry,
+                pixelsPerPagePoint: 1
+            )
         )
         guard case .composited(let soft) = base else {
             Issue.record("the base did not composite: \(base)")
@@ -60,7 +71,12 @@ struct LensTests {
         // The lens over a quarter of the page at two pixels per page point:
         // pure black and pure white columns alternate.
         let render = await renderer.lens(
-            for: StaticLayerRequest(layers: [layer], geometry: Self.stripeGeometry, pixelsPerPagePoint: 2),
+            for: StaticLayerRequest(
+                pageID: Self.pageID,
+                layers: [layer],
+                geometry: Self.stripeGeometry,
+                pixelsPerPagePoint: 2
+            ),
             visibleRect: CGRect(x: 0, y: 0, width: 100, height: 100)
         )
         guard case .composited(let sharp) = render else {
@@ -86,6 +102,7 @@ struct LensTests {
             transform: PageSpaceTransform(a: 120, b: 0, c: 0, d: 200, tx: 0, ty: 0)
         )
         let request = StaticLayerRequest(
+            pageID: Self.pageID,
             layers: [layer], geometry: PageGeometry(width: 120, height: 200), pixelsPerPagePoint: 2
         )
 
@@ -116,6 +133,7 @@ struct LensTests {
 
         let render = await renderer.lens(
             for: StaticLayerRequest(
+                pageID: Self.pageID,
                 layers: [worksheet, sticker], geometry: Self.stripeGeometry, pixelsPerPagePoint: 2
             ),
             visibleRect: CGRect(x: 0, y: 0, width: 100, height: 100)
@@ -140,7 +158,12 @@ struct LensTests {
             transform: PageSpaceTransform(a: 120, b: 0, c: 0, d: 200, tx: 60, ty: 80)
         )
         let render = await renderer.lens(
-            for: StaticLayerRequest(layers: [layer], geometry: .canonical, pixelsPerPagePoint: 2),
+            for: StaticLayerRequest(
+                pageID: Self.pageID,
+                layers: [layer],
+                geometry: .canonical,
+                pixelsPerPagePoint: 2
+            ),
             visibleRect: CGRect(x: 0, y: 0, width: 120, height: 160)
         )
         guard case .composited(let lens) = render else {
@@ -314,6 +337,7 @@ struct LensTests {
             transform: PageSpaceTransform(a: 400, b: 0, c: 0, d: 400, tx: 0, ty: 0)
         )
         let controller = PageCanvasController(
+            pageID: UUID(),
             toolPicker: PKToolPicker(),
             projection: PageProjection(
                 geometry: Self.stripeGeometry,

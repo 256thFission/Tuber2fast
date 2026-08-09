@@ -41,6 +41,17 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
     /// page would mean the selected tool resetting every time you turn one.
     private let toolPicker: PKToolPicker
 
+    /// Which page this controller's drawing belongs to, told at construction.
+    ///
+    /// **Told, never asked** (`Contract.md` — Owners, golden rule 7). It is an
+    /// identity and not a position: this controller still knows nothing about
+    /// page numbers, page order, or turns, and it never looks this ID up in
+    /// anything. It exists so the composite requests below name the page whose
+    /// texture they are — which is what lets the render cache evict by page,
+    /// and what lets a page with no static layers have a cached composite at
+    /// all.
+    private let pageID: UUID
+
     /// This page's own size and the document's zoom cap, told at construction
     /// and never changed (`Contract.md` — Geometry and coordinates: geometry is
     /// per page, set at page creation, immutable afterward).
@@ -233,11 +244,13 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
     private static let maximumCompositeLongEdge: Double = 2800
 
     init(
+        pageID: UUID,
         toolPicker: PKToolPicker,
         projection: PageProjection,
         host: any PageCanvasHost,
         staticRenderer: StaticLayerRenderer? = nil
     ) {
+        self.pageID = pageID
         self.toolPicker = toolPicker
         self.projection = projection
         self.host = host
@@ -840,6 +853,7 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         // minus-one). `geometry` is the page's own, not the canonical one, so
         // a landscape page composites at its own extent (phase 3b).
         let request = StaticLayerRequest(
+            pageID: pageID,
             layers: layersToComposite,
             geometry: geometry,
             pixelsPerPagePoint: scale
@@ -989,6 +1003,7 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         guard !clamped.isEmpty else { return }
 
         let request = StaticLayerRequest(
+            pageID: pageID,
             layers: layersToComposite,
             geometry: geometry,
             pixelsPerPagePoint: lensScale

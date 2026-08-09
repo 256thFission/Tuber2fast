@@ -825,6 +825,7 @@ package final class PagedCanvasController: UIViewController, UIScrollViewDelegat
         // instead, in `PageCanvasController.installDrawing`, which is where the
         // assignment is and where a reader looking for the rule will be.
         let page = PageCanvasController(
+            pageID: pageID,
             toolPicker: toolPicker,
             projection: session.projection(forPage: pageID),
             host: SlotHost(runtime: self, pageID: pageID),

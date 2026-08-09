@@ -22,6 +22,12 @@ import UIKit
 @Suite("PDF layers in the static composite")
 struct PDFLayerRenderTests {
 
+    /// The page every request in this suite is for. One document page, so two
+    /// composites of it differ by level of detail or by layer list and never
+    /// by identity — and the cache's page-scoped eviction has one page to be
+    /// about.
+    private static let pageID = UUID()
+
     /// The quadrant fixture's own extent, as a page: an imported page's
     /// geometry is its source's size in points.
     private static let quadrantGeometry = PageGeometry(width: 120, height: 200)
@@ -39,6 +45,7 @@ struct PDFLayerRenderTests {
         let composite = try await composited(
             renderer,
             request: StaticLayerRequest(
+                pageID: Self.pageID,
                 layers: [layer], geometry: Self.quadrantGeometry, pixelsPerPagePoint: 1
             )
         )
@@ -67,6 +74,7 @@ struct PDFLayerRenderTests {
         let composite = try await composited(
             renderer,
             request: StaticLayerRequest(
+                pageID: Self.pageID,
                 layers: [layer],
                 geometry: PageGeometry(width: 200, height: 120),
                 pixelsPerPagePoint: 1
@@ -92,7 +100,12 @@ struct PDFLayerRenderTests {
 
         let composite = try await composited(
             renderer,
-            request: StaticLayerRequest(layers: [layer], geometry: .canonical, pixelsPerPagePoint: 1)
+            request: StaticLayerRequest(
+                pageID: Self.pageID,
+                layers: [layer],
+                geometry: .canonical,
+                pixelsPerPagePoint: 1
+            )
         )
         #expect(isRed(pixel(composite.image, x: 110, y: 210)), "inside the placed rect, top-left quadrant")
         #expect(isYellow(pixel(composite.image, x: 210, y: 390)), "inside, bottom-right quadrant")
@@ -118,6 +131,7 @@ struct PDFLayerRenderTests {
         let composite = try await composited(
             renderer,
             request: StaticLayerRequest(
+                pageID: Self.pageID,
                 layers: [worksheet, sticker],
                 geometry: Self.quadrantGeometry,
                 pixelsPerPagePoint: 1
@@ -141,6 +155,7 @@ struct PDFLayerRenderTests {
         let composite = try await composited(
             renderer,
             request: StaticLayerRequest(
+                pageID: Self.pageID,
                 layers: [layer], geometry: Self.quadrantGeometry, pixelsPerPagePoint: 1
             )
         )
@@ -162,6 +177,7 @@ struct PDFLayerRenderTests {
         )
         let render = await renderer.composite(
             for: StaticLayerRequest(
+                pageID: Self.pageID,
                 layers: [layer], geometry: Self.quadrantGeometry, pixelsPerPagePoint: 1
             )
         )
@@ -182,6 +198,7 @@ struct PDFLayerRenderTests {
         )
         let render = await renderer.composite(
             for: StaticLayerRequest(
+                pageID: Self.pageID,
                 layers: [layer], geometry: Self.quadrantGeometry, pixelsPerPagePoint: 1
             )
         )
@@ -214,6 +231,7 @@ struct PDFLayerRenderTests {
         )
         let render = await renderer.composite(
             for: StaticLayerRequest(
+                pageID: Self.pageID,
                 layers: [layer, good], geometry: Self.quadrantGeometry, pixelsPerPagePoint: 1
             )
         )
@@ -241,6 +259,7 @@ struct PDFLayerRenderTests {
         )
         let render = await renderer.composite(
             for: StaticLayerRequest(
+                pageID: Self.pageID,
                 layers: [layer], geometry: Self.quadrantGeometry, pixelsPerPagePoint: 1
             )
         )
@@ -261,7 +280,12 @@ struct PDFLayerRenderTests {
             pageSpaceTransform: PageSpaceTransform(a: 10, b: 0, c: 0, d: 10, tx: 0, ty: 0)
         )
         let render = await renderer.composite(
-            for: StaticLayerRequest(layers: [stranger], geometry: .canonical, pixelsPerPagePoint: 1)
+            for: StaticLayerRequest(
+                pageID: Self.pageID,
+                layers: [stranger],
+                geometry: .canonical,
+                pixelsPerPagePoint: 1
+            )
         )
         guard case .refused(let why) = render else {
             Issue.record("an unknown kind rendered as \(render)")

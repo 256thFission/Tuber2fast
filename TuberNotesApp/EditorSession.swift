@@ -696,24 +696,25 @@ final class EditorSession {
     /// (`PagedCanvasControllerTests.halfDragCommitsNothing`,
     /// `pageChangeIsReportedOnceWhenSettled`, `flingAcrossPagesReportsOneTurn`),
     /// so an abandoned half-drag reaches here zero times and a completed turn
-    /// exactly once — nothing can double-decode. The visible page's layers
-    /// travel as the protected set, so warming can never answer byte-bound
-    /// pressure by evicting the composite on screen; a warm for a page that
-    /// leaves the window before it lands is dropped by the next retain, which
-    /// is this path's droppability.
+    /// exactly once — nothing can double-decode. The visible page travels as
+    /// the protected set, so warming can never answer byte-bound pressure by
+    /// evicting the composite on screen; a warm for a page that leaves the
+    /// window before it lands is dropped by the next retain, which is this
+    /// path's droppability.
     private func retainRenderedLayers() {
         let current = index.currentPageIndex
         let lower = max(0, current - Self.prefetchRadius)
         let upper = min(pageStates.count - 1, current + Self.prefetchRadius)
         guard lower <= upper else { return }
 
-        var live: Set<UUID> = []
-        for pageIndex in lower...upper {
-            for layer in pageStates[pageIndex].staticLayers { live.insert(layer.layerID) }
-        }
-        let visible = Set(pageStates[current].staticLayers.map(\.layerID))
+        // Page identities, not the union of their layers'. A page with no
+        // static layers contributed nothing to that union, so its composite —
+        // a templated blank page's — was disjoint with every live set and
+        // evicted on every turn, the page on screen included.
+        let live = Set(pageStates[lower...upper].map(\.id))
+        let visible: Set<UUID> = [pageStates[current].id]
         let renderer = staticRenderer
-        Task { await renderer.retain(layerIDs: live, protecting: visible) }
+        Task { await renderer.retain(pageIDs: live, protecting: visible) }
     }
 
     /// Warms the prefetch window's other pages' base composites, outermost
@@ -748,6 +749,7 @@ final class EditorSession {
                   let detail = liveRuntime?.compositeDetail(forPage: pageStates[pageIndex].id)
             else { continue }
             let request = StaticLayerRequest(
+                pageID: pageStates[pageIndex].id,
                 layers: pageStates[pageIndex].staticLayers,
                 geometry: geometry,
                 pixelsPerPagePoint: detail

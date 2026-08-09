@@ -28,6 +28,12 @@ import UniformTypeIdentifiers
 @Suite("Static layer rendering")
 struct StaticLayerRenderTests {
 
+    /// The page every request in this suite is for. One document page, so two
+    /// composites of it differ by level of detail or by layer list and never
+    /// by identity — and the cache's page-scoped eviction has one page to be
+    /// about.
+    private static let pageID = UUID()
+
     // MARK: - The composite
 
     @Test("The composite stacks layers in list order, lower ones beneath")
@@ -111,7 +117,12 @@ struct StaticLayerRenderTests {
         let scratch = try TestScratch("render")
         let renderer = StaticLayerRenderer(store: scratch.store)
         let render = await renderer.composite(
-            for: StaticLayerRequest(layers: [], geometry: .canonical, pixelsPerPagePoint: 1)
+            for: StaticLayerRequest(
+                pageID: Self.pageID,
+                layers: [],
+                geometry: .canonical,
+                pixelsPerPagePoint: 1
+            )
         )
         guard case .empty = render else {
             Issue.record("an empty layer list rendered as \(render)")
@@ -178,7 +189,12 @@ struct StaticLayerRenderTests {
             image: TestScratch.solidHEIC(width: 1600, height: 1000, color: .red),
             transform: PageSpaceTransform(a: 60, b: 0, c: 0, d: 37.5, tx: 10, ty: 10)
         )
-        let request = StaticLayerRequest(layers: [layer], geometry: .canonical, pixelsPerPagePoint: 2)
+        let request = StaticLayerRequest(
+            pageID: Self.pageID,
+            layers: [layer],
+            geometry: .canonical,
+            pixelsPerPagePoint: 2
+        )
         let bound = StaticLayerRenderer.maxPixelSize(of: layer.pageSpaceTransform, at: 2)
         #expect(bound == 120, "the decode is bounded by the placement, not by the source")
 
@@ -213,8 +229,18 @@ struct StaticLayerRenderTests {
         // Different levels of detail, so the two composites have different
         // byte counts: with equal sizes, evicting the *new* entry instead of
         // the old would pass every counter assertion below identically.
-        let requestA = StaticLayerRequest(layers: [first], geometry: .canonical, pixelsPerPagePoint: 1)
-        let requestB = StaticLayerRequest(layers: [second], geometry: .canonical, pixelsPerPagePoint: 2)
+        let requestA = StaticLayerRequest(
+            pageID: Self.pageID,
+            layers: [first],
+            geometry: .canonical,
+            pixelsPerPagePoint: 1
+        )
+        let requestB = StaticLayerRequest(
+            pageID: Self.pageID,
+            layers: [second],
+            geometry: .canonical,
+            pixelsPerPagePoint: 2
+        )
 
         let a = try await composited(renderer, request: requestA)
         #expect(await renderer.cachedCompositeCount == 1, "the entry just made is never the one evicted")
@@ -243,9 +269,24 @@ struct StaticLayerRenderTests {
         let renderer = StaticLayerRenderer(store: store, byteBound: 3_700_000)
 
         let layer = try await scratch.imageLayer(store: store, color: .red, transform: .fullPage)
-        let requestA = StaticLayerRequest(layers: [layer], geometry: .canonical, pixelsPerPagePoint: 1.0)
-        let requestB = StaticLayerRequest(layers: [layer], geometry: .canonical, pixelsPerPagePoint: 0.9)
-        let requestC = StaticLayerRequest(layers: [layer], geometry: .canonical, pixelsPerPagePoint: 0.8)
+        let requestA = StaticLayerRequest(
+            pageID: Self.pageID,
+            layers: [layer],
+            geometry: .canonical,
+            pixelsPerPagePoint: 1.0
+        )
+        let requestB = StaticLayerRequest(
+            pageID: Self.pageID,
+            layers: [layer],
+            geometry: .canonical,
+            pixelsPerPagePoint: 0.9
+        )
+        let requestC = StaticLayerRequest(
+            pageID: Self.pageID,
+            layers: [layer],
+            geometry: .canonical,
+            pixelsPerPagePoint: 0.8
+        )
 
         let a = try await composited(renderer, request: requestA)
         let b = try await composited(renderer, request: requestB)
@@ -272,8 +313,18 @@ struct StaticLayerRenderTests {
         let renderer = StaticLayerRenderer(store: store, byteBound: 3_700_000)
 
         let layer = try await scratch.imageLayer(store: store, color: .red, transform: .fullPage)
-        let requestA = StaticLayerRequest(layers: [layer], geometry: .canonical, pixelsPerPagePoint: 1.0)
-        let requestB = StaticLayerRequest(layers: [layer], geometry: .canonical, pixelsPerPagePoint: 0.9)
+        let requestA = StaticLayerRequest(
+            pageID: Self.pageID,
+            layers: [layer],
+            geometry: .canonical,
+            pixelsPerPagePoint: 1.0
+        )
+        let requestB = StaticLayerRequest(
+            pageID: Self.pageID,
+            layers: [layer],
+            geometry: .canonical,
+            pixelsPerPagePoint: 0.9
+        )
         _ = try await composited(renderer, request: requestA)
         _ = try await composited(renderer, request: requestB)
         #expect(await renderer.cachedCompositeCount == 2)
@@ -281,7 +332,12 @@ struct StaticLayerRenderTests {
         // Bigger than the whole bound on its own (about 3.8 MB): both older
         // entries must go — one eviction is not enough — and the entry just
         // made survives even though the cache is still over its bound.
-        let big = StaticLayerRequest(layers: [layer], geometry: .canonical, pixelsPerPagePoint: 1.4)
+        let big = StaticLayerRequest(
+            pageID: Self.pageID,
+            layers: [layer],
+            geometry: .canonical,
+            pixelsPerPagePoint: 1.4
+        )
         let d = try await composited(renderer, request: big)
         #expect(d.byteCount > 3_700_000, "the arithmetic this test rests on")
         #expect(await renderer.cachedCompositeCount == 1, "the trim loops until under the bound")
@@ -303,7 +359,12 @@ struct StaticLayerRenderTests {
             layers.append(try await scratch.imageLayer(store: store, color: .red, transform: .fullPage))
         }
         let requests = layers.map {
-            StaticLayerRequest(layers: [$0], geometry: .canonical, pixelsPerPagePoint: 1)
+            StaticLayerRequest(
+                pageID: Self.pageID,
+                layers: [$0],
+                geometry: .canonical,
+                pixelsPerPagePoint: 1
+            )
         }
         // What one of them costs, measured rather than assumed — the padding
         // in a CoreGraphics context's bytes-per-row is not this test's to
@@ -365,10 +426,20 @@ struct StaticLayerRenderTests {
         let layer = try await scratch.imageLayer(store: store, color: .red, transform: .fullPage)
 
         let coarse = try await composited(
-            renderer, request: StaticLayerRequest(layers: [layer], geometry: .canonical, pixelsPerPagePoint: 1)
+            renderer, request: StaticLayerRequest(
+                pageID: Self.pageID,
+                layers: [layer],
+                geometry: .canonical,
+                pixelsPerPagePoint: 1
+            )
         )
         let fine = try await composited(
-            renderer, request: StaticLayerRequest(layers: [layer], geometry: .canonical, pixelsPerPagePoint: 2)
+            renderer, request: StaticLayerRequest(
+                pageID: Self.pageID,
+                layers: [layer],
+                geometry: .canonical,
+                pixelsPerPagePoint: 2
+            )
         )
         #expect(fine.image.width == coarse.image.width * 2)
         #expect(await renderer.cachedCompositeCount == 2)
@@ -380,28 +451,30 @@ struct StaticLayerRenderTests {
         let store = scratch.store
         let renderer = StaticLayerRenderer(store: store)
 
+        let onScreen = UUID()
+        let departed = UUID()
         let kept = try await scratch.imageLayer(store: store, color: .red, transform: .fullPage)
         let gone = try await scratch.imageLayer(store: store, color: .green, transform: .fullPage)
-        _ = try await composited(renderer, layers: [kept])
-        _ = try await composited(renderer, layers: [gone])
+        _ = try await composited(renderer, layers: [kept], pageID: onScreen)
+        _ = try await composited(renderer, layers: [gone], pageID: departed)
         #expect(await renderer.cachedCompositeCount == 2)
 
-        let a = try await composited(renderer, layers: [kept])
-        let b = try await composited(renderer, layers: [gone])
+        let a = try await composited(renderer, layers: [kept], pageID: onScreen)
+        let b = try await composited(renderer, layers: [gone], pageID: departed)
 
-        await renderer.retain(layerIDs: [kept.layerID])
+        await renderer.retain(pageIDs: [onScreen])
         #expect(await renderer.cachedCompositeCount == 1)
         #expect(await renderer.cachedByteCount > 0)
 
-        // Identity, not counters: with the disjointness condition inverted,
-        // the count is 1 either way and only the *wrong* entry survives.
-        let keptAgain = try await composited(renderer, layers: [kept])
-        #expect(keptAgain.image === a.image, "the survivor must be the composite whose layer is still live")
-        let goneAgain = try await composited(renderer, layers: [gone])
+        // Identity, not counters: with the retention condition inverted, the
+        // count is 1 either way and only the *wrong* entry survives.
+        let keptAgain = try await composited(renderer, layers: [kept], pageID: onScreen)
+        #expect(keptAgain.image === a.image, "the survivor must be the composite of the page still live")
+        let goneAgain = try await composited(renderer, layers: [gone], pageID: departed)
         #expect(goneAgain.image !== b.image, "the evicted composite must be a fresh render")
 
         // Nothing is retained because it might be wanted again.
-        await renderer.retain(layerIDs: [])
+        await renderer.retain(pageIDs: [])
         #expect(await renderer.cachedCompositeCount == 0)
         #expect(await renderer.cachedByteCount == 0)
     }
@@ -432,8 +505,18 @@ struct StaticLayerRenderTests {
             payload: before.payload,
             pageSpaceTransform: PageSpaceTransform(a: 306, b: 0, c: 0, d: 792, tx: 306, ty: 0)
         )
-        let staleRequest = StaticLayerRequest(layers: [before], geometry: .canonical, pixelsPerPagePoint: 1)
-        let freshRequest = StaticLayerRequest(layers: [after], geometry: .canonical, pixelsPerPagePoint: 1)
+        let staleRequest = StaticLayerRequest(
+            pageID: Self.pageID,
+            layers: [before],
+            geometry: .canonical,
+            pixelsPerPagePoint: 1
+        )
+        let freshRequest = StaticLayerRequest(
+            pageID: Self.pageID,
+            layers: [after],
+            geometry: .canonical,
+            pixelsPerPagePoint: 1
+        )
 
         let stale = Task { await renderer.composite(for: staleRequest) }
         // Hold the first render in flight until the second request has asked.
@@ -483,7 +566,12 @@ struct StaticLayerRenderTests {
         await renderer.setRenderGateForTesting { await gate.wait($0) }
 
         let layer = try await scratch.imageLayer(store: store, color: .red, transform: .fullPage)
-        let request = StaticLayerRequest(layers: [layer], geometry: .canonical, pixelsPerPagePoint: 1)
+        let request = StaticLayerRequest(
+            pageID: Self.pageID,
+            layers: [layer],
+            geometry: .canonical,
+            pixelsPerPagePoint: 1
+        )
 
         let asked = Task { await renderer.composite(for: request) }
         while await gate.waiterCount == 0 { await Task.yield() }
@@ -515,7 +603,12 @@ struct StaticLayerRenderTests {
         await renderer.setRenderGateForTesting { await gate.wait($0) }
 
         let layer = try await scratch.imageLayer(store: store, color: .red, transform: .fullPage)
-        let request = StaticLayerRequest(layers: [layer], geometry: .canonical, pixelsPerPagePoint: 1)
+        let request = StaticLayerRequest(
+            pageID: Self.pageID,
+            layers: [layer],
+            geometry: .canonical,
+            pixelsPerPagePoint: 1
+        )
 
         // Two canvases asking for the same composite: the second joins the
         // first's render rather than starting its own, which is the dedup
@@ -580,7 +673,12 @@ struct StaticLayerRenderTests {
         // The broken layer is second, so a partial composite would be the
         // plausible wrong answer: everything below it drew fine.
         let render = await renderer.composite(
-            for: StaticLayerRequest(layers: [good, broken], geometry: .canonical, pixelsPerPagePoint: 1)
+            for: StaticLayerRequest(
+                pageID: Self.pageID,
+                layers: [good, broken],
+                geometry: .canonical,
+                pixelsPerPagePoint: 1
+            )
         )
         guard case .refused(let why) = render else {
             Issue.record("a stack with an undecodable layer rendered as \(render)")
@@ -603,7 +701,12 @@ struct StaticLayerRenderTests {
             pageSpaceTransform: .fullPage
         )
         let render = await renderer.composite(
-            for: StaticLayerRequest(layers: [layer], geometry: .canonical, pixelsPerPagePoint: 1)
+            for: StaticLayerRequest(
+                pageID: Self.pageID,
+                layers: [layer],
+                geometry: .canonical,
+                pixelsPerPagePoint: 1
+            )
         )
         guard case .refused(let why) = render else {
             Issue.record("an unreadable format rendered as \(render)")
@@ -624,7 +727,12 @@ struct StaticLayerRenderTests {
             pageSpaceTransform: .fullPage
         )
         let render = await renderer.composite(
-            for: StaticLayerRequest(layers: [layer], geometry: .canonical, pixelsPerPagePoint: 1)
+            for: StaticLayerRequest(
+                pageID: Self.pageID,
+                layers: [layer],
+                geometry: .canonical,
+                pixelsPerPagePoint: 1
+            )
         )
         guard case .refused = render else {
             Issue.record("a missing asset rendered as \(render)")
@@ -664,6 +772,7 @@ struct StaticLayerRenderTests {
         let layer = try await scratch.imageLayer(store: store, color: .red, transform: .fullPage)
 
         let controller = PageCanvasController(
+            pageID: UUID(),
             toolPicker: PKToolPicker(),
             projection: .canonical,
             host: TestPageHost(),
@@ -718,6 +827,7 @@ struct StaticLayerRenderTests {
     @MainActor
     func aBlankPagePaysNothing() {
         let controller = PageCanvasController(
+            pageID: UUID(),
             toolPicker: PKToolPicker(),
             projection: .canonical,
             host: TestPageHost()
@@ -745,6 +855,7 @@ struct StaticLayerRenderTests {
         )
 
         let controller = PageCanvasController(
+            pageID: UUID(),
             toolPicker: PKToolPicker(), projection: .canonical,
             host: TestPageHost(),
             staticRenderer: StaticLayerRenderer(store: store)
@@ -789,6 +900,7 @@ struct StaticLayerRenderTests {
         let layer = try await scratch.imageLayer(store: store, color: .red, transform: .fullPage)
 
         let controller = PageCanvasController(
+            pageID: UUID(),
             toolPicker: PKToolPicker(), projection: .canonical,
             host: TestPageHost(),
             staticRenderer: StaticLayerRenderer(store: store)
@@ -819,6 +931,7 @@ struct StaticLayerRenderTests {
         )
 
         let controller = PageCanvasController(
+            pageID: UUID(),
             toolPicker: PKToolPicker(), projection: .canonical,
             host: TestPageHost(),
             staticRenderer: StaticLayerRenderer(store: store)
@@ -904,10 +1017,16 @@ struct StaticLayerRenderTests {
 
     private func composited(
         _ renderer: StaticLayerRenderer,
-        layers: [LayerEnvelope]
+        layers: [LayerEnvelope],
+        pageID: UUID = StaticLayerRenderTests.pageID
     ) async throws -> StaticComposite {
         try await composited(
-            renderer, request: StaticLayerRequest(layers: layers, geometry: .canonical, pixelsPerPagePoint: 1)
+            renderer, request: StaticLayerRequest(
+                pageID: pageID,
+                layers: layers,
+                geometry: .canonical,
+                pixelsPerPagePoint: 1
+            )
         )
     }
 
