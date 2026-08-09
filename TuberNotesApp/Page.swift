@@ -22,10 +22,11 @@ extension EditorSession {
         private(set) var durable: Data?
 
         /// The durable identity of the page's single ink layer. Minted here
-        /// for a page that has never been saved in layered form — an appended
-        /// page, a first launch, a pre-layer file being read forward — and
-        /// replaced by the loaded identity when the page's bytes arrive, so
-        /// the identity a save writes is the one already on disk.
+        /// for a page that has no file yet — an appended page, a first launch,
+        /// an inserted or duplicated page — and replaced by the loaded identity
+        /// when the page's bytes arrive, so the identity a save writes is the
+        /// one already on disk. There is no third case since the shim deletion:
+        /// every page file this build can read already names its ink layer.
         private(set) var inkLayerID = UUID()
 
         /// Layers this build refused on load — a typed refused state, never a

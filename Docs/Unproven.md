@@ -13,8 +13,13 @@ maintenance ritual attached.
 To read the current list:
 
 ```bash
-grep -rn "KNOWN DEFECT" TuberNotesApp/
+grep -rn "KNOWN DEFECT" TuberNotesApp/ Modules/ TuberNotesTests/
 ```
+
+`Modules/` and `TuberNotesTests/` are in that command because blocks live in
+both: the canvas runtime and the renderer moved into `Modules/` and took their
+defects with them, and a check that is wrong about what it proves is a defect
+at the check.
 
 Nothing here is a reason not to ship. It is a reason not to be surprised.
 
@@ -25,7 +30,8 @@ Nothing here is a reason not to ship. It is a reason not to be surprised.
 - **The library browser has been launched and seen, and almost nothing in it
   has been tapped by a hand.** Two launches in the pinned simulator produced
   screenshots (the spine, then the integrated build) showing the sidebar, the
-  toolbar, and the adopted document's cell. Every flow — create, open, Back,
+  toolbar, and a document's cell — an adopted one, in a build that still
+  adopted. Every flow — create, open, Back,
   rename, move, trash, recover, duplicate, favorites, sort, filter, search,
   multi-select — is proven by unit tests driving models and stores, which
   proves the logic and nothing about the touch. The handover's ten-minute
@@ -42,10 +48,12 @@ Nothing here is a reason not to ship. It is a reason not to be surprised.
   runs — on a Mac's CPU through a simulator PencilKit. No inequality about
   an iPad follows from it, in either direction; same caveat as the settle
   decode benchmark below.
-- **Adoption has run only against scratch roots and one simulator
-  container.** The one production-shaped adoption seen moved the simulator's
-  `JustACanvas.tubernotes` into the library and rendered its cell. No iPad's
-  real pre-library document has been through it.
+- ~~Adoption has run only against scratch roots~~ — **gone, not proven.**
+  `LibraryStore` no longer adopts a pre-library `JustACanvas.tubernotes`; the
+  shim was deleted with the rest, and the store now reads, moves, and adopts
+  nothing outside its own tree. Any such document on an iPad is now invisible
+  to the library rather than imported by it, which is the deliberate
+  consequence of having no live users.
 - **Library name collisions have never met a case-sensitive volume.**
   `LibraryStore` resolves collisions by asking the file system (`fileExists`
   on the real path), never by string-comparing listings, precisely because
@@ -152,9 +160,12 @@ Nothing here is a reason not to ship. It is a reason not to be surprised.
     has measured.** The fork doc prices it at "≥ 2×, routine for M-series
     iPads"; that is arithmetic, not a frame capture. What the code does about
     it is narrower than the fork doc proposed — the canvas goes transparent
-    only on a page that actually has static layers, so the blank-page path
-    keeps its opaque surface — but "one blended full-screen layer is free on
-    this hardware" remains unmeasured either way.
+    only on a page that has something beneath it to show, which since paper
+    landed means static layers **or** a template other than `blank`, so a
+    genuinely blank page in a blank notebook still keeps its opaque surface and
+    pays nothing. "One blended full-screen layer is free on this hardware"
+    remains unmeasured either way, and a ruled notebook now takes that cost on
+    every page rather than on imported ones alone.
   - **the placeholder tint and the refusal tint have never been seen.** Both
     are colours chosen by an agent against a written requirement that they be
     "loudly distinguishable from blank". Whether they read as chrome rather
@@ -165,7 +176,10 @@ Nothing here is a reason not to ship. It is a reason not to be surprised.
     gesture frame. Whether that softness is acceptable, or whether phase 3's
     base-and-lens is needed sooner than planned, is a thing to see rather than
     to reason about.
-  - No image has been imported through any UI, because there is none.
+  - **The import UI exists and no hand has used it.** `RootCanvasView`'s
+    photo button presents a `PHPickerViewController` and calls `importImage`;
+    neither the presentation nor the picked-asset path can run headless, so
+    every image the suite imports is bytes handed straight to the session.
 - **The render cache's byte bound has never met a real photograph.** The 96 MB
   bound is derived from the fork doc's estimate of 22 MB per fit-width
   composite, which is itself unmeasured. The eviction *mechanism* is tested;
@@ -202,7 +216,58 @@ Nothing here is a reason not to ship. It is a reason not to be surprised.
     — no PDF with a CropBox smaller than its MediaBox, and no rotated page,
     has been imported from the wild; both are simulator fixtures. The
     arithmetic is asserted; the judgment is not.
-  - No PDF has been imported through any UI, because there is none.
+  - **The import UI exists and no hand has used it**, and the same is true of
+    the one button that undoes a mis-import: `RootCanvasView`'s Files picker
+    calls `importPDF`, and its trash button calls `deletePDFLayers`. The
+    Files picker cannot run headless either, and the refusal alert
+    ("This page has no PDF behind it.") has never been read off a screen.
+- **No ruled page has ever been looked at, and paper is the one feature whose
+  whole point is how it looks.** The template is durable, told down to the
+  runtime, stroked into the base composite and re-stroked into the lens, and
+  pixel-tested at every spacing — which proves that marks land where the
+  arithmetic says and nothing about whether the result is paper. Owed to an
+  iPad, in the order the eye meets them:
+  - **The metrics are a proposal, not a verdict.** `ruleSpacing` 24 pt (US
+    wide-ruled, rounded to a third of an inch, chosen wide because stylus
+    handwriting on glass runs larger than pen on paper); `gridSpacing` and
+    `dotSpacing` 18 pt (the quad-ruled quarter-inch square, deliberately not
+    equal to the line pitch so a grid is not a lined page with columns);
+    `dotRadius` 0.6 pt; `ruleWidth` 0.5 pt (one device pixel at 2× at
+    fit-width); `topMargin` 72 pt, on `lined` alone. Every one of those is an
+    agent's number against a written intention. Whether the ruling reads as
+    *paper* rather than as a screenshot of paper is Phillip's verdict and
+    nothing else.
+  - **Rule contrast under live ink is unknown.** The mark colour is one
+    constant — sRGB (0.58, 0.65, 0.75) — and 0.5 pt of it must recede under a
+    black stroke without disappearing under nothing. Both failures are
+    invisible to a pixel test, which asserts the mark is *there*. It needs
+    checking at `lined` density and again at the denser 18 pt lattices, where
+    four times as many marks compete for the same page.
+  - **Whether the soft-base → sharp-lens swap on a ruled page shows as a
+    flash.** This is a worse case than anything shipped so far and it is worth
+    saying why: ruling is high-frequency edge content across the *whole* page,
+    where a photograph's detail is local. The base is compositor-scaled during
+    the gesture and the lens re-strokes at the settled scale, so the two
+    pictures differ most exactly where the eye is looking.
+  - **Whether a template change on a live page shows a visible blank frame.**
+    `setTemplate` tears the composite down, bumps the generation, invalidates
+    the lens, and re-requests; the new picture lands off-main some frames
+    later. Nothing in the suite can see what is on screen in between.
+  - **Lens latency on a dense page still owes a number**, and that is not a
+    new debt: it is spike 2, recorded above under the `pdf` entry as
+    *scaffolded and unthreaded*. A ruled page is a second dense fixture for
+    the same unrun bench, not a second bench.
+  - **The picker has never been tapped, and nothing mechanical can tap it.**
+    There is no view test in this project at all, so `RootCanvasView`'s four
+    buttons, their lit state, and `.disabled(session.currentPageCarriesPDF)`
+    are unasserted as *view*. What is asserted is the property the disabled
+    condition hangs on: `currentPageCarriesPDF` follows the visible page onto
+    an imported PDF page and back off it when the PDF is deleted, with the
+    document's paper unchanged underneath. Whether SwiftUI re-renders the
+    picker promptly on a settled turn — the observation is published from
+    `alignedWithIndex`, the load path, and `deleteLayer` — is a claim about
+    Observation that only a screen can settle.
+
 - **Mixed geometry has never been swiped through.** Per-page geometry landed
   in phase 3b, so the letterboxing is gone: an imported landscape worksheet is
   a landscape page, and the blank page a swipe past the end appends is
@@ -242,9 +307,12 @@ at all, after CI and after review. The known price of closing this gap:
 XCUITests that tap, drag, and pinch the real canvas cost four cold app
 launches — 34.5s of a 41s test run, roughly six times the wall clock of the
 entire unit suite under load — and can assert only that the process is still
-running. `page.canvas`,
-`page.error`, and `save.error` remain as accessibility identifiers in
-`RootCanvasView`; nothing reads them.
+running. `RootCanvasView` carries accessibility identifiers throughout —
+`page.canvas`, `page.error`, `save.error`, and one per control on the shape
+picker, the template picker, and the page actions — and **nothing reads any of
+them.** They are the hooks such a suite would need, kept because writing them
+after the fact is the expensive half; they prove nothing on their own, and a
+count of them is not coverage.
 
 ## No numbers exist
 

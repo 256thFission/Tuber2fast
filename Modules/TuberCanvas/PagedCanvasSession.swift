@@ -77,7 +77,8 @@ package protocol PagedCanvasSession: AnyObject {
     /// One committed layer transform, and whether the session accepted it.
     ///
     /// The page identity is added by `PagedCanvasController` and nowhere else,
-    /// because a `PageCanvasController` is blind to which page it is
+    /// because a `PageCanvasController` reports to its host rather than to the
+    /// session, and is blind to page numbers, page order, and turns
     /// (`Contract.md` — Owners, golden rule 7). Nothing about the gesture that
     /// produced the value travels with it — one immutable transform does,
     /// which is the same shape as a retiring page's drawing snapshot.

@@ -3,7 +3,9 @@
 What has actually landed against
 [`CanvasFeatureComplete.md`](CanvasFeatureComplete.md), and what is still
 prose. Written by the agent grinding overnight; Phillip edits or deletes it
-freely. Branch: `canvas-feature-complete` off `postoai`.
+freely. Branch: `canvas-feature-complete` off `postoai`, and since row 6
+`pdf-templates`, which carries that branch's work forward and is measured
+against [`pdf-templates-proposal.md`](pdf-templates-proposal.md) instead.
 
 The rule this file follows: **a claim here names the commit and the evidence.**
 "Implemented" means code is in the tree and the suite is green. It never means
@@ -21,13 +23,14 @@ listed under *Owed evidence* rather than counted as done.
 | 3c. base-and-lens, prefetch decode | **landed, green** | pdf-in-composite, lens, prefetch warm — three commits, this branch | All three moments of the fork doc's zoom story are in the real page path. **Rendered pdf pages** (resolves review finding 4): `StaticLayerRenderer.render` rasterizes `pdf` layers through `OpenPDFDocument`, one open per render, decode bounded by the placed extent; pixel-tested against byte-exact fixtures, including image-over-pdf and every remaining refusal (`PDFLayerRenderTests`). **The lens**: during a gesture, compositor only — asserted that no gesture frame requests anything; at settle, the visible sub-rect renders off-main at the settled zoom and swaps in above the base; stale lenses are generation-dropped, the rect is clamped to the page before the rasterizer, sharp-at-scale is pinned by pixels (stripe fixture: grey at 1 px/pt, pure columns at 2), in memory only (`LensTests`). The fork doc's "an image past a size threshold renders through the same path" is **not done**: images in the lens are present and placed but bounded to the base's detail cap — sharp-at-depth is pdf-only for now. **Prefetch warm**: a settled turn warms the prefetch window's composites through the existing cache; the neighbour's canvas is later served the identical render (`===`), the visible page's composite is protected from byte-bound eviction, and a warm never counts as an LRU use (`PrefetchWarmTests`). Device-only, owed to spike 2: lens swap latency against a dense textbook, and the feel of soft-then-sharp; no latency number exists. |
 | 4. Transformable `image` layers | **landed, green** | `34acbe8` | Selection, handles, minus-one composite, `locked`; layer-edit undo: inverse-commit path asserted, undo registration device-only. Arbitration, feel, and undo are device-only; spike 3 is owed. |
 | 5. The shape tool | **landed, green** | `6f72d18` | Synthesis and rasterized pixels asserted; everything between Pencil and stroke is device-only |
+| 6. One paper template, and the shims' deletion | **landed, green** | fourteen commits on `pdf-templates`, `fa4260d`…`7d4df4d` | Against [`pdf-templates-proposal.md`](pdf-templates-proposal.md) revision 3; steps 2 and 4 are Phillip's and are not done. **PDF:** `OpenPDFDocument` opens the source once per render rather than twice, byte-identical against the existing fixtures. **The shims are gone:** the index's version-2 read path and its write-forward machinery, `PageFile`'s pre-split and pre-layer forms, `locked`-absent, and the pre-library adoption — `currentFormatVersion` is 1 and one form is read. Two corrupt-file tests retargeted; A19 is *forced* by this and staged, not adopted. **The cache evicts by page** (`StaticLayerRequest.pageID`, `CompositeKey.pageID`, `retain(pageIDs:protecting:)`), which closes a real hole: the empty set is disjoint with every set, so a layer-less page's composite used to be evicted on every turn including while it was on screen. **Paper:** `PageTemplate` is one durable name on the index — not a layer, not per page — refused by `validated()` if unknown; `PaperTemplateRenderer` strokes it into the base composite *and* re-strokes it into the lens, so ruled paper is resolution-independent at any zoom rather than a resampled raster; delivery is `setTemplate` told down the runtime exactly as the shape tool is. A page carrying a `pdf` layer draws no template (`StaticLayerRequest.effectiveTemplate`) — enforced at the render, never on disk, so the durable value survives underneath and a deleted PDF reveals it. A genuinely blank page in a blank notebook still short-circuits to `.empty` and keeps its opaque canvas, pinned by test. **UI:** one picker for the document in `RootCanvasView`, four buttons in the shape picker's idiom, disabled on a PDF page via `EditorSession.currentPageCarriesPDF`; no custom spacing, colour, per-page override, or thumbnails, each named out of scope in §i. Changing paper is **not undoable** by decision (§g5) and that decision wants Phillip's verdict. A16, A17, A19 staged. Device-only: every metric, rule contrast under ink, the base→lens swap on a ruled page, a template change on a live page, and the picker itself — see `Unproven.md`. |
 
 ## Contract
 
 `f6522bd` adopted the phase 1 amendments (Owners golden rule 5 generalized;
 the *Durable form* layer-envelope block) — the only human-authorized contract
 change in this branch. Everything else is staged in
-[`Contract.proposed.md`](../Contract.proposed.md) as A3–A15, marked LANDED /
+[`Contract.proposed.md`](../Contract.proposed.md) as A3–A19, marked LANDED /
 FORCED / AHEAD.
 
 **The contract lags the code, deliberately and in known places.** The most
@@ -41,7 +44,9 @@ which is exactly what the proposed file is shaped for.
 Two staged items want a decision rather than a rubber stamp: **A15**, where an
 agent *widened a machine-checked rule* to ban `CoreGraphics`, and **A10**,
 whose premise (PencilKit tolerating foreign undo registrations) no spike has
-tested.
+tested. **A19 is forced**: the shim deletion has landed, so `Contract.md`'s
+sentence about reading the pre-layer page form is describing code that no
+longer exists. So is the template's absence from *Durable form* (A16).
 
 ## Device session findings, 2026-08-07
 
@@ -124,3 +129,8 @@ This list covers phase 1 only; the full register continues in
   *unverified* — PencilKit may not tolerate foreign registrations at all.
 - **Every number in the proposal's memory budget.** Still no measurement;
   `Unproven.md`'s "no numbers exist" stands.
+- **Every template metric, and whether ruling reads as paper.** Row 6 ships
+  spacings, a mark colour, and a margin that no eye has judged, and the
+  base→lens swap on a ruled page is a worse case than any photograph shipped
+  so far. Enumerated in `Unproven.md` rather than here; spike 2 is the same
+  unrun bench it was.

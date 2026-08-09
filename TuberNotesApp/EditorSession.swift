@@ -2012,9 +2012,10 @@ final class EditorSession {
     /// `pageSpaceTransform` maps the image's unit square into page space, so
     /// placement never restates what the asset's own bytes say.
     ///
-    /// No UI calls this, and it is on no interaction path: it awaits a file
-    /// write and then a save. It is the entry point phase 2's durable half is
-    /// testable through, and the one the import UI will call when it exists.
+    /// It is on no interaction path: it awaits a file write and then a save.
+    /// `RootCanvasView`'s photo button calls it, through
+    /// `ImageImportPreparation` — which is why the extent it is handed is the
+    /// orientation-applied one rather than the file's.
     ///
     /// The save is immediate rather than debounced. A debounce exists to
     /// coalesce Pencil-frequency edits; an import is one discrete action whose
@@ -2293,8 +2294,9 @@ final class EditorSession {
 
     /// Locks or unlocks one layer, and returns the value it replaced.
     ///
-    /// No UI calls this yet, exactly as no UI called `importImage` when phase 2
-    /// landed. It is here because `locked` is only allowed to exist at all if
+    /// No UI calls this yet — the last entry point here with none, now that
+    /// both imports, the PDF delete, and the template have controls. It is
+    /// here because `locked` is only allowed to exist at all if
     /// something reads it, and something reading a bit nothing can ever write
     /// is the same dead field wearing a different hat: this is its one writer,
     /// `LayerSelectionRuntime` and `transformLayer` are its two readers.

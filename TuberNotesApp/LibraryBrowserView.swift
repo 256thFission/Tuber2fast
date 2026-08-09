@@ -740,8 +740,8 @@ struct FolderContentView: View {
     }
 
     /// The observed empty copy, with **no button** (UX-13). First-run root
-    /// renders the same pattern; adoption already ran inside the store's
-    /// first root listing.
+    /// renders the same pattern: an empty library is genuinely empty now that
+    /// nothing is adopted into it, so there is no listing this could be racing.
     private var emptyView: some View {
         VStack(spacing: 10) {
             Spacer()

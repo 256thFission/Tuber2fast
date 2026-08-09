@@ -712,6 +712,20 @@ struct StaticLayerRenderTests {
         )
     }
 
+    /// KNOWN DEFECT: this test is intermittent — it failed once in five full
+    /// runs and passed on re-run. It is the assertion that is wrong, not the
+    /// renderer.
+    ///
+    /// `staying.value` can return before the *cancelled* awaiter's `composite`
+    /// frame has resumed to run `remember`, so `cachedCompositeCount` is
+    /// momentarily 0 and the last line fails. The test asserts on the cache
+    /// when what it means to assert is that the install decision was made —
+    /// the survivor got a composited result, which the `guard` above already
+    /// proves. Fixing it means giving the renderer a signal the install has
+    /// landed for every awaiter, rather than a count that trails them.
+    ///
+    /// Pre-existing, and untouched by the templates work: this test predates
+    /// it and its own request already carried `.blank`.
     @Test("One awaiter leaving does not cancel a render another is waiting for")
     func aJoinedRenderSurvivesOneAwaiterLeaving() async throws {
         let scratch = try TestScratch("render")

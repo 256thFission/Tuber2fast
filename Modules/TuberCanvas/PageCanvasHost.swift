@@ -4,9 +4,11 @@ import TuberModel
 /// What one page's runtime reports to whoever placed it.
 ///
 /// The other half of `PagedCanvasSession`, one level down and inside this
-/// module: a `PageCanvasController` is blind to which page it is
-/// (`Contract.md` — Owners, golden rule 7), so it reports to its host and the
-/// host adds the index. Required for the same reason and in the same way — a
+/// module: a `PageCanvasController` is blind to page numbers, page order, and
+/// turns (`Contract.md` — Owners, golden rule 7), so it reports to its host
+/// and the host adds the position. It does hold its page's *identity*, so that
+/// the composites it asks for can name the page they are — an ID it never
+/// looks up in anything. Required for the same reason and in the same way — a
 /// page canvas cannot be constructed without a host, so there is no unwired
 /// state in which a drawing change goes unreported or a refused layer
 /// transform reads as accepted.
