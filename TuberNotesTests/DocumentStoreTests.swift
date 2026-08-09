@@ -196,60 +196,44 @@ struct DocumentStoreTests {
         }
     }
 
-    /// Read both forms, write forward on the next save, never migrate eagerly —
-    /// phase 1's precedent, now at the index. Opening a pre-per-page-geometry
-    /// document must not touch it; the first save that follows must write it
-    /// forward, whether or not anything about the document changed.
-    @Test("A superseded index is read untouched and written forward by the next save")
-    func supersededIndexIsWrittenForwardOnNextSave() async throws {
+    /// One form is written and the same one is read back. There is no second
+    /// form and no migration, so the version on disk is a constant — and the
+    /// assertion is against the bytes, because a decoded value would report
+    /// whatever `encode(to:)` decided regardless of what landed.
+    @Test("A document written and reopened round-trips at format version 1")
+    func documentRoundTripsAtFormatVersionOne() async throws {
         let scratch = try TestScratch("store")
-        let pageID = UUID()
-        try scratch.createDirectories()
-        try scratch.writeRawPage(pageID, drawingData: Data([0x07]))
-        try scratch.writeLegacyIndex(
-            pageIDs: [pageID],
-            geometry: PageGeometry(width: 595, height: 842)
-        )
-        try scratch.freezeTimestamps()
-
         let store = scratch.freshStore()
-        let loaded = try #require(try await store.load())
-        #expect(loaded.pages.map(\.geometry) == [PageGeometry(width: 595, height: 842)])
-        // Opening migrates nothing: the file on disk is byte-for-byte what it
-        // was.
-        #expect(try scratch.modificationDateOfIndex() == TestScratch.frozen)
-        #expect(try scratch.rawIndexKeys().contains("pageIDs"))
+        let index = scratch.index()
 
-        try await store.save(index: loaded, changedPages: [pageID: inkLayer(Data([0x08]))])
+        try await store.save(index: index, changedPages: [index.pageIDs[0]: inkLayer(Data([0x01]))])
 
-        #expect(try scratch.modificationDateOfIndex() != TestScratch.frozen)
-        let keys = try scratch.rawIndexKeys()
-        #expect(keys.contains("pages"))
-        #expect(!keys.contains("pageIDs"))
-        // And the geometry survived the migration rather than being replaced
-        // with the canonical page.
-        let reloaded = try #require(try await scratch.freshStore().load())
-        #expect(reloaded.pages.map(\.geometry) == [PageGeometry(width: 595, height: 842)])
-        #expect(!reloaded.wasReadInSupersededForm)
+        #expect(try scratch.rawIndexFormatVersion() == 1)
+        let reopened = try #require(try await scratch.freshStore().load())
+        #expect(reopened == index)
+        #expect(reopened.formatVersion == 1)
     }
 
-    /// The other half of write-forward: once migrated, the index is not
-    /// rewritten again by a save that changes nothing about it.
-    @Test("A migrated index is not rewritten by the save after it")
-    func migratedIndexIsNotRewrittenAgain() async throws {
-        let scratch = try TestScratch("store")
-        let pageID = UUID()
-        try scratch.createDirectories()
-        try scratch.writeRawPage(pageID, drawingData: Data([0x07]))
-        try scratch.writeLegacyIndex(pageIDs: [pageID], geometry: .canonical)
+    /// The half that keeps deleting the version-2 read path from reading as
+    /// "version checking was deleted". Every version but the current one is
+    /// refused, by name and naming the number found — a file from a newer build
+    /// must say so rather than decode into whatever this build can make of it.
+    @Test("An index at any other format version refuses to open, naming the number")
+    func anyOtherFormatVersionRefusesToOpen() async throws {
+        for version in [0, 2, 3, 4, 99] {
+            let scratch = try TestScratch("store")
+            let pageID = UUID()
+            try scratch.createDirectories()
+            try scratch.writeRawPage(pageID, drawingData: Data([0x07]))
+            try scratch.writeIndexFile(scratch.index(pageIDs: [pageID]))
+            try scratch.rewriteIndexFormatVersion(to: version)
 
-        let store = scratch.freshStore()
-        let loaded = try #require(try await store.load())
-        try await store.save(index: loaded, changedPages: [pageID: inkLayer(Data([0x08]))])
-        try scratch.freezeTimestamps()
-        try await store.save(index: loaded, changedPages: [pageID: inkLayer(Data([0x09]))])
-
-        #expect(try scratch.modificationDateOfIndex() == TestScratch.frozen)
+            let bytesBefore = try Data(contentsOf: scratch.indexURL)
+            await #expect(throws: DocumentIndexError.unsupportedFormatVersion(UInt32(version))) {
+                try await scratch.freshStore().load()
+            }
+            #expect(try Data(contentsOf: scratch.indexURL) == bytesBefore)
+        }
     }
 
     @Test("An out-of-range current page index is rejected rather than clamped")
@@ -321,22 +305,32 @@ private extension TestScratch {
         try TestScratch.binaryEncoder().encode(page).write(to: pageURL(fileName), options: .atomic)
     }
 
-    /// A pre-per-page-geometry index: page order and one document-wide
-    /// geometry, under format version 2. The test owns the fixture type for a
-    /// superseded form, exactly as `LegacyPageFile` does — `DocumentIndex`
-    /// itself can only ever write the current one.
-    func writeLegacyIndex(pageIDs: [UUID], geometry: PageGeometry) throws {
-        try FileManager.default.createDirectory(at: documentURL, withIntermediateDirectories: true)
-        let legacy: [String: Any] = [
-            "formatVersion": 2,
-            "documentID": documentID.uuidString,
-            "pageWidth": geometry.width,
-            "pageHeight": geometry.height,
-            "pageIDs": pageIDs.map(\.uuidString),
-            "currentPageIndex": 0,
-        ]
+    /// The version stamped on the index file, read from the bytes rather than
+    /// through `DocumentIndex`, whose `encode(to:)` would answer for it.
+    func rawIndexFormatVersion() throws -> Int? {
+        let raw = try PropertyListSerialization.propertyList(
+            from: Data(contentsOf: indexURL),
+            options: [],
+            format: nil
+        ) as? [String: Any]
+        return raw?["formatVersion"] as? Int
+    }
+
+    /// An otherwise-valid index restamped with a version this build does not
+    /// write. `DocumentIndex.encode(to:)` writes the current version whatever
+    /// the value says, so the only way to put another one on disk is to edit
+    /// the bytes.
+    func rewriteIndexFormatVersion(to version: Int) throws {
+        guard var raw = try PropertyListSerialization.propertyList(
+            from: Data(contentsOf: indexURL),
+            options: [.mutableContainers],
+            format: nil
+        ) as? [String: Any] else {
+            throw CocoaError(.propertyListReadCorrupt)
+        }
+        raw["formatVersion"] = version
         try PropertyListSerialization
-            .data(fromPropertyList: legacy, format: .binary, options: 0)
+            .data(fromPropertyList: raw, format: .binary, options: 0)
             .write(to: indexURL, options: .atomic)
     }
 }

@@ -31,72 +31,9 @@ struct DocumentIndexTests {
         #expect(decoded.pages.map(\.geometry) == original.pages.map(\.geometry))
         #expect(decoded.geometry(ofPageAt: 1) == PageGeometry(width: 842, height: 595))
         #expect(decoded.zoomCapPagePointsPerPixel == original.zoomCapPagePointsPerPixel)
-        #expect(!decoded.wasReadInSupersededForm)
     }
 
-    /// Phase 1's precedent at the index: read both forms, write forward on the
-    /// next save, never migrate eagerly. A version 2 index has one
-    /// document-wide geometry and no cap, and every page takes them.
-    @Test("A pre-per-page-geometry index reads forward, one geometry onto every page")
-    func legacyIndexReadsForward() throws {
-        let pageIDs = [UUID(), UUID(), UUID()]
-        let legacy: [String: Any] = [
-            "formatVersion": 2,
-            "documentID": UUID().uuidString,
-            "pageWidth": 612.0,
-            "pageHeight": 792.0,
-            "pageIDs": pageIDs.map(\.uuidString),
-            "currentPageIndex": 1,
-        ]
-        let bytes = try PropertyListSerialization.data(
-            fromPropertyList: legacy,
-            format: .binary,
-            options: 0
-        )
-
-        let decoded = try PropertyListDecoder().decode(DocumentIndex.self, from: bytes)
-
-        #expect(decoded.pageIDs == pageIDs)
-        #expect(decoded.pages.allSatisfy { $0.geometry == PageGeometry.canonical })
-        #expect(decoded.currentPageIndex == 1)
-        // A document written before the cap was pinned gets the application's
-        // constant: nothing durable ever depended on the old viewport-derived
-        // cap, which is why adopting A9 costs no migration.
-        #expect(decoded.zoomCapPagePointsPerPixel
-            == DocumentIndex.canonicalZoomCapPagePointsPerPixel)
-        // The value is in the current form; only the *file* is superseded.
-        #expect(decoded.formatVersion == DocumentIndex.currentFormatVersion)
-        #expect(decoded.wasReadInSupersededForm)
-        #expect(throws: Never.self) { try decoded.validated() }
-    }
-
-    /// A legacy document whose one geometry was not the canonical page keeps
-    /// that geometry on every page. It is read forward, never corrected.
-    @Test("A legacy index's geometry is carried, not replaced by the canonical page")
-    func legacyGeometryIsCarriedNotCorrected() throws {
-        let pageID = UUID()
-        let legacy: [String: Any] = [
-            "formatVersion": 2,
-            "documentID": UUID().uuidString,
-            "pageWidth": 595.0,
-            "pageHeight": 842.0,
-            "pageIDs": [pageID.uuidString],
-            "currentPageIndex": 0,
-        ]
-        let bytes = try PropertyListSerialization.data(
-            fromPropertyList: legacy,
-            format: .binary,
-            options: 0
-        )
-
-        let decoded = try PropertyListDecoder().decode(DocumentIndex.self, from: bytes)
-        #expect(
-            decoded.pages
-                == [PageRecord(id: pageID, geometry: PageGeometry(width: 595, height: 842))]
-        )
-    }
-
-    @Test("Encoding writes only the current form")
+    @Test("Encoding writes the one form this build reads")
     func encodingWritesOnlyTheCurrentForm() throws {
         let encoder = PropertyListEncoder()
         encoder.outputFormat = .binary
@@ -113,12 +50,7 @@ struct DocumentIndexTests {
 
         #expect(keys.contains("pages"))
         #expect(keys.contains("zoomCapPagePointsPerPixel"))
-        // The superseded keys are never written back by any code path, which is
-        // what makes write-forward a fact rather than a discipline.
-        #expect(!keys.contains("pageIDs"))
-        #expect(!keys.contains("pageWidth"))
-        #expect(!keys.contains("pageHeight"))
-        #expect((raw?["formatVersion"] as? Int) == 3)
+        #expect((raw?["formatVersion"] as? Int) == 1)
     }
 
     @Test("A page file round trips unchanged")
@@ -141,18 +73,17 @@ struct DocumentIndexTests {
         #expect(decoded.inlineLayers == nil)
     }
 
-    @Test("Only the current format version validates")
+    /// Only version 1 opens, and every other number is refused by name — the
+    /// forward compatibility that survives having no backward paths at all. A
+    /// newer build's index must say "written by a newer version" rather than
+    /// decode into whatever this build can make of it.
+    @Test("Only the current format version validates, and the rest are refused by number")
     func rejectsUnsupportedVersion() {
-        #expect(throws: DocumentIndexError.unsupportedFormatVersion(1)) {
-            try sample(formatVersion: 1).validated()
-        }
-        // Version 2 is *read* forward and never validated as itself: an index
-        // value still carrying that version was constructed rather than decoded.
-        #expect(throws: DocumentIndexError.unsupportedFormatVersion(2)) {
-            try sample(formatVersion: 2).validated()
-        }
-        #expect(throws: DocumentIndexError.unsupportedFormatVersion(4)) {
-            try sample(formatVersion: 4).validated()
+        #expect(throws: Never.self) { try sample(formatVersion: 1).validated() }
+        for version: UInt32 in [0, 2, 3, 4, .max] {
+            #expect(throws: DocumentIndexError.unsupportedFormatVersion(version)) {
+                try sample(formatVersion: version).validated()
+            }
         }
     }
 

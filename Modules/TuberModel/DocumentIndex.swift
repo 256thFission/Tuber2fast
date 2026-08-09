@@ -50,28 +50,9 @@ package struct PageRecord: Codable, Sendable, Equatable {
 /// value that can disagree with itself, and the disagreement would only surface
 /// on a document the user could no longer open.
 ///
-/// ## Two forms are read; exactly one is written
-///
-/// Phase 1's precedent, applied to the index for the first time — read both
-/// forms, write forward on the next save, never migrate eagerly:
-///
-/// | On disk | Written by | Read as |
-/// |---|---|---|
-/// | version 2: `pageIDs` + one document-wide `pageWidth`/`pageHeight` | before phase 3b | every page at that one geometry |
-/// | version 3: `pages` of `{ id, geometry }` + `zoomCapPagePointsPerPixel` | phase 3b onward | as written |
-///
-/// `encode(to:)` writes the third form and only the third form, so a superseded
-/// form cannot be written back by any code path — the property that makes
-/// write-forward a fact rather than a discipline. `DocumentStore` owns *when*:
-/// it remembers that the index it loaded was superseded and writes it forward on
-/// the first save that follows.
-///
-/// **The version is bumped, where phase 3a's page-file split did not bump it.**
-/// A page file carries no version field, so it had no choice; the index does,
-/// and this is precisely what it is for. A build predating per-page geometry
-/// must refuse a version 3 index saying "this document was written by a newer
-/// version", not fail to find a `pageIDs` key and report that the index will not
-/// decode.
+/// One form is read and the same one is written; `formatVersion` exists so that
+/// an index written by a *newer* build refuses to open by name rather than
+/// decoding into something plausible.
 package struct DocumentIndex: Codable, Sendable, Equatable {
     package let formatVersion: UInt32
     package let documentID: UUID
@@ -93,21 +74,10 @@ package struct DocumentIndex: Codable, Sendable, Equatable {
     /// ceiling it was written under.
     package let zoomCapPagePointsPerPixel: Double
 
-    /// Whether this value was read from a superseded on-disk form and must be
-    /// written forward.
-    ///
-    /// Not encoded, exactly as `PageFile.inlineLayers` is not: it is a fact
-    /// about a file, not about a document. It participates in equality, which
-    /// is conservative in the only direction that matters — `DocumentStore`
-    /// compares indexes to decide whether to write one, and "different" there
-    /// only ever means "write it".
-    package let wasReadInSupersededForm: Bool
-
-    package static let currentFormatVersion: UInt32 = 3
-
-    /// The oldest index form this build reads: page order with one
-    /// document-wide geometry.
-    package static let supersededFormatVersion: UInt32 = 2
+    /// The one index form this build reads and writes. Its only job is to
+    /// refuse a file written by a newer build, so the count starts where a
+    /// count starts.
+    package static let currentFormatVersion: UInt32 = 1
 
     /// **1/20 of a page point per pixel** — twenty device pixels per page point
     /// at the deepest zoom this application allows.
@@ -137,15 +107,13 @@ package struct DocumentIndex: Codable, Sendable, Equatable {
         documentID: UUID,
         pages: [PageRecord],
         currentPageIndex: Int,
-        zoomCapPagePointsPerPixel: Double = DocumentIndex.canonicalZoomCapPagePointsPerPixel,
-        wasReadInSupersededForm: Bool = false
+        zoomCapPagePointsPerPixel: Double = DocumentIndex.canonicalZoomCapPagePointsPerPixel
     ) {
         self.formatVersion = formatVersion
         self.documentID = documentID
         self.pages = pages
         self.currentPageIndex = currentPageIndex
         self.zoomCapPagePointsPerPixel = zoomCapPagePointsPerPixel
-        self.wasReadInSupersededForm = wasReadInSupersededForm
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -154,13 +122,6 @@ package struct DocumentIndex: Codable, Sendable, Equatable {
         case pages
         case currentPageIndex
         case zoomCapPagePointsPerPixel
-        /// The version 2 form: page order alone. Read-only — encoding never
-        /// writes it.
-        case pageIDs
-        /// The version 2 form's one document-wide geometry. Read-only, for the
-        /// same reason.
-        case pageWidth
-        case pageHeight
     }
 
     package init(from decoder: Decoder) throws {
@@ -169,35 +130,12 @@ package struct DocumentIndex: Codable, Sendable, Equatable {
         let documentID = try container.decode(UUID.self, forKey: .documentID)
         let currentPageIndex = try container.decode(Int.self, forKey: .currentPageIndex)
 
-        if onDisk == Self.supersededFormatVersion {
-            // One document-wide geometry becomes the same geometry on every
-            // page. Nothing is validated here — `validated()` is the one place
-            // that judges, and it judges the expanded value exactly as it
-            // judges a freshly written one.
-            let geometry = PageGeometry(
-                width: try container.decode(Double.self, forKey: .pageWidth),
-                height: try container.decode(Double.self, forKey: .pageHeight)
-            )
-            let pageIDs = try container.decode([UUID].self, forKey: .pageIDs)
-            self.init(
-                formatVersion: Self.currentFormatVersion,
-                documentID: documentID,
-                pages: pageIDs.map { PageRecord(id: $0, geometry: geometry) },
-                currentPageIndex: currentPageIndex,
-                // A document written before the cap was pinned gets the
-                // application's constant. It is not a guess about what that
-                // document was zoomed to: nothing durable ever depended on the
-                // old cap, which is exactly why A9 could be adopted at all.
-                zoomCapPagePointsPerPixel: Self.canonicalZoomCapPagePointsPerPixel,
-                wasReadInSupersededForm: true
-            )
-            return
-        }
-
-        // Any other version decodes as far as it can and is refused by
-        // `validated()`, which names the number it found. Refusing inside
-        // `init(from:)` would report a decode failure instead, which reads as a
-        // corrupt file rather than as a newer one.
+        // A version this build does not write decodes as far as it can and is
+        // refused by `validated()`, which names the number it found. Refusing
+        // inside `init(from:)` would report a decode failure instead, which
+        // reads as a corrupt file rather than as a newer one — which is why
+        // the two fields a newer form need not carry are optional here and
+        // nowhere else.
         self.init(
             formatVersion: onDisk,
             documentID: documentID,
@@ -206,8 +144,7 @@ package struct DocumentIndex: Codable, Sendable, Equatable {
             zoomCapPagePointsPerPixel: try container.decodeIfPresent(
                 Double.self,
                 forKey: .zoomCapPagePointsPerPixel
-            ) ?? Self.canonicalZoomCapPagePointsPerPixel,
-            wasReadInSupersededForm: false
+            ) ?? Self.canonicalZoomCapPagePointsPerPixel
         )
     }
 
