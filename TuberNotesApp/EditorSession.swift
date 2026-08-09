@@ -1982,8 +1982,8 @@ final class EditorSession {
     /// change**. Turning to an import is navigation, and navigation on import
     /// is the import UI's decision, not the durable form's.
     ///
-    /// No UI calls this yet. It is the entry point phase 3's durable half is
-    /// testable through, and the one the import UI will call when it exists.
+    /// The import UI reaches this: `LibraryCoordinator.importAndOpenDocument`
+    /// calls it behind + → New → Import, on a document it has just created.
     @discardableResult
     func importPDF(_ bytes: Data) async throws -> [UUID] {
         guard phase == .ready, !isClosing else { throw LayerEditError.sessionNotReady }

@@ -1173,3 +1173,167 @@ between the check and the mutation defeats it. The loop is what makes the
 statement true. A serializing queue was also written, and deleted: nothing
 could observe it, and `EditorSession`'s page-management section records the
 experiment so it is not re-added without a test.
+
+---
+
+# The paper-template run's amendments (A16–A19)
+
+Design and rationale live in `Docs/Forks/pdf-templates-proposal.md`, revision 3.
+Three constraints Phillip set shape all of them: a page is a PDF **or** it is
+paper, never both; the template is the same across every page of a document;
+and no document exists outside this repository, so any schema may change.
+
+`A18` is **deliberately not staged**. It licenses a memory-mapped asset read
+(`.mappedIfSafe`), which the proposal gates on Phillip as an optional step
+(§b2); its number is reserved so that adopting it later does not renumber
+anything. Its text is in the proposal.
+
+**Prerequisite, and not this run's to pay:** A5 and A13 are still unadopted, so
+`Contract.md` says "The only kind is `ink`" while three kinds ship. A16's text
+below assumes they land first.
+
+## A16. *Durable form* — a document carries a paper template — **AHEAD**
+
+Replace, in *Durable form*:
+
+> `document.plist` holds the format version, `documentID`, page geometry, an
+> ordered list of page IDs, and the current page index.
+
+with:
+
+> `document.plist` holds the format version, `documentID`, an ordered list of
+> page records — each a page ID and that page's geometry — the current page
+> index, the document's zoom cap, and the document's paper template.
+
+Replace:
+
+> - **A save writes only what changed.** One changed page writes one page file,
+>   and the index is rewritten only if page order or the current index changed.
+
+with:
+
+> - **A save writes only what changed.** One changed page writes one page file,
+>   and the index is rewritten only if page order, the current index, or the
+>   document's paper template changed.
+
+Add to the bulleted rules:
+
+> - **A document's paper template is a name from a closed set** — `blank`,
+>   `lined`, `grid`, `dotted` — stored once in the index and applying to every
+>   page of that document. It is a name and nothing more: no spacing, colour,
+>   margin, or measurement is durable, because a template is drawn procedurally
+>   from constants the build owns, and a stored measurement would be a second
+>   authority for one picture. Adding a member is a `CONTRACT:` amendment,
+>   exactly as adding a layer kind is.
+> - **A template is not a layer.** It has no envelope, no payload, no asset, and
+>   no position in any page's layer list; it cannot be selected, transformed,
+>   locked, or reclaimed. It is drawn beneath every layer of every page, and it
+>   is the document's, never a page's.
+> - **A page is a PDF or it is paper, never both.** A page carrying a `pdf`
+>   layer draws no template. This is a rule about the picture and not about the
+>   file: the document's template stays exactly as written, so removing the
+>   `pdf` layer reveals the paper the document already said it had. There is no
+>   durable state in which a page is both, because a page's paper was never
+>   durable in the first place.
+> - **An index naming a template this build does not know refuses the
+>   document**, exactly as an unhonourable zoom cap does. The scope is the
+>   document because the value is the document's; a page is never refused for
+>   paper.
+
+*Why the index and not the page file:* `EditorSession.warmNeighbourComposites`
+builds composites for the prefetch window from what the index knows, before
+those pages' files have been read. A template in the page file means either
+warming with the wrong paper and re-rendering on arrival, or reading page files
+ahead of the window — which is the whole-document read the split format exists
+to prevent. This is the same argument that put per-page geometry in the index
+(the A8 correction, above).
+
+*What it costs, stated because it is a new write trigger:* one index rewrite per
+template change. A discrete user action writing one small file, at a frequency
+far below the page turns that already rewrite the index for `currentPageIndex`.
+
+*Why document-scope refusal is right here:* an unknown *paper name* refusing a
+whole notebook would be an over-reaction for a per-page value, and this value is
+not per-page. It costs one error case beside `invalidZoomCap` and no new
+mechanism.
+
+## A17. *Geometry and coordinates* — where template geometry is measured — **AHEAD**
+
+Append to *Geometry and coordinates*:
+
+> A paper template is drawn in **page space**, in absolute page points, from the
+> page-space origin at the top-left. It is never a fraction of the page: pages
+> differ in size within one document, and ruling that scaled with the page would
+> put different line spacings on facing pages of one notebook.
+
+*Why:* under A8 mixed geometry is the normal state of any annotated import — an
+imported worksheet sits next to a canonical appended page. Absolute spacing means
+a landscape page gets more columns and fewer rows at *the same* spacing as the
+portrait page beside it, which is what paper does.
+
+## A19. *Durable form* — one form is read, one form is written — **AHEAD, and forced the moment the shim deletion lands**
+
+The proposal deletes all five backward-compatibility paths in this build
+(`pdf-templates-proposal.md` §d): the index's version-2 read path and its
+write-forward machinery, `PageFile`'s pre-split and pre-layer forms and the four
+`DocumentStore` sites that read them, `locked`-absent-decodes-unlocked, and the
+pre-library document adoption. Every one is unreachable except from its own test
+fixtures. `Contract.md` currently describes one of them as a live path.
+
+Delete, from *Durable form*:
+
+> - The pre-layer page form (bare drawing bytes) is read as a one-ink-layer page
+>   and written forward on the page's next save, never migrated eagerly.
+
+and, where A14 extended that sentence:
+
+> The pre-layer page form (bare drawing bytes) and the pre-split form
+> (envelopes inline in the page file) are both read, and written forward on the
+> page's next save, never migrated eagerly. **A page not yet in the split form
+> writes all of its layer files forward on that save**, because none of them
+> has a file to be unchanged. Three forms are read; exactly one is written.
+
+Replace both with the rule stated forward rather than as a description of a live
+path:
+
+> - **This build reads exactly the form it writes.** No superseded on-disk form
+>   is read by any code path, and the format version starts at 1. That is a
+>   statement about today and not a policy: the first durable format change made
+>   after a document exists outside this repository must follow the
+>   read-both-forms rule — read the old form, write the new one on the next save
+>   that would have written anyway, never migrate eagerly — and must say in
+>   `Contract.md` which two forms are live and when the older one may be
+>   dropped. A compatibility path with no file in the world to read is dead
+>   code, and dead code on the durability path is a maintenance cost paid
+>   forever against a risk that does not exist.
+
+*Why:* this project's own standard, applied to itself —
+`EditorSession.swift`'s note on deleting a serializing task chain says "code
+whose absence nothing can detect does not ship", and nothing can detect the
+absence of any of the five. **The rule is kept and the instances are deleted**;
+deleting the rule because its instances are gone would be deleting the reason
+they were right.
+
+*What is deliberately not deleted, so this is not read as "version checking
+went away":* `formatVersion` itself and `unsupportedFormatVersion` stay — that is
+*forward* compatibility, a file from a newer build refusing to open with the
+right diction. `LayerEnvelope.kind` stays a raw `String` with `recognizedKind`
+returning `nil`, which is the same mechanism one level down. And
+`DocumentStore`'s refusal to overwrite a page file it cannot decode stays: a
+durability guard, not a compatibility path.
+
+## Open questions for Phillip (paper-template run)
+
+1. **A18 is unstaged and its number is reserved.** Taking `.mappedIfSafe` means
+   a page fault inside `drawPDFPage` on the render executor materializes bytes
+   `DocumentStore` opened — which golden rule 4 has to license explicitly. The
+   memory claim behind it is **unmeasured**; what is certain is only that the
+   pages become file-backed.
+2. **A template change is not undoable** (proposal §g5). Like turning and
+   appending, it is not a PencilKit stroke edit, and *Undo* says there is no
+   semantic undo domain. GoodNotes does make it undoable. This is the one
+   template decision worth your verdict rather than your assent.
+3. **Library thumbnails ignore templates**, so a templated page thumbnails as
+   blank paper exactly as a PDF-backed page already does (§g9). Out of scope by
+   decision: fixing it means giving the thumbnail path a static composite, which
+   is the per-cell decode L5's design exists to avoid.

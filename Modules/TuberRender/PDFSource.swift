@@ -179,8 +179,10 @@ package enum PDFRasterizeError: Error, Equatable {
 /// This is the renderer the base-and-lens design needs (`Docs/Forks/
 /// CanvasFeatureComplete.md` — "Sharpness comes from base + lens"): the base
 /// asks for the whole page at fit-width, the lens asks for the visible
-/// sub-rect at the settled zoom. Neither integration exists yet — this type
-/// answers the question and stops.
+/// sub-rect at the settled zoom. **Both integrations exist**:
+/// `StaticLayerRenderer`'s `case .pdf` in the base composite, and the same
+/// case in `renderLens`, which maps the visible sub-rect back into source
+/// display points before asking.
 package enum PDFPageRasterizer {
     /// The displayed extent of one source page, in the source's own points —
     /// CropBox falling back to MediaBox, `/Rotate` applied.
