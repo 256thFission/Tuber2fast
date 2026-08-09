@@ -8,7 +8,7 @@ import TuberStore
 /// **The one place in this build that opens a PDF**, and therefore the one
 /// place that decides which of a PDF page's five boxes "the page" means.
 ///
-/// `PDFPageRasterizer` lives in this file rather than beside the canvas
+/// `OpenPDFDocument` lives in this file rather than beside the canvas
 /// runtime for exactly that reason: the durable payload stores no source
 /// rectangle (see `PDFLayerRef`), so any renderer must re-derive the CropBox —
 /// including a non-zero origin — and `/Rotate` from the asset itself, and two
@@ -171,10 +171,11 @@ package enum PDFRasterizeError: Error, Equatable {
     case rasterUnavailable(widthPixels: Int, heightPixels: Int)
 }
 
-/// One source page, as pixels. Pure rendering: bytes in, a `CGImage` out,
-/// nothing durable touched and no file opened — it is handed bytes exactly as
-/// `PDFSource.pages` is, so `DocumentStore` remains the only thing that reads
-/// storage.
+/// One source PDF, opened once, as pixels. Pure rendering: bytes in, a
+/// `CGImage` out, nothing durable touched and no file opened — it is handed
+/// bytes exactly as `PDFSource.pages` is, so `DocumentStore` remains the only
+/// thing that reads storage. `init` therefore takes `Data` and never a URL,
+/// and that is a rule rather than a convenience.
 ///
 /// This is the renderer the base-and-lens design needs (`Docs/Forks/
 /// CanvasFeatureComplete.md` — "Sharpness comes from base + lens"): the base
@@ -183,7 +184,45 @@ package enum PDFRasterizeError: Error, Equatable {
 /// `StaticLayerRenderer`'s `case .pdf` in the base composite, and the same
 /// case in `renderLens`, which maps the visible sub-rect back into source
 /// display points before asking.
-package enum PDFPageRasterizer {
+///
+/// **A handle, not a cache, and three constraints that are each load-bearing.**
+/// It replaced two free functions that each built a `CGDataProvider` and a
+/// `CGPDFDocument` from the same bytes, so every composite, every lens, and
+/// every prefetch warm paid two full document opens per `pdf` layer.
+///
+/// - **Not `Sendable`, and deliberately not an `actor`.** Under Swift 6
+///   (`project.yml`'s `SWIFT_VERSION`) `CGPDFDocument` and `CGPDFPage` are not
+///   `Sendable`, so an actor could not vend them to the `nonisolated` render
+///   path at all; and keeping the rasterization inside the actor would put
+///   every composite, warm, and lens on one actor executor — precisely what
+///   `StaticLayerRenderer.render` and `renderLens` are `nonisolated` to avoid.
+///   So this is created and destroyed inside **one** `render` or `renderLens`
+///   call, on the global executor, and never crosses an isolation boundary.
+/// - **`rasterize` is synchronous.** It is compute-bound and already runs on
+///   the global executor inside a `nonisolated` caller; the `async` it used to
+///   carry had no suspension point to justify itself.
+/// - **Nothing is cached across renders**, which is a decision rather than an
+///   omission. The prefetch radius is 3 and the live window is 3, so more
+///   distinct assets can be in flight than any bound this build could state,
+///   and the `retain(assetIDs:)` such a cache would need means decoding
+///   `PDFLayerRef` payloads on `@MainActor` every turn. The residual cost is
+///   one parse per composite, and `Docs/Unproven.md`'s "no numbers exist"
+///   governs: measure on a device before adding a mechanism whose bound
+///   nobody can state.
+package final class OpenPDFDocument {
+    private let document: CGPDFDocument
+
+    /// Opens the bytes once. Everything else on this type reads the document
+    /// this opened — that is the whole point of the type.
+    package init(bytes: Data) throws {
+        guard let provider = CGDataProvider(data: bytes as CFData),
+              let document = CGPDFDocument(provider)
+        else {
+            throw PDFRasterizeError.notAPDF
+        }
+        self.document = document
+    }
+
     /// The displayed extent of one source page, in the source's own points —
     /// CropBox falling back to MediaBox, `/Rotate` applied.
     ///
@@ -192,26 +231,20 @@ package enum PDFPageRasterizer {
     /// lands on the page (`StaticLayerRenderer.maxPixelSize`), and turning
     /// that pixel bound into pixels-per-source-point requires the source's
     /// extent. It throws exactly the refusals `rasterize` would throw for the
-    /// same bytes and index, so a caller that survives this call cannot then
-    /// be surprised by the render.
-    package static func displaySize(of bytes: Data, sourcePageIndex: Int) throws -> CGSize {
-        let geometry = try displayGeometry(of: bytes, sourcePageIndex: sourcePageIndex).geometry
+    /// same index, so a caller that survives this call cannot then be
+    /// surprised by the render.
+    package func displaySize(sourcePageIndex: Int) throws -> CGSize {
+        let geometry = try displayGeometry(sourcePageIndex: sourcePageIndex).geometry
         return CGSize(width: geometry.displayWidth, height: geometry.displayHeight)
     }
 
-    /// Opens the document, validates the page index, and derives the one
-    /// display geometry — shared by `displaySize` and `rasterize` so the two
-    /// cannot disagree about which rectangle a page shows.
-    private static func displayGeometry(
-        of bytes: Data,
+    /// Validates the page index and derives the one display geometry — shared
+    /// by `displaySize` and `rasterize` so the two cannot disagree about which
+    /// rectangle a page shows. It moved inside this class when the two free
+    /// functions became one handle; it did not become two.
+    private func displayGeometry(
         sourcePageIndex: Int
     ) throws -> (page: CGPDFPage, geometry: PDFSource.DisplayGeometry) {
-        guard let provider = CGDataProvider(data: bytes as CFData),
-              let document = CGPDFDocument(provider)
-        else {
-            throw PDFRasterizeError.notAPDF
-        }
-
         let count = document.numberOfPages
         guard (0..<count).contains(sourcePageIndex) else {
             throw PDFRasterizeError.pageOutOfRange(index: sourcePageIndex, pageCount: count)
@@ -225,12 +258,6 @@ package enum PDFPageRasterizer {
     }
 
     /// Pixels for one source page, or a sub-rect of it.
-    ///
-    /// `async` and `nonisolated` for the same load-bearing reason
-    /// `PDFSource.pages` is: a nonisolated async function runs on the generic
-    /// executor, never the caller's actor, so rasterizing a dense vector page
-    /// cannot land on the main thread from the canvas runtime
-    /// (`Docs/Contract.md` — Performance names PDF work on main specifically).
     ///
     /// - `sourcePageIndex` is zero-based, matching `PDFLayerRef`.
     /// - `pixelsPerPagePoint` is the level of detail, in the same unit
@@ -249,18 +276,17 @@ package enum PDFPageRasterizer {
     /// The y-flip therefore happens **exactly once** — converting the
     /// sub-rect's top-left origin into the context's bottom-left one — and
     /// everything after it composes rotation and box origin in y-up space.
-    package static func rasterize(
-        _ bytes: Data,
+    package func rasterize(
         sourcePageIndex: Int,
         pixelsPerPagePoint: Double,
         subRect: CGRect? = nil
-    ) async throws -> CGImage {
+    ) throws -> CGImage {
         precondition(
             pixelsPerPagePoint.isFinite && pixelsPerPagePoint > 0,
             "a raster at \(pixelsPerPagePoint) pixels per page point is not a level of detail"
         )
 
-        let (page, geometry) = try displayGeometry(of: bytes, sourcePageIndex: sourcePageIndex)
+        let (page, geometry) = try displayGeometry(sourcePageIndex: sourcePageIndex)
 
         let pageRect = CGRect(x: 0, y: 0, width: geometry.displayWidth, height: geometry.displayHeight)
         let rect = subRect ?? pageRect

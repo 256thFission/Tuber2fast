@@ -9,7 +9,7 @@ import Testing
 import UIKit
 
 /// Phase 3c of `Docs/Forks/CanvasFeatureComplete.md`, first deliverable: a
-/// `pdf` layer renders in the static composite, through `PDFPageRasterizer`,
+/// `pdf` layer renders in the static composite, through `OpenPDFDocument`,
 /// exactly as an `image` layer renders through ImageIO.
 ///
 /// This is the resolution of review finding 4: an imported PDF page used to
@@ -192,7 +192,14 @@ struct PDFLayerRenderTests {
         #expect(why.contains(layer.layerID.uuidString))
     }
 
-    @Test("A source page index outside the document refuses")
+    /// The render path is the only place this can be proven. The load path
+    /// deliberately does not check `sourcePageIndex` against the asset —
+    /// doing so would mean opening every asset of every page on load — so an
+    /// index past the end survives all the way here, and here it must refuse
+    /// the **whole** composite rather than drop one layer out of a picture
+    /// that then looks correct (`Docs/Contract.md` — Invalid states fail
+    /// loud). The good image layer below is what makes "whole" observable.
+    @Test("A source page index outside the document refuses the whole composite")
     func anOutOfRangeSourcePageRefuses() async throws {
         let scratch = try TestScratch("pdfrender")
         let renderer = StaticLayerRenderer(store: scratch.store)
@@ -201,15 +208,25 @@ struct PDFLayerRenderTests {
             sourcePageIndex: 7,
             transform: PageSpaceTransform(a: 120, b: 0, c: 0, d: 200, tx: 0, ty: 0)
         )
+        let good = try await scratch.imageLayer(
+            color: UIColor.green.cgColor,
+            transform: PageSpaceTransform(a: 40, b: 0, c: 0, d: 40, tx: 10, ty: 10)
+        )
         let render = await renderer.composite(
             for: StaticLayerRequest(
-                layers: [layer], geometry: Self.quadrantGeometry, pixelsPerPagePoint: 1
+                layers: [layer, good], geometry: Self.quadrantGeometry, pixelsPerPagePoint: 1
             )
         )
-        guard case .refused = render else {
+        guard case .refused(let why) = render else {
             Issue.record("an out-of-range source page rendered as \(render)")
             return
         }
+        // The typed refusal, by name: a source page past the end is
+        // `pageOutOfRange` and nothing else, and it names the layer whose
+        // asset could not answer.
+        #expect(why.contains("pageOutOfRange"))
+        #expect(why.contains("pageCount: 1"))
+        #expect(why.contains(layer.layerID.uuidString))
     }
 
     @Test("A pdf payload that will not decode refuses")

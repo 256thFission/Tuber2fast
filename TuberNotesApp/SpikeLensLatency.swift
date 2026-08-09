@@ -45,7 +45,7 @@
 // the compositor scales the existing base texture (no decode is ever
 // triggered by a gesture frame — the only per-tick code here is the scroll
 // view's own). When the pinch SETTLES, the visible rect of the page is
-// rasterized at the new scale off-main via `PDFPageRasterizer`, and the
+// rasterized at the new scale off-main via `OpenPDFDocument`, and the
 // result is swapped in as `CALayer.contents` on main. Three timestamps —
 // settle, decode-done, swap-committed — go out as one `CanvasLog` line per
 // settle, never per frame, and `Tools/device`'s digest collects them:
@@ -165,15 +165,27 @@ final class SpikeLensController: UIViewController, UIScrollViewDelegate {
         return scale > 0 ? scale : 2
     }
 
+    /// One open, one raster, off main. `OpenPDFDocument.rasterize` is
+    /// synchronous and this controller is `@MainActor`, so a `Task` here would
+    /// inherit main; this `nonisolated static func` is the idiom that puts the
+    /// work on the generic executor (`CONTRIBUTING.md` — Getting off the main
+    /// actor). The handle is created and destroyed inside this call and never
+    /// crosses an isolation boundary.
+    nonisolated private static func raster(
+        _ bytes: Data, pixelsPerPagePoint: Double, subRect: CGRect? = nil
+    ) async throws -> CGImage {
+        try OpenPDFDocument(bytes: bytes).rasterize(
+            sourcePageIndex: 0, pixelsPerPagePoint: pixelsPerPagePoint, subRect: subRect
+        )
+    }
+
     private func renderBase() {
         let bytes = pdfBytes
         let scale = Double(scrollView.bounds.width / pageSize.width * displayScale)
         let level = scale.isFinite && scale > 0 ? scale : 2
         Task { [baseLayer] in
             do {
-                let image = try await PDFPageRasterizer.rasterize(
-                    bytes, sourcePageIndex: 0, pixelsPerPagePoint: level
-                )
+                let image = try await Self.raster(bytes, pixelsPerPagePoint: level)
                 baseLayer.contents = image
                 CanvasLog.event(
                     .canvas,
@@ -236,8 +248,8 @@ final class SpikeLensController: UIViewController, UIScrollViewDelegate {
                 // Off-main by construction: nonisolated async runs on the
                 // generic executor, and `builtOffMain` in the log is the
                 // observed fact, not the intention.
-                image = try await PDFPageRasterizer.rasterize(
-                    bytes, sourcePageIndex: 0, pixelsPerPagePoint: level, subRect: visible
+                image = try await Self.raster(
+                    bytes, pixelsPerPagePoint: level, subRect: visible
                 )
             } catch {
                 CanvasLog.event(.canvas, "SPIKE lens render REFUSED: \(error)")

@@ -92,7 +92,7 @@ lock pdf pages until 3c; composite per-layer instead of all-or-nothing;
 accept and write it down.)
 
 **Status: resolved by phase 3c.** `StaticLayerRenderer.render` now
-rasterizes `pdf` layers through `PDFPageRasterizer`, so both halves are
+rasterizes `pdf` layers through `OpenPDFDocument`, so both halves are
 gone: an imported PDF page composites its worksheet, and an image layer on
 a pdf-backed page composites over it. Pinned by `PDFLayerRenderTests`
 (pixel tests against byte-exact fixtures, plus both session-level cases),

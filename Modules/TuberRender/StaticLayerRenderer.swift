@@ -508,9 +508,12 @@ package actor StaticLayerRenderer {
                 if target.isEmpty { continue }
 
                 do {
-                    let display = try PDFPageRasterizer.displaySize(
-                        of: bytes, sourcePageIndex: ref.sourcePageIndex
-                    )
+                    // One open for this layer's whole contribution to this
+                    // lens: the handle lives and dies inside this call, on the
+                    // global executor, and is never shared or cached
+                    // (`OpenPDFDocument`).
+                    let document = try OpenPDFDocument(bytes: bytes)
+                    let display = try document.displaySize(sourcePageIndex: ref.sourcePageIndex)
                     // The visible part of the layer, mapped back into the
                     // source's own display points — and intersected with the
                     // source's page so float arithmetic can never hand the
@@ -527,8 +530,7 @@ package actor StaticLayerRenderer {
                         Double(placed.width) * scale / Double(display.width),
                         Double(placed.height) * scale / Double(display.height)
                     )
-                    let image = try await PDFPageRasterizer.rasterize(
-                        bytes,
+                    let image = try document.rasterize(
                         sourcePageIndex: ref.sourcePageIndex,
                         pixelsPerPagePoint: rasterScale,
                         subRect: source
@@ -876,9 +878,11 @@ package actor StaticLayerRenderer {
                     // the finer of the two so neither axis undersamples. For an
                     // imported page — the unit square edge to edge — both
                     // ratios equal the composite's own scale.
-                    let display = try PDFPageRasterizer.displaySize(
-                        of: bytes, sourcePageIndex: ref.sourcePageIndex
-                    )
+                    // One open per layer per composite: the handle lives and
+                    // dies inside this call, on the global executor, and is
+                    // never shared or cached (`OpenPDFDocument`).
+                    let document = try OpenPDFDocument(bytes: bytes)
+                    let display = try document.displaySize(sourcePageIndex: ref.sourcePageIndex)
                     let widthPoints = (transform.a * transform.a + transform.b * transform.b).squareRoot()
                     let heightPoints = (transform.c * transform.c + transform.d * transform.d).squareRoot()
                     let rasterScale = max(
@@ -891,8 +895,7 @@ package actor StaticLayerRenderer {
                                 + "which is not a level of detail"
                         )
                     }
-                    image = try await PDFPageRasterizer.rasterize(
-                        bytes,
+                    image = try document.rasterize(
                         sourcePageIndex: ref.sourcePageIndex,
                         pixelsPerPagePoint: rasterScale
                     )

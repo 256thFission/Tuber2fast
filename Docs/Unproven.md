@@ -174,7 +174,7 @@ Nothing here is a reason not to ship. It is a reason not to be surprised.
   The kind is durable — one import becomes one page per source page, the asset
   is written once and never rewritten, refs round-trip with their source page
   index and their placement — and since phase 3c the rendering half exists
-  too: `PDFPageRasterizer` turns a source page into pixels, `StaticLayerRenderer`
+  too: `OpenPDFDocument` turns a source page into pixels, `StaticLayerRenderer`
   draws those pixels into the base composite and into the lens, and
   `PageCanvasController` asks for the lens at settle. `PDFPageRasterizerTests`,
   `PDFLayerRenderTests`, `LensTests`, and `PrefetchWarmTests` hold it.
