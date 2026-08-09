@@ -44,9 +44,10 @@ struct PageCanvasControllerTests {
         let fitWidth = root.frame.width / PageGeometry.canonical.width
         #expect(abs(canvas.zoomScale - fitWidth) < 0.001)
 
-        // The floor is fit-width: you may never zoom out to where horizontal
-        // dead space appears beside the page (maintainer verdict, device
-        // session 2026-08-07).
+        // The floor is fit-page, and in a portrait viewport that min *is*
+        // fit-width: no horizontal dead space beside the page (maintainer
+        // verdict, device session 2026-08-07 — upheld in portrait when the
+        // 2026-08-08 landscape verdict moved the floor to fit-page).
         #expect(abs(canvas.minimumZoomScale - fitWidth) < 0.001)
         #expect(canvas.maximumZoomScale > canvas.zoomScale)
 
@@ -65,11 +66,14 @@ struct PageCanvasControllerTests {
         #expect(canvas.drawing.strokes.isEmpty)
     }
 
-    /// The maintainer's verdict from the 2026-08-07 device session: the floor
-    /// is fit-width, never lower. A landscape viewport is where the old
-    /// fit-page floor diverged most — this test fails against that floor.
-    @Test("The zoom floor is fit-width: no horizontal dead space, and vertical pan room remains")
-    func zoomFloorIsFitWidth() {
+    /// Two maintainer verdicts, one from each orientation, and the fit-page
+    /// floor is the min that honors both. Portrait 2026-08-07: no dead space
+    /// beside the page — there fit-width *is* the min, and `canvasInvariants`
+    /// holds it. Landscape 2026-08-08: a fit-width floor left the page's full
+    /// extent unreachable, so the floor is the whole page and the side room
+    /// centres. This test fails against the fit-width floor it replaces.
+    @Test("The zoom floor is fit-page: a landscape viewport can pull back to the whole page, centred")
+    func zoomFloorIsFitPageInLandscape() {
         let controller = PageCanvasController(
             toolPicker: PKToolPicker(),
             projection: .canonical,
@@ -80,19 +84,26 @@ struct PageCanvasControllerTests {
         root.layoutIfNeeded()
 
         let canvas = controller.canvasView
-        let fitWidth = root.frame.width / PageGeometry.canonical.width
-        let floor = canvas.minimumZoomScale
-        #expect(abs(floor - fitWidth) < 0.001)
+        let fitPage = root.frame.height / PageGeometry.canonical.height
 
-        // At the floor the page exactly fills the viewport's width — no dead
-        // space beside the page — and a portrait page is taller than the
-        // viewport, so vertical panning within the page still has room.
+        // The page opens at the floor: its full extent on screen, top and
+        // bottom, never dropped into the middle of a page not yet seen
+        // (device verdict, 2026-08-08). Zooming in to write is the user's
+        // pinch.
+        #expect(abs(canvas.zoomScale - fitPage) < 0.001)
+        // The floor is the whole page, which in landscape is fit-height.
+        let floor = canvas.minimumZoomScale
+        #expect(abs(floor - fitPage) < 0.001)
+
+        // At the floor the whole page is visible — full height, nothing to
+        // pan — and the side room splits evenly rather than pinning the page
+        // to the leading edge.
         canvas.zoomScale = floor
         root.layoutIfNeeded()
-        #expect(abs(canvas.contentSize.width - root.frame.width) < 0.5)
-        #expect(canvas.contentSize.height > canvas.bounds.height)
-        #expect(canvas.contentInset.left == 0)
-        #expect(canvas.contentInset.right == 0)
+        #expect(abs(canvas.contentSize.height - root.frame.height) < 0.5)
+        #expect(canvas.contentSize.width < root.frame.width)
+        #expect(canvas.contentInset.left > 0)
+        #expect(abs(canvas.contentInset.left - canvas.contentInset.right) < 0.5)
 
         // A repeated layout pass must not move the floor.
         root.layoutIfNeeded()
@@ -237,14 +248,17 @@ struct PageCanvasControllerTests {
         root.frame = CGRect(x: 0, y: 0, width: 1180, height: 820)
         root.layoutIfNeeded()
 
-        // The floor now describes the screen that exists: fit-width for the
-        // rotated viewport, so no dead space can appear beside the page.
-        #expect(abs(canvas.minimumZoomScale - 1180 / PageGeometry.canonical.width) < 0.001)
+        // The floor now describes the screen that exists: fit-page for the
+        // rotated viewport, which in landscape is fit-height — the whole page
+        // stays reachable (device verdict, 2026-08-08).
+        let landscapeFitPage = 820 / PageGeometry.canonical.height
+        #expect(abs(canvas.minimumZoomScale - landscapeFitPage) < 0.001)
 
-        // And the user's zoom survives as a ratio of fit-width rather than
-        // snapping back to fit.
-        let landscapeFitWidth = 1180 / PageGeometry.canonical.width
-        #expect(abs(canvas.zoomScale - landscapeFitWidth * 2) < 0.001)
+        // And the user's zoom survives as a ratio of the floor rather than
+        // snapping back to fit: twice fit-page before the rotation is twice
+        // fit-page after it. (In the portrait viewport fit-page and fit-width
+        // coincide for this page, so the 2× above was a ratio of both.)
+        #expect(abs(canvas.zoomScale - landscapeFitPage * 2) < 0.001)
     }
 
     @Test("A page shorter than the viewport is centred vertically; fit-width leaves no horizontal room")

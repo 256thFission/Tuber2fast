@@ -689,9 +689,10 @@ struct StaticLayerRenderTests {
         #expect(clipIndex < canvasIndex, "the stack must render before the ink surface")
 
         // The ink surface is transparent so the stack shows through, and the
-        // root carries the page white the canvas used to paint.
+        // root carries the gutter's dark — the backdrop paints its own paper,
+        // and the margins are universally dark (device verdict, 2026-08-08).
         #expect(controller.canvasView.isOpaque == false)
-        #expect(root.backgroundColor == .white)
+        #expect(root.backgroundColor == .systemGray5)
 
         // The stack is masked to the slot, or a zoomed page would draw across
         // its neighbours in the paging scroll view.

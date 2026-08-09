@@ -34,36 +34,6 @@ Record the evidence, hand it over, leave the verdict alone.
 
 ---
 
-## contract-checker-is-blind — exit met; subdirectories are safe to create
-
-The blindness is gone. `ContractStructureTests` no longer lists the source
-directory: `ContractChecker.swiftFileURLs(under:)` walks it, at any depth,
-skipping hidden entries, build products, and symbolic links. The rules became
-pure functions over a directory URL, which is what made them testable — the
-suite plants sources violating each of the three rules in a *new subdirectory*
-of a temp tree and asserts each is caught, hermetically, so a failing run never
-leaves the repository dirty. Reverting the recursion fails four of those tests.
-
-The `names.isEmpty` guard is replaced by two: a floor on the plausible source
-count, and a cross-check against a second, independent enumeration. The floor
-alone would not have caught the original bug, whose top level was full.
-
-Also landed while the walk exposed them: the import rule now reads
-`@preconcurrency`, `@_exported`, `import struct UIKit.X`, `import UIKit.UIView`,
-and post-semicolon imports, all of which a `trimmed == "import UIKit"`
-comparison missed; the file-I/O rule reads `String(contentsOf:)`,
-`OutputStream`, `fopen`, `.write(toFile:)`, and `UserDefaults`; the
-`PKCanvasView` rule reads `.init(` and a space before the paren; and an
-allowlist entry naming a file that no longer exists is now a failure, so the
-throwaway spike's entry dies with its file rather than outliving it.
-
-**Still review-only.** The forbidden-pattern list is untouched — see
-[`Unproven.md`](Unproven.md). Two of its entries are decidable rather than
-aesthetic, and neither is checked: a durable derived artifact reaching disk, and
-a cache that states no bound. That is a separate item whenever it is worth one.
-The token scan's own blind spots are recorded as `KNOWN DEFECT:` blocks beside
-the rules they limit.
-
 ## loud-by-default — the loud path has still never run on an iPad
 
 The mechanical half is done. `CanvasLog`'s stderr mirror carries no
@@ -153,32 +123,6 @@ ink. The user-visible half needs no Pencil and is provable in the simulator.
 
 *Blocked by:* `loud-by-default`, which is how a trap would be observed at all.
 
-## handovers-landed — the structural save-path rework awaits device evidence
-
-The Handovers proposal's S1–S7 are in the code: retirement hands over a
-drawing value synchronously; per-page ink state is one `Page` value with
-named transitions (`dirtyPageIDs`, `pageData`, `retiredInk`, and
-`unloadedPages` are gone); the save captures totally and acknowledges only
-after the store returns; an unloaded or unreadable page is a placeholder,
-never a canvas; `saveInFlight` and both waiter arrays are task handles; and
-a turn commits only at rest, on the settle callbacks. Each closed finding
-has a test that fails against the pre-change code.
-
-What no test can prove, and what this item now is:
-
-- **Turn feel after settling** is Phillip's verdict. The window refresh now
-  happens at rest, so a fast multi-page flick may briefly show a loading
-  placeholder where the old runtime built canvases mid-drag.
-- **The placeholder itself** has never been seen on a device.
-
-The contract amendments are done: Phillip approved and the `CONTRACT:` commit
-landed the per-page ink state in *Owners*, the synchronous handover in
-*Navigation*, capture-then-acknowledge in *Saving*, and the unreadable-page
-refusal in *Lifecycle*.
-
-**Exit:** Phillip accepts the settle feel and the placeholder on the iPad, or
-returns bounded findings.
-
 ## turn-feel — Phillip's verdict on page turning
 
 Nothing about paging has been exercised by hand. The unit tests drive turns by
@@ -209,71 +153,6 @@ Hand-exercise on the named iPad and record, before asking for a verdict:
 *Was blocked by* loading marking pages dirty; that is fixed and pinned by
 `turningAwayAndBackDoesNotRewriteThePage`, so the save-trace check can now
 fail only for reasons that are about turn feel.
-
-## image-format-is-heic — code landed; awaits the contract amendment
-
-Phillip overruled the phase-2 mixed-format design (2026-08-07): image assets
-consolidate onto **HEIC** — one format, hardware-decoded, with transparency.
-The closed set in `AssetFormat` keeps `pdf` (a PDF is not an image, and the
-small-export story stays whole for it) and loses `png` and `jpeg` as
-image-usable formats.
-
-Evidence behind the pick, checked against the APIs this code actually uses:
-
-- HEIC carries alpha as an auxiliary image (`urn:mpeg:hevc:2015:auxid:1`);
-  `CIContext.heifRepresentation` writes it and current ImageIO reads it back.
-  The premultiplied-alpha decode bugs were iOS 12–14.
-- Decode on Apple silicon is hardware-accelerated — at parity with JPEG and
-  far past PNG, which is software zlib and 5–10× the bytes at photo sizes.
-- The accepted loss: HEIC is lossy in practice (RGB→YCbCr means a PNG
-  screenshot softens slightly on transcode), and the small-export story dies
-  for images — the user gets back a HEIC, not the file they imported.
-
-What it closes by construction: the alpha-flattening defect in the current
-transcode-to-JPEG path — a TIFF or GIF with transparency imported through the
-Files picker gets its transparent regions baked into the stored JPEG,
-durably, because assets are write-once. One alpha-carrying format removes
-the class.
-
-Implementation surface, when picked up: `AssetFormat` narrows and
-`ImageLayerRef.recognizedFormat` follows (the closed-set refusal stays — an
-unknown format string on disk is still how a future format lands safely);
-`ImageImportPreparation.prepare` keeps bytes only for HEIC sources and
-transcodes everything else with orientation baked; the fixtures in
-`ImageLayerTests`, `ImportPreparationTests`, `StaticLayerRenderTests`, and
-`LensTests` move to HEIC. Existing documents are wiped — nothing in prod, no
-migration, no refuse-shim.
-
-Pin this first, before the import path moves: a test that encodes a CGImage
-carrying real alpha to HEIC, reads it back through the renderer's
-`downsample`, and asserts a transparent pixel is still transparent. If
-`CGImageDestinationAddImage` does not embed the auxiliary image on this OS,
-the encode goes through `CIContext.heifRepresentation` instead — this is
-checkable in the simulator; do not discover it on a device. The compression
-quality for HEIC is a fresh choice; 0.9 was JPEG's.
-
-Contract amendment: the closed-set line in *Durable form* and the
-small-export comments in `AssetRef.swift` change meaning. Exact edits
-proposed in the PR; Phillip authors them.
-
-**Landed** (`14d5666` pin, `d1ec58b` narrowing). The pin came back green:
-`CGImageDestinationAddImage` does embed the alpha auxiliary image on this OS,
-so the `CIContext.heifRepresentation` fallback is unused. The quality is 0.9,
-reasoned afresh at its declaration rather than inherited. `png` and `jpeg`
-now take the closed-set refusal, tested rather than assumed. The comment that
-stood TIFF in for HEIC — "the simulator has no HEIC hardware encoder" — was a
-hardware fact wrongly generalized to the framework, and is gone.
-
-Proposed amendment text: `Docs/Forks/ContractPass/06-HEIC-amendment.md`.
-
-**Exit:** the amendment is in `Contract.md` — the only part still open — and
-a device session confirms the hardware encoder keeps alpha too, which no
-simulator run can say. The rest is met: import transcodes PNG, JPEG, and
-TIFF sources to `.heic` and passes HEIC through, and a transparent source
-round-trips its alpha through import → store → downsample → composite.
-
-
-
 
 ## prove-ci — the verdict runs; only the fork half is left
 

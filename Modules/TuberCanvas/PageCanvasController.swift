@@ -63,8 +63,9 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
     /// A hairline showing where the page ends.
     ///
     /// Presentation only: it is not ink, is never part of the drawing, and is
-    /// not persisted. The page and the canvas background are both white, so
-    /// without it the page boundary is invisible.
+    /// not persisted. It crisps the seam between the white paper and the dark
+    /// gutter, and survives from the era when both were white and the page
+    /// was otherwise invisible.
     ///
     /// A layer, not a view, and that is load-bearing. `PKCanvasView` is a
     /// `UIScrollView`, and a scroll view delays and re-delivers touches to its
@@ -72,6 +73,22 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
     /// crashed UIKit inside `_delayTouchesForEvent:` on the first Pencil stroke.
     /// Layers never participate in touch handling, so they cannot perturb it.
     private let pageBoundary = CALayer()
+
+    /// The dark margins: four opaque strips framing the page rect, so the
+    /// gutter's dark is what shows wherever the paper is not (device verdict,
+    /// 2026-08-08 — margins are universally dark, "it's neater").
+    ///
+    /// Strips *around* the page and not a ground *behind* it, and the reason
+    /// is a measured PencilKit behaviour: an opaque `PKCanvasView` paints its
+    /// `backgroundColor` through its own tiled content view, over any sublayer
+    /// slipped beneath it — a dark canvas ground turned the paper itself dark
+    /// on device. So the canvas background stays the paper white, opaque and
+    /// blend-free, and the dark is painted only where ink cannot be: outside
+    /// the content rect, in the inset room. Four plain layers, framed in the
+    /// same transaction as the hairline — frame assignments only, nothing
+    /// allocated on a zoom frame. The same layer-not-view reasoning as
+    /// `pageBoundary` applies.
+    private let marginShades = [CALayer(), CALayer(), CALayer(), CALayer()]
 
     /// Whether the session has opened this canvas for user editing.
     ///
@@ -251,6 +268,12 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         // The canvas is the page: its content coordinate system is page space,
         // so ink is authored in page points regardless of zoom or view size.
         // `contentSize` and the delegate are established in `init`.
+        //
+        // White and opaque, and it must stay both: this background *is* the
+        // paper — PencilKit's opaque tiled view paints it through everything
+        // (see `marginShades` for the device finding) — and opaque is the
+        // blank-page path's freedom from a full-screen blend. The dark
+        // margins are the strips, never this colour.
         canvasView.backgroundColor = .white
         canvasView.isOpaque = true
 
@@ -259,22 +282,22 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
 
         canvasView.showsVerticalScrollIndicator = false
         canvasView.showsHorizontalScrollIndicator = false
-        // **No rubber-band past the zoom limits.** Two reasons, and the first is
-        // the same verdict that set the floor at fit-width: a bounce below the
-        // floor shows exactly the dead space beside the page that Phillip
-        // overruled, briefly, on every quick zoom-out — and the page now *opens*
-        // at the floor, so every zoom-out gesture starts against it.
+        // **`bouncesZoom` stays `true`, and the reason is a device finding.**
+        // It was set to `false` after the 2026-08-07 round-2 session, on two
+        // arguments — no dead space flashing below the floor, and the bounce
+        // being the one state where the presented scale and the reported scale
+        // disagree under the mirror. Neither was ever felt on hardware, and on
+        // 2026-08-08 Phillip found the actual price: with the canvas sitting
+        // exactly at its floor — which is where every page opens — `false`
+        // killed pinch zoom outright. Not stiff at the limit: dead. No pinch
+        // registered in either direction.
         //
-        // The second is registration. Bouncing is the one state where the scale
-        // `UIScrollView` presents and the scale it reports can differ, and the
-        // mirror is driven from the reported one; the ink would then follow the
-        // presented scale while the backdrop snapped to the model. That is the
-        // leading candidate for "the ink is catching up to its scale on the
-        // images beneath it" (device session, 2026-08-07), and
-        // `ZoomRegistrationProbe` is what will say whether it was the whole of
-        // it. Off costs a little iOS-native give at the limits; the feel verdict
-        // is Phillip's.
-        canvasView.bouncesZoom = false
+        // So the trade reverses, priced honestly: the rubber-band can again
+        // briefly show past-the-limit scale, and during that bounce the mirror
+        // follows the model while the ink follows the presentation —
+        // `ZoomRegistrationProbe` is still in place to say whether that
+        // disagreement is the visible "ink catching up" or a rounding error.
+        canvasView.bouncesZoom = true
 
         canvasView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(canvasView)
@@ -288,6 +311,16 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         // A scroll view scrolls by moving its layer's bounds origin, so a
         // sublayer pans with the page for free. Only zoom changes need it
         // resized, because content coordinates already include the zoom scale.
+        //
+        // The shades go in before the selection chrome ever installs, so
+        // handles that overhang a page edge still draw above the margins.
+        // Resolved against the current traits, as `pageBoundary`'s colour is.
+        for shade in marginShades {
+            shade.backgroundColor = UIColor.systemGray5.resolvedColor(
+                with: traitCollection
+            ).cgColor
+            canvasView.layer.addSublayer(shade)
+        }
         pageBoundary.borderColor = UIColor.separator.cgColor
         canvasView.layer.addSublayer(pageBoundary)
         updatePageBoundary()
@@ -321,14 +354,32 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
     /// frame, and an animated frame change would lag the ink it borders.
     private func updatePageBoundary() {
         let scale = canvasView.zoomScale
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        pageBoundary.borderWidth = 1 / max(traitCollection.displayScale, 1)
-        pageBoundary.frame = CGRect(
+        let pageRect = CGRect(
             x: 0,
             y: 0,
             width: geometry.width * scale,
             height: geometry.height * scale
+        )
+        // Far larger than any inset room a viewport can open around the page,
+        // so the strips never run out however the page is centred.
+        let pad: CGFloat = 4096
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        pageBoundary.borderWidth = 1 / max(traitCollection.displayScale, 1)
+        pageBoundary.frame = pageRect
+        // Left and right run tall to take the corners; top and bottom span
+        // only the page's width between them.
+        marginShades[0].frame = CGRect(
+            x: pageRect.minX - pad, y: -pad, width: pad, height: pageRect.height + 2 * pad
+        )
+        marginShades[1].frame = CGRect(
+            x: pageRect.maxX, y: -pad, width: pad, height: pageRect.height + 2 * pad
+        )
+        marginShades[2].frame = CGRect(
+            x: pageRect.minX, y: -pad, width: pageRect.width, height: pad
+        )
+        marginShades[3].frame = CGRect(
+            x: pageRect.minX, y: pageRect.maxY, width: pageRect.width, height: pad
         )
         CATransaction.commit()
     }
@@ -395,15 +446,26 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
     /// Establishes the zoom range for the current viewport, and re-establishes
     /// it when the viewport itself changes size.
     ///
-    /// **The floor is fit-width** (`Contract.md` — Geometry and coordinates:
-    /// the floor derives from the fixed page). The page opens at fit-width and
-    /// may never zoom out below it: below fit-width the page is narrower than
-    /// the viewport and dead space appears beside it, which Phillip overruled
-    /// on hardware (device session, 2026-08-07). The earlier floor — fit the
-    /// whole page with overview room to spare — is gone with that verdict, not
-    /// merely lowered. At the floor a portrait page is *taller* than the
-    /// viewport, so vertical panning within the page still works there; only
-    /// horizontal room is forbidden.
+    /// **The floor is fit-page** — `min(fitWidth, fitHeight)` — and the page
+    /// **opens at the floor** (`Contract.md` — Geometry and coordinates: the
+    /// floor derives from the fixed page). Two device verdicts, one from each
+    /// orientation, and the min is what honors both:
+    ///
+    /// - Portrait, 2026-08-07: no dead space beside the page. For a page
+    ///   taller than the viewport's aspect, fit-height exceeds fit-width, so
+    ///   the min *is* fit-width there and nothing this verdict refused comes
+    ///   back — including the opening scale, which is unchanged in portrait.
+    /// - Landscape, 2026-08-08 (reachable only since the portrait pin lifted
+    ///   that morning): a fit-width floor left the full extent of the page
+    ///   unreachable, and a fit-width *opening* dropped the reader into the
+    ///   middle of a page they had not seen yet. A page arrives whole — its
+    ///   top and bottom on screen — and the side room that appears is
+    ///   `centerPageInViewport`'s to split evenly. Zooming to fit-width to
+    ///   write is one pinch, and it is the user's pinch.
+    ///
+    /// The earlier floor — fit the whole page *with overview room to spare* —
+    /// stays gone: the floor shows all of the page and not one point of grey
+    /// past it.
     ///
     /// A repeated layout pass at one size does nothing, which is the invariant
     /// in `Contract.md` — Performance that rebuilding SwiftUI views rebuilds
@@ -414,9 +476,9 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
     /// floor computed for a screen that no longer exists.
     ///
     /// The user's zoom survives that change rather than snapping back to fit:
-    /// the scale is carried across as a ratio of fit-width, so a page examined
-    /// at twice fit-width is still at twice fit-width after a rotation. On the
-    /// first pass the ratio is 1, so opening at fit-width is the same code path.
+    /// the scale is carried across as a ratio of fit-page, so a page examined
+    /// at twice the floor is still at twice the floor after a rotation. On the
+    /// first pass the ratio is 1, so opening at the floor is the same code path.
     ///
     /// **The floor derives from this page**, not from a global — which is what
     /// per-page geometry changes here. A landscape page fits its own width; a
@@ -432,7 +494,7 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
     ///
     /// KNOWN DEFECT: zoom lives per page and dies with the controller. A page
     /// retired from the live window is released with no zoom saved, so turning
-    /// back rebuilds it at fit-width, while pages still inside the window keep
+    /// back rebuilds it at fit-page, while pages still inside the window keep
     /// their scale — inconsistent by distance rather than uniformly wrong. The
     /// tool picker is shared across pages for exactly this reason; zoom is not.
     /// Whether zoom *should* be shared is a feel question, and Phillip's. Mixed
@@ -445,9 +507,13 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
 
         let fitWidth = bounds.width / geometry.width
         guard fitWidth > 0, fitWidth.isFinite else { return }
+        let fitPage = min(fitWidth, bounds.height / geometry.height)
+        guard fitPage > 0, fitPage.isFinite else { return }
 
-        let previousFitWidth = zoomRangeBounds.map { $0.width / geometry.width }
-        let ratio = previousFitWidth.map { canvasView.zoomScale / $0 } ?? 1
+        let previousFitPage = zoomRangeBounds.map {
+            min($0.width / geometry.width, $0.height / geometry.height)
+        }
+        let ratio = previousFitPage.map { canvasView.zoomScale / $0 } ?? 1
 
         let displayScale = Double(max(traitCollection.displayScale, 1))
         let required = projection.maximumZoomScale(displayScale: displayScale)
@@ -511,7 +577,7 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         // Order matters: the range must admit the new scale before it is set,
         // or UIScrollView clamps it to the range still describing the old
         // viewport.
-        canvasView.minimumZoomScale = fitWidth
+        canvasView.minimumZoomScale = fitPage
         canvasView.maximumZoomScale = CGFloat(ceiling)
         // `PKCanvasView` silently clamps `maximumZoomScale` to 10 — measured,
         // undocumented, and invisible unless something reads the value back.
@@ -527,7 +593,7 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
                 + "anything above \(PageProjection.runtimeMaximumZoomScale)"
         )
         canvasView.zoomScale = min(
-            max(fitWidth * ratio, canvasView.minimumZoomScale),
+            max(fitPage * ratio, canvasView.minimumZoomScale),
             canvasView.maximumZoomScale
         )
         zoomRangeBounds = bounds
@@ -536,11 +602,10 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
 
     /// Keeps the page centred once it is smaller than the viewport.
     ///
-    /// With the floor at fit-width no horizontal room can exist, so the
-    /// horizontal inset is always zero; the vertical term still earns its keep
-    /// on a page shorter than the viewport at fit-width — a landscape page in
-    /// a portrait slot. Without this it pins to the top and the empty room all
-    /// falls to one side.
+    /// Both terms earn their keep now that the floor is fit-page: below
+    /// fit-width — reachable in a landscape viewport — the side room splits
+    /// evenly instead of pinning the page to the leading edge, and the
+    /// vertical term does the same for a page shorter than the viewport.
     /// `contentInset` is the mechanism rather than a content transform, because
     /// it moves only where the scroll view may rest, leaving content
     /// coordinates — and therefore page space and the boundary layer — alone.
@@ -592,7 +657,7 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
             liftedLayerID = nil
             pendingLift = nil
             // Back to the cheap path: an opaque canvas is one fewer full-screen
-            // blend per frame.
+            // blend per frame, and its background is the paper again.
             if isViewLoaded {
                 canvasView.backgroundColor = .white
                 canvasView.isOpaque = true
@@ -749,7 +814,10 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         guard backdrop == nil else { return }
         canvasView.backgroundColor = .clear
         canvasView.isOpaque = false
-        view.backgroundColor = .white
+        // The backdrop paints its own paper at the page rect; the view behind
+        // everything shows the same dark the margin strips show, so the
+        // gutter is one colour with or without a stack.
+        view.backgroundColor = .systemGray5
         let installed = PageBackdrop(under: canvasView, in: view, geometry: geometry)
         installed.viewportChanged(to: view.bounds)
         installed.mirror(offset: canvasView.contentOffset, zoom: canvasView.zoomScale)
