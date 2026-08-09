@@ -93,6 +93,58 @@ struct LensTests {
         #expect(sharp.builtOffMain, "the lens must render off the main thread")
     }
 
+    @Test("A page whose whole picture is paper still gets a lens, and it is re-stroked")
+    func paperGetsALensAndItIsSharp() async throws {
+        let scratch = try TestScratch("lens")
+        let renderer = StaticLayerRenderer(store: scratch.store)
+        func request(at scale: Double) -> StaticLayerRequest {
+            StaticLayerRequest(
+                pageID: Self.pageID,
+                layers: [],
+                geometry: Self.stripeGeometry,
+                template: .lined,
+                pixelsPerPagePoint: scale
+            )
+        }
+
+        // The base at one pixel per page point: a half-point rule covers half
+        // a device row and can only land as a blend. This is what deep zoom
+        // shows scaled up — soft by construction, exactly as the stripe
+        // fixture above is.
+        guard case .composited(let soft) = await renderer.composite(for: request(at: 1)) else {
+            Issue.record("a templated page with no layers did not composite")
+            return
+        }
+        let blended = pixel(soft.image, x: 200, y: 72)
+        #expect(
+            blended.r > 175 && blended.r < 245,
+            "at 1 px/pt a 0.5 pt rule must blend with the page (got \(blended))"
+        )
+
+        // The lens at two pixels per page point over the page's top-left
+        // quarter. Without the emptiness guard in `renderLens` this is
+        // `.empty` and a ruled page is soft at every depth forever.
+        let render = await renderer.lens(
+            for: request(at: 2), visibleRect: CGRect(x: 0, y: 0, width: 100, height: 100)
+        )
+        guard case .composited(let sharp) = render else {
+            Issue.record("a templated page with no layers rendered no lens: \(render)")
+            return
+        }
+        #expect(sharp.image.width == 200 && sharp.image.height == 200)
+        #expect(sharp.builtOffMain, "the lens must render off the main thread")
+
+        // The rule re-stroked at the settled scale: one device row at full
+        // strength, with bare page either side of it. The scaled-up base would
+        // have shown the blend above across two rows instead.
+        let rule = pixel(sharp.image, x: 100, y: 144)
+        #expect(rule.r < 175, "the lens must re-stroke the rule, not resample it (got \(rule))")
+        #expect(isWhite(pixel(sharp.image, x: 100, y: 145)), "one device row, not two")
+        #expect(isWhite(pixel(sharp.image, x: 100, y: 143)))
+        // And between two rules there is nothing at all.
+        #expect(isWhite(pixel(sharp.image, x: 100, y: 168)))
+    }
+
     @Test("The lens renders the rect it was asked about, not the page origin")
     func theLensIsTheVisibleRect() async throws {
         let scratch = try TestScratch("lens")

@@ -441,7 +441,11 @@ package actor StaticLayerRenderer {
         visibleRect: CGRect,
         store: any DocumentStoring
     ) async -> StaticLayerRender {
-        guard !request.layers.isEmpty else { return .empty }
+        // The same emptiness rule the composite applies, and it has to be here
+        // too: without it a templated blank page answers `.empty` from *every*
+        // lens, so its paper would stay soft at every depth while a page
+        // carrying one image went sharp.
+        guard !request.layers.isEmpty || request.template != .blank else { return .empty }
         let builtOffMain = pthread_main_np() == 0
 
         let scale = request.pixelsPerPagePoint
@@ -476,6 +480,19 @@ package actor StaticLayerRenderer {
         context.translateBy(x: 0, y: CGFloat(heightPixels))
         context.scaleBy(x: scale, y: -scale)
         context.translateBy(x: -visibleRect.minX, y: -visibleRect.minY)
+
+        // The paper, re-**stroked** at the settled scale rather than resampled
+        // from the base's pixels. That is what makes ruled paper genuinely
+        // resolution-independent at any zoom — a property a pre-rendered paper
+        // image could not have — and it is why `clippedTo` exists: a lens two
+        // hundred points tall on a long page emits the rules it shows and not
+        // the hundreds above them.
+        PaperTemplateRenderer.draw(
+            request.effectiveTemplate,
+            in: context,
+            pageSize: CGSize(width: request.geometry.width, height: request.geometry.height),
+            clippedTo: visibleRect
+        )
 
         for layer in request.layers {
             // One checkpoint per layer, for the reason `render` has one.

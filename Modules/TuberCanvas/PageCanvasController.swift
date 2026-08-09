@@ -146,6 +146,22 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
     /// only to know what to render.
     private var staticLayers: [LayerEnvelope] = []
 
+    /// The paper beneath this page, as the document has it. Told by
+    /// `PagedCanvasController` exactly as the shape tool is — one setting for
+    /// the document, never a per-page question this controller could ask.
+    ///
+    /// `.blank` until it is told otherwise, which is the honest default rather
+    /// than a placeholder: a runtime with no document behind it draws no
+    /// paper, and that is precisely the page that must cost nothing.
+    ///
+    /// Read raw by every guard in this file, and that is correct even where a
+    /// `pdf` layer suppresses the paper: suppression only happens when the
+    /// layer list is non-empty, so every `!staticLayers.isEmpty || template !=
+    /// .blank` is already true by its first disjunct in exactly that case. The
+    /// resolved value is `StaticLayerRequest.effectiveTemplate`, read only by
+    /// the two draw calls in the renderer.
+    private var template: PageTemplate = .blank
+
     /// Selection and the transform gesture, built only for a page that carries
     /// something selectable. See `LayerSelectionRuntime`: like the shape tool
     /// and the backdrop it is this controller's own runtime rather than a
@@ -856,7 +872,7 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
             pageID: pageID,
             layers: layersToComposite,
             geometry: geometry,
-            template: .blank,
+            template: template,
             pixelsPerPagePoint: scale
         )
         guard request != renderedRequest else { return }
@@ -975,7 +991,12 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
     /// with nothing beneath their ink — the blank-page path pays one nil
     /// check.
     private func requestLensIfNeeded() {
-        guard backdrop != nil, let staticRenderer, !staticLayers.isEmpty else { return }
+        // Ruled paper is worth a lens for the same reason a worksheet is: the
+        // lens re-strokes it at the settled scale. A page that is genuinely
+        // blank still pays one nil check and nothing else.
+        guard backdrop != nil, let staticRenderer,
+              !staticLayers.isEmpty || template != .blank
+        else { return }
         guard selection?.selectedLayerID == nil else { return }
         guard let base = renderedRequest?.pixelsPerPagePoint ?? compositeScale() else { return }
 
@@ -1007,7 +1028,7 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
             pageID: pageID,
             layers: layersToComposite,
             geometry: geometry,
-            template: .blank,
+            template: template,
             pixelsPerPagePoint: lensScale
         )
         lensGeneration += 1
