@@ -861,56 +861,6 @@ struct PDFLayerTests {
         #expect(!FileManager.default.fileExists(atPath: scratch.layerURL(unwritten.layerID).path))
     }
 
-    // MARK: - Migration: read three forms, write one
-
-    @Test("A phase 2 page file with an image layer loads, then splits on its next save")
-    func aPhase2PageSplitsOnItsNextSave() async throws {
-        let scratch = try TestScratch("pdf")
-        let store = scratch.freshStore()
-        let pageID = UUID()
-        let assetID = UUID()
-        try await store.writeAsset(Data([0x89, 0x50]), assetID: assetID, format: .heic)
-
-        let image = try LayerEnvelope.image(
-            layerID: UUID(),
-            ref: ImageLayerRef(assetID: assetID, format: .heic),
-            pageSpaceTransform: .fittingSource(
-                width: 100, height: 50,
-                inPageOfWidth: PageGeometry.canonical.width, height: PageGeometry.canonical.height
-            )
-        )
-        let ink = inkEnvelope(payload: Data([0x01]))
-        try scratch.writeInlinePageFile(pageID, layers: [image, ink])
-        let documentIndex = scratch.index(pageIDs: [pageID])
-        try scratch.writeIndexFile(documentIndex)
-
-        // It loads in the old form, with no layers/ files at all.
-        let loaded = try await scratch.freshStore().loadPage(pageID)
-        #expect(loaded.staticLayers.map(\.layerID) == [image.layerID])
-        #expect(!FileManager.default.fileExists(atPath: scratch.layerURL(ink.layerID).path))
-
-        // The next save writes it forward. Only the ink changed, but a page
-        // that has never been split writes *all* of its layers forward — none
-        // of them has a file yet, so a minimal write would dangle.
-        let newInk = inkEnvelope(layerID: ink.layerID, payload: Data([0x02]))
-        try await scratch.freshStore().save(
-            index: documentIndex,
-            pages: [
-                PageWrite(
-                    pageID: pageID,
-                    layers: [image, newInk],
-                    changedLayerIDs: [newInk.layerID]
-                )
-            ]
-        )
-
-        #expect(FileManager.default.fileExists(atPath: scratch.layerURL(image.layerID).path))
-        #expect(FileManager.default.fileExists(atPath: scratch.layerURL(ink.layerID).path))
-        let reloaded = try await scratch.freshStore().loadPage(pageID)
-        #expect(reloaded.inkData == Data([0x02]))
-        #expect(reloaded.staticLayers.map(\.layerID) == [image.layerID])
-    }
-
     // MARK: - The exit test
 
     /// **The exit test for phase 3, and the reason the split lands here.**
@@ -1140,21 +1090,8 @@ struct PDFLayerTests {
     }
 }
 
-/// The fixtures only this suite needs: the superseded inline page form, an
-/// index written without the store, and a count of the assets on disk.
+/// The fixtures only this suite needs: a count of the assets on disk.
 private extension TestScratch {
-    /// The phase 1–2 form: envelopes inline in the page file. Production code
-    /// can read it and can never write it, so the fixture lives here.
-    func writeInlinePageFile(_ pageID: UUID, layers: [LayerEnvelope]) throws {
-        struct InlinePageFile: Encodable {
-            let pageID: UUID
-            let layers: [LayerEnvelope]
-        }
-        try TestScratch.binaryEncoder()
-            .encode(InlinePageFile(pageID: pageID, layers: layers))
-            .write(to: pageURL(pageID), options: .atomic)
-    }
-
     func assetFileCount() throws -> Int {
         guard FileManager.default.fileExists(atPath: assetsURL.path) else { return 0 }
         return try FileManager.default.contentsOfDirectory(

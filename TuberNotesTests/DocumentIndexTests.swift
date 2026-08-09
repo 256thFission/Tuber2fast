@@ -70,7 +70,16 @@ struct DocumentIndexTests {
 
         #expect(decoded == original)
         #expect(decoded.layerIDs == original.layerIDs)
-        #expect(decoded.inlineLayers == nil)
+
+        // Both halves of `Codable` are synthesized now that one form is read,
+        // so the key set is exactly the two stored properties — asserted rather
+        // than assumed, because nothing else here would notice a third.
+        let raw = try PropertyListSerialization.propertyList(
+            from: try encoder.encode(original),
+            options: [],
+            format: nil
+        ) as? [String: Any]
+        #expect(Set((raw ?? [:]).keys) == ["pageID", "layerIDs"])
     }
 
     /// Only version 1 opens, and every other number is refused by name — the

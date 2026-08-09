@@ -136,9 +136,7 @@ package actor DocumentStore {
     /// ones** — a strictly larger set than "what the pages name", so it can
     /// only ever be more conservative. That is deliberate. An orphan layer file
     /// pinning an asset costs bytes; a live layer whose asset was reclaimed
-    /// underneath it costs the document. Pre-split page files still carry their
-    /// envelopes inline, so those are scanned too and a document part-way
-    /// through migration is answered correctly.
+    /// underneath it costs the document.
     ///
     /// **When it cannot tell, it deletes nothing.** A layer whose kind or
     /// payload this build cannot open might reference any asset, so one
@@ -156,16 +154,6 @@ package actor DocumentStore {
     package func deleteAssetIfUnreferenced(assetID: UUID, format: AssetFormat) throws -> Bool {
         let url = assetURL(assetID, format)
         guard FileManager.default.fileExists(atPath: url.path) else { return false }
-
-        // Pre-split page files, whose envelopes are still inline.
-        for pageFile in try plistFiles(in: pagesDirectoryURL) {
-            let page = try PropertyListDecoder().decode(
-                PageFile.self,
-                from: Data(contentsOf: pageFile)
-            )
-            guard let inline = page.inlineLayers else { continue }
-            if Self.references(assetID, in: inline) { return false }
-        }
 
         for layerFile in try plistFiles(in: layersDirectoryURL) {
             let layer = try PropertyListDecoder().decode(
@@ -388,20 +376,14 @@ package actor DocumentStore {
         )
     }
 
-    /// One page's layer envelopes, wherever they live.
-    ///
-    /// A page file in the current form names its layers and they are one file
-    /// each; a page file written before phase 3 carries them inline and is read
-    /// exactly as written until its next save moves it forward. Both produce
-    /// the same list, so everything downstream of here — validation, refusal
-    /// scoping, the save path's checks — is blind to which form it came from.
+    /// One page's layer envelopes: the page file names them, in order, and each
+    /// is its own file under `layers/`.
     ///
     /// **A dangling layer ref is fatal, an orphan layer file is inert.** The
     /// same rule as page files, one level down: a named layer that is not there
     /// throws, and a layer file nothing names is simply never read.
     private func layers(of page: PageFile) throws -> [LayerEnvelope] {
-        if let inline = page.inlineLayers { return inline }
-        return try page.layerIDs.map { layerID in
+        try page.layerIDs.map { layerID in
             let url = layerURL(layerID)
             guard FileManager.default.fileExists(atPath: url.path) else {
                 throw LayerError.missingLayerFile(pageID: page.pageID, layerID: layerID)
@@ -752,15 +734,14 @@ package actor DocumentStore {
         let existing = try existingPageFile(write.pageID)
         let layerIDs = write.layers.map(\.layerID)
 
-        // A page file this build has not split yet writes all of its layers
-        // forward, whatever the caller claims changed — the caller is talking
-        // about envelope *values*, and none of these layers has a file yet.
-        // Phase 1's write-forward precedent, one level down: read the old form,
-        // write the new one on the page's next save, never migrate eagerly.
-        let isAlreadySplit = existing.map { $0.inlineLayers == nil } ?? false
-        let layersToWrite = isAlreadySplit
-            ? write.layers.filter { write.changedLayerIDs.contains($0.layerID) }
-            : write.layers
+        // A page with no file on disk yet writes all of its layers, whatever
+        // the caller claims changed — the caller is talking about envelope
+        // *values*, and none of this page's layers has a file for an unchanged
+        // one to be already durable in. Every other page writes exactly the
+        // changed set.
+        let layersToWrite = existing == nil
+            ? write.layers
+            : write.layers.filter { write.changedLayerIDs.contains($0.layerID) }
 
         // The caller's claim about what changed, checked rather than trusted: a
         // layer this write neither carries nor finds on disk would become a
@@ -776,9 +757,9 @@ package actor DocumentStore {
 
         // The page file is bytes about identity and order alone, so it is
         // rewritten exactly when identity or order changed — or when the file
-        // is in a superseded form, or absent.
+        // is absent.
         let pageFileNeedsWriting = existing.map {
-            $0.inlineLayers != nil || $0.layerIDs != layerIDs || $0.pageID != write.pageID
+            $0.layerIDs != layerIDs || $0.pageID != write.pageID
         } ?? true
 
         return PagePlan(
@@ -830,13 +811,6 @@ package actor DocumentStore {
     ) throws {
         guard let existing else { return }
         let kept = Set(layerIDs)
-
-        if let inline = existing.inlineLayers {
-            for layer in inline where !kept.contains(layer.layerID) {
-                try refuseIfUnrewritable(layer, pageID: pageID)
-            }
-            return
-        }
 
         for layerID in existing.layerIDs where !kept.contains(layerID) {
             let url = layerURL(layerID)

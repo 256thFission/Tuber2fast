@@ -4,11 +4,11 @@ import Testing
 @testable import TuberStore
 import UIKit
 
-/// Phase 1 of `Docs/Forks/CanvasFeatureComplete.md`: the page's durable form
-/// is an ordered layer list, envelopes inlined in the page file, with `ink`
-/// the only kind. These tests pin the envelope round-trip, the legacy
-/// read-forward path, the layer invariants failing loud, and unknown kinds
-/// refusing the layer — not the document — while the page refuses input.
+/// The page's durable form is an ordered layer list, one envelope per file
+/// under `layers/`. These tests pin the envelope round-trip, a page file
+/// naming no layers surfacing as unreadable, the layer invariants failing
+/// loud, and unknown kinds refusing the layer — not the document — while the
+/// page refuses input.
 @Suite("Layer envelopes")
 struct LayerEnvelopeTests {
 
@@ -37,141 +37,16 @@ struct LayerEnvelopeTests {
         #expect(decodedPage == page)
     }
 
-    // MARK: - Legacy page files read forward
+    // MARK: - A page file naming no layers is unreadable
 
-    @Test("A pre-layer page file decodes as a one-ink-layer page")
-    func legacyPageFileDecodesAsAOneInkLayerPage() throws {
-        let ink = Data([0x0A, 0x0B, 0x0C])
-        let legacy = LegacyPageFile(pageID: UUID(), drawingData: ink)
-        let decoded = try PropertyListDecoder().decode(
-            PageFile.self,
-            from: TestScratch.binaryEncoder().encode(legacy)
-        )
-
-        #expect(decoded.pageID == legacy.pageID)
-        // A pre-split page file carries its envelopes itself, so they arrive
-        // inline rather than as names of files in `layers/`.
-        let inline = try #require(decoded.inlineLayers)
-        #expect(inline.count == 1)
-        #expect(inline[0].recognizedKind == .ink)
-        #expect(inline[0].payload == ink)
-        #expect(inline[0].pageSpaceTransform.isIdentity)
-        #expect(decoded.layerIDs == [inline[0].layerID])
-    }
-
-    @Test("A phase 1–2 page file decodes with its envelopes inline")
-    func inlinePageFileDecodesWithItsEnvelopesInline() throws {
-        let envelope = LayerEnvelope(
-            layerID: UUID(),
-            kind: .ink,
-            payload: Data([0x11, 0x22]),
-            pageSpaceTransform: .identity
-        )
-        let inlineForm = InlinePageFile(pageID: UUID(), layers: [envelope])
-        let decoded = try PropertyListDecoder().decode(
-            PageFile.self,
-            from: TestScratch.binaryEncoder().encode(inlineForm)
-        )
-
-        #expect(decoded.pageID == inlineForm.pageID)
-        #expect(decoded.inlineLayers == [envelope])
-        #expect(decoded.layerIDs == [envelope.layerID])
-    }
-
-    /// Three forms are read; exactly one is written. Re-encoding anything the
-    /// decoder produced yields the current form, so no code path can put a
-    /// superseded form back on disk.
-    @Test("Re-encoding a page file read in any older form writes the current form")
-    func reEncodingAnyFormWritesTheCurrentForm() throws {
-        let pageID = UUID()
-        let envelope = LayerEnvelope(
-            layerID: UUID(),
-            kind: .ink,
-            payload: Data([0x33]),
-            pageSpaceTransform: .identity
-        )
-        let older: [Data] = [
-            try TestScratch.binaryEncoder()
-                .encode(LegacyPageFile(pageID: pageID, drawingData: Data([0x33]))),
-            try TestScratch.binaryEncoder()
-                .encode(InlinePageFile(pageID: pageID, layers: [envelope])),
-        ]
-
-        for bytes in older {
-            let decoded = try PropertyListDecoder().decode(PageFile.self, from: bytes)
-            let rewritten = try PropertyListSerialization.propertyList(
-                from: try TestScratch.binaryEncoder().encode(decoded),
-                format: nil
-            ) as? [String: Any]
-            #expect(rewritten?["layerIDs"] != nil)
-            #expect(rewritten?["layers"] == nil)
-            #expect(rewritten?["drawingData"] == nil)
-        }
-    }
-
-    @Test("A pre-layer page file loads through the store")
-    func legacyPageFileLoadsThroughTheStore() async throws {
+    @Test("A page file with no layer list throws on decode rather than reading as blank")
+    func pageFileWithNoLayerListThrows() async throws {
         let scratch = try TestScratch("layer")
         let pageID = UUID()
-        let ink = Data([0x01, 0x02, 0x03])
-        try scratch.writeLegacyPageFile(pageID, drawingData: ink)
-        try scratch.writeIndexFile(scratch.index(pageIDs: [pageID]))
-
-        let loaded = try await scratch.freshStore().loadPage(pageID)
-        #expect(loaded.inkData == ink)
-        #expect(loaded.refusedLayers.isEmpty)
-    }
-
-    /// Write-forward, not eager migration: saving one page rewrites that page
-    /// in the layered form and leaves the other page's legacy bytes untouched
-    /// — which is also the save path still writing only changed pages.
-    @Test("A save writes the layered form forward and touches only changed pages")
-    func saveWritesForwardAndTouchesOnlyChangedPages() async throws {
-        let scratch = try TestScratch("layer")
-        let changed = UUID()
-        let untouched = UUID()
-        try scratch.writeLegacyPageFile(changed, drawingData: Data([0x01]))
-        try scratch.writeLegacyPageFile(untouched, drawingData: Data([0x02]))
-        let documentIndex = scratch.index(pageIDs: [changed, untouched])
-        try scratch.writeIndexFile(documentIndex)
-        let untouchedBytesBefore = try Data(contentsOf: scratch.pageURL(untouched))
-
-        let store = scratch.freshStore()
-        _ = try await store.load()
-        try await store.save(
-            index: documentIndex,
-            changedPages: [changed: inkLayer(Data([0x03]))]
-        )
-
-        // The changed page is now in the split form on disk...
-        let raw = try PropertyListSerialization.propertyList(
-            from: Data(contentsOf: scratch.pageURL(changed)),
-            format: nil
-        ) as? [String: Any]
-        #expect(raw?["layerIDs"] != nil, "the saved page was not written forward to the split form")
-        #expect(raw?["layers"] == nil, "the saved page still carries inline envelopes")
-        #expect(raw?["drawingData"] == nil, "the saved page still carries the pre-layer field")
-        #expect(try await store.loadPage(changed).inkData == Data([0x03]))
-
-        // ...with its ink in a layer file the page file names, which is what
-        // "written forward" now has to mean.
-        let writtenIDs = try #require(raw?["layerIDs"] as? [String])
-        let firstWritten = try #require(writtenIDs.first)
-        let inkLayerID = try #require(UUID(uuidString: firstWritten))
-        #expect(FileManager.default.fileExists(atPath: scratch.layerURL(inkLayerID).path))
-
-        // ...and the unchanged page's bytes were not touched at all.
-        #expect(try Data(contentsOf: scratch.pageURL(untouched)) == untouchedBytesBefore)
-    }
-
-    @Test("A corrupt pre-layer page file throws on decode rather than reading as blank")
-    func corruptLegacyPageFileThrows() async throws {
-        let scratch = try TestScratch("layer")
-        let pageID = UUID()
-        // The legacy shape with its drawing bytes missing: a truncated or
+        // A page file carrying its own ID and nothing else: a truncated or
         // hand-damaged file, not an unknown kind — there is no layer to
         // refuse, so the whole page is unreadable.
-        try scratch.writeCorruptLegacyPageFile(pageID)
+        try scratch.writePageFileWithNoLayerList(pageID)
         try scratch.writeIndexFile(scratch.index(pageIDs: [pageID]))
 
         #expect(throws: (any Error).self) {
@@ -185,12 +60,12 @@ struct LayerEnvelopeTests {
         }
     }
 
-    @Test("A corrupt pre-layer page surfaces as unreadable and refuses ink")
+    @Test("A page whose file names no layers surfaces as unreadable and refuses ink")
     @MainActor
-    func corruptLegacyPageRefusesInk() async throws {
+    func pageFileWithNoLayerListRefusesInk() async throws {
         let scratch = try TestScratch("layer")
         let pageID = UUID()
-        try scratch.writeCorruptLegacyPageFile(pageID)
+        try scratch.writePageFileWithNoLayerList(pageID)
         try scratch.writeIndexFile(scratch.index(pageIDs: [pageID]))
 
         let session = EditorSession(store: scratch.freshStore(), debounce: .milliseconds(20))
@@ -417,40 +292,11 @@ struct LayerEnvelopeTests {
 
 }
 
-/// The pre-layer page form, byte for byte what a version-2 document wrote
-/// before phase 1: `{ pageID, drawingData }`.
-private struct LegacyPageFile: Codable {
-    let pageID: UUID
-    let drawingData: Data
-}
-
-/// The phase 1–2 page form: `{ pageID, layers }`, envelopes inline. Owned by
-/// the tests for the same reason `LegacyPageFile` is — a superseded form that
-/// production code can read and must never write.
-private struct InlinePageFile: Codable {
-    let pageID: UUID
-    let layers: [LayerEnvelope]
-}
-
-/// The superseded durable forms. Production code can read each and can write
-/// none of them, which is what makes write-forward a fact rather than a
-/// discipline — and the reason these fixtures have to exist here.
 private extension TestScratch {
-    /// The phase 1–2 form: envelopes inline in the page file, no `layers/`
-    /// directory involved.
-    func writeInlinePageFile(_ pageID: UUID, layers: [LayerEnvelope]) throws {
-        let inline = InlinePageFile(pageID: pageID, layers: layers)
-        try TestScratch.binaryEncoder().encode(inline).write(to: pageURL(pageID), options: .atomic)
-    }
-
-    func writeLegacyPageFile(_ pageID: UUID, drawingData: Data) throws {
-        let legacy = LegacyPageFile(pageID: pageID, drawingData: drawingData)
-        try TestScratch.binaryEncoder().encode(legacy).write(to: pageURL(pageID), options: .atomic)
-    }
-
-    /// The legacy shape with its drawing bytes missing entirely: neither
-    /// `layers` nor `drawingData`, so decoding must throw.
-    func writeCorruptLegacyPageFile(_ pageID: UUID) throws {
+    /// A page file carrying its own ID and no layer list at all — what a
+    /// truncated or hand-damaged file looks like. `PageFile` requires
+    /// `layerIDs`, so decoding it must throw.
+    func writePageFileWithNoLayerList(_ pageID: UUID) throws {
         let plist: [String: Any] = ["pageID": pageID.uuidString]
         let data = try PropertyListSerialization.data(
             fromPropertyList: plist,

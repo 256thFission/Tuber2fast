@@ -132,14 +132,12 @@ final class TestScratch {
     }
 
     /// One page's layer envelopes as they are on disk, read the way the store
-    /// reads them: the page file names the layers, each layer is its own file
-    /// unless the page is still in the inline form.
+    /// reads them: the page file names the layers and each is its own file.
     func layersOnDisk(ofPage pageID: UUID) throws -> [LayerEnvelope] {
         let page = try PropertyListDecoder().decode(
             PageFile.self,
             from: Data(contentsOf: pageURL(pageID))
         )
-        if let inline = page.inlineLayers { return inline }
         return try page.layerIDs.map { layerID in
             try PropertyListDecoder().decode(
                 LayerEnvelope.self,
