@@ -46,7 +46,7 @@ struct PDFLayerRenderTests {
             renderer,
             request: StaticLayerRequest(
                 pageID: Self.pageID,
-                layers: [layer], geometry: Self.quadrantGeometry, pixelsPerPagePoint: 1
+                layers: [layer], geometry: Self.quadrantGeometry, template: .blank, pixelsPerPagePoint: 1
             )
         )
         #expect(composite.image.width == 120 && composite.image.height == 200)
@@ -77,6 +77,7 @@ struct PDFLayerRenderTests {
                 pageID: Self.pageID,
                 layers: [layer],
                 geometry: PageGeometry(width: 200, height: 120),
+                template: .blank,
                 pixelsPerPagePoint: 1
             )
         )
@@ -104,6 +105,7 @@ struct PDFLayerRenderTests {
                 pageID: Self.pageID,
                 layers: [layer],
                 geometry: .canonical,
+                template: .blank,
                 pixelsPerPagePoint: 1
             )
         )
@@ -134,6 +136,7 @@ struct PDFLayerRenderTests {
                 pageID: Self.pageID,
                 layers: [worksheet, sticker],
                 geometry: Self.quadrantGeometry,
+                template: .blank,
                 pixelsPerPagePoint: 1
             )
         )
@@ -156,7 +159,7 @@ struct PDFLayerRenderTests {
             renderer,
             request: StaticLayerRequest(
                 pageID: Self.pageID,
-                layers: [layer], geometry: Self.quadrantGeometry, pixelsPerPagePoint: 1
+                layers: [layer], geometry: Self.quadrantGeometry, template: .blank, pixelsPerPagePoint: 1
             )
         )
         #expect(composite.byteCount > 0)
@@ -178,7 +181,7 @@ struct PDFLayerRenderTests {
         let render = await renderer.composite(
             for: StaticLayerRequest(
                 pageID: Self.pageID,
-                layers: [layer], geometry: Self.quadrantGeometry, pixelsPerPagePoint: 1
+                layers: [layer], geometry: Self.quadrantGeometry, template: .blank, pixelsPerPagePoint: 1
             )
         )
         guard case .refused = render else {
@@ -199,7 +202,7 @@ struct PDFLayerRenderTests {
         let render = await renderer.composite(
             for: StaticLayerRequest(
                 pageID: Self.pageID,
-                layers: [layer], geometry: Self.quadrantGeometry, pixelsPerPagePoint: 1
+                layers: [layer], geometry: Self.quadrantGeometry, template: .blank, pixelsPerPagePoint: 1
             )
         )
         guard case .refused(let why) = render else {
@@ -232,7 +235,7 @@ struct PDFLayerRenderTests {
         let render = await renderer.composite(
             for: StaticLayerRequest(
                 pageID: Self.pageID,
-                layers: [layer, good], geometry: Self.quadrantGeometry, pixelsPerPagePoint: 1
+                layers: [layer, good], geometry: Self.quadrantGeometry, template: .blank, pixelsPerPagePoint: 1
             )
         )
         guard case .refused(let why) = render else {
@@ -260,7 +263,7 @@ struct PDFLayerRenderTests {
         let render = await renderer.composite(
             for: StaticLayerRequest(
                 pageID: Self.pageID,
-                layers: [layer], geometry: Self.quadrantGeometry, pixelsPerPagePoint: 1
+                layers: [layer], geometry: Self.quadrantGeometry, template: .blank, pixelsPerPagePoint: 1
             )
         )
         guard case .refused = render else {
@@ -284,6 +287,7 @@ struct PDFLayerRenderTests {
                 pageID: Self.pageID,
                 layers: [stranger],
                 geometry: .canonical,
+                template: .blank,
                 pixelsPerPagePoint: 1
             )
         )

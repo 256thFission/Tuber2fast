@@ -55,6 +55,7 @@ struct LensTests {
                 pageID: Self.pageID,
                 layers: [layer],
                 geometry: Self.stripeGeometry,
+                template: .blank,
                 pixelsPerPagePoint: 1
             )
         )
@@ -75,6 +76,7 @@ struct LensTests {
                 pageID: Self.pageID,
                 layers: [layer],
                 geometry: Self.stripeGeometry,
+                template: .blank,
                 pixelsPerPagePoint: 2
             ),
             visibleRect: CGRect(x: 0, y: 0, width: 100, height: 100)
@@ -103,7 +105,7 @@ struct LensTests {
         )
         let request = StaticLayerRequest(
             pageID: Self.pageID,
-            layers: [layer], geometry: PageGeometry(width: 120, height: 200), pixelsPerPagePoint: 2
+            layers: [layer], geometry: PageGeometry(width: 120, height: 200), template: .blank, pixelsPerPagePoint: 2
         )
 
         let render = await renderer.lens(
@@ -134,7 +136,7 @@ struct LensTests {
         let render = await renderer.lens(
             for: StaticLayerRequest(
                 pageID: Self.pageID,
-                layers: [worksheet, sticker], geometry: Self.stripeGeometry, pixelsPerPagePoint: 2
+                layers: [worksheet, sticker], geometry: Self.stripeGeometry, template: .blank, pixelsPerPagePoint: 2
             ),
             visibleRect: CGRect(x: 0, y: 0, width: 100, height: 100)
         )
@@ -162,6 +164,7 @@ struct LensTests {
                 pageID: Self.pageID,
                 layers: [layer],
                 geometry: .canonical,
+                template: .blank,
                 pixelsPerPagePoint: 2
             ),
             visibleRect: CGRect(x: 0, y: 0, width: 120, height: 160)

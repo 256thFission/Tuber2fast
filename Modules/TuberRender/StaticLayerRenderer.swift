@@ -185,6 +185,19 @@ package actor StaticLayerRenderer {
     /// The key is not the whole request: transforms are compared by the stored
     /// `Entry.request` on lookup, so a layer that moved is a miss rather than a
     /// wrong picture.
+    ///
+    /// **The template is deliberately absent, and it is the one omission that
+    /// is a decision rather than a consequence.** A template is one value per
+    /// *document*, so there is never an adjacent page on different paper: two
+    /// composites of one page differing only in template can never both be
+    /// wanted. Leaving it out means a template change **overwrites** the entry
+    /// it supersedes in place — `remember` subtracts the old byte count and
+    /// assigns — rather than parking an orphan beside it that only the byte
+    /// bound would ever collect. Nothing stale is served in the meantime: the
+    /// hit path above compares the *whole* stored request, and the in-flight
+    /// join compares the whole request too, so a render issued before the
+    /// change is never joined by one issued after it. Putting the template in
+    /// here would buy a second entry nobody can ask for.
     private struct CompositeKey: Hashable {
         let pageID: UUID
         let layerIDs: [UUID]
@@ -228,7 +241,10 @@ package actor StaticLayerRenderer {
         // before this ran — five pages into a flick — reaches no decoder at
         // all.
         if Task.isCancelled { return .cancelled }
-        guard !request.layers.isEmpty else { return .empty }
+        // A page with no layers is empty only if it also has no paper. A
+        // templated blank page has nothing in its layer list and is not empty
+        // — it is the case this short-circuit used to be able to assume away.
+        guard !request.layers.isEmpty || request.template != .blank else { return .empty }
         precondition(
             request.pixelsPerPagePoint.isFinite && request.pixelsPerPagePoint > 0,
             "a composite at \(request.pixelsPerPagePoint) pixels per page point is not a level of detail"
@@ -358,7 +374,10 @@ package actor StaticLayerRenderer {
     /// that lands is a cache hit for the next turn rather than wasted work.
     /// Were one ever cancelled, `composite`'s join would carry it through.
     package func warm(_ request: StaticLayerRequest) async {
-        guard !request.layers.isEmpty else { return }
+        // The same emptiness rule `composite` applies: a neighbour that is
+        // blank paper has nothing to warm, and a neighbour that is *ruled*
+        // paper has a composite worth having before the turn lands.
+        guard !request.layers.isEmpty || request.template != .blank else { return }
         let key = CompositeKey(request)
         if let entry = cache[key], entry.request == request { return }
         _ = await composite(for: request)
@@ -987,6 +1006,17 @@ package actor StaticLayerRenderer {
         context.translateBy(x: 0, y: CGFloat(heightPixels))
         context.scaleBy(x: scale, y: -scale)
 
+        // The paper, beneath every layer and above nothing but the white fill.
+        // `effectiveTemplate` rather than `template`: a page is a PDF or it is
+        // paper, and this call and the one in `renderLens` are the only two
+        // places that rule is read.
+        PaperTemplateRenderer.draw(
+            request.effectiveTemplate,
+            in: context,
+            pageSize: CGSize(width: request.geometry.width, height: request.geometry.height),
+            clippedTo: CGRect(x: 0, y: 0, width: request.geometry.width, height: request.geometry.height)
+        )
+
         for entry in placed {
             context.saveGState()
             // The durable transform maps the image's own extent, taken as the
@@ -1067,10 +1097,12 @@ package actor StaticLayerRenderer {
 
 // MARK: - The values that cross the boundary
 
-/// What the canvas runtime asks the renderer for: one page's static layers, in
-/// order, and the level of detail to flatten them at.
+/// What the canvas runtime asks the renderer for: whose page, one page's
+/// static layers in order, the paper beneath them, and the level of detail to
+/// flatten it all at.
 ///
-/// Carries no page identity, by design — see `StaticLayerRenderer.CompositeKey`.
+/// The line that used to be here said it carried no page identity by design.
+/// It carried one already — that claim outlived its truth by a commit.
 package struct StaticLayerRequest: Sendable, Equatable {
     /// Whose page this is. Not used to *find* anything on disk — this renderer
     /// still reads only the assets its layers name — but it is the identity
@@ -1091,10 +1123,38 @@ package struct StaticLayerRequest: Sendable, Equatable {
     /// page are a different picture.
     let geometry: PageGeometry
 
+    /// The document's paper, **as the index has it**. Never resolved here —
+    /// see `effectiveTemplate`.
+    ///
+    /// It is the document's rather than the page's, so it arrives the way the
+    /// active shape tool does: told to the runtime once and carried into every
+    /// request the runtime builds.
+    let template: PageTemplate
+
     /// Composite pixels per page point. Fit-width times the display scale, so
     /// the texture is pixel-exact at the scale the page opens at and merely
     /// soft when zoomed past it.
     package let pixelsPerPagePoint: Double
+
+    /// What actually gets drawn: `.blank` whenever a `pdf` layer is present,
+    /// because **a page is a PDF or it is paper**, never both.
+    ///
+    /// **The one place that rule lives**, read by `render` and by `renderLens`
+    /// and by nothing else. It is a rule about the picture and not about the
+    /// file: `template` above stays exactly as the document wrote it, so
+    /// deleting the `pdf` layer reveals the paper the document already said it
+    /// had, and there is no durable state in which a page is both.
+    ///
+    /// **The suppression is local, and provably so.** It bites only when a
+    /// `pdf` layer exists — that is, only when the layer list is non-empty —
+    /// so every "does this page need a backdrop, a lens, a warm" guard may
+    /// read the raw `template` and be correct either way: `!layers.isEmpty ||
+    /// template != .blank` is already true by its first disjunct in exactly
+    /// the case this suppresses. Keep it that way; two more readers of this
+    /// property would be two more places the rule could disagree with itself.
+    var effectiveTemplate: PageTemplate {
+        layers.contains { $0.recognizedKind == .pdf } ? .blank : template
+    }
 
     // Spelled out because a memberwise initializer is `internal` however
     // visible its type is, and the canvas runtime builds the request.
@@ -1102,11 +1162,13 @@ package struct StaticLayerRequest: Sendable, Equatable {
         pageID: UUID,
         layers: [LayerEnvelope],
         geometry: PageGeometry,
+        template: PageTemplate,
         pixelsPerPagePoint: Double
     ) {
         self.pageID = pageID
         self.layers = layers
         self.geometry = geometry
+        self.template = template
         self.pixelsPerPagePoint = pixelsPerPagePoint
     }
 }
@@ -1128,8 +1190,12 @@ package struct StaticComposite: Sendable {
 /// What a page's static stack renders as. Four outcomes and no fifth: there
 /// is deliberately no "partially rendered" case.
 package enum StaticLayerRender: Sendable {
-    /// The page has no static layers. Not a failure — it is every page in a
-    /// blank notebook, and it is the case that must cost nothing.
+    /// The page has no static layers **and** blank paper. Not a failure — it
+    /// is every page of a blank notebook on blank paper, and it is the case
+    /// that must cost nothing.
+    ///
+    /// It used to be "no static layers" alone. A templated page has nothing in
+    /// its layer list and is not empty: its whole picture is the paper.
     case empty
     case composited(StaticComposite)
     /// The stack could not be rendered honestly. The page shows a refusal

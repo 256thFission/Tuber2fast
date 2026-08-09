@@ -73,6 +73,7 @@ struct PrefetchWarmTests {
             pageID: session.pageIDForTesting(at: 4),
             layers: [decorated],
             geometry: .canonical,
+            template: .blank,
             pixelsPerPagePoint: detail
         )
         let warmed = await renderer.composite(for: request)
@@ -113,11 +114,11 @@ struct PrefetchWarmTests {
         let neighbour = try await scratch.imageLayer(color: .green)
         let visibleRequest = StaticLayerRequest(
             pageID: visiblePage,
-            layers: [visible], geometry: .canonical, pixelsPerPagePoint: 1
+            layers: [visible], geometry: .canonical, template: .blank, pixelsPerPagePoint: 1
         )
         let neighbourRequest = StaticLayerRequest(
             pageID: neighbourPage,
-            layers: [neighbour], geometry: .canonical, pixelsPerPagePoint: 1
+            layers: [neighbour], geometry: .canonical, template: .blank, pixelsPerPagePoint: 1
         )
 
         guard case .composited(let shown) = await renderer.composite(for: visibleRequest) else {
@@ -154,18 +155,21 @@ struct PrefetchWarmTests {
             pageID: pageID,
             layers: [layer],
             geometry: .canonical,
+            template: .blank,
             pixelsPerPagePoint: 1.0
         )
         let b = StaticLayerRequest(
             pageID: pageID,
             layers: [layer],
             geometry: .canonical,
+            template: .blank,
             pixelsPerPagePoint: 0.9
         )
         let c = StaticLayerRequest(
             pageID: pageID,
             layers: [layer],
             geometry: .canonical,
+            template: .blank,
             pixelsPerPagePoint: 0.8
         )
 

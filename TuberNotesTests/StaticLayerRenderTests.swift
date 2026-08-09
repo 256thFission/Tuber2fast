@@ -112,7 +112,7 @@ struct StaticLayerRenderTests {
         #expect(isWhite(pixel(composite.image, x: 150, y: 400)), "below it is bare page")
     }
 
-    @Test("A page with no static layers renders nothing at all")
+    @Test("A page with no static layers and no paper renders nothing at all")
     func noLayersIsNotAComposite() async throws {
         let scratch = try TestScratch("render")
         let renderer = StaticLayerRenderer(store: scratch.store)
@@ -121,6 +121,7 @@ struct StaticLayerRenderTests {
                 pageID: Self.pageID,
                 layers: [],
                 geometry: .canonical,
+                template: .blank,
                 pixelsPerPagePoint: 1
             )
         )
@@ -129,6 +130,108 @@ struct StaticLayerRenderTests {
             return
         }
         #expect(await renderer.cachedCompositeCount == 0, "nothing to render is nothing to cache")
+    }
+
+    // MARK: - Paper, beneath everything
+
+    @Test("A templated page with no layers is a composite, not an empty page")
+    func templatedPaperIsNotAnEmptyPage() async throws {
+        let scratch = try TestScratch("render")
+        let renderer = StaticLayerRenderer(store: scratch.store)
+        let composite = try await composited(
+            renderer,
+            request: StaticLayerRequest(
+                pageID: Self.pageID,
+                layers: [],
+                geometry: .canonical,
+                template: .lined,
+                pixelsPerPagePoint: 1
+            )
+        )
+        // The paper is the whole picture: there is no layer under it and none
+        // above it, so a marked pixel here can only be the template.
+        #expect(!isWhite(pixel(composite.image, x: 306, y: 72)), "the first rule is missing")
+        #expect(isWhite(pixel(composite.image, x: 306, y: 84)), "there is no rule between two rules")
+        #expect(composite.builtOffMain, "paper is drawn off the main thread like everything else")
+        #expect(await renderer.cachedCompositeCount == 1, "a layer-less composite is still a composite")
+    }
+
+    @Test("The template draws beneath every layer")
+    func theTemplateIsBeneathTheLayers() async throws {
+        let scratch = try TestScratch("render")
+        let renderer = StaticLayerRenderer(store: scratch.store)
+        // A patch covering the page's first rule, and nothing else.
+        let patch = try await scratch.imageLayer(
+            store: scratch.store,
+            color: .green,
+            transform: PageSpaceTransform(a: 200, b: 0, c: 0, d: 40, tx: 0, ty: 60)
+        )
+        let composite = try await composited(
+            renderer,
+            request: StaticLayerRequest(
+                pageID: Self.pageID,
+                layers: [patch],
+                geometry: .canonical,
+                template: .lined,
+                pixelsPerPagePoint: 1
+            )
+        )
+
+        // Where the image covers a rule, the image wins — paper is under the
+        // stack, not over it.
+        #expect(isGreen(pixel(composite.image, x: 100, y: 72)))
+        // Beside the image, at the same rule, the paper still shows: without
+        // this the assertion above would pass on a page with no template at
+        // all.
+        #expect(!isWhite(pixel(composite.image, x: 400, y: 72)), "the rule must exist to be covered")
+    }
+
+    @Test("A page carrying a pdf layer renders identically under any paper")
+    func aPDFPageIsAPDFAndNotPaper() async throws {
+        let scratch = try TestScratch("render")
+        let renderer = StaticLayerRenderer(store: scratch.store)
+        // The imported shape: a source fitted edge to edge, which is the only
+        // placement `importPDF` can produce.
+        let worksheet = try await scratch.pdfLayer(
+            bytes: PDFFixture.stripePDF(side: 400),
+            transform: PageSpaceTransform(a: 400, b: 0, c: 0, d: 400, tx: 0, ty: 0)
+        )
+        let geometry = PageGeometry(width: 400, height: 400)
+
+        func composite(under template: PageTemplate) async throws -> Data {
+            let made = try await composited(
+                StaticLayerRenderer(store: scratch.store),
+                request: StaticLayerRequest(
+                    pageID: Self.pageID,
+                    layers: [worksheet],
+                    geometry: geometry,
+                    template: template,
+                    pixelsPerPagePoint: 1
+                )
+            )
+            return Self.rawBytes(of: made.image)
+        }
+
+        // `Contract.proposed.md` A16: a page is a PDF or it is paper, never
+        // both. The rule lives at `effectiveTemplate` and this is the only
+        // form a test can hold it in — the same pixels, whatever the document
+        // says its paper is.
+        #expect(try await composite(under: .lined) == composite(under: .blank))
+        #expect(try await composite(under: .grid) == composite(under: .blank))
+
+        // And the comparison can tell two composites apart, or it would pass
+        // over a renderer that had stopped drawing templates entirely.
+        let paperOnly = try await composited(
+            renderer,
+            request: StaticLayerRequest(
+                pageID: Self.pageID,
+                layers: [],
+                geometry: geometry,
+                template: .lined,
+                pixelsPerPagePoint: 1
+            )
+        )
+        #expect(try await Self.rawBytes(of: paperOnly.image) != composite(under: .blank))
     }
 
     // MARK: - Decode for the viewport, never for the source
@@ -193,6 +296,7 @@ struct StaticLayerRenderTests {
             pageID: Self.pageID,
             layers: [layer],
             geometry: .canonical,
+            template: .blank,
             pixelsPerPagePoint: 2
         )
         let bound = StaticLayerRenderer.maxPixelSize(of: layer.pageSpaceTransform, at: 2)
@@ -233,12 +337,14 @@ struct StaticLayerRenderTests {
             pageID: Self.pageID,
             layers: [first],
             geometry: .canonical,
+            template: .blank,
             pixelsPerPagePoint: 1
         )
         let requestB = StaticLayerRequest(
             pageID: Self.pageID,
             layers: [second],
             geometry: .canonical,
+            template: .blank,
             pixelsPerPagePoint: 2
         )
 
@@ -273,18 +379,21 @@ struct StaticLayerRenderTests {
             pageID: Self.pageID,
             layers: [layer],
             geometry: .canonical,
+            template: .blank,
             pixelsPerPagePoint: 1.0
         )
         let requestB = StaticLayerRequest(
             pageID: Self.pageID,
             layers: [layer],
             geometry: .canonical,
+            template: .blank,
             pixelsPerPagePoint: 0.9
         )
         let requestC = StaticLayerRequest(
             pageID: Self.pageID,
             layers: [layer],
             geometry: .canonical,
+            template: .blank,
             pixelsPerPagePoint: 0.8
         )
 
@@ -317,12 +426,14 @@ struct StaticLayerRenderTests {
             pageID: Self.pageID,
             layers: [layer],
             geometry: .canonical,
+            template: .blank,
             pixelsPerPagePoint: 1.0
         )
         let requestB = StaticLayerRequest(
             pageID: Self.pageID,
             layers: [layer],
             geometry: .canonical,
+            template: .blank,
             pixelsPerPagePoint: 0.9
         )
         _ = try await composited(renderer, request: requestA)
@@ -336,6 +447,7 @@ struct StaticLayerRenderTests {
             pageID: Self.pageID,
             layers: [layer],
             geometry: .canonical,
+            template: .blank,
             pixelsPerPagePoint: 1.4
         )
         let d = try await composited(renderer, request: big)
@@ -363,6 +475,7 @@ struct StaticLayerRenderTests {
                 pageID: Self.pageID,
                 layers: [$0],
                 geometry: .canonical,
+                template: .blank,
                 pixelsPerPagePoint: 1
             )
         }
@@ -430,6 +543,7 @@ struct StaticLayerRenderTests {
                 pageID: Self.pageID,
                 layers: [layer],
                 geometry: .canonical,
+                template: .blank,
                 pixelsPerPagePoint: 1
             )
         )
@@ -438,6 +552,7 @@ struct StaticLayerRenderTests {
                 pageID: Self.pageID,
                 layers: [layer],
                 geometry: .canonical,
+                template: .blank,
                 pixelsPerPagePoint: 2
             )
         )
@@ -509,12 +624,14 @@ struct StaticLayerRenderTests {
             pageID: Self.pageID,
             layers: [before],
             geometry: .canonical,
+            template: .blank,
             pixelsPerPagePoint: 1
         )
         let freshRequest = StaticLayerRequest(
             pageID: Self.pageID,
             layers: [after],
             geometry: .canonical,
+            template: .blank,
             pixelsPerPagePoint: 1
         )
 
@@ -570,6 +687,7 @@ struct StaticLayerRenderTests {
             pageID: Self.pageID,
             layers: [layer],
             geometry: .canonical,
+            template: .blank,
             pixelsPerPagePoint: 1
         )
 
@@ -607,6 +725,7 @@ struct StaticLayerRenderTests {
             pageID: Self.pageID,
             layers: [layer],
             geometry: .canonical,
+            template: .blank,
             pixelsPerPagePoint: 1
         )
 
@@ -677,6 +796,7 @@ struct StaticLayerRenderTests {
                 pageID: Self.pageID,
                 layers: [good, broken],
                 geometry: .canonical,
+                template: .blank,
                 pixelsPerPagePoint: 1
             )
         )
@@ -705,6 +825,7 @@ struct StaticLayerRenderTests {
                 pageID: Self.pageID,
                 layers: [layer],
                 geometry: .canonical,
+                template: .blank,
                 pixelsPerPagePoint: 1
             )
         )
@@ -731,6 +852,7 @@ struct StaticLayerRenderTests {
                 pageID: Self.pageID,
                 layers: [layer],
                 geometry: .canonical,
+                template: .blank,
                 pixelsPerPagePoint: 1
             )
         )
@@ -1025,6 +1147,7 @@ struct StaticLayerRenderTests {
                 pageID: pageID,
                 layers: layers,
                 geometry: .canonical,
+                template: .blank,
                 pixelsPerPagePoint: 1
             )
         )
@@ -1092,6 +1215,34 @@ struct StaticLayerRenderTests {
         context.translateBy(x: CGFloat(-x), y: CGFloat(y - image.height + 1))
         context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
         return (Int(bytes[0]), Int(bytes[1]), Int(bytes[2]))
+    }
+
+    /// Every pixel of a composite, in a layout this test chooses, so that two
+    /// composites can be compared as bytes rather than sampled a pixel at a
+    /// time.
+    ///
+    /// Redrawn into a context rather than read through `CGImage`'s own data
+    /// provider for the same reason `pixel` is: byte order and alpha
+    /// arrangement are the renderer's business, and a comparison that depended
+    /// on them would fail for reasons that are not about paper.
+    private static func rawBytes(of image: CGImage) -> Data {
+        let bytesPerRow = image.width * 4
+        var bytes = [UInt8](repeating: 0, count: bytesPerRow * image.height)
+        bytes.withUnsafeMutableBytes { buffer in
+            guard let context = CGContext(
+                data: buffer.baseAddress,
+                width: image.width,
+                height: image.height,
+                bitsPerComponent: 8,
+                bytesPerRow: bytesPerRow,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ) else {
+                preconditionFailure("could not build a \(image.width)x\(image.height) comparison context")
+            }
+            context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        }
+        return Data(bytes)
     }
 
     private func near(_ value: Int, _ target: Int) -> Bool { abs(value - target) <= 12 }

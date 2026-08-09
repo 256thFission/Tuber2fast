@@ -856,6 +856,7 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
             pageID: pageID,
             layers: layersToComposite,
             geometry: geometry,
+            template: .blank,
             pixelsPerPagePoint: scale
         )
         guard request != renderedRequest else { return }
@@ -1006,6 +1007,7 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
             pageID: pageID,
             layers: layersToComposite,
             geometry: geometry,
+            template: .blank,
             pixelsPerPagePoint: lensScale
         )
         lensGeneration += 1

@@ -962,6 +962,7 @@ struct MinusOneCompositeTests {
                 pageID: Self.pageID,
                 layers: layers,
                 geometry: .canonical,
+                template: .blank,
                 pixelsPerPagePoint: 1
             )
         )

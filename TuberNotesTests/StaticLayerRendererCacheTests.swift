@@ -24,13 +24,90 @@ import UIKit
 ///
 /// So these tests pin the property rather than the symptom: **retention and
 /// protection are decided by page identity, and a page's layer list has no
-/// say in either.** The layer-less entry that would otherwise expose it is
-/// unreachable until the template is drawn, and it is this behaviour that
-/// makes it safe when it arrives. Revert either condition to a set operation
-/// over layer IDs and both tests below fail, because a page ID is not a layer
-/// ID.
+/// say in either.** Revert either condition to a set operation over layer IDs
+/// and the tests below fail, because a page ID is not a layer ID.
+///
+/// The layer-less entry the defect was really about was unwritable until the
+/// template was drawn — `composite` short-circuited to `.empty` before the
+/// cache was reached, so no such entry could exist to be evicted.
+/// `aTemplatedLayerLessPageIsRetainedByItsPage` is that case, and it is the
+/// one this file was waiting for.
 @Suite("The render cache, by page")
 struct StaticLayerRendererCacheTests {
+
+    @Test("A templated page with no layers is retained and dropped by its page, like any other")
+    func aTemplatedLayerLessPageIsRetainedByItsPage() async throws {
+        let scratch = try TestScratch("cache")
+        let renderer = StaticLayerRenderer(store: scratch.store)
+
+        // No layers at all, so the entry's layer-ID set is empty — and the
+        // empty set is disjoint with every set, which is exactly what the old
+        // eviction asked about.
+        let onScreen = UUID()
+        let request = StaticLayerRequest(
+            pageID: onScreen,
+            layers: [],
+            geometry: .canonical,
+            template: .lined,
+            pixelsPerPagePoint: 1
+        )
+        guard case .composited(let made) = await renderer.composite(for: request) else {
+            Issue.record("a templated page with no layers did not composite")
+            return
+        }
+
+        await renderer.retain(pageIDs: [onScreen])
+        #expect(
+            await renderer.cachedCompositeCount == 1,
+            "the page the user is looking at kept its paper through a retain that named it"
+        )
+        guard case .composited(let again) = await renderer.composite(for: request) else {
+            Issue.record("the composite vanished")
+            return
+        }
+        #expect(again.image === made.image, "it must be the composite already made, not a re-render")
+
+        await renderer.retain(pageIDs: [UUID()])
+        #expect(await renderer.cachedCompositeCount == 0, "and it goes when its page leaves the window")
+        #expect(await renderer.cachedByteCount == 0)
+    }
+
+    @Test("A template change replaces the cached composite rather than adding one")
+    func aTemplateChangeOverwritesItsEntry() async throws {
+        let scratch = try TestScratch("cache")
+        let renderer = StaticLayerRenderer(store: scratch.store)
+        let page = UUID()
+
+        func request(_ template: PageTemplate) -> StaticLayerRequest {
+            StaticLayerRequest(
+                pageID: page,
+                layers: [],
+                geometry: .canonical,
+                template: template,
+                pixelsPerPagePoint: 1
+            )
+        }
+
+        guard case .composited(let ruled) = await renderer.composite(for: request(.lined)) else {
+            Issue.record("the lined page did not composite")
+            return
+        }
+        #expect(await renderer.cachedCompositeCount == 1)
+
+        // The template is deliberately not in the cache key: with one value
+        // per document there is never an adjacent page on other paper, so the
+        // superseded entry can never be wanted again and is overwritten in
+        // place rather than orphaned beside its replacement.
+        guard case .composited(let squared) = await renderer.composite(for: request(.grid)) else {
+            Issue.record("the grid page did not composite")
+            return
+        }
+        #expect(squared.image !== ruled.image, "the new paper must actually be a new picture")
+        #expect(
+            await renderer.cachedCompositeCount == 1,
+            "putting the template in the key would leave the superseded entry behind"
+        )
+    }
     @Test("A composite survives a retain naming its page, and goes when one does not")
     func retentionIsDecidedByPageIdentity() async throws {
         let scratch = try TestScratch("cache")
@@ -42,6 +119,7 @@ struct StaticLayerRendererCacheTests {
             pageID: onScreen,
             layers: [layer],
             geometry: .canonical,
+            template: .blank,
             pixelsPerPagePoint: 1
         )
         guard case .composited(let made) = await renderer.composite(for: request) else {
@@ -83,12 +161,14 @@ struct StaticLayerRendererCacheTests {
             pageID: visiblePage,
             layers: [onScreen],
             geometry: .canonical,
+            template: .blank,
             pixelsPerPagePoint: 1
         )
         let neighbourRequest = StaticLayerRequest(
             pageID: neighbourPage,
             layers: [nextDoor],
             geometry: .canonical,
+            template: .blank,
             pixelsPerPagePoint: 1
         )
 

@@ -752,6 +752,7 @@ final class EditorSession {
                 pageID: pageStates[pageIndex].id,
                 layers: pageStates[pageIndex].staticLayers,
                 geometry: geometry,
+                template: .blank,
                 pixelsPerPagePoint: detail
             )
             Task { await renderer.warm(request) }
