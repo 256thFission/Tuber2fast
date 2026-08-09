@@ -40,7 +40,8 @@ The mechanical half is done. `CanvasLog`'s stderr mirror carries no
 configuration check: `TN_TRACE` is the sole gate, read once per process into a
 `static let`, so a launch that does not set it pays a branch per event and never
 materializes the environment. `Tools/device` grows `--release`, forwards
-`TN_SPIKE_MIRROR_VARIANT` alongside `TN_TRACE`, and its digest looks for a trap
+`TN_TRACE` (and, since the spikes were deleted, nothing else), and its digest
+looks for a trap
 (`Fatal error:`, `Assertion failed:`, `EXC_BAD_ACCESS`, `SIGABRT`,
 `Trace/BPT trap`, and the rest) **before** deciding a stream is empty — a crash
 now reads as a crash. `Tools/device-tests` holds that digest against a fixture
@@ -55,8 +56,13 @@ What is left is the part no build machine can do:
 - **No planted trap has been seen through the fixed digest on real hardware.**
   The fixtures are hand-written consoles, not a console an iPad produced.
 
-Spike 1 variant B answers both at once for free: it is expected to trap, and
-that trap arrives on the same capture as the trace.
+*This paragraph named spike 1 variant B as the vehicle — it was expected to
+trap, so the trap and the trace arrived on one capture. The spikes are
+deleted, and "for free" was already false: variant B needed eight `#if` sites
+reinstalled in `PageCanvasController` before it would install anything. Any
+deliberate trap on device produces the same evidence for one line. The item is
+otherwise unchanged, and this edit is a correction of a reference, not a
+re-plan — revert it if you would rather keep the spike than the paragraph.*
 
 **Exit:** a Release build on a registered iPad, launched with `TN_TRACE` set,
 produces a readable trace, and a real trap on that hardware is reported by the

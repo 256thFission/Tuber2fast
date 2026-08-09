@@ -81,8 +81,8 @@ Phillip's, on hardware.
 
 | Spike | State | Notes |
 |---|---|---|
-| 1. Mirror fidelity | **scaffolded but UNTHREADED, verdict owed** — scaffolding landed `f78a050`; the eight `#if TN_SPIKE_MIRROR` hooks in `PageCanvasController` were removed by Stage 2 item 12, and a re-thread recipe naming all eight sites is recorded in the header of `SpikeMirrorFidelity.swift`. Building with `TN_SPIKE_MIRROR` now compiles the spike and installs nothing; reinstall the hooks first. | Behind `TN_SPIKE_MIRROR`. Variant A: sibling mirrored by one transform per scroll tick. Variant B: inside-`PKCanvasView`, expected to trap. **Phase 2's rendering half ships on the presumption variant A holds**, using the same technique with a `CALayer` rather than a view. |
-| 2. Lens latency | **scaffolded but UNTHREADED, verdict owed** — the one `#if TN_SPIKE_LENS` hook in `TuberNotesApp.swift` (which chose the spike scene) was removed by Stage 2 item 12, and the one-hook re-thread recipe is recorded in the header of `SpikeLensLatency.swift`. Building with `TN_SPIKE_LENS` now compiles the spike and still opens the editor; reinstall the hook first. | Behind `TN_SPIKE_LENS`. The renderer exists now — `OpenPDFDocument` in `PDFSource.swift`, rotation/CropBox-origin/y-flip pinned by pixel tests against byte-exact fixtures. The spike replaces the editor scene with a self-contained scroll-view bench over a dense synthetic worksheet: pinch-settle → visible-rect raster off-main → contents swap on main, one `SPIKE lens settled` line per settle with settle→decode→swap timestamps; `Tools/device`'s digest reprints them. Built and launched in the simulator only — **no latency number exists**, the fixture is synthetic rather than a textbook, and the verdict is Phillip's on hardware. |
+| 1. Mirror fidelity | **DELETED, and its question answered by shipped code.** Scaffolding landed `f78a050`; the eight `#if TN_SPIKE_MIRROR` hooks came out of `PageCanvasController` at Stage 2 item 12, leaving a file that compiled and installed nothing. Variant A — a sibling under a transparent `PKCanvasView`, mirrored by one transform per scroll tick from the delegate callbacks — **is what shipped**, as `PageBackdrop`, driven from `PageCanvasController`'s scroll callbacks, running since phase 2. Variant B asked whether a subview *inside* `PKCanvasView` survives a first stroke; the design took the other branch on the grounds that this project already crashed UIKit doing it, so B is a question about a structure nobody chose. | Registration through a fast pinch is still open and still measured — by `ZoomRegistrationProbe`, which is live in the shipping controller and is the instrument that can actually run. |
+| 2. Lens latency | **DELETED, superseded by the real lens.** The one `#if TN_SPIKE_LENS` hook in `TuberNotesApp.swift` came out at Stage 2 item 12, after which building with the flag compiled the spike and still opened the editor. Its own header said it stood alone "because base-and-lens integration is phase 3c proper" — and 3c shipped: `StaticLayerRenderer.renderLens`, generation-guarded, pixel-tested, and now stroking paper as well as PDF. | **No latency number exists, and this is still owed.** Getting one now means instrumenting the real lens on hardware, not a synthetic worksheet in a scene the app cannot reach. |
 | 3. Manipulation feel and undo | not built | Phase 4 |
 
 ## Decisions taken without Phillip
@@ -118,9 +118,13 @@ This list covers phase 1 only; the full register continues in
 
 - **Every device claim.** No stroke, pinch, fling, or turn has been performed
   on hardware against any of tonight's code.
-- **Spike 1's two questions** — does the sibling mirror hold registration at
-  120 Hz, and does the inside-`PKCanvasView` branch survive a first stroke.
-  The entire rendering direction of phases 2–4 rests on the first answer.
+- **Whether the mirrored sibling holds registration with the ink at 120 Hz**
+  through pinch, fling, and rubber-band. This was spike 1 variant A; the spike
+  is deleted and the question is not, because `PageBackdrop` *is* that design
+  and the entire rendering direction of phases 2–4 rests on it. The live
+  instrument is `ZoomRegistrationProbe`. The other half of spike 1 — does a
+  subview inside `PKCanvasView` survive a first stroke — is not owed: nothing
+  was built that way.
 - **Phase 1 on device** — it touches the editor session and the durable form,
   so the PR template's device pass is owed regardless of the green suite.
 - **Undo of any kind.** `undoManager` walks the responder chain, so an

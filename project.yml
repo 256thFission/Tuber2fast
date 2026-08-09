@@ -28,38 +28,15 @@ settings:
     # API", and nothing in this repository ships a framework.
     SWIFT_PACKAGE_NAME: TuberNotes
   configs:
-    # THROWAWAY SPIKE wiring — CanvasFeatureComplete device spikes 1 and 2.
-    # TN_SPIKE_CONDITIONS is empty by default, so both lines are inert and
-    # the app compiles with exactly the conditions it always had (DEBUG in
-    # Debug, none in Release). To compile a spike in, pass the setting on the
-    # command line
-    #   xcodebuild build ... TN_SPIKE_CONDITIONS=TN_SPIKE_MIRROR
-    #   xcodebuild build ... TN_SPIKE_CONDITIONS=TN_SPIKE_LENS
-    # or add `TN_SPIKE_CONDITIONS = TN_SPIKE_MIRROR` (or TN_SPIKE_LENS) to
-    # Local.xcconfig for Tools/device runs (and remove it after).
-    #
-    # As of Stage 2 item 12 the flags gate nothing outside the two
-    # `Spike*.swift` files — the hooks that installed and drove them came out
-    # of `PageCanvasController` and `TuberNotesApp`, so a spike build now
-    # compiles the spike and runs the ordinary app. Each spike file carries
-    # the recipe for reinstalling its hooks; that is why this wiring stays
-    # rather than being deleted with the hooks. Still not both flags at once:
-    # once re-threaded, TN_SPIKE_LENS replaces the editor scene that
-    # TN_SPIKE_MIRROR instruments.
-    #
-    # Release carries the same hook as Debug. It used to be Debug-only
-    # because the spike's trace depended on CanvasLog's stderr mirror and
-    # that mirror was `#if DEBUG`; the mirror now ships in every
-    # configuration, gated on TN_TRACE alone, so a Release spike build is
-    # readable — and Release is what device.yml distributes.
-    #
-    # Project-level rather than per-target since the module split: spike 1
-    # lives in TuberCanvas and spike 2 in the app, and a condition set on one
-    # target is invisible to the other.
+    # DEBUG in Debug and nothing in Release, which is all this has ever
+    # needed to be. There was a `$(TN_SPIKE_CONDITIONS)` interpolation here,
+    # so that a device spike could be compiled in from the command line; the
+    # two spikes it gated are deleted, and a build setting that gates nothing
+    # is a setting the next reader has to rule out.
     Debug:
-      SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG $(TN_SPIKE_CONDITIONS)
+      SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
     Release:
-      SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(TN_SPIKE_CONDITIONS)
+      SWIFT_ACTIVE_COMPILATION_CONDITIONS: ""
 
 # The module graph, bottom first. It exists to make golden rule 2's *import*
 # half a compile error rather than a token scan: see `noSwiftUI` below and

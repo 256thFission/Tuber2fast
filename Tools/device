@@ -13,12 +13,9 @@
 # present in every configuration and gated only on TN_TRACE, so a Release
 # capture is readable — this is the flag that proves it on your own iPad
 # rather than trusting that the distributed build behaves like the local one.
-# Note that TN_SPIKE_MIRROR-style compilation conditions must be passed to the
-# same configuration you build here (see project.yml).
 #
-# Two environment variables are forwarded to the app at launch, and only two:
+# One environment variable is forwarded to the app at launch, and only one:
 #   TN_TRACE                  defaults to 1; set it to anything to keep it on
-#   TN_SPIKE_MIRROR_VARIANT   forwarded only when set — sibling | inside
 # Nothing else on your Mac reaches the app; devicectl passes exactly what this
 # names, so a variable exported in your shell and not listed here is silently
 # absent on device.
@@ -227,15 +224,6 @@ digest_trace() {
   if grep -q 'serialized drawing snapshot' "$CONSOLE"; then
     printf '  serialization on main thread:\n'
     grep -oE 'mainThread=(true|false)' "$CONSOLE" | sort | uniq -c | sed 's|^|      |'
-  fi
-
-  # Device spike 2 ("Lens latency", TN_SPIKE_LENS): one line per pinch
-  # settle, carrying settle→decode→swap timestamps. Reprinted verbatim —
-  # these are the numbers the spike exists to produce, and whether they are
-  # fast enough is a maintainer's verdict, not this script's.
-  if grep -q 'SPIKE lens settled' "$CONSOLE"; then
-    printf '  lens latency (spike 2), one line per settle:\n'
-    grep -oE 'SPIKE lens settled .*' "$CONSOLE" | sed 's|^|      |'
   fi
 
   if [ "$fatals" -gt 0 ]; then
@@ -556,13 +544,10 @@ fi
 # `digest` prints it, and a Ctrl-C that arrived in between would otherwise read
 # an unset variable under `set -u`.
 #
-# Two variables reach the app and no more. devicectl passes precisely this
-# dictionary, so anything else exported on this Mac is absent on device, and a
-# spike that reads a third variable must be named here to receive it.
-LAUNCH_ENV="$("$JQ" -nc \
-  --arg trace "${TN_TRACE:-1}" \
-  --arg variant "${TN_SPIKE_MIRROR_VARIANT:-}" \
-  '{TN_TRACE: $trace} + (if $variant == "" then {} else {TN_SPIKE_MIRROR_VARIANT: $variant} end)')"
+# One variable reaches the app and no more. devicectl passes precisely this
+# dictionary, so anything else exported on this Mac is absent on device, and
+# anything that reads a second variable must be named here to receive it.
+LAUNCH_ENV="$("$JQ" -nc --arg trace "${TN_TRACE:-1}" '{TN_TRACE: $trace}')"
 
 # ------------------------------------------------------------------- digest --
 # Printed once, when the session ends. Everything here is an observation about

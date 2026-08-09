@@ -524,7 +524,8 @@ struct ContractStructureTests {
     ///
     /// A stale entry is not harmless: it is a standing permission nobody is
     /// reviewing, and it silently survives the rename that should have expired
-    /// it. The throwaway spike's entry, in particular, must die with its file.
+    /// it. An entry earned by a file that is gone must die with that file —
+    /// this check is what makes deleting the file enough.
     static func staleAllowlistEntries(_ allowed: Set<String>, in sources: [CheckedSource]) -> [String] {
         let present = Set(sources.map(\.path))
         return allowed.subtracting(present).sorted()
