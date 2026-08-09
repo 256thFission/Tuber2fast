@@ -763,6 +763,44 @@ struct EditorSessionTests {
         }
     }
 
+    // MARK: - The document's paper reaches every page
+
+    /// The claim that made a per-page template unnecessary: paper is the
+    /// document's, so a page created after the choice is ruled with it and
+    /// neither `appendPage` nor `insertPage` has a line about templates in it.
+    ///
+    /// A page's canvas is where the value has to arrive, because that is what
+    /// builds the request; `git diff` on those two functions is the other half
+    /// of the claim and this test is the half a machine can check.
+    @Test("A page appended or inserted after the paper was chosen is ruled with it")
+    func newPagesCarryTheDocumentsPaper() async throws {
+        let scratch = try TestScratch("session")
+        let session = scratch.session()
+        await session.start()
+        _ = try await canvas(of: session)
+
+        try await session.setTemplate(.dotted)
+        let first = try #require(session.pages.livePage(session.currentPageID))
+        #expect(first.templateForTesting == .dotted, "the page already open is told at once")
+
+        // Appended past the end: built by `makeCanvas` after the choice.
+        pullPastTheEnd(session)
+        let appended = try #require(session.pages.livePage(session.currentPageID))
+        #expect(appended.templateForTesting == .dotted)
+
+        // And inserted mid-document, which rebuilds slots around it.
+        let inserted = try await session.insertPage(after: session.pageIDForTesting(at: 0))
+        session.pages.view.layoutIfNeeded()
+        #expect(
+            try #require(session.pages.livePage(inserted)).templateForTesting == .dotted,
+            "turning to a page you just made must not unrule the notebook"
+        )
+
+        // The paper is the index's and nothing about making a page touched it.
+        #expect(session.template == .dotted)
+        #expect(try #require(await scratch.freshStore().load()).template == .dotted)
+    }
+
     /// Dirties `count` pages with the same heavy fixture, appending as a person
     /// would to reach each new one, and runs a single save pass over all of
     /// them. Returns what that pass measured.

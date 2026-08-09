@@ -754,6 +754,29 @@ struct PagedCanvasControllerTests {
         #expect(page3.view.frame.minX == scroll.bounds.width * 4)
     }
 
+    @Test("A page entering the live window after a template change is built with the new paper")
+    func aPageBuiltAfterATemplateChangeCarriesIt() async throws {
+        let controller = hosted()
+        controller.setTestPages(count: 12, current: 0)
+        let alreadyLive = try #require(controller.testLivePage(at: 0))
+
+        controller.setTemplate(.grid)
+        #expect(alreadyLive.templateForTesting == .grid, "the live window is told at once")
+
+        // Far enough that every page built for this turn is a page that did
+        // not exist when the template changed. That is the `makeCanvas` half,
+        // and it has no other observable: the request shape is identical
+        // either way and the difference is pixels in a texture that has not
+        // landed when this assertion runs.
+        turn(controller, to: 8)
+        let arrived = try await requireCanvas(controller, at: 8)
+        #expect(
+            arrived.templateForTesting == .grid,
+            "a page built after the choice must be ruled with it, or turning the page unrules the notebook"
+        )
+        #expect(controller.template == .grid)
+    }
+
     /// A laid-out runtime, and the session it answers to.
     private func hosted(
         configure: (TestCanvasSession) -> Void = { _ in }

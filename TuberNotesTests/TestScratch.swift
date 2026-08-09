@@ -90,13 +90,15 @@ final class TestScratch {
     func index(
         pageIDs: [UUID]? = nil,
         currentPageIndex: Int = 0,
-        geometry: PageGeometry = .canonical
+        geometry: PageGeometry = .canonical,
+        template: PageTemplate = .blank
     ) -> DocumentIndex {
         DocumentIndex(
             formatVersion: DocumentIndex.currentFormatVersion,
             documentID: documentID,
             pages: (pageIDs ?? [defaultPageID]).map { PageRecord(id: $0, geometry: geometry) },
-            currentPageIndex: currentPageIndex
+            currentPageIndex: currentPageIndex,
+            template: template
         )
     }
 

@@ -616,6 +616,140 @@ struct PageCanvasControllerTests {
         #expect(contents(of: backdrop.pageLayerForTesting) == nil)
     }
 
+    // MARK: - Paper, and what a blank page still pays
+
+    @Test("A genuinely blank page builds no backdrop, keeps its opaque canvas, and asks for nothing")
+    func aBlankPagePaysNothing() async throws {
+        let controller = try templatedPage(.blank, layers: [])
+
+        // `Docs/Unproven.md` cares about this property, so it is asserted
+        // rather than assumed: the transparency and the sibling stack are paid
+        // for **per page that has a stack**, and a page of a blank notebook on
+        // blank paper is untouched by any of it.
+        #expect(controller.backdrop == nil, "no layers and no paper is no sibling stack")
+        #expect(controller.canvasView.isOpaque, "an opaque canvas is one fewer full-screen blend per frame")
+        #expect(controller.canvasView.backgroundColor == .white, "and its background is still the page")
+        #expect(controller.renderedRequestForTesting == nil, "nothing is composited for a page with no picture")
+    }
+
+    @Test("A templated page with no layers builds a backdrop and goes transparent")
+    func ruledPaperCostsTheBackdrop() async throws {
+        let controller = try templatedPage(.lined, layers: [])
+        let backdrop = try #require(controller.backdrop, "ruled paper is a picture, and a picture needs the stack")
+        #expect(controller.canvasView.isOpaque == false)
+
+        let request = try #require(controller.renderedRequestForTesting)
+        #expect(request.template == .lined)
+        #expect(request.layers.isEmpty, "the paper is not a layer and never enters the list")
+        try await waitUntil("the paper composites") { self.contents(of: backdrop.pageLayerForTesting) != nil }
+    }
+
+    @Test("Setting the template supersedes the composite, hides the lens, and re-requests")
+    func settingTheTemplateRedrawsThePage() async throws {
+        let controller = try templatedPage(.lined, layers: [], geometry: PageGeometry(width: 400, height: 400))
+        let backdrop = try #require(controller.backdrop)
+        let canvas = controller.canvasView
+        try await waitUntil("the ruled paper lands") { self.contents(of: backdrop.pageLayerForTesting) != nil }
+        let ruled = contents(of: backdrop.pageLayerForTesting)
+
+        // A settled deep zoom, so there is a sharp patch on screen for the
+        // change to invalidate.
+        canvas.zoomScale = 4
+        controller.scrollViewDidEndZooming(canvas, with: nil, atScale: 4)
+        try await waitUntil("the lens lands") { backdrop.hasLens }
+
+        controller.setTemplate(.grid)
+
+        // Synchronously, before any frame renders: the sharp patch describes
+        // paper this page no longer has, and a wrong picture at the highest
+        // sharpness is the worst thing this pipeline can show.
+        #expect(backdrop.hasLens == false)
+        let reissued = try #require(controller.renderedRequestForTesting)
+        #expect(reissued.template == .grid, "the change re-requests immediately, not at the next layout pass")
+
+        try await waitUntil("the new paper lands") {
+            self.contents(of: backdrop.pageLayerForTesting) !== ruled
+        }
+        #expect(controller.canvasView.isOpaque == false, "still ruled, so still transparent")
+
+        // Setting the same value again is a no-op, not a re-render.
+        let settled = contents(of: backdrop.pageLayerForTesting)
+        controller.setTemplate(.grid)
+        #expect(contents(of: backdrop.pageLayerForTesting) === settled)
+    }
+
+    @Test("A ruled page asks for no composite and no lens from a gesture frame")
+    func paperIsNeverRequestedFromAGestureFrame() async throws {
+        let controller = try templatedPage(.lined, layers: [], geometry: PageGeometry(width: 400, height: 400))
+        let canvas = controller.canvasView
+        let asked = try #require(controller.renderedRequestForTesting)
+
+        canvas.zoomScale = 4
+        controller.scrollViewDidZoom(canvas)
+        controller.scrollViewDidScroll(canvas)
+        #expect(controller.lensRequestCountForTesting == 0, "a pinch decodes nothing, ruled or not")
+        #expect(
+            controller.renderedRequestForTesting == asked,
+            "and re-composites nothing: the compositor scales the paper it already has"
+        )
+
+        controller.scrollViewDidEndZooming(canvas, with: nil, atScale: 4)
+        #expect(controller.lensRequestCountForTesting == 1, "settle is the lens moment for paper too")
+    }
+
+    @Test("Deleting the last layer of a ruled page leaves the paper on it")
+    func removingEveryLayerKeepsThePaper() async throws {
+        let store = try scratchStore()
+        let layer = try await imageLayer(
+            store: store, color: .red,
+            transform: PageSpaceTransform(a: 200, b: 0, c: 0, d: 100, tx: 50, ty: 50)
+        )
+        let controller = try templatedPage(.lined, layers: [layer], store: store)
+        #expect(controller.backdrop != nil)
+
+        controller.setStaticLayers([])
+
+        // The tear-down asks whether anything is left beneath the ink, not
+        // whether the layer list is empty. Asking the narrower question would
+        // rip the paper off the page the moment its last image was deleted.
+        #expect(controller.backdrop != nil, "the paper is still a picture")
+        #expect(controller.canvasView.isOpaque == false)
+        let request = try #require(controller.renderedRequestForTesting)
+        #expect(request.layers.isEmpty && request.template == .lined)
+
+        // And blanking the paper too does take the whole stack down.
+        controller.setTemplate(.blank)
+        #expect(controller.backdrop == nil)
+        #expect(controller.canvasView.isOpaque)
+    }
+
+    /// A laid-out page carrying a template and a layer list, with a real
+    /// renderer behind it.
+    private func templatedPage(
+        _ template: PageTemplate,
+        layers: [LayerEnvelope],
+        geometry: PageGeometry = .canonical,
+        store: DocumentStore? = nil
+    ) throws -> PageCanvasController {
+        let controller = PageCanvasController(
+            pageID: UUID(),
+            toolPicker: PKToolPicker(),
+            projection: PageProjection(
+                geometry: geometry,
+                zoomCapPagePointsPerPixel: DocumentIndex.canonicalZoomCapPagePointsPerPixel
+            ),
+            host: TestPageHost(),
+            staticRenderer: StaticLayerRenderer(store: try store ?? scratchStore())
+        )
+        let root = controller.view!
+        root.frame = CGRect(x: 0, y: 0, width: 820, height: 1180)
+        // The order `PagedCanvasController.makeCanvas` uses.
+        controller.setStaticLayers(layers)
+        controller.setTemplate(template)
+        root.layoutIfNeeded()
+        return controller
+    }
+
     // MARK: - Static-layer helpers
 
     /// `CALayer.contents` as an identity, or nil. `Any?` cannot be compared

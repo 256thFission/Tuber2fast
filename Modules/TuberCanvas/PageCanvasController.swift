@@ -162,6 +162,16 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
     /// the two draw calls in the renderer.
     private var template: PageTemplate = .blank
 
+    /// Read only by tests. That a page built *after* a template change carries
+    /// the new paper has no other observable: the composite it asks for is the
+    /// same request shape either way, and the difference is pixels inside a
+    /// texture that has not landed yet when the assertion runs.
+    // Debug-only, as every `…ForTesting` member is; the reasoning is at
+    // `EditorSession.staticRendererForTesting`.
+    #if DEBUG
+    var templateForTesting: PageTemplate { template }
+    #endif
+
     /// Selection and the transform gesture, built only for a page that carries
     /// something selectable. See `LayerSelectionRuntime`: like the shape tool
     /// and the backdrop it is this controller's own runtime rather than a
@@ -366,7 +376,7 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         // A page whose layer list was set before its view loaded — every page
         // built by `PagedCanvasController`, which configures the controller and
         // then lets layout force the view.
-        if !staticLayers.isEmpty {
+        if hasSomethingBelowTheInk {
             installBackdropIfNeeded()
             installSelectionIfNeeded()
             selection?.setLayers(staticLayers)
@@ -656,17 +666,20 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
     ///
     /// Told, never asked (`Contract.md` — Owners, golden rule 7): the list
     /// belongs to `EditorSession` and arrives by way of
-    /// `PagedCanvasController`, exactly as the drawing and the shape tool do.
-    /// The page's identity does not travel with it — the renderer keys on layer
-    /// IDs, so this controller stays blind to which page it is.
+    /// `PagedCanvasController`, exactly as the drawing, the shape tool, and the
+    /// paper do. The page's identity does not travel with it — this controller
+    /// was told which page it is once, at construction, and stays blind to page
+    /// *numbers* and turns, which is what golden rule 7 actually says.
     ///
-    /// An empty list is the case that must cost nothing, and it does: no
-    /// backdrop object exists, no layer is installed, and the canvas stays
-    /// opaque. **The transparency the stack needs is paid for per page that has
-    /// a stack**, not once and forever for the whole app — which is a real
-    /// narrowing of the fork doc's "the ink surface goes transparent, and a
-    /// full-screen blend under the ink is the floor cost everywhere, forever".
-    /// Every page in a blank notebook is untouched by this feature.
+    /// An empty list on blank paper is the case that must cost nothing, and it
+    /// does: no backdrop object exists, no layer is installed, and the canvas
+    /// stays opaque. **The transparency the stack needs is paid for per page
+    /// that has a stack**, not once and forever for the whole app — which is a
+    /// real narrowing of the fork doc's "the ink surface goes transparent, and
+    /// a full-screen blend under the ink is the floor cost everywhere,
+    /// forever". Every page of a genuinely blank notebook is untouched by this
+    /// feature, and `hasSomethingBelowTheInk` is the one place that sentence is
+    /// decided.
     func setStaticLayers(_ layers: [LayerEnvelope]) {
         guard layers != staticLayers else { return }
         staticLayers = layers
@@ -678,19 +691,11 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         // longer exists.
         invalidateLens()
 
-        guard !layers.isEmpty else {
-            backdrop?.remove()
-            backdrop = nil
-            selection?.remove()
-            selection = nil
-            liftedLayerID = nil
-            pendingLift = nil
-            // Back to the cheap path: an opaque canvas is one fewer full-screen
-            // blend per frame, and its background is the paper again.
-            if isViewLoaded {
-                canvasView.backgroundColor = .white
-                canvasView.isOpaque = true
-            }
+        // The tear-down is conditioned on the *template* too, and it has to
+        // be: deleting the last layer of a ruled page would otherwise rip the
+        // paper off it and leave the ink over bare white.
+        guard hasSomethingBelowTheInk else {
+            teardownBackdrop()
             return
         }
 
@@ -699,6 +704,65 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         installSelectionIfNeeded()
         selection?.setLayers(layers)
         requestCompositeIfNeeded()
+    }
+
+    /// The paper this page is ruled with — the document's, told to this
+    /// controller the way the shape tool is.
+    ///
+    /// Sibling of `setStaticLayers`, and deliberately the same shape: a no-op
+    /// when unchanged, and otherwise everything the old picture is now wrong
+    /// about. It is `EditorSession` that owns the durable value; this is a
+    /// canvas being told what to draw (`Contract.md` — Owners, golden rule 7).
+    package func setTemplate(_ template: PageTemplate) {
+        guard template != self.template else { return }
+        self.template = template
+        renderedRequest = nil
+        compositeGeneration += 1
+        // Whatever is compositing is compositing the old paper.
+        compositeTask?.cancel()
+        // And a lens on screen is a sharp patch of the paper this page no
+        // longer has, which is worse than the soft base underneath it.
+        invalidateLens()
+
+        guard hasSomethingBelowTheInk else {
+            teardownBackdrop()
+            return
+        }
+
+        guard isViewLoaded else { return }
+        installBackdropIfNeeded()
+        requestCompositeIfNeeded()
+    }
+
+    /// Whether anything at all is drawn beneath this page's ink.
+    ///
+    /// **One home for the emptiness rule**, because it decides five things
+    /// that must agree: whether a backdrop exists, whether the canvas is
+    /// transparent, whether a composite is asked for, whether a lens is worth
+    /// rendering, and — through `EditorSession`, which asks the same question
+    /// of its own state — whether a neighbour is worth warming.
+    ///
+    /// It reads the **raw** template, which is correct even where a `pdf`
+    /// layer suppresses the paper: suppression happens only when the layer
+    /// list is non-empty, so the first disjunct is already true in exactly
+    /// that case. See `StaticLayerRequest.effectiveTemplate`.
+    private var hasSomethingBelowTheInk: Bool {
+        !staticLayers.isEmpty || template != .blank
+    }
+
+    /// Back to the cheap path: no sibling stack, no selection, and an opaque
+    /// canvas painting its own paper — one fewer full-screen blend per frame.
+    private func teardownBackdrop() {
+        backdrop?.remove()
+        backdrop = nil
+        selection?.remove()
+        selection = nil
+        liftedLayerID = nil
+        pendingLift = nil
+        if isViewLoaded {
+            canvasView.backgroundColor = .white
+            canvasView.isOpaque = true
+        }
     }
 
     /// Builds the selection runtime the first time this page carries something
@@ -861,7 +925,7 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
     /// soft; it triggers no decode, which is the rule the whole zoom story
     /// rests on.
     private func requestCompositeIfNeeded() {
-        guard let backdrop, let staticRenderer, !staticLayers.isEmpty else { return }
+        guard let backdrop, let staticRenderer, hasSomethingBelowTheInk else { return }
         guard let scale = compositeScale() else { return }
 
         // `layersToComposite` rather than `staticLayers`: a selected layer is
@@ -994,9 +1058,7 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         // Ruled paper is worth a lens for the same reason a worksheet is: the
         // lens re-strokes it at the settled scale. A page that is genuinely
         // blank still pays one nil check and nothing else.
-        guard backdrop != nil, let staticRenderer,
-              !staticLayers.isEmpty || template != .blank
-        else { return }
+        guard backdrop != nil, let staticRenderer, hasSomethingBelowTheInk else { return }
         guard selection?.selectedLayerID == nil else { return }
         guard let base = renderedRequest?.pixelsPerPagePoint ?? compositeScale() else { return }
 

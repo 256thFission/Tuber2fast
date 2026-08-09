@@ -530,6 +530,11 @@ final class EditorSession {
             }
             alignedWithIndex()
             phase = .ready
+            // Strictly before the first window is built, so the opening pages
+            // are ruled as they are created rather than composited blank and
+            // re-composited a moment later. The runtime keeps it from here on
+            // — every later `setPages` is a page-list change, not a paper one.
+            pages.setTemplate(index.template)
             pages.setPages(index.pageIDs, current: currentPageID)
             // Editing opens only now, after the loaded drawings are installed.
             // Each canvas enforces the ordering; the session decides when it
@@ -743,16 +748,22 @@ final class EditorSession {
         for pageIndex in (lower...upper).sorted(by: {
             abs($0 - current) > abs($1 - current)
         }) where pageIndex != current {
+            // A neighbour on ruled paper is worth warming even with nothing in
+            // its layer list: its whole picture is the paper, and that is a
+            // composite the turn would otherwise pay for on arrival.
             guard pageStates[pageIndex].refusedLayers.isEmpty,
-                  !pageStates[pageIndex].staticLayers.isEmpty,
+                  !pageStates[pageIndex].staticLayers.isEmpty || index.template != .blank,
                   let geometry = index.geometry(ofPageAt: pageIndex),
                   let detail = liveRuntime?.compositeDetail(forPage: pageStates[pageIndex].id)
             else { continue }
+            // `index.template` and not something derived: a warm is a cache
+            // hit only if its request is byte-for-byte the one the page's own
+            // controller will make, and the controller was told this value.
             let request = StaticLayerRequest(
                 pageID: pageStates[pageIndex].id,
                 layers: pageStates[pageIndex].staticLayers,
                 geometry: geometry,
-                template: .blank,
+                template: index.template,
                 pixelsPerPagePoint: detail
             )
             Task { await renderer.warm(request) }
@@ -1411,6 +1422,10 @@ final class EditorSession {
 
         index = index.withTemplate(template)
         indexDirty = true
+        // The durable value and the picture, in that order and in the same
+        // main-actor stretch: the runtime re-composites every live page and
+        // every page built afterwards from the value the index now holds.
+        pages.setTemplate(template)
         CanvasLog.event(.canvas, "document template set to \(template.rawValue)")
 
         await saveIfNeeded()

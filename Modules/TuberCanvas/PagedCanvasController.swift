@@ -216,6 +216,19 @@ package final class PagedCanvasController: UIViewController, UIScrollViewDelegat
     /// the page does not silently put the pen back in your hand.
     package private(set) var shapeTool: ShapeKind?
 
+    /// The paper every page of this document is ruled with.
+    ///
+    /// It lives here for exactly the reason the shape tool does: it is one
+    /// setting for the document rather than one per page, so it is **told**
+    /// and never asked. `PagedCanvasSession` gains nothing for it and neither
+    /// does `PageProjection` — a template is not a construction-time fact
+    /// about a page, and a `template(forPage:)` question would invent a
+    /// per-page authority for a value that has none.
+    ///
+    /// `.blank` until `EditorSession` says otherwise, which is what a runtime
+    /// hosted with no document behind it should draw.
+    package private(set) var template: PageTemplate = .blank
+
     /// Flattens a page's static layers off-main. Shared across every page the
     /// way the tool picker is, so one cache serves the whole live window.
     ///
@@ -417,6 +430,20 @@ package final class PagedCanvasController: UIViewController, UIScrollViewDelegat
         shapeTool = kind
         for case .canvas(let page) in slots.values {
             page.setShapeTool(kind)
+        }
+    }
+
+    /// Rules every page, live or later, with the document's paper.
+    ///
+    /// Sibling of `setShapeTool` in every respect: an intention from the
+    /// SwiftUI root by way of `EditorSession`, stored here, fanned out to the
+    /// live window, and applied by `makeCanvas` to every page built
+    /// afterwards. No page's ink changes, and nothing durable is written here
+    /// — the index is `EditorSession`'s to write.
+    package func setTemplate(_ template: PageTemplate) {
+        self.template = template
+        for case .canvas(let page) in slots.values {
+            page.setTemplate(template)
         }
     }
 
@@ -847,6 +874,11 @@ package final class PagedCanvasController: UIViewController, UIScrollViewDelegat
         // after the install, because nothing about the tool may participate in
         // loading a page's ink.
         page.setShapeTool(shapeTool)
+
+        // And a page built after the paper was chosen is ruled with it. Same
+        // ordering, same reason: nothing about what is under the ink may
+        // participate in loading the ink.
+        page.setTemplate(template)
 
         // What sits beneath the ink. After the install, for the same reason:
         // nothing about rendering the backdrop may participate in loading a

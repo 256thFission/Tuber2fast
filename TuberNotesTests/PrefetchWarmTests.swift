@@ -99,6 +99,70 @@ struct PrefetchWarmTests {
         )
     }
 
+    @Test("A neighbour whose whole picture is paper is warmed too")
+    @MainActor
+    func aTemplatedNeighbourIsWarmed() async throws {
+        let scratch = try TestScratch("warm")
+
+        // Five pages, no static layers anywhere, and ruled paper. Before the
+        // template existed there was nothing on such a page to warm; now the
+        // paper *is* the page's picture, and a turn that did not warm it would
+        // pay for it on arrival.
+        let pageIDs = (0..<5).map { _ in UUID() }
+        var pages: [UUID: [LayerEnvelope]] = [:]
+        for id in pageIDs {
+            pages[id] = [
+                LayerEnvelope(layerID: UUID(), kind: .ink, payload: Data(), pageSpaceTransform: .identity)
+            ]
+        }
+        try await scratch.store.save(
+            index: scratch.index(pageIDs: pageIDs, template: .grid), changedPages: pages
+        )
+
+        let session = EditorSession(store: scratch.store, debounce: .milliseconds(10))
+        await session.start()
+        let root = session.pages.view!
+        root.frame = CGRect(x: 0, y: 0, width: 820, height: 1180)
+        root.layoutIfNeeded()
+        #expect(session.template == .grid)
+
+        let renderer = session.staticRendererForTesting
+        let scroll = session.pages.scrollView
+        scroll.contentOffset = CGPoint(x: scroll.bounds.width, y: 0)
+        session.pages.scrollViewDidEndDecelerating(scroll)
+        root.layoutIfNeeded()
+
+        // Page 4 is at prefetch distance from page 1 and outside the live
+        // window, so no canvas exists to ask for its composite: the warm is
+        // the only thing that can put one in the cache. Pages 0 through 3 are
+        // live and each composites its own paper, so a fifth entry can only be
+        // page 4's — the count is read from that relationship rather than from
+        // the window and radius numbers themselves.
+        #expect(session.pages.livePage(session.pageIDForTesting(at: 4)) == nil)
+        #expect(session.pages.liveCanvasCount == 4)
+        try await waitUntil("the paper-only neighbour warms") {
+            await renderer.cachedCompositeCount == 5
+        }
+
+        // And the warm's request is byte-for-byte the one page 4's own
+        // controller would make: asking for it adds no entry, so it was
+        // already there. A warm at the wrong template or the wrong detail
+        // would render a sixth.
+        let detail = try #require(session.pages.compositeDetail(forPage: session.pageIDForTesting(at: 4)))
+        let request = StaticLayerRequest(
+            pageID: session.pageIDForTesting(at: 4),
+            layers: [],
+            geometry: .canonical,
+            template: .grid,
+            pixelsPerPagePoint: detail
+        )
+        guard case .composited = await renderer.composite(for: request) else {
+            Issue.record("page 4's paper did not composite")
+            return
+        }
+        #expect(await renderer.cachedCompositeCount == 5, "the warm's request must be the canvas's request")
+    }
+
     @Test("Warming never evicts the visible page's composite at the byte bound")
     func warmingCannotEvictTheVisiblePage() async throws {
         let scratch = try TestScratch("warm")
