@@ -41,8 +41,8 @@ package struct PageRecord: Codable, Sendable, Equatable {
 
 /// The index of a document (`Contract.md` — Durable form).
 ///
-/// It holds page identity, page order, per-page geometry, and the document's
-/// zoom cap — and no ink. Ink lives in a layer file named by one `PageFile` per
+/// It holds page identity, page order, per-page geometry, the document's zoom
+/// cap, and the paper it is ruled with — and no ink. Ink lives in a layer file named by one `PageFile` per
 /// page, so a save can rewrite one page's ink without touching the other pages,
 /// that page's other layers, or this index.
 ///
@@ -73,6 +73,36 @@ package struct DocumentIndex: Codable, Sendable, Equatable {
     /// promise survive a later change to the constant: a document keeps the
     /// ceiling it was written under.
     package let zoomCapPagePointsPerPixel: Double
+
+    /// The paper every page of this document is ruled with.
+    ///
+    /// **One value per document, and there is no per-page one.** `PageRecord`
+    /// carries geometry and not this: `EditorSession.warmNeighbourComposites`
+    /// builds composites for the prefetch window from what this index knows,
+    /// before those pages' files have been read, so a template in the page file
+    /// would mean either warming with the wrong paper and re-rendering on
+    /// arrival, or reading page files ahead of the window — the whole-document
+    /// read the split format exists to prevent. It is the same argument that
+    /// put geometry here, one level up: not a default for new pages beside a
+    /// per-page override, but the only place the value lives.
+    ///
+    /// A name and nothing more; see `PageTemplate` for why no measurement is
+    /// durable. An unknown name refuses the *document*, in `validated()`, for
+    /// the reason an unhonourable zoom cap does — the value is the document's,
+    /// so refusing the document is the honest scope, and a page is never
+    /// refused for paper.
+    package let template: PageTemplate
+
+    /// The template name on disk when it is not one this build knows, and `nil`
+    /// otherwise — carried only so `validated()` can refuse the document *by
+    /// name* rather than let `Codable` fail anonymously on a raw string.
+    ///
+    /// Not durable and never encoded: an index carrying one is refused at load
+    /// and so can never reach a write. It exists for the reason `formatVersion`
+    /// is stored as found rather than checked in `init(from:)` — a refusal
+    /// raised inside decoding reads as a corrupt file rather than as a file
+    /// naming something this build does not have.
+    private let unrecognizedTemplateName: String?
 
     /// The one index form this build reads and writes. Its only job is to
     /// refuse a file written by a newer build, so the count starts where a
@@ -107,13 +137,39 @@ package struct DocumentIndex: Codable, Sendable, Equatable {
         documentID: UUID,
         pages: [PageRecord],
         currentPageIndex: Int,
-        zoomCapPagePointsPerPixel: Double = DocumentIndex.canonicalZoomCapPagePointsPerPixel
+        zoomCapPagePointsPerPixel: Double = DocumentIndex.canonicalZoomCapPagePointsPerPixel,
+        template: PageTemplate = .blank
+    ) {
+        self.init(
+            formatVersion: formatVersion,
+            documentID: documentID,
+            pages: pages,
+            currentPageIndex: currentPageIndex,
+            zoomCapPagePointsPerPixel: zoomCapPagePointsPerPixel,
+            template: template,
+            unrecognizedTemplateName: nil
+        )
+    }
+
+    /// The initializer the decoder uses, and the only way an index carrying an
+    /// unknown template name can be built. Private so that no caller can
+    /// construct one except by reading a file.
+    private init(
+        formatVersion: UInt32,
+        documentID: UUID,
+        pages: [PageRecord],
+        currentPageIndex: Int,
+        zoomCapPagePointsPerPixel: Double,
+        template: PageTemplate,
+        unrecognizedTemplateName: String?
     ) {
         self.formatVersion = formatVersion
         self.documentID = documentID
         self.pages = pages
         self.currentPageIndex = currentPageIndex
         self.zoomCapPagePointsPerPixel = zoomCapPagePointsPerPixel
+        self.template = template
+        self.unrecognizedTemplateName = unrecognizedTemplateName
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -122,6 +178,7 @@ package struct DocumentIndex: Codable, Sendable, Equatable {
         case pages
         case currentPageIndex
         case zoomCapPagePointsPerPixel
+        case template
     }
 
     package init(from decoder: Decoder) throws {
@@ -130,12 +187,26 @@ package struct DocumentIndex: Codable, Sendable, Equatable {
         let documentID = try container.decode(UUID.self, forKey: .documentID)
         let currentPageIndex = try container.decode(Int.self, forKey: .currentPageIndex)
 
+        // The template as a raw string rather than as the enum, so a name this
+        // build does not have is carried to `validated()` and refused *by
+        // name*. Decoding it as `PageTemplate` directly would fail here, and
+        // the caller would be told the file is corrupt when what is actually
+        // true is that it names paper this build has never heard of.
+        let templateName = try container.decodeIfPresent(String.self, forKey: .template)
+        let template = templateName.flatMap(PageTemplate.init(rawValue:))
+
         // A version this build does not write decodes as far as it can and is
         // refused by `validated()`, which names the number it found. Refusing
         // inside `init(from:)` would report a decode failure instead, which
         // reads as a corrupt file rather than as a newer one — which is why
-        // the two fields a newer form need not carry are optional here and
-        // nowhere else.
+        // the fields a newer form need not carry are optional here and nowhere
+        // else. `template` is the third of them, and its absence is **not** a
+        // compatibility path: no file written by any build lacks the key, this
+        // build writes it in every index it writes, and what an absent key
+        // gets here is what an absent key gets in the two fields above it —
+        // enough of a value to reach the version refusal below. A version-1
+        // index without the key is not a superseded form, because it is not a
+        // form anything ever wrote.
         self.init(
             formatVersion: onDisk,
             documentID: documentID,
@@ -144,17 +215,29 @@ package struct DocumentIndex: Codable, Sendable, Equatable {
             zoomCapPagePointsPerPixel: try container.decodeIfPresent(
                 Double.self,
                 forKey: .zoomCapPagePointsPerPixel
-            ) ?? Self.canonicalZoomCapPagePointsPerPixel
+            ) ?? Self.canonicalZoomCapPagePointsPerPixel,
+            template: template ?? .blank,
+            unrecognizedTemplateName: template == nil ? templateName : nil
         )
     }
 
     package func encode(to encoder: Encoder) throws {
+        // An index carrying a name this build does not know is refused by
+        // `validated()`, and every write goes through it — so reaching here
+        // with one would mean writing `blank` over paper somebody else's build
+        // chose. It cannot happen, which is exactly why it says so.
+        precondition(
+            unrecognizedTemplateName == nil,
+            "an index naming the unknown template \"\(unrecognizedTemplateName ?? "")\" "
+                + "reached a write; it should have been refused at load"
+        )
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(Self.currentFormatVersion, forKey: .formatVersion)
         try container.encode(documentID, forKey: .documentID)
         try container.encode(pages, forKey: .pages)
         try container.encode(currentPageIndex, forKey: .currentPageIndex)
         try container.encode(zoomCapPagePointsPerPixel, forKey: .zoomCapPagePointsPerPixel)
+        try container.encode(template, forKey: .template)
     }
 }
 
@@ -162,6 +245,9 @@ package enum DocumentIndexError: Error, Equatable {
     case unsupportedFormatVersion(UInt32)
     case invalidGeometry(pageID: UUID, width: Double, height: Double)
     case invalidZoomCap(Double)
+    /// The index names paper this build does not have, carrying the name it
+    /// found. The document is refused, not a page — see `DocumentIndex.template`.
+    case unknownTemplate(String)
     case noPages
     case duplicatePageID(UUID)
     case currentPageOutOfRange(index: Int, pageCount: Int)
@@ -222,6 +308,14 @@ extension DocumentIndex {
         else {
             throw DocumentIndexError.invalidZoomCap(zoomCapPagePointsPerPixel)
         }
+        // Refused rather than defaulted to blank paper, and refused at document
+        // scope because the value is the document's: a page is never refused
+        // for paper. Opening the notebook on paper it does not have would show
+        // the user a document that is not the one they wrote, and the first
+        // save would make that the truth.
+        if let unrecognizedTemplateName {
+            throw DocumentIndexError.unknownTemplate(unrecognizedTemplateName)
+        }
         guard !pages.isEmpty else { throw DocumentIndexError.noPages }
 
         var seen = Set<UUID>()
@@ -240,13 +334,19 @@ extension DocumentIndex {
         return self
     }
 
-    /// A one-page document at the canonical geometry.
-    package static func newDocument(documentID: UUID, pageID: UUID) -> DocumentIndex {
+    /// A one-page document at the canonical geometry, on blank paper unless
+    /// asked otherwise.
+    package static func newDocument(
+        documentID: UUID,
+        pageID: UUID,
+        template: PageTemplate = .blank
+    ) -> DocumentIndex {
         DocumentIndex(
             formatVersion: Self.currentFormatVersion,
             documentID: documentID,
             pages: [PageRecord(id: pageID, geometry: .canonical)],
-            currentPageIndex: 0
+            currentPageIndex: 0,
+            template: template
         )
     }
 
@@ -256,7 +356,23 @@ extension DocumentIndex {
             documentID: documentID,
             pages: pages,
             currentPageIndex: currentPageIndex,
-            zoomCapPagePointsPerPixel: zoomCapPagePointsPerPixel
+            zoomCapPagePointsPerPixel: zoomCapPagePointsPerPixel,
+            template: template
+        )
+    }
+
+    /// The same document on different paper. Page identity, page order, and
+    /// every page's geometry are untouched: no page's *content* changes when
+    /// the paper does, which is why choosing paper writes this file and no
+    /// other.
+    package func withTemplate(_ template: PageTemplate) -> DocumentIndex {
+        DocumentIndex(
+            formatVersion: formatVersion,
+            documentID: documentID,
+            pages: pages,
+            currentPageIndex: currentPageIndex,
+            zoomCapPagePointsPerPixel: zoomCapPagePointsPerPixel,
+            template: template
         )
     }
 }

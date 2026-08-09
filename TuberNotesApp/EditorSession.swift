@@ -1364,6 +1364,55 @@ final class EditorSession {
         }
     }
 
+    // MARK: - The document's paper
+
+    /// The paper every page of this document is ruled with, as the index has
+    /// it.
+    ///
+    /// A read-through of durable state the session already owns, not a second
+    /// copy — the index is the one authority (`Contract.md` — Owners). Nothing
+    /// renders from it yet; the picker that will read it is step 15.
+    var template: PageTemplate { index.template }
+
+    /// Rules this document's paper differently.
+    ///
+    /// **One writer, and it writes one file.** The template is the index's, so
+    /// this rewrites the index and nothing else: no page's content changed, and
+    /// rewriting an unchanged page file is the whole-document rewrite the
+    /// durable form exists to prevent. `DocumentStore` needs no new trigger to
+    /// notice — it compares the whole index against the last one it wrote — and
+    /// this is the write trigger A16 adds to "a save writes only what changed".
+    ///
+    /// It therefore has **no interaction with the withheld trailing run**. A
+    /// page nobody has written on stays undurable while the paper under it
+    /// changes, because `durableIndex` withholds pages and carries every other
+    /// field of the index forward, and nothing here touches `neverWritten`.
+    /// This is what the value's home buys: were the template a layer, choosing
+    /// paper on an overswept page would have made that page durable.
+    ///
+    /// Not undoable, exactly as turning and appending are not: it is not a
+    /// PencilKit stroke edit, and there is no semantic undo domain
+    /// (`Contract.md` — Undo).
+    ///
+    /// The same discipline as every page-management operation — validate,
+    /// quiesce, re-validate, mutate synchronously, then persist — because a
+    /// capture and an index mutation must not overlap.
+    func setTemplate(_ template: PageTemplate) async throws {
+        guard phase == .ready, !isClosing else { throw PageEditError.sessionNotReady }
+        guard index.template != template else { return }
+
+        await quiesceSaves()
+
+        guard phase == .ready, !isClosing else { throw PageEditError.sessionNotReady }
+        guard index.template != template else { return }
+
+        index = index.withTemplate(template)
+        indexDirty = true
+        CanvasLog.event(.canvas, "document template set to \(template.rawValue)")
+
+        await saveIfNeeded()
+    }
+
     // MARK: - Autosave
 
     /// The one place a drawing change is judged to be user editing.
