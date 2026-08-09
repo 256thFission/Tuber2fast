@@ -566,23 +566,6 @@ struct LayerSelectionTests {
 
     // MARK: - The value that crosses the boundary
 
-    @Test("An envelope written before `locked` existed decodes as unlocked")
-    func anEnvelopeWithoutLockedDecodesAsUnlocked() throws {
-        let encoder = PropertyListEncoder()
-        encoder.outputFormat = .binary
-        let old = try encoder.encode(
-            PreLockEnvelope(
-                layerID: UUID(),
-                kind: "image",
-                payload: Data([0x01]),
-                pageSpaceTransform: .identity
-            )
-        )
-        let decoded = try PropertyListDecoder().decode(LayerEnvelope.self, from: old)
-        #expect(!decoded.locked)
-        #expect(decoded.kind == "image")
-    }
-
     @Test("`locked` survives an envelope round trip")
     func lockedRoundTripsThroughTheEnvelope() throws {
         let envelope = try LayerEnvelope.image(
@@ -653,15 +636,6 @@ struct LayerSelectionTests {
             preconditionFailure("an image ref failed to encode")
         }
         return envelope
-    }
-
-    /// A `LayerEnvelope` as it was written before `locked` existed. Encoding
-    /// through this is the only way to produce such a file now.
-    private struct PreLockEnvelope: Encodable {
-        let layerID: UUID
-        let kind: String
-        let payload: Data
-        let pageSpaceTransform: PageSpaceTransform
     }
 }
 

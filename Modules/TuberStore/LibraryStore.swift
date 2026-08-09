@@ -130,10 +130,10 @@ package actor LibraryStore {
 
     private nonisolated let rootURL: URL
 
-    /// Adoption and the `.staging` sweep run inside the first root listing.
-    /// Both are idempotent by construction — the flag saves the stats, it
-    /// does not carry correctness.
-    private var didAdoptAndSweep = false
+    /// The `.staging` sweep runs inside the first root listing. It is
+    /// idempotent by construction — the flag saves the stats, it does not
+    /// carry correctness.
+    private var didSweepStaging = false
 
     /// The prefs as last read from or written to disk — a cache of this
     /// store's own I/O, never a second authority.
@@ -161,14 +161,14 @@ package actor LibraryStore {
     // MARK: - Listing
 
     /// One folder's contents, `""` for the root. The first root listing sweeps
-    /// `.staging/` and adopts the pre-library document, both idempotent.
+    /// `.staging/`, which is idempotent. Nothing outside this store's tree is
+    /// read, moved, or adopted.
     package func listFolder(_ folderPath: String) throws -> LibraryListing {
         if folderPath.isEmpty {
             try createDirectoryIfNeeded(documentsURL)
-            if !didAdoptAndSweep {
+            if !didSweepStaging {
                 sweepStaging()
-                adoptLegacyDocumentIfPresent()
-                didAdoptAndSweep = true
+                didSweepStaging = true
             }
         }
 
@@ -637,32 +637,6 @@ package actor LibraryStore {
             CanvasLog.event(.lifecycle, "swept .staging")
         } catch {
             CanvasLog.event(.lifecycle, "could not sweep .staging: \(error)")
-        }
-    }
-
-    /// The one write this store makes outside a user action and outside its
-    /// tree (`Contract.proposed.md` — L1): the pre-library document at the old
-    /// fixed path is moved whole into `Documents/`. The source is the sibling
-    /// of the library root — for the production root that is exactly
-    /// `<Application Support>/JustACanvas.tubernotes`, the path
-    /// `DocumentStore.defaultDirectoryURL()` names. Idempotent by
-    /// construction: a crash before leaves the source to try again, a crash
-    /// after leaves nothing to do. Deletable the day it stops mattering.
-    private func adoptLegacyDocumentIfPresent() {
-        let source = rootURL.deletingLastPathComponent()
-            .appendingPathComponent("JustACanvas.tubernotes")
-        guard FileManager.default.fileExists(atPath: source.path) else { return }
-        let name = freeName(base: "Just a Canvas", suffix: Self.documentSuffix, in: documentsURL)
-        do {
-            try FileManager.default.moveItem(
-                at: source,
-                to: documentsURL.appendingPathComponent(name)
-            )
-            CanvasLog.event(.lifecycle, "adopted the pre-library document as \(name)")
-        } catch {
-            // The source survives, so the next launch tries again; a failed
-            // adoption must not refuse the library.
-            CanvasLog.event(.lifecycle, "adoption failed, will retry next launch: \(error)")
         }
     }
 

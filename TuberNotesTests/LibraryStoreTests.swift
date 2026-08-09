@@ -8,8 +8,8 @@ import Testing
 /// Mirrors `TestScratch`, one storage level up, and deliberately does not
 /// touch it: that class means "a scratch document", this one means "a scratch
 /// library". `container` stands in for Application Support — the library root
-/// is a child of it, exactly the shape `defaultRootURL()` produces, so the
-/// adoption path (a sibling of the root) is exercised as production runs it.
+/// is a child of it, exactly the shape `defaultRootURL()` produces, so a file
+/// planted beside the root sits where production would find one.
 private final class LibraryScratch {
     let container: URL
     let root: URL
@@ -39,17 +39,17 @@ private final class LibraryScratch {
     }
 
     /// A fresh store each time, deliberately: it defeats the once-per-instance
-    /// adoption/sweep flag and the prefs cache, so assertions about disk are
-    /// about disk.
+    /// sweep flag and the prefs cache, so assertions about disk are about disk.
     func freshStore() -> LibraryStore { LibraryStore(rootURL: root) }
 
     func itemURL(_ relativePath: String) -> URL {
         documentsURL.appendingPathComponent(relativePath)
     }
 
-    /// The pre-library document at the old fixed path: a sibling of the root,
-    /// where `DocumentStore.defaultDirectoryURL()` puts it.
-    func plantLegacyDocument() throws {
+    /// A document directory sitting beside the library root rather than inside
+    /// it — where `DocumentStore.defaultDirectoryURL()` used to put one. The
+    /// library must ignore it entirely.
+    func plantStrayDocumentBesideTheRoot() throws {
         let source = container.appendingPathComponent("JustACanvas.tubernotes")
         try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
         try Data([0x01, 0x02]).write(to: source.appendingPathComponent("document.plist"))
@@ -547,39 +547,33 @@ struct LibraryStoreTests {
         #expect(!FileManager.default.fileExists(atPath: scratch.stagingURL.path))
     }
 
-    // MARK: - Adoption
+    // MARK: - Nothing outside the library root is touched
 
-    @Test("The first root listing adopts the pre-library document, idempotently")
-    func adoptionIsIdempotent() async throws {
+    /// The library owns its tree and nothing beside it. A stray document
+    /// sitting next to the root — the shape the deleted adoption path went
+    /// looking for — is not listed, not moved, and not deleted. This is the
+    /// inverse of the test that proved adoption happened, and it is what says
+    /// the deletion was intended rather than dropped.
+    @Test("The first root listing leaves a stray document beside the root alone")
+    func aStrayDocumentBesideTheRootIsLeftAlone() async throws {
         let scratch = try LibraryScratch()
-        try scratch.plantLegacyDocument()
+        try scratch.plantStrayDocumentBesideTheRoot()
+        let strayURL = scratch.container.appendingPathComponent("JustACanvas.tubernotes")
+        let strayBytes = try Data(contentsOf: strayURL.appendingPathComponent("document.plist"))
 
-        let first = try await scratch.store.listFolder("")
-        #expect(first.items.map(\.id) == ["Just a Canvas.tubernotes"])
+        let listing = try await scratch.store.listFolder("")
+
+        #expect(listing.items.isEmpty)
+        #expect(FileManager.default.fileExists(atPath: strayURL.path))
         #expect(
-            !FileManager.default.fileExists(
-                atPath: scratch.container.appendingPathComponent("JustACanvas.tubernotes").path
-            )
+            try Data(contentsOf: strayURL.appendingPathComponent("document.plist")) == strayBytes
         )
 
-        // Again on the same store, and again on a fresh one: nothing to do.
-        let again = try await scratch.store.listFolder("")
-        #expect(again.items.count == 1)
+        // And a fresh store, which has never run its once-per-instance sweep,
+        // does not find it either.
         let fresh = try await scratch.freshStore().listFolder("")
-        #expect(fresh.items.count == 1)
-    }
-
-    @Test("Adoption suffixes when the adopted name is taken")
-    func adoptionCollisionSuffixes() async throws {
-        let scratch = try LibraryScratch()
-        _ = try await scratch.store.createDocumentDirectory(named: "Just a Canvas", in: "")
-        try scratch.plantLegacyDocument()
-
-        let listing = try await scratch.freshStore().listFolder("")
-        #expect(
-            Set(listing.items.map(\.id))
-                == ["Just a Canvas.tubernotes", "Just a Canvas 2.tubernotes"]
-        )
+        #expect(fresh.items.isEmpty)
+        #expect(FileManager.default.fileExists(atPath: strayURL.path))
     }
 
     // MARK: - The derived modified date

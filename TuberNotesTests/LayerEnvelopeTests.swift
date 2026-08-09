@@ -37,6 +37,42 @@ struct LayerEnvelopeTests {
         #expect(decodedPage == page)
     }
 
+    /// `locked` is a required key, not a bit that defaults to unlocked when a
+    /// file omits it. Nothing on disk can omit it, so an envelope that does is
+    /// a file this build cannot read — and it says so rather than inventing an
+    /// answer.
+    @Test("An envelope with no locked key fails to decode")
+    func envelopeWithNoLockedKeyFailsToDecode() throws {
+        let complete: [String: Any] = [
+            "layerID": UUID().uuidString,
+            "kind": "ink",
+            "payload": Data([0x01]),
+            "pageSpaceTransform": ["a": 1.0, "b": 0.0, "c": 0.0, "d": 1.0, "tx": 0.0, "ty": 0.0],
+            "locked": false,
+        ]
+        // The fixture is only worth trusting if the complete form decodes, so
+        // the missing-key case is failing for the key and not for the shape.
+        #expect(throws: Never.self) {
+            try PropertyListDecoder().decode(
+                LayerEnvelope.self,
+                from: PropertyListSerialization.data(
+                    fromPropertyList: complete, format: .binary, options: 0
+                )
+            )
+        }
+
+        var missing = complete
+        missing["locked"] = nil
+        #expect(throws: (any Error).self) {
+            try PropertyListDecoder().decode(
+                LayerEnvelope.self,
+                from: PropertyListSerialization.data(
+                    fromPropertyList: missing, format: .binary, options: 0
+                )
+            )
+        }
+    }
+
     // MARK: - A page file naming no layers is unreadable
 
     @Test("A page file with no layer list throws on decode rather than reading as blank")

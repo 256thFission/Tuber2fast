@@ -208,6 +208,10 @@ package enum LayerKind: String, Sendable {
 /// The constraint is ink's alone: an `image` layer's `pageSpaceTransform` is a
 /// real durable value — the invertible mapping from the image's own extent,
 /// taken as the unit square, into page space — and is where the layer is.
+///
+/// Both halves of `Codable` are synthesized, so all five fields are required
+/// on the way in. An envelope missing one is a file this build cannot read,
+/// which is the loud failure and not a default.
 package struct LayerEnvelope: Codable, Sendable, Equatable {
     package let layerID: UUID
     package let kind: String
@@ -261,39 +265,6 @@ package struct LayerEnvelope: Codable, Sendable, Equatable {
         self.payload = payload
         self.pageSpaceTransform = pageSpaceTransform
         self.locked = locked
-    }
-
-    /// Decoding, with one hand-written case: **an envelope written before
-    /// `locked` existed decodes as unlocked.**
-    ///
-    /// This is the read-forward rule *Durable form* already states for the
-    /// pre-layer page form, one level down — "read as a one-ink-layer page and
-    /// written forward on the page's next save, never migrated eagerly" — and
-    /// not a defaulted invalid state. An absent `locked` is not ambiguous and
-    /// not corrupt: it is a layer nobody locked, in a file written by a build
-    /// that had no way to lock one. The alternative is that every page file on
-    /// disk becomes unreadable, which for a bit that changes no other rule is a
-    /// cost with nothing bought.
-    /// Spelled out rather than synthesized, because `init(from:)` below is
-    /// hand-written and a reader must be able to see the exact key set the two
-    /// halves agree on.
-    package enum CodingKeys: String, CodingKey {
-        case layerID
-        case kind
-        case payload
-        case pageSpaceTransform
-        case locked
-    }
-
-    package init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        layerID = try container.decode(UUID.self, forKey: .layerID)
-        kind = try container.decode(String.self, forKey: .kind)
-        payload = try container.decode(Data.self, forKey: .payload)
-        pageSpaceTransform = try container.decode(
-            PageSpaceTransform.self, forKey: .pageSpaceTransform
-        )
-        locked = try container.decodeIfPresent(Bool.self, forKey: .locked) ?? false
     }
 
     /// The kind, if this build recognizes it; `nil` is a refusal, not a default.
