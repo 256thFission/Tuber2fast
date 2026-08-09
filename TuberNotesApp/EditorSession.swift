@@ -95,9 +95,10 @@ package enum CloseOutcome: Equatable {
 /// It owns page order and identity, per-page ink state, and the active save
 /// policy. Live drawings live in PencilKit and are captured only at save time.
 /// `@Observable` is deliberate and narrow. SwiftUI observes `phase`,
-/// `lastSaveError`, and `shapeTool` — user-action-frequency values, and the
-/// last of them a read-through of the runtime's own rather than a copy. It is
-/// forbidden to observe the drawing, pan, zoom, or Pencil samples.
+/// `lastSaveError`, `shapeTool`, `template`, and `currentPageCarriesPDF` —
+/// user-action-frequency values, and the last three read-throughs of state
+/// owned elsewhere rather than copies of it. It is forbidden to observe the
+/// drawing, pan, zoom, or Pencil samples.
 @MainActor
 @Observable
 final class EditorSession {
@@ -602,11 +603,38 @@ final class EditorSession {
     /// `pageStates` and `index.pageIDs` are the same list in the same order.
     /// Checked after every mutation of either, so a drift fails at the mutation
     /// that caused it.
+    ///
+    /// It also republishes `currentPageCarriesPDF`, because being *the* call
+    /// every index mutation already makes is exactly what a notification wants:
+    /// a page operation written next year cannot forget it. That is
+    /// `CONTRIBUTING.md` — "fail closed, not open" applied to an observation
+    /// rather than to a check.
     private func alignedWithIndex() {
         precondition(
             pageStates.map(\.id) == index.pageIDs,
             "page states have drifted from the document index"
         )
+        republishCurrentPagePDFPresence()
+    }
+
+    /// Tells Observation that `currentPageCarriesPDF` may now answer
+    /// differently.
+    ///
+    /// Called from the three places the answer can change: `alignedWithIndex`,
+    /// which every page-list mutation makes; the load path, where a page's
+    /// layer list arrives from disk; and `deleteLayer`, the one site that
+    /// removes a layer from a page. Nothing else can put a `pdf` layer on the
+    /// page the user is looking at — an import appends pages without
+    /// navigating, and an image is not a PDF.
+    ///
+    /// An empty closure because the value is computed rather than stored:
+    /// there is nothing here to mutate, only observers to wake.
+    ///
+    /// Missing a site would make the *chrome* late by one render and never make
+    /// the value wrong, which is the failure mode a read-through buys over a
+    /// stored mirror — a mirror could disagree with the page list outright.
+    private func republishCurrentPagePDFPresence() {
+        withMutation(keyPath: \.currentPageCarriesPDF) {}
     }
 
     // MARK: - Page content
@@ -842,6 +870,10 @@ final class EditorSession {
                     continue
                 }
                 pageStates[landing].bytesLoaded(loaded)
+                // A page's layer list arrives here and nowhere else, so this is
+                // where the visible page becomes known to be a PDF page after a
+                // turn onto one whose bytes were not already held.
+                republishCurrentPagePDFPresence()
             } catch {
                 CanvasLog.event(
                     .lifecycle,
@@ -1384,9 +1416,46 @@ final class EditorSession {
     /// it.
     ///
     /// A read-through of durable state the session already owns, not a second
-    /// copy — the index is the one authority (`Contract.md` — Owners). Nothing
-    /// renders from it yet; the picker that will read it is step 15.
-    var template: PageTemplate { index.template }
+    /// copy — the index is the one authority (`Contract.md` — Owners). The
+    /// chrome's picker lights its current choice from this snapshot.
+    ///
+    /// `access`/`withMutation` rather than a stored `@Observable` property, for
+    /// the same reason `shapeTool` uses it: the storage is somewhere else, and
+    /// a copy up here could only drift from it. `index` itself stays
+    /// `@ObservationIgnored` — it changes at save frequency, and observing it
+    /// would rebuild the chrome on every page turn's index write.
+    var template: PageTemplate {
+        access(keyPath: \.template)
+        return index.template
+    }
+
+    /// Whether the page the user is looking at draws a PDF rather than paper.
+    ///
+    /// The chrome disables the template picker on it. A page is a PDF or it is
+    /// paper, and that rule is enforced at the render — a page carrying a `pdf`
+    /// layer draws no template (`StaticLayerRequest.effectiveTemplate`) — so
+    /// offering paper for such a page would offer a choice with no picture
+    /// behind it. The document's durable template is untouched meanwhile, which
+    /// is exactly why deleting the `pdf` layer reveals the paper the document
+    /// already said it had.
+    ///
+    /// This is the one thing the chrome observes about *which* page is visible,
+    /// and it is affordable because it changes at user-action frequency:
+    /// `currentPageChanged` fires once a turn has settled, never per pan frame
+    /// (`Contract.md` — Owners; SwiftUI never mirrors pan or zoom).
+    ///
+    /// Derived on every read from the page list and that page's own layers,
+    /// both of which have one writer already;
+    /// `republishCurrentPagePDFPresence` is what wakes observers.
+    ///
+    /// `false` before the session is ready: there is no visible page yet, and
+    /// the chrome renders a spinner rather than a picker.
+    var currentPageCarriesPDF: Bool {
+        access(keyPath: \.currentPageCarriesPDF)
+        guard phase == .ready,
+              let pageIndex = stateIndexIfPresent(of: currentPageID) else { return false }
+        return pageStates[pageIndex].staticLayers.contains { $0.recognizedKind == .pdf }
+    }
 
     /// Rules this document's paper differently.
     ///
@@ -1420,7 +1489,7 @@ final class EditorSession {
         guard phase == .ready, !isClosing else { throw PageEditError.sessionNotReady }
         guard index.template != template else { return }
 
-        index = index.withTemplate(template)
+        withMutation(keyPath: \.template) { index = index.withTemplate(template) }
         indexDirty = true
         // The durable value and the picture, in that order and in the same
         // main-actor stretch: the runtime re-composites every live page and
@@ -2334,6 +2403,9 @@ final class EditorSession {
             // page is editable again the moment nothing on it is refused.
             refusedLayers: pageStates[page].refusedLayers.filter { $0.layerID != layerID }
         )
+        // The one site that takes a layer off a page, so the one site where the
+        // visible page can stop being a PDF page and start being paper.
+        republishCurrentPagePDFPresence()
         CanvasLog.event(.canvas, "deleted layer \(layerID) from page \(pageID)")
 
         // Same as an import: the ink is untouched, so the canvas is told rather

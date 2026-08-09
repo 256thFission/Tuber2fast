@@ -40,6 +40,7 @@ struct RootCanvasView: View {
                     .overlay(alignment: .topTrailing) {
                         VStack(alignment: .trailing, spacing: 8) {
                             shapePicker
+                            templatePicker
                             pageActions
                         }
                         .padding(16)
@@ -127,10 +128,15 @@ struct RootCanvasView: View {
     /// Throws away the PDF behind the page the user is looking at.
     ///
     /// Always enabled, and the refusal is an alert rather than a disabled
-    /// button, deliberately: knowing whether *this* page carries a PDF would
-    /// mean SwiftUI observing which page is visible, and the visible page
-    /// changes as the user scrolls (`Contract.md` — Owners: the chrome does not
-    /// observe pan). The session answers instead, once, when asked.
+    /// button, deliberately: a destructive button that has quietly greyed out
+    /// says nothing, while "This page has no PDF behind it." says exactly what
+    /// happened. The session answers, once, when asked.
+    ///
+    /// The template picker beside it *is* disabled on a PDF page, and the two
+    /// are not in disagreement: a disabled picker states what a page is —
+    /// paper does not apply to this one — where a disabled trash button would
+    /// only withhold an explanation. `session.currentPageCarriesPDF` is the
+    /// same fact and this button could read it; it deliberately does not.
     private func removePDFFromCurrentPage() {
         Task {
             do {
@@ -228,6 +234,95 @@ struct RootCanvasView: View {
         .buttonStyle(.plain)
         .accessibilityLabel(name)
         .accessibilityIdentifier("shape.tool.\(kind?.rawValue ?? "freehand")")
+    }
+
+    /// The document's paper, and the whole of its user interface.
+    ///
+    /// One control for the document, because the template is one durable value
+    /// on the index rather than a per-page fact — so there is nothing here to
+    /// scope to a page. Four buttons in the shape picker's idiom: no custom
+    /// spacing, no colour, no margins, no per-page override, and no preview
+    /// thumbnails. Each of those is a decision that has not been taken, and
+    /// adding one is a change of scope rather than a flourish.
+    ///
+    /// Built from `PageTemplate.allCases` with an exhaustive `switch` behind
+    /// each button, so a template added to the enum is a compile error here
+    /// rather than a case with no way to choose it.
+    ///
+    /// Disabled on a page carrying a `pdf` layer: a page is a PDF or it is
+    /// paper, and such a page draws no template at all. The durable value is
+    /// left exactly as it was while the control is disabled, which is why
+    /// throwing the PDF away reveals the paper the document already had.
+    ///
+    /// **Choosing paper is not undoable**, exactly as turning and appending are
+    /// not: it is not a PencilKit stroke edit, and there is no semantic undo
+    /// domain (`Contract.md` — Undo). Nothing here registers with an undo
+    /// manager.
+    private var templatePicker: some View {
+        HStack(spacing: 2) {
+            ForEach(PageTemplate.allCases, id: \.self) { template in
+                templateButton(template)
+            }
+        }
+        .padding(4)
+        .background(.regularMaterial, in: Capsule())
+        .disabled(session.currentPageCarriesPDF)
+        .accessibilityIdentifier("template.picker")
+    }
+
+    private func templateButton(_ template: PageTemplate) -> some View {
+        Button {
+            chooseTemplate(template)
+        } label: {
+            Image(systemName: Self.symbol(for: template))
+                .font(.body)
+                .frame(width: 36, height: 36)
+                .background(
+                    // Lit from the session's read-through of the index, never
+                    // from a copy held here: the durable template is the
+                    // document's (`Contract.md` — Owners).
+                    session.template == template
+                        ? AnyShapeStyle(.tint.opacity(0.25))
+                        : AnyShapeStyle(.clear),
+                    in: Circle()
+                )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(Self.name(for: template))
+        .accessibilityIdentifier("template.\(template.rawValue)")
+    }
+
+    private static func symbol(for template: PageTemplate) -> String {
+        switch template {
+        case .blank: "square"
+        case .lined: "text.justify"
+        case .grid: "square.grid.3x3"
+        case .dotted: "circle.grid.3x3"
+        }
+    }
+
+    private static func name(for template: PageTemplate) -> String {
+        switch template {
+        case .blank: "Blank paper"
+        case .lined: "Ruled paper"
+        case .grid: "Grid paper"
+        case .dotted: "Dotted paper"
+        }
+    }
+
+    /// Rules the document differently, and surfaces a refusal the way every
+    /// other failing action here does — the same alert, never a swallowed
+    /// error. `setTemplate` throws when the session is not ready, and writes
+    /// the index through the ordinary save path, so a write failure arrives as
+    /// the save-failure banner rather than as a throw.
+    private func chooseTemplate(_ template: PageTemplate) {
+        Task {
+            do {
+                try await session.setTemplate(template)
+            } catch {
+                actionError = String(describing: error)
+            }
+        }
     }
 
     @ViewBuilder

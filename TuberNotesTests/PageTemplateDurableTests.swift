@@ -170,6 +170,84 @@ struct PageTemplateDurableTests {
         _ = await reopened.close()
     }
 
+    // MARK: - What the picker reads
+
+    /// The picker's whole state is these two reads, and this is as close to it
+    /// as anything mechanical gets: there is no view test in this project, and
+    /// `.disabled(session.currentPageCarriesPDF)` is a claim about SwiftUI.
+    /// What is checkable is that the property it is attached to answers
+    /// correctly on every page a document can be showing.
+    @Test("The picker's disabled condition follows the visible page onto a PDF and off it")
+    func theDisabledConditionFollowsTheVisiblePage() async throws {
+        let scratch = try TestScratch("template")
+        let session = EditorSession(store: scratch.freshStore(), debounce: .milliseconds(20))
+        await session.start()
+
+        // Page 0 is the document's own blank page: paper, and the picker is
+        // live on it.
+        #expect(!session.currentPageCarriesPDF)
+
+        // The import appends without navigating, so the visible page is still
+        // paper even though the document now contains a PDF page.
+        let appended = try await session.importPDF(PDFFixture.quadrantPDF(rotate: 0, scale: 2))
+        let pdfPage = try #require(appended.first)
+        #expect(!session.currentPageCarriesPDF, "the picker is per visible page, not per document")
+
+        turn(session, to: 1)
+        #expect(session.currentPageID == pdfPage)
+        #expect(session.currentPageCarriesPDF, "a PDF page is a PDF, not paper")
+
+        // Throwing the worksheet away hands the page back to paper, in the same
+        // main-actor stretch that deleted the layer.
+        #expect(try await session.deletePDFLayers() == 1)
+        #expect(!session.currentPageCarriesPDF)
+
+        turn(session, to: 0)
+        #expect(!session.currentPageCarriesPDF)
+        _ = await session.close()
+    }
+
+    /// The durable value is untouched while the picker is disabled — which is
+    /// the whole of §c4's payoff: a PDF thrown away reveals the paper the
+    /// document already said it had, because nothing ever overwrote it.
+    @Test("Paper chosen before an import is still the document's paper under a deleted PDF")
+    func paperSurvivesUnderneathAPDF() async throws {
+        let scratch = try TestScratch("template")
+        let session = EditorSession(store: scratch.freshStore(), debounce: .milliseconds(20))
+        await session.start()
+        try await session.setTemplate(.grid)
+
+        let appended = try await session.importPDF(PDFFixture.quadrantPDF(rotate: 0, scale: 2))
+        let pdfPage = try #require(appended.first)
+        turn(session, to: 1)
+        #expect(session.currentPageCarriesPDF)
+        #expect(session.template == .grid, "the value the picker would show is unchanged")
+
+        #expect(try await session.deletePDFLayers(onPage: pdfPage) == 1)
+        #expect(!session.currentPageCarriesPDF)
+        #expect(session.template == .grid)
+
+        let saved = try #require(await scratch.freshStore().load())
+        #expect(saved.template == .grid)
+        _ = await session.close()
+    }
+
+    /// The picker's action is `async throws`, and the view has an alert behind
+    /// it rather than a `try?`. This is the refusal that alert exists for.
+    @Test("Choosing paper before the session is ready is refused rather than swallowed")
+    func choosingPaperOnAnUnstartedSessionThrows() async throws {
+        let scratch = try TestScratch("template")
+        let session = EditorSession(store: scratch.freshStore(), debounce: .milliseconds(20))
+
+        await #expect(throws: PageEditError.sessionNotReady) {
+            try await session.setTemplate(.lined)
+        }
+        #expect(session.template == .blank, "a refused choice changes nothing")
+        // No visible page, so nothing is a PDF page and the chrome is not
+        // rendering a picker anyway.
+        #expect(!session.currentPageCarriesPDF)
+    }
+
     // MARK: - Fixtures
 
     private static let samplePageID = UUID(uuidString: "22222222-2222-2222-2222-222222222222")!
@@ -213,6 +291,15 @@ struct PageTemplateDurableTests {
             root.frame = CGRect(x: 0, y: 0, width: 820, height: 1180)
         }
         root.layoutIfNeeded()
+    }
+
+    /// The paging runtime settles on a page the way a finished scroll does.
+    private func turn(_ session: EditorSession, to page: Int) {
+        host(session)
+        let scroll = session.pages.scrollView
+        scroll.contentOffset = CGPoint(x: scroll.bounds.width * CGFloat(page), y: 0)
+        session.pages.scrollViewDidEndDecelerating(scroll)
+        session.pages.view.layoutIfNeeded()
     }
 
     /// Drives the append gesture: a deliberate pull past the last page, which
