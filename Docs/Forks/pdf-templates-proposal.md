@@ -529,9 +529,17 @@ Cascade in `DocumentStore`:
   the `layers/` scan below it is the whole sweep
 - `layers(of:)` — delete `if let inline = page.inlineLayers { return inline }`
   (`:425`)
-- `plan` — delete `isAlreadySplit` (`:790-793`); `layersToWrite` becomes
-  unconditionally the caller's changed set. Delete the `$0.inlineLayers != nil ||`
-  term from `pageFileNeedsWriting` (`:811`)
+- `plan` — delete `isAlreadySplit` (`:790-793`). Delete the
+  `$0.inlineLayers != nil ||` term from `pageFileNeedsWriting` (`:811`).
+  **Correction, found in implementation:** this section first said
+  `layersToWrite` "becomes unconditionally the caller's changed set". That is
+  not a semantics-preserving deletion and would have shipped a durability bug.
+  `isAlreadySplit` was `existing.map { $0.inlineLayers == nil } ?? false`, and
+  the `?? false` carried a live, non-shim case — **a page with no file on disk
+  yet**, which must write all of its layers because none of them has a file to
+  be unchanged. Written as this section originally described it, 16 tests fail
+  with `danglingLayerRef` on the first save of an imported page. The correct
+  reading is `existing == nil ? write.layers : filter(changed)`
 - `refuseIfThisWriteWouldDropAnUnrewritableLayer` — delete the
   `if let inline = existing.inlineLayers` branch (`:864-869`)
 
