@@ -34,14 +34,18 @@ differs per developer — signing team, bundle prefix — lives in gitignored
 The authoritative statements live in `Docs/Contract.md`. Cite rules by name,
 not number, and where this index and that file differ, that file wins:
 
-- **One writer** — each durable value has one authoritative writer; views
-  render snapshots and send intentions.
-- **Canvas runtime owns the frame path** — frame-frequency work stays inside
-  the UIKit/PencilKit canvas runtime.
-- **Nothing synchronous on interaction paths** — no file, encoding, PDF,
-  image, or database work on an interaction path or the main thread.
-- **Contract changes are explicit** — the change updates `Docs/Contract.md`
-  and the commit subject is tagged `CONTRACT:`.
+- **Custody** — each piece of state has one owner, and the owner holds the
+  value. The notebook holds the ink; the canvas is told, never asks; views
+  draw state and send requests.
+- **Structure** — nothing runs per Pencil sample except PencilKit; per-frame
+  work lives in `TNCanvas`; file I/O lives in the two stores and the import
+  reader; the module graph is a test.
+- **One save** — leaves, then page files, then the index; only `compact()`
+  deletes.
+- **Invalid states fail loud** — `TNPrecondition`, never a clamp or a
+  default.
+- A change to a rule edits `Docs/Contract.md` and the commit subject starts
+  with `CONTRACT:`.
 
 One rule's home is this file: **smallest change that proves the queue item.**
 No future notebook, PDF, AI, Pin, collaboration, or sync abstractions early.
@@ -51,7 +55,7 @@ No future notebook, PDF, AI, Pin, collaboration, or sync abstractions early.
 Done means CI is green and a reviewer has approved the pull request — never
 that it compiled. Green CI means it built and the tests passed; **it is
 silent about ink**, because the simulator has no Apple Pencil. A change to
-the canvas runtime or the editor session needs evidence from a physical
+`TNCanvas`, `TNEditor`, or `Workspace` needs evidence from a physical
 iPad — the pull request template names the files. Pencil feel, stroke
 fidelity, and visual taste are a maintainer's verdict: record the evidence,
 leave the verdict.

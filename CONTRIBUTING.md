@@ -102,24 +102,24 @@ pressure cannot be proven off-device at all, so some changes are not finishable
 by CI no matter how green it is.
 
 Evidence from a physical iPad is **required** when a pull request touches the
-canvas runtime or the editor session:
+canvas runtime, the editor binding, or the workspace:
 
 | File | Why |
 |---|---|
-| `PageCanvasController.swift` | the live PencilKit canvas — ink, pan, zoom |
-| `PagedCanvasController.swift` | paging, the live window, gesture arbitration |
-| `EditorSession.swift` | page turns, autosave timing, dirty tracking |
-| `EditorLifecycle.swift` | the background-execution lease and flush |
-| `CanvasLog.swift` | the stderr mirror ships in Release and is the only sink a person can read without a Mac |
+| `Modules/TNCanvas/PageCanvasController.swift` | the live PencilKit canvas — ink, pan, zoom, the undo manager |
+| `Modules/TNCanvas/PagedCanvasController.swift` | paging, the live window, gesture arbitration |
+| `Modules/TNEditor/EditorBinding.swift` | every report and every push between notebook and canvas |
+| `TuberNotesApp/Workspace.swift` | the background-execution lease and flush |
+| `Modules/TNCore/TNLog.swift` | the stderr mirror ships in Release and is the only sink a person can read without a Mac |
 
-`CanvasLog` is on that list for one reason: its stderr mirror is no longer
-compiled out of Release, and a diagnostic path is worth nothing until the build
-that ships has been seen to emit through it. A change there is finished when a
-Release build on an iPad, launched with `TN_TRACE`, produced a readable capture
-— not when the simulator suite passed.
+`TNLog` is on that list for one reason: its stderr mirror is not compiled out
+of Release, and a diagnostic path is worth nothing until the build that ships
+has been seen to emit through it. A change there is finished when a Release
+build on an iPad, launched with `TN_TRACE`, produced a readable capture — not
+when the simulator suite passed.
 
-Device evidence is **not** required for `DocumentStore`, `DocumentIndex`,
-`PageGeometry`, tests, docs, or tooling. Correctness there is settled by a test.
+Device evidence is **not** required for `TNFormat`, `TNLibrary`, `TNModel`,
+tests, docs, or tooling. Correctness there is settled by a test.
 
 The pull request template asks which case you are in. Answering "required but
 not done" is a legitimate answer; add it to `Docs/Unproven.md` and say so.
@@ -182,7 +182,7 @@ that scored it would be usurping one. And it is **never consumed by CI**:
 everything it writes comes from an untrusted machine and is trivially forgeable,
 so a human cites it and nothing verifies it.
 
-`CanvasLog`'s stderr mirror is present in **every** configuration, Release
+`TNLog`'s stderr mirror is present in **every** configuration, Release
 included, and is gated on `TN_TRACE` alone. That is deliberate: `device.yml`
 archives `-configuration Release` and distributes that build to every registered
 iPad, so a mirror only Debug carried would be compiled out of the one build most
@@ -231,10 +231,9 @@ next person, which is worse than not having it.
   the Pencil path" from a code-review opinion into a build error.
 - **Warnings as errors** (`SWIFT_TREAT_WARNINGS_AS_ERRORS`). A deprecated call
   becomes a build error the moment it is written, not a review comment.
-- **Runtime ownership.** Each `EditorSession` constructs and retains its canvas
-  controller once. There is one controlled `PKCanvasView` construction site,
-  but no process-global singleton: future scenes and virtualized page editors
-  must be able to own independent active canvases.
+- **Runtime ownership.** Each `EditorBinding` constructs and retains its
+  canvas runtime once. There is one `PKCanvasView` construction site, but no
+  process-global singleton: every open tab owns its own runtime.
 
 ## Cancellation
 
@@ -262,22 +261,20 @@ stale. **A generation counter with no cancellation is wasted work; a cancel
 with no comparison is a race.** Sites that only compare, with no droppable
 work behind them, say at the declaration why comparison is the whole answer.
 
-**Dedup is not staleness.** `pageLoadsInFlight` and the renderer's in-flight
-join answer "is someone already doing this?" — not "is this still wanted?".
-They are not cancellation mechanisms and must not become them: re-asking for
-the render already in flight has to *join* it, never cancel and restart it.
-Each such structure says which question it answers where it is declared.
+**Dedup is not staleness.** `Notebook.loads` answers "is someone already
+loading this page?" — not "is this still wanted?". It is not a cancellation
+mechanism and must not become one. Each such structure says which question
+it answers where it is declared.
 
 **Some work may never be cancelled**, because cancelling it loses ink or
 strands it. Nothing joins this list without a reason of the same kind:
 
 | Task | Why it is protected |
 |---|---|
-| `EditorSession.currentSave` | it owns pages already marked `.saving`, and only its own return moves them out; cancelled, they are stranded — ink neither on disk nor recapturable |
-| `EditorSession.startTask` | the one load allowed to cross the store boundary before any canvas is editable; cancelled, the session stays `.loading` with no second attempt |
-| `EditorLifecycle.flushTask` | the last write the process gets, holding the execution lease that buys the time to finish it |
-| `DrawingSnapshot.serialized`'s detached task | the bytes of a save in progress; `Task.detached` makes it uncancellable by construction rather than by anyone remembering |
-| the page handover | synchronous by contract (`Contract.md` — Navigation) and not a task at all; it must never become one |
+| `Notebook.currentSave` | it holds the captured values of a pass; cancelled, the pages stay dirty with no pass to clear them, and the retry buffer is never filled |
+| `Workspace.leaseFlush` | the last write the process gets, holding the execution lease that buys the time to finish it |
+| the serialize hop in `Notebook.performSave` | the bytes of a save in progress; `Task.detached` makes it uncancellable by construction rather than by anyone remembering |
+| the final ink report | synchronous by contract (`Contract.md` — Navigation and the window) and not a task at all; it must never become one |
 
 A cancelled `Task.sleep` is the ordinary outcome, not a failure, and is caught
 by name in a two-line `do`/`catch` — never `try?`, which answers a genuine
@@ -289,7 +286,7 @@ Three idioms exist. Each has one situation, chosen by what the work owns:
 
 | Situation | Idiom | Why |
 |---|---|---|
-| off-main work over shared mutable state | `actor` | serialized access is the type's job rather than a convention — `DocumentStore`, `StaticLayerRenderer` |
+| off-main work over shared mutable state | `actor` | serialized access is the type's job rather than a convention — `PackageStore`, `LibraryStore`, `Renderer` |
 | heavy work over values, owning no state | `nonisolated` (usually `static`) `async func` | runs on the generic executor, so it never occupies an actor's queue behind another page's request — and it runs *in the caller's task*, so it inherits the cancellation the checkpoints above depend on |
 | a *synchronous* call that must leave the main actor, or work that must outlive its caller | `Task.detached` | the only two honest reasons, and the site names which one it is |
 
@@ -355,16 +352,15 @@ The contract's hardest rule to follow is *smallest change that proves the
 queue item*. The pressure to add the next abstraction is constant and it always
 feels justified. Concretely:
 
-- No `import UIKit` or `import PencilKit` outside the canvas runtime and
-  `EditorLifecycle`.
+- No `import UIKit` outside `TNCanvas`, `TNEditor`, and the app.
 - The live canvas count is bounded by a small constant and must not grow with
   page count.
 
 The first is machine-checked by `TuberNotesTests/ContractStructureTests.swift`,
 along with the single `PKCanvasView` construction site and file I/O confined to
-`TuberStore`'s actors, one per storage domain, plus the import picker. The second is not, and neither is the forbidden-pattern list —
-those hold only as far as review holds them. `Docs/Unproven.md` says which is
-which.
+`PosixFileSystem`, `LibraryStore`, and `ImportReader`. The second is not, and
+neither is the forbidden-pattern list — those hold only as far as review holds
+them.
 
 Those checks are tests rather than a script on purpose. They run inside the
 thing that already decides, they fail like any other test so no second verdict

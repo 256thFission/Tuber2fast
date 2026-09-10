@@ -184,7 +184,7 @@ digest_trace() {
     # false report. Say nothing was captured rather than printing zeroes that
     # read as "nothing went wrong".
     printf '  NO TRACE CAPTURED.\n'
-    printf '  No TN[ line and no trap appears in this stream. CanvasLog'\''s stderr\n'
+    printf '  No TN[ line and no trap appears in this stream. TNLog'\''s stderr\n'
     printf '  mirror is present in every configuration, Release included, and is\n'
     printf '  gated only on TN_TRACE — so the usual causes are a launch without\n'
     printf '  that variable, or attaching to an already-running process:\n'

@@ -23,14 +23,14 @@ app feels, and the simulator has no Apple Pencil at all.
 
 **Required** when this PR touches any of:
 
-- `Modules/TuberCanvas/PageCanvasController.swift`
-- `Modules/TuberCanvas/PagedCanvasController.swift`
-- `TuberNotesApp/EditorSession.swift`
-- `TuberNotesApp/EditorLifecycle.swift`
+- `Modules/TNCanvas/PageCanvasController.swift`
+- `Modules/TNCanvas/PagedCanvasController.swift`
+- `Modules/TNEditor/EditorBinding.swift`
+- `TuberNotesApp/Workspace.swift`
+- `Modules/TNCore/TNLog.swift`
 
-**Not required** for `DocumentStore`, `DocumentIndex`,
-`PageGeometry`, `CanvasLog`, tests, docs, or tooling — correctness there is
-settled by a test.
+**Not required** for `TNFormat`, `TNLibrary`, `TNModel`, tests, docs, or
+tooling — correctness there is settled by a test.
 
 - [ ] Not required — this PR touches none of the files above
 - [ ] Exercised on a physical iPad, described below

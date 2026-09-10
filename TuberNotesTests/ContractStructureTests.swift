@@ -18,7 +18,7 @@ struct CheckedSource: Sendable, Equatable {
 /// learn whether they still bite was to break the real source tree. Now the
 /// suite below points the same functions at a temp directory holding planted
 /// violations, so **the recursion and each rule have a test that fails when the
-/// rule dies** — see `Docs/Queue.md`, `contract-checker-is-blind`.
+/// rule dies**.
 enum ContractChecker {
 
     // MARK: Enumeration
@@ -205,15 +205,14 @@ enum ContractChecker {
     // MARK: Rule — UI framework imports
 
     /// The framework imports this checker can see, and which it therefore
-    /// decides the placement of. `Docs/Contract.md`, *Owners*: "Durable value
-    /// types import Foundation only."
+    /// decides the placement of. `Docs/Contract.md`, *Structure*: UIKit is
+    /// imported only by `TNCanvas`, `TNEditor`, and the app.
     ///
-    /// `CoreGraphics` joined the list with phase 3's `pdf` kind. It is not a UI
-    /// framework, and it is here for the rule behind the rule rather than the
-    /// name: "durable value types import Foundation only" is a ban on acquiring
-    /// a graphics framework's whole vocabulary, and `CGPDFDocument` arrives with
-    /// `CGContext`, `CGImage`, and every drawing call attached. Without the
-    /// entry, any file could import it and the checker would say nothing.
+    /// `CoreGraphics` is not a UI framework, and it is here because importing
+    /// it acquires a graphics framework's whole vocabulary: `CGPDFDocument`
+    /// arrives with `CGContext`, `CGImage`, and every drawing call attached.
+    /// Without the entry, any file could import it and the checker would say
+    /// nothing.
     ///
     /// **`SwiftUI` is deliberately absent, and the reason changed with the
     /// module split.** It used to be absent because a flat allowlist would have
@@ -274,15 +273,15 @@ enum ContractChecker {
 
     /// Tokens that mean this source reaches the file system.
     ///
-    /// `Docs/Contract.md`, golden rules 3 and 4: `DocumentStore` is the one
-    /// writer of durable state and `PageCanvasController` never reads or writes
-    /// files. This is an allowlist rule — the list below is what "touches
-    /// storage" is spelled as, not a list of known offenders.
+    /// `Docs/Contract.md`, *Structure*: file I/O happens in `PosixFileSystem`,
+    /// `LibraryStore`, and `ImportReader`, and nowhere else. This is an
+    /// allowlist rule — the list below is what "touches storage" is spelled
+    /// as, not a list of known offenders.
     ///
-    /// `fputs` is deliberately absent: `CanvasLog` writes to `stderr`, and a
+    /// `fputs` is deliberately absent: `TNLog` writes to `stderr`, and a
     /// stream is not storage. `UserDefaults` is deliberately present: it is
-    /// durable state landing on disk without passing through `DocumentStore`,
-    /// which is the rule, not the API.
+    /// durable state landing on disk without passing through a store, which
+    /// is the rule, not the API.
     static let forbiddenFileIOTokens = [
         "FileManager",
         "FileHandle",
@@ -425,9 +424,8 @@ struct CanvasConstructionSite: Sendable, Equatable {
 
 /// The structural rules of `Docs/Contract.md`, machine-checked.
 ///
-/// These were enforced by a shell gate until the gate was removed, and
-/// `Docs/Unproven.md` recorded the loss as a regression. They are tests rather
-/// than a script for three reasons:
+/// These were once enforced by a shell gate. They are tests rather than a
+/// script for three reasons:
 ///
 /// - they run inside the thing that already decides — CI and `Cmd-U` — so they
 ///   need no new entrypoint and no second verdict vocabulary;
@@ -645,8 +643,8 @@ struct ContractStructureTests {
         )
     }
 
-    /// Golden rule 2's import half is the compiler's now, and this is the one
-    /// line of it a test can still lose silently.
+    /// The SwiftUI ban (`Docs/Contract.md`, *Structure*) is the compiler's,
+    /// and this is the one line of it a test can still lose silently.
     ///
     /// The ban itself needs no test: `import SwiftUI` below the app target does
     /// not compile, and a build failure is not something a suite has to notice.
@@ -664,9 +662,9 @@ struct ContractStructureTests {
             yaml.contains("-module-alias SwiftUI="),
             """
             project.yml no longer aliases SwiftUI away from the framework targets, so the canvas \
-            runtime can import it again and nothing but review would say so. Golden rule 2's \
-            import half is enforced there and nowhere else — restore it, or decide deliberately \
-            that a scanner rule replaces it.
+            runtime can import it again and nothing but review would say so. The SwiftUI ban in \
+            Contract.md, Structure, is enforced there and nowhere else — restore it, or decide \
+            deliberately that a scanner rule replaces it.
             """
         )
     }
@@ -675,9 +673,9 @@ struct ContractStructureTests {
 
     /// Which of the three scanned frameworks each module may import.
     ///
-    /// `Docs/Contract.md`, *Owners*: "Durable value types import Foundation
-    /// only", and "UIKit and PencilKit may be imported only by the canvas
-    /// runtime ... and by the owner of the background-execution lease."
+    /// `Docs/Contract.md`, *Structure*: "UIKit is imported only by `TNCanvas`,
+    /// `TNEditor`, and the app." PencilKit and CoreGraphics reach further
+    /// down, because `TNModel` carries `PKDrawing` and `CGImage` as values.
     ///
     /// **This replaced a twenty-three-entry allowlist of file paths.** The
     /// allowlist could not express the rule it was enforcing: it was one flat
@@ -761,16 +759,15 @@ struct ContractStructureTests {
         }
     }
 
-    /// `DocumentStore` is the only writer of durable state.
+    /// `PackageStore` and `LibraryStore` are the writers of durable state.
     ///
-    /// `ImportPickers.swift` is here for one read, not a write: a document
+    /// `ImportReader.swift` is here for one read, not a write: a document
     /// picked from the Files picker arrives as a security-scoped URL outside
     /// the sandbox, and its bytes must be read where the scope is held. That
-    /// file is the *user's source*, not the document's durable state — the
-    /// bytes become durable only by passing through `EditorSession.importPDF`
+    /// file is the *user's source*, not the notebook's durable state — the
+    /// bytes become durable only by passing through `Notebook.importPDF`
     /// and then the store, which remains the one writer.
     ///
-    /// Still a file-path allowlist rather than a module one, deliberately:
     /// A file-path allowlist rather than a module one, deliberately: the app
     /// target's one permitted read is a single file's business, and naming
     /// the module would licence the whole SwiftUI shell.
@@ -1198,7 +1195,7 @@ struct ContractCheckerOwnTests {
             )
         }
 
-        // A stream is not storage: CanvasLog's stderr mirror must stay legal.
+        // A stream is not storage: TNLog's stderr mirror must stay legal.
         #expect(ContractChecker.fileIOTokens(in: "fputs(message, stderr)").isEmpty)
     }
 
