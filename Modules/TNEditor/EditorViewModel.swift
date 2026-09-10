@@ -91,8 +91,10 @@ package final class EditorViewModel {
 
     package var currentPaper: Paper? { notebook.paper(of: notebook.currentPageID) }
 
-    package func setPaper(_ paper: Paper) {
-        binding.intention { notebook.setPaper(paper, on: notebook.currentPageID) }
+    /// Drawn paper only: the two asset papers are intentions of their own,
+    /// and neither is a menu item the user picks from a list.
+    package func setPaper(_ paper: DrawnPaper) {
+        binding.intention { try? notebook.setPaper(.drawn(paper), on: notebook.currentPageID) }
     }
 
     package func scroll(toPageIndex index: Int) {

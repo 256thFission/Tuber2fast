@@ -175,7 +175,7 @@ struct TNCanvasTests {
         // synchronous answer the seam allows: it finishes its own change and
         // pushes the new list back down before returning.
         reporter.onEndBoundary = { seq in
-            pages.append(PageDescriptor(id: PageID(), geometry: .letter, paper: .known(.blank)))
+            pages.append(PageDescriptor(id: PageID(), geometry: .letter, paper: .known(.drawn(.blank))))
             runtime.setPages(pages, seq: StructureSeq(2), answering: seq)
         }
 
@@ -242,7 +242,7 @@ struct TNCanvasTests {
 
     private func descriptors(_ count: Int) -> [PageDescriptor] {
         (0..<count).map { _ in
-            PageDescriptor(id: PageID(), geometry: .letter, paper: .known(.blank))
+            PageDescriptor(id: PageID(), geometry: .letter, paper: .known(.drawn(.blank)))
         }
     }
 

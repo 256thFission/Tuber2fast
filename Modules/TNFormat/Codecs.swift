@@ -76,7 +76,15 @@ package enum Codecs {
 package enum DurableKeys {
     package static let index: Set<String> = ["formatVersion", "notebookID", "createdAt", "pages"]
     package static let pageRecord: Set<String> = ["id", "width", "height", "paper"]
-    package static let paper: Set<String> = ["kind"]
+    /// Paper's keys depend on its kind; an unknown kind pins nothing,
+    /// because the page is refused before its payload is read.
+    package static func paper(kind: String) -> Set<String> {
+        switch kind {
+        case PaperKind.imageKind: ["kind", "asset"]
+        case PaperKind.pdfKind: ["kind", "asset", "sourcePageIndex"]
+        default: ["kind"]
+        }
+    }
     package static let pageFile: Set<String> = ["pageID", "hasInk", "inkIndex", "layers"]
     package static let view: Set<String> = ["currentPageID"]
     package static func layerFile(kind: String) -> Set<String> { ["layerID", "kind", "transform", kind] }

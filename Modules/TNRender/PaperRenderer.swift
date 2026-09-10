@@ -20,7 +20,7 @@ package enum PaperRenderer {
 
     /// The context is in page space: origin top-left, y down, one unit per
     /// page point. `none` draws nothing at all; the source shows through.
-    package static func draw(_ paper: Paper, geometry: PageGeometry, in context: CGContext) {
+    package static func draw(_ paper: DrawnPaper, geometry: PageGeometry, in context: CGContext) {
         let width = geometry.width, height = geometry.height
         if paper != .none {
             context.setFillColor(pageColor)

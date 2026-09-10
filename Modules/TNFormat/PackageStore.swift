@@ -166,6 +166,12 @@ package actor PackageStore {
         for page in validated.pageIDs where !fs.exists(layout.pageURL(page)) {
             faults[page, default: []].append(.missingPageFile)
         }
+        // Stat only: the asset's bytes are the renderer's business, and open
+        // reads no page.
+        for record in validated.pages {
+            guard let asset = record.paperAsset, !fs.exists(layout.assetURL(asset)) else { continue }
+            faults[record.id, default: []].append(.paperAssetMissing(asset.fileName))
+        }
         knownNotebookID = validated.notebookID
         return LoadedNotebook(index: validated, pageFaults: faults)
     }
@@ -484,6 +490,11 @@ package actor PackageStore {
             }
             reachableLayers.formUnion(file.layers)
         }
+        // Paper is reached from the index, not from a page file: a paper
+        // asset stays reachable even for a page whose file will not read.
+        for record in index.pages {
+            if let asset = record.paperAsset { reachableAssets.insert(asset.fileName) }
+        }
         if !report.layerReclamationSuspended {
             for layerID in reachableLayers {
                 guard let data = try? fs.read(layout.layerURL(layerID)),
@@ -549,7 +560,12 @@ package enum IndexFile {
         for page in pages {
             try Codecs.checkKeys(Set(page.keys), against: DurableKeys.pageRecord)
             guard let paper = page["paper"] as? [String: Any] else { throw .corruptJSON("paper is not an object") }
-            try Codecs.checkKeys(Set(paper.keys), against: DurableKeys.paper)
+            guard let kind = paper["kind"] as? String else { throw .missingKey("kind") }
+            // An unknown kind is a page's fault, not the index's, so its keys
+            // are not pinned: this build cannot know what they should be.
+            if PaperKind.isKnownKind(kind) {
+                try Codecs.checkKeys(Set(paper.keys), against: DurableKeys.paper(kind: kind))
+            }
         }
         return try Codecs.decode(NotebookIndex.self, from: data)
     }

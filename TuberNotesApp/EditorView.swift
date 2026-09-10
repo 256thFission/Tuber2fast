@@ -139,11 +139,11 @@ struct EditorView: View {
 
     private var paperMenu: some View {
         Menu {
-            ForEach([Paper.blank, .lined, .grid, .dotted], id: \.self) { paper in
+            ForEach(DrawnPaper.allCases, id: \.self) { paper in
                 Button {
                     editor.setPaper(paper)
                 } label: {
-                    if editor.currentPaper == paper {
+                    if editor.currentPaper == .drawn(paper) {
                         Label(Self.paperName(paper), systemImage: "checkmark")
                     } else {
                         Text(Self.paperName(paper))
@@ -153,7 +153,7 @@ struct EditorView: View {
         } label: {
             Label("Paper", systemImage: "square.grid.2x2")
         }
-        // A PDF-backed page has no paper of its own to set.
+        // A page whose paper this build does not know is a placeholder.
         .disabled(editor.currentPaper == nil)
     }
 
@@ -232,7 +232,7 @@ struct EditorView: View {
         return .medium
     }
 
-    private static func paperName(_ paper: Paper) -> String {
+    private static func paperName(_ paper: DrawnPaper) -> String {
         switch paper {
         case .none: "None"
         case .blank: "Blank"

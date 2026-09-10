@@ -1,4 +1,6 @@
+import CoreGraphics
 import Foundation
+import ImageIO
 import Testing
 @testable import TNFormat
 @testable import TNModel
@@ -38,8 +40,39 @@ enum Fixture {
         NotebookIndex(
             notebookID: notebookID,
             createdAt: Date(timeIntervalSince1970: 1_800_000_000),
-            pages: (0..<pages).map { _ in PageRecord(id: PageID(), geometry: .letter, paper: .lined) }
+            pages: (0..<pages).map { _ in PageRecord(id: PageID(), geometry: .letter, paper: .drawn(.lined)) }
         )
+    }
+
+    /// A PDF of `pages` pages, each `width` by `height` points.
+    static func pdfData(pages: Int, width: Double = 400, height: Double = 600) throws -> Data {
+        let output = NSMutableData()
+        let consumer = try #require(CGDataConsumer(data: output))
+        var box = CGRect(x: 0, y: 0, width: width, height: height)
+        let context = try #require(CGContext(consumer: consumer, mediaBox: &box, nil))
+        for page in 0..<pages {
+            context.beginPage(mediaBox: &box)
+            context.setFillColor(CGColor(srgbRed: 0.2 + 0.1 * Double(page), green: 0.4, blue: 0.6, alpha: 1))
+            context.fill(CGRect(x: 20, y: 20, width: width - 40, height: height - 40))
+            context.endPage()
+        }
+        context.closePDF()
+        return output as Data
+    }
+
+    /// A PNG of the given pixel size, for the image-import path to normalize.
+    static func imageData(width: Int, height: Int) throws -> Data {
+        let context = try #require(CGContext(
+            data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.setFillColor(CGColor(srgbRed: 0.9, green: 0.3, blue: 0.2, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        let image = try #require(context.makeImage())
+        let output = NSMutableData()
+        let destination = try #require(CGImageDestinationCreateWithData(output, "public.png" as CFString, 1, nil))
+        CGImageDestinationAddImage(destination, image, nil)
+        #expect(CGImageDestinationFinalize(destination))
+        return output as Data
     }
 
     static func imageLayer(asset: AssetRef = AssetRef(id: AssetID(), format: .heic)) -> Layer {

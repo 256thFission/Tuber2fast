@@ -284,19 +284,117 @@ struct NotebookTests {
         #expect(notebook.currentPageID == second)
         let reopened = try await PackageStore(root: scratch.packageURL).load()
         #expect(reopened.index.pageIDs == [first, second])
-        #expect(reopened.index.pages[1].paper == .known(.blank))
+        #expect(reopened.index.pages[1].paper == .known(.drawn(.blank)))
 
-        notebook.setPaper(.grid, on: second)
+        try notebook.setPaper(.drawn(.grid), on: second)
         notebook.movePage(second, before: first)
         await notebook.flush()
         var again = try await PackageStore(root: scratch.packageURL).load()
         #expect(again.index.pageIDs == [second, first])
-        #expect(again.index.pages[0].paper == .known(.grid))
+        #expect(again.index.pages[0].paper == .known(.drawn(.grid)))
         notebook.deletePage(second)
         #expect(notebook.currentPageID == first)
         await notebook.flush()
         again = try await PackageStore(root: scratch.packageURL).load()
         #expect(again.index.pageIDs == [first])
+    }
+
+    @Test("Importing a PDF makes one page per PDF page, each with that page as paper and no layer")
+    func pdfPagesArePaper() async throws {
+        let scratch = try Scratch("nb-pdf-paper")
+        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        let first = notebook.pageIDs[0]
+        try await notebook.importPDF(try Fixture.pdfData(pages: 2))
+        #expect(notebook.pageCount == 3)
+        let imported = Array(notebook.pageIDs.dropFirst())
+        for (offset, page) in imported.enumerated() {
+            let record = try #require(notebook.index.record(of: page))
+            guard case .pdf(let asset, let sourcePageIndex) = try #require(record.paper.paper) else {
+                Issue.record("page \(page) is not PDF paper"); continue
+            }
+            #expect(asset.format == .pdf)
+            #expect(sourcePageIndex == offset)
+            #expect(record.geometry == PageGeometry(width: 400, height: 600))
+            #expect(notebook.state(of: page)?.content?.layers.isEmpty == true)
+        }
+        #expect(notebook.paper(of: first) == .drawn(.blank))
+        await notebook.flush()
+        let reopened = try await PackageStore(root: scratch.packageURL).load()
+        #expect(reopened.pageFaults.isEmpty)
+        #expect(reopened.index.pages[1].paper == notebook.index.pages[1].paper)
+        let bytes = try await PackageStore(root: scratch.packageURL).loadPage(imported[0])
+        #expect(bytes.file.layers.isEmpty && bytes.file.inkIndex == 0)
+    }
+
+    @Test("Asset paper needs an empty page, takes the asset's aspect, and dirties the index")
+    func assetPaperRules() async throws {
+        let scratch = try Scratch("nb-asset-paper")
+        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        let letter = notebook.pageIDs[0]
+        try await notebook.importPDF(try Fixture.pdfData(pages: 1))
+        let source = notebook.pageIDs[1]
+        notebook.windowChanged(to: notebook.pageIDs)
+        try await waitUntil { notebook.state(of: letter)?.content != nil }
+        let flattened = try await notebook.flatten(source)
+        #expect(flattened.format == .heic)
+
+        notebook.inkChanged(on: letter, Ink.drawing(strokes: 1), echoOf: nil)
+        #expect(throws: PaperRefusal.pageNotEmpty) { try notebook.setPaper(.image(flattened), on: letter) }
+        #expect(notebook.paper(of: letter) == .drawn(.blank))
+        // Drawn paper still applies to a page with ink on it.
+        try notebook.setPaper(.drawn(.lined), on: letter)
+        #expect(notebook.paper(of: letter) == .drawn(.lined))
+
+        let empty = notebook.appendPage(after: letter)
+        await notebook.flush()
+        #expect(!notebook.isDirty)
+        try notebook.setPaper(.image(flattened), on: empty)
+        #expect(notebook.isDirty, "geometry and paper live in the index")
+        let record = try #require(notebook.index.record(of: empty))
+        #expect(record.geometry == PageGeometry(width: 612, height: 612 * 600 / 400))
+        #expect(record.paper == .known(.image(flattened)))
+
+        await notebook.flush()
+        let reopened = try await PackageStore(root: scratch.packageURL).load()
+        #expect(reopened.pageFaults.isEmpty)
+        let saved = try #require(reopened.index.record(of: empty))
+        #expect(saved.paper == .known(.image(flattened)) && saved.height == 918)
+    }
+
+    @Test("Flattening leaves the source page alone; a photo becomes paper and a new page after it is blank")
+    func flattenAndPhotoPaper() async throws {
+        let scratch = try Scratch("nb-flatten")
+        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        let source = notebook.pageIDs[0]
+        notebook.windowChanged(to: [source])
+        try await waitUntil { notebook.state(of: source)?.content != nil }
+        let layer = Fixture.imageLayer()
+        try await notebook.addLayer(layer, assetData: try Fixture.imageData(width: 40, height: 30), on: source)
+        notebook.inkChanged(on: source, Ink.drawing(strokes: 2), echoOf: nil)
+        let ink = try #require(notebook.state(of: source)?.content?.ink)
+
+        let flattened = try await notebook.flatten(source)
+        #expect(notebook.state(of: source)?.content?.ink == ink, "flatten does not change the source")
+        #expect(notebook.state(of: source)?.content?.layers.map(\.id) == [layer.id])
+        #expect(notebook.paper(of: source) == .drawn(.blank))
+        #expect(try await notebook.store.readAsset(flattened).count > 0)
+
+        let photoPage = notebook.appendPage(after: source)
+        try await notebook.importImageAsPaper(try Fixture.imageData(width: 200, height: 100), on: photoPage)
+        guard case .image(let photo) = try #require(notebook.paper(of: photoPage)) else {
+            Issue.record("photo paper is not an image"); return
+        }
+        #expect(try #require(notebook.index.record(of: photoPage)).geometry == PageGeometry(width: 612, height: 306))
+        // A new page after asset paper is blank: the asset belongs to the
+        // page whose geometry it set.
+        let after = notebook.appendPage(after: photoPage)
+        #expect(notebook.paper(of: after) == .drawn(.blank))
+
+        await notebook.flush()
+        let reopened = try await PackageStore(root: scratch.packageURL).load()
+        #expect(reopened.pageFaults.isEmpty)
+        #expect(reopened.index.record(of: photoPage)?.paper == .known(.image(photo)))
+        #expect(reopened.index.record(of: after)?.paper == .known(.drawn(.blank)))
     }
 
     @Test("A layer import publishes the asset first, sits beneath the ink, and round-trips")

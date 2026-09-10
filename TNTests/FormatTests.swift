@@ -13,7 +13,7 @@ struct KeySetPins {
         let pages = try #require(top["pages"] as? [[String: Any]])
         for page in pages {
             #expect(Set(page.keys) == DurableKeys.pageRecord)
-            #expect(Set(try #require(page["paper"] as? [String: Any]).keys) == DurableKeys.paper)
+            #expect(Set(try #require(page["paper"] as? [String: Any]).keys) == DurableKeys.paper(kind: "lined"))
         }
         #expect(top["formatVersion"] as? Int == 2)
     }
@@ -87,6 +87,62 @@ struct StrictDecode {
         object["pages"] = pages
         let index = try IndexFile.decode(try jsonData(object)).validated()
         #expect(index.pageFaults[index.pageIDs[0]] == .unknownPaper("parchment"))
+    }
+
+    @Test("Every paper kind round-trips through the index with exactly its own keys")
+    func paperKinds() throws {
+        let heic = AssetRef(id: AssetID(), format: .heic)
+        let pdf = AssetRef(id: AssetID(), format: .pdf)
+        let papers: [Paper] = DrawnPaper.allCases.map(Paper.drawn) + [.image(heic), .pdf(pdf, sourcePageIndex: 3)]
+        let index = NotebookIndex(
+            notebookID: NotebookID(), createdAt: Date(timeIntervalSince1970: 1_800_000_000),
+            pages: papers.map { PageRecord(id: PageID(), geometry: .letter, paper: $0) })
+        let data = try Codecs.encode(index)
+        let decoded = try IndexFile.decode(data).validated()
+        #expect(decoded == index)
+        #expect(decoded.pageFaults.isEmpty)
+
+        let pages = try #require(try jsonObject(data)["pages"] as? [[String: Any]])
+        for (record, page) in zip(decoded.pages, pages) {
+            let paper = try #require(page["paper"] as? [String: Any])
+            #expect(Set(paper.keys) == DurableKeys.paper(kind: record.paper.rawKind))
+        }
+        #expect(pages.last?["paper"] as? [String: Any] != nil)
+    }
+
+    @Test("Deleting any key of an asset paper refuses the index naming it; a mismatched format refuses too")
+    func assetPaperDeleteEachKey() throws {
+        let assets: [(Paper, AssetRef)] = [
+            (.image(AssetRef(id: AssetID(), format: .heic)), AssetRef(id: AssetID(), format: .pdf)),
+            (.pdf(AssetRef(id: AssetID(), format: .pdf), sourcePageIndex: 2), AssetRef(id: AssetID(), format: .heic)),
+        ]
+        for (paper, wrongFormat) in assets {
+            let index = NotebookIndex(
+                notebookID: NotebookID(), createdAt: Date(timeIntervalSince1970: 1_800_000_000),
+                pages: [PageRecord(id: PageID(), geometry: .letter, paper: paper)])
+            let base = try jsonObject(try Codecs.encode(index))
+            let kind = PaperKind.known(paper).rawKind
+            let paperObject = try #require((base["pages"] as? [[String: Any]])?[0]["paper"] as? [String: Any])
+            func data(withPaper object: [String: Any]) throws -> Data {
+                var page = try #require((base["pages"] as? [[String: Any]])?[0])
+                page["paper"] = object
+                var top = base
+                top["pages"] = [page]
+                return try jsonData(top)
+            }
+            for key in DurableKeys.paper(kind: kind) {
+                var object = paperObject
+                object.removeValue(forKey: key)
+                #expect(throws: FormatFault.missingKey(key)) { try IndexFile.decode(try data(withPaper: object)) }
+            }
+            var extra = paperObject
+            extra["spacing"] = 12
+            #expect(throws: FormatFault.unknownKey("spacing")) { try IndexFile.decode(try data(withPaper: extra)) }
+
+            var mismatched = paperObject
+            mismatched["asset"] = wrongFormat.fileName
+            #expect(throws: (any Error).self) { try IndexFile.decode(try data(withPaper: mismatched)) }
+        }
     }
 
     @Test("Deleting any page-file key refuses naming it")
@@ -198,6 +254,25 @@ struct StoreTests {
         #expect(page2.file.hasInk == false)
     }
 
+    @Test("A page whose paper asset is missing is refused, and the notebook still opens")
+    func paperAssetMissing() async throws {
+        let scratch = try Scratch("paper-asset")
+        let asset = AssetRef(id: AssetID(), format: .heic)
+        let index = NotebookIndex(
+            notebookID: NotebookID(), createdAt: Date(),
+            pages: [PageRecord(id: PageID(), geometry: .letter, paper: .image(asset)),
+                    PageRecord(id: PageID(), geometry: .letter, paper: .drawn(.lined))])
+        let store = try await PackageStore.create(root: scratch.packageURL, index: index)
+        try await store.writeAsset(Fixture.archive(4, count: 256), asset)
+        #expect(try await store.load().pageFaults.isEmpty)
+
+        try FileManager.default.removeItem(at: store.layout.assetURL(asset))
+        let loaded = try await PackageStore(root: scratch.packageURL).load()
+        #expect(loaded.index.pageIDs == index.pageIDs)
+        #expect(loaded.pageFaults[index.pageIDs[0]] == [.paperAssetMissing(asset.fileName)])
+        #expect(loaded.pageFaults[index.pageIDs[1]] == nil)
+    }
+
     @Test("No package means noPackage, never nil or a blank notebook")
     func noPackage() async throws {
         let scratch = try Scratch("nopackage")
@@ -232,7 +307,7 @@ struct StoreTests {
     func refusedNewPageIsAbsent() async throws {
         let scratch = try Scratch("refusednew")
         let (store, index, _) = try await Fixture.populated(at: scratch.packageURL)
-        let newPage = PageRecord(id: PageID(), geometry: .letter, paper: .grid)
+        let newPage = PageRecord(id: PageID(), geometry: .letter, paper: .drawn(.grid))
         let intended = index.withPages(index.pages + [newPage])
         let dangling = Fixture.imageLayer()  // its asset was never written
         let batch = SaveBatch(index: intended, indexChanged: true, pages: [
@@ -348,7 +423,7 @@ struct WriteOrderSweep {
         let added = Fixture.imageLayer()
         // Through a plain store: the faulting file system counts only the save.
         try await PackageStore(root: store.layout.root).writeAsset(Fixture.archive(11, count: 256), added.payload.asset!)
-        let newPage = PageRecord(id: PageID(), geometry: .letter, paper: .dotted)
+        let newPage = PageRecord(id: PageID(), geometry: .letter, paper: .drawn(.dotted))
         let intended = index.withPages(index.pages + [newPage])
         let ids = index.pageIDs
         let batch = SaveBatch(index: intended, indexChanged: true, pages: [
@@ -463,6 +538,26 @@ struct CompactTests {
         report = try await store.compact()
         #expect(!PosixFileSystem().exists(layout.layerURL(layer.id)))
         #expect(report.removed.count == 1)
+    }
+
+    @Test("A paper asset is reachable from the index alone; a stale one still goes")
+    func paperAssetsAreReachable() async throws {
+        let scratch = try Scratch("compact-paper")
+        let paperAsset = AssetRef(id: AssetID(), format: .heic)
+        let index = NotebookIndex(
+            notebookID: NotebookID(), createdAt: Date(),
+            pages: [PageRecord(id: PageID(), geometry: .letter, paper: .image(paperAsset))])
+        let store = try await PackageStore.create(root: scratch.packageURL, index: index)
+        try await store.writeAsset(Fixture.archive(5, count: 256), paperAsset)
+        let stale = store.layout.assetURL(AssetRef(id: AssetID(), format: .heic))
+        try Data([7]).write(to: stale)
+        try scratch.backdate(stale, by: 2 * 86_400)
+        try scratch.backdate(store.layout.assetURL(paperAsset), by: 2 * 86_400)
+
+        let report = try await store.compact()
+        #expect(!report.assetReclamationSuspended)
+        #expect(PosixFileSystem().exists(store.layout.assetURL(paperAsset)), "paper asset kept")
+        #expect(!PosixFileSystem().exists(stale))
     }
 
     @Test("A layer this build cannot open suspends asset reclamation for the whole notebook")

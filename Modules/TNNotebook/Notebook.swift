@@ -56,6 +56,14 @@ package final class Notebook {
     @ObservationIgnored private var history = InkHistory()
     /// An undo whose page was not loaded: applied when the page arrives.
     @ObservationIgnored private var pendingRestores: [PageID: PKDrawing] = [:]
+    /// Height over width for every asset paper this notebook has published.
+    ///
+    /// `setPaper` sets the page's geometry from the asset's aspect, and it
+    /// is synchronous, so the aspect cannot be measured there: reading the
+    /// asset is I/O. Every asset paper is published by one of the three
+    /// intentions below, so each records the aspect it already knows, and a
+    /// paper whose aspect is unknown is refused rather than guessed at.
+    @ObservationIgnored private var assetPaperAspect: [Paper: Double] = [:]
 
     // MARK: Save engine
 
@@ -345,7 +353,10 @@ package final class Notebook {
     @discardableResult
     package func appendPage(after: PageID? = nil, answering: ReportSeq? = nil) -> PageID {
         let template = index.record(of: currentPageID) ?? index.pages[0]
-        let paper = template.paper.paper.map { $0 == Paper.none ? Paper.blank : $0 } ?? Paper.blank
+        // Asset paper is not copied: it belongs to the page it was applied
+        // to, whose geometry it set.
+        let inherited = template.paper.paper?.drawn ?? .blank
+        let paper = Paper.drawn(inherited == .none ? .blank : inherited)
         let record = PageRecord(id: PageID(), geometry: template.geometry, paper: paper)
         var pages = index.pages
         if let after, let position = pages.firstIndex(where: { $0.id == after }) {
@@ -393,12 +404,31 @@ package final class Notebook {
         markDirty()
     }
 
-    package func setPaper(_ paper: Paper, on page: PageID) {
-        index = index.withPages(index.pages.map { $0.id == page ? $0.withPaper(paper) : $0 })
+    /// Drawn paper applies to any page. Asset paper applies only to a page
+    /// that is loaded and empty, and takes the page's geometry with it: the
+    /// asset fills the page rectangle, so the rectangle is the asset's shape.
+    package func setPaper(_ paper: Paper, on page: PageID) throws(PaperRefusal) {
+        guard let record = index.record(of: page) else { throw .pageNotLoaded }
+        var geometry = record.geometry
+        if paper.isAsset {
+            try checkAssetPaperTarget(page)
+            guard let aspect = assetPaperAspect[paper] else { throw .assetAspectUnknown }
+            let sized = PageGeometry(width: record.geometry.width, height: record.geometry.width * aspect)
+            guard sized.isWithinBounds else { throw .geometryOutOfBounds }
+            geometry = sized
+        }
+        index = index.withPages(index.pages.map { $0.id == page ? $0.with(paper: paper, geometry: geometry) : $0 })
         indexSeq += 1
         emitStructure(answering: nil)
         markDirty()
         rerenderComposite(of: page)
+    }
+
+    /// Asset paper covers the whole page, so a page with anything on it
+    /// would lose it behind the paper.
+    private func checkAssetPaperTarget(_ page: PageID) throws(PaperRefusal) {
+        guard case .ready(let content) = states[page] else { throw .pageNotLoaded }
+        guard content.ink.strokes.isEmpty, content.layers.isEmpty else { throw .pageNotEmpty }
     }
 
     package func paper(of page: PageID) -> Paper? { index.record(of: page)?.paper.paper }
@@ -468,38 +498,71 @@ package final class Notebook {
     }
 
     /// One new page per PDF page, inserted after the current page, each
-    /// sized to its source extent on `none` paper. The asset is written once.
+    /// sized to its source extent with that PDF page as its paper. The asset
+    /// is written once. No layer: the `pdf` layer kind is for a clipping
+    /// placed on a page, not for a page that *is* the PDF.
     package func importPDF(_ data: Data) async throws(FormatFault) {
         guard let source = PDFSource(data: data), source.pageCount > 0 else { throw .invalidWrite("PDF could not be opened") }
         let asset = AssetRef(id: AssetID(), format: .pdf)
         try await store.writeAsset(data, asset)
         var after = currentPageID
+        var created: [PageID] = []
         for pageIndex in 0..<source.pageCount {
             guard let page = source.page(at: pageIndex), let extent = PDFSource.displayExtent(of: page) else { continue }
             let geometry = PageGeometry(width: extent.width, height: extent.height)
             guard geometry.isWithinBounds else { throw .invalidWrite("PDF page \(pageIndex + 1) is outside the page bounds") }
-            let record = PageRecord(id: PageID(), geometry: geometry, paper: Paper.none)
+            let paper = Paper.pdf(asset, sourcePageIndex: pageIndex)
+            assetPaperAspect[paper] = extent.height / extent.width
+            let record = PageRecord(id: PageID(), geometry: geometry, paper: paper)
             var pages = index.pages
             let position = pages.firstIndex { $0.id == after }.map { $0 + 1 } ?? pages.count
             pages.insert(record, at: position)
             index = index.withPages(pages)
-            let layer = Layer(id: LayerID(),
-                              transform: .unitSquare(to: PageRect(x: 0, y: 0, width: geometry.width, height: geometry.height)),
-                              payload: .pdf(PDFLayer(asset: asset, sourcePageIndex: pageIndex, sourceExtent: extent)))
-            var content = PageContent(ink: PKDrawing(), layers: [layer], hasInk: false, inkIndex: 1)
-            content.pendingLayerFiles = [layer.id]
+            var content = PageContent(ink: PKDrawing(), layers: [], hasInk: false, inkIndex: 0)
             content.edited()
             states[record.id] = .ready(content)
             wanted.insert(record.id)
+            created.append(record.id)
             after = record.id
         }
         indexSeq += 1
         emitStructure(answering: nil)
-        for page in index.pageIDs where states[page]?.content?.pendingLayerFiles.isEmpty == false {
+        for page in created {
             emitContent(page)
             rerenderComposite(of: page)
         }
         markDirty()
+    }
+
+    /// A photo as a page's paper: normalized to HEIC, published, applied.
+    package func importImageAsPaper(_ data: Data, on page: PageID) async throws(FormatFault) {
+        do { try checkAssetPaperTarget(page) } catch { throw .invalidWrite("paper refused: \(error)") }
+        guard let normalized = await Task.detached(priority: .userInitiated, operation: { ImageImport.normalize(data) }).value else {
+            throw .invalidWrite("image could not be decoded")
+        }
+        guard normalized.size.isValid else { throw .invalidWrite("image is outside the asset bounds") }
+        let asset = AssetRef(id: AssetID(), format: .heic)
+        try await store.writeAsset(normalized.heic, asset)
+        let paper = Paper.image(asset)
+        assetPaperAspect[paper] = Double(normalized.size.height) / Double(normalized.size.width)
+        do { try setPaper(paper, on: page) } catch { throw .invalidWrite("paper refused: \(error)") }
+    }
+
+    /// A page's composite and ink rendered to one asset at asset resolution.
+    /// The source page is untouched; the caller decides which empty page the
+    /// result becomes the paper of.
+    package func flatten(_ page: PageID) async throws(FormatFault) -> AssetRef {
+        guard let record = index.record(of: page) else { throw .invalidWrite("no such page") }
+        guard case .ready(let content) = states[page] else { throw .invalidWrite("page \(page) is not ready") }
+        guard let heic = await renderer.flattened(
+            geometry: record.geometry, paper: record.paper.paper, layers: content.layers, ink: content.ink
+        ) else { throw .invalidWrite("page \(page) could not be flattened") }
+        let asset = AssetRef(id: AssetID(), format: .heic)
+        try await store.writeAsset(heic, asset)
+        // The flattened pixels are the page rectangle, so its aspect is the
+        // asset's, without decoding what was just encoded.
+        assetPaperAspect[.image(asset)] = record.geometry.height / record.geometry.width
+        return asset
     }
 
     package func addTextLayer(on page: PageID, rect: PageRect, runs: [TextRun]) async throws(FormatFault) {
@@ -688,4 +751,15 @@ package final class Notebook {
         isClosed = true
         return .clean
     }
+}
+
+/// Why a paper change was refused. Drawn paper is never refused on a page
+/// that exists; every case here is about asset paper.
+package enum PaperRefusal: Error, Sendable, Equatable {
+    case pageNotLoaded
+    case pageNotEmpty
+    case geometryOutOfBounds
+    /// The asset was not published by this notebook in this session, so the
+    /// geometry it implies is not known here. See `assetPaperAspect`.
+    case assetAspectUnknown
 }

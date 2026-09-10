@@ -2,6 +2,7 @@ import CoreGraphics
 import CoreText
 import Foundation
 import ImageIO
+import PencilKit
 import TNCore
 import TNFormat
 import TNModel
@@ -61,12 +62,71 @@ package actor Renderer {
         context.scaleBy(x: scale, y: -scale)
         context.setFillColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1))
         context.fill(CGRect(x: 0, y: 0, width: geometry.width, height: geometry.height))
-        PaperRenderer.draw(paper ?? .blank, geometry: geometry, in: context)
+        await draw(paper ?? .drawn(.blank), geometry: geometry, in: context)
         for layer in layers {
             await draw(layer, in: context)
         }
         guard let image = context.makeImage() else { return nil }
         return Composite(image: image, scale: scale)
+    }
+
+    /// The page's paper. An asset fills the page rectangle exactly: the
+    /// geometry was set from the asset's aspect when the paper was applied,
+    /// so filling is not stretching.
+    private func draw(_ paper: Paper, geometry: PageGeometry, in context: CGContext) async {
+        switch paper {
+        case .drawn(let drawn):
+            PaperRenderer.draw(drawn, geometry: geometry, in: context)
+        case .image(let ref):
+            guard case .image(let image, _)? = await decodedAsset(ref) else { return }
+            context.saveGState()
+            // CGImage draws y-up; flip within the page rectangle.
+            context.translateBy(x: 0, y: geometry.height)
+            context.scaleBy(x: 1, y: -1)
+            context.draw(image, in: CGRect(x: 0, y: 0, width: geometry.width, height: geometry.height))
+            context.restoreGState()
+        case .pdf(let ref, let sourcePageIndex):
+            guard case .pdf(let source, _)? = await decodedAsset(ref),
+                  let page = source.page(at: sourcePageIndex),
+                  let extent = PDFSource.displayExtent(of: page)
+            else { return }
+            context.saveGState()
+            context.concatenate(CGAffineTransform(scaleX: geometry.width, y: geometry.height))
+            PDFSource.draw(page, extent: extent, in: context)
+            context.restoreGState()
+        }
+    }
+
+    /// A page's composite and its ink as one HEIC at asset resolution: the
+    /// long edge at `maximumLongEdgePixels`, which is what a flattened page
+    /// becomes as paper. The page it renders is not changed.
+    package func flattened(geometry: PageGeometry, paper: Paper?, layers: [Layer], ink: PKDrawing) async -> Data? {
+        let scale = Self.cappedScale(for: geometry, requested: .greatestFiniteMagnitude)
+        guard let composite = await composite(geometry: geometry, paper: paper, layers: layers, scale: scale) else { return nil }
+        let pageRect = CGRect(x: 0, y: 0, width: geometry.width, height: geometry.height)
+        // PencilKit rasterizes the ink itself, off this actor and off the
+        // main one: a flatten is an intention, never a frame.
+        let inkImage = await Task.detached(priority: .userInitiated) { () -> Composite? in
+            guard let image = ink.image(from: pageRect, scale: scale).cgImage else { return nil }
+            return Composite(image: image, scale: scale)
+        }.value
+        let width = composite.image.width, height = composite.image.height
+        guard let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        else { return nil }
+        let pixels = CGRect(x: 0, y: 0, width: width, height: height)
+        context.draw(composite.image, in: pixels)
+        if let inkImage { context.draw(inkImage.image, in: pixels) }
+        guard let image = context.makeImage() else { return nil }
+        return Self.heic(image)
+    }
+
+    private static func heic(_ image: CGImage) -> Data? {
+        let output = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(output, "public.heic" as CFString, 1, nil) else { return nil }
+        CGImageDestinationAddImage(destination, image, [kCGImageDestinationLossyCompressionQuality: 0.9] as CFDictionary)
+        guard CGImageDestinationFinalize(destination) else { return nil }
+        return output as Data
     }
 
     private func draw(_ layer: Layer, in context: CGContext) async {

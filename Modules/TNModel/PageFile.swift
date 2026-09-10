@@ -45,6 +45,8 @@ package enum PageFault: Error, Sendable, Equatable {
     /// The container was sound and PencilKit refused its archive.
     case inkArchiveUndecodable(String)
     case unknownPaper(String)
+    /// The paper names an asset that is not in the package.
+    case paperAssetMissing(String)
     case layerRefused(LayerFault)
 }
 

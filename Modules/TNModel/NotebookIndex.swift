@@ -25,9 +25,12 @@ package struct PageRecord: Codable, Sendable, Equatable, Identifiable {
 
     package var geometry: PageGeometry { PageGeometry(width: width, height: height) }
 
-    package func withPaper(_ paper: Paper) -> PageRecord {
-        PageRecord(id: id, width: width, height: height, paper: .known(paper))
+    package func with(paper: Paper, geometry: PageGeometry) -> PageRecord {
+        PageRecord(id: id, geometry: geometry, paper: paper)
     }
+
+    /// The asset this record's paper names, if it names one.
+    package var paperAsset: AssetRef? { paper.paper?.asset }
 }
 
 /// The index: the commit point when it changes. Holds identity, creation
@@ -68,7 +71,7 @@ package struct NotebookIndex: Codable, Sendable, Equatable {
         NotebookIndex(
             notebookID: notebookID,
             createdAt: createdAt,
-            pages: [PageRecord(id: firstPage, geometry: .letter, paper: .blank)]
+            pages: [PageRecord(id: firstPage, geometry: .letter, paper: .drawn(.blank))]
         )
     }
 
