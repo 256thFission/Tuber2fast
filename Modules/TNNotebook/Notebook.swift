@@ -20,11 +20,6 @@ package struct SaveSchedule: Sendable {
     package init() {}
 }
 
-package enum CloseOutcome: Sendable, Equatable {
-    case clean
-    case dirty([PageID])
-}
-
 /// The notebook: custody of every page's newest ink, the page order, and
 /// the save engine. `@MainActor`; the store is an actor behind a seam.
 ///
@@ -37,7 +32,7 @@ package final class Notebook {
     package private(set) var pageCount: Int = 0
     package private(set) var currentPageID: PageID
     package private(set) var dirtyPageCount: Int = 0
-    package private(set) var lastSaveError: String?
+    package private(set) var lastSaveError: SaveFailure?
     package private(set) var isClosed = false
 
     // MARK: Custody
@@ -54,7 +49,6 @@ package final class Notebook {
     @ObservationIgnored private var nextStructureSeq: UInt64 = 1
     @ObservationIgnored private var nextInkSeq: UInt64 = 1
     @ObservationIgnored private var changes: [NotebookChange] = []
-    @ObservationIgnored private var retiresAwaited: Set<PageID> = []
 
     // MARK: Save engine
 
@@ -111,13 +105,13 @@ package final class Notebook {
     package var pageIDs: [PageID] { index.pageIDs }
 
     package var descriptors: [PageDescriptor] {
-        index.pages.map { PageDescriptor(id: $0.id, geometry: $0.geometry, paper: $0.paper.paper) }
+        index.pages.map { PageDescriptor(id: $0.id, geometry: $0.geometry, paper: $0.paper) }
     }
 
     package var isDirty: Bool { dirtyPageCount > 0 || indexSeq > savedIndexSeq }
 
     package var dirtyPages: [PageID] {
-        index.pageIDs.filter { states[$0]?.content?.isDirty == true }
+        index.pageIDs.filter { states[$0]?.isDirty == true }
     }
 
     /// The changes since the last drain, in order. The binding calls this
@@ -139,8 +133,8 @@ package final class Notebook {
             if case .loading = states[page] { states[page] = .unloaded }
         }
         wanted = newWanted
-        for page in pages where states[page] != nil {
-            if case .unloaded = states[page]! { startLoad(page) }
+        for page in pages {
+            if case .unloaded = states[page] { startLoad(page) }
         }
     }
 
@@ -149,7 +143,6 @@ package final class Notebook {
         nextGeneration += 1
         states[page] = .loading(generation: generation)
         let store = self.store
-        let notebookID = self.notebookID
         loads[page] = Task { [weak self] in
             let bytes: PageBytes
             do {
@@ -172,17 +165,17 @@ package final class Notebook {
             if Task.isCancelled { return }
             if faults.isEmpty {
                 var content = PageContent(
-                    ink: ink,
-                    layers: bytes.layers.compactMap { if case .success(let layer) = $0 { layer } else { nil } },
+                    ink: ink ?? PKDrawing(),
+                    layers: bytes.layers,
                     hasInk: bytes.file.hasInk || bytes.inkRecordNeeded,
                     inkIndex: bytes.file.inkIndex
                 )
-                if bytes.inkRecordNeeded { content.editSeq = 1 }
+                // An adopted container is recorded by the next save.
+                if bytes.inkRecordNeeded { content.edited() }
                 self?.installLoaded(page, generation: generation, result: .ready(content))
             } else {
                 self?.installLoaded(page, generation: generation, result: .faults(faults))
             }
-            _ = notebookID
         }
     }
 
@@ -192,22 +185,21 @@ package final class Notebook {
     }
 
     private func installLoaded(_ page: PageID, generation: UInt64, result: LoadOutcome) {
-        guard case .loading(let current) = states[page], current == generation, wanted.contains(page) else {
+        guard case .loading(let current) = states[page], current == generation else { return }
+        loads[page] = nil
+        guard wanted.contains(page) else {
             TNLog.event(.notebook, "dropped a stale load for page \(page)")
-            if case .loading(let current) = states[page], current == generation { states[page] = .unloaded }
+            states[page] = .unloaded
             return
         }
-        loads[page] = nil
         switch result {
         case .ready(let content):
             states[page] = .ready(content)
-            if content.isDirty { recountDirty(); markDirty() }
-            emitContent(page)
+            if content.isDirty { markDirty() }
         case .faults(let faults):
             states[page] = .unreadable(faults)
-            changes.append(.pageStateChanged(page))
-            emitContent(page)
         }
+        emitContent(page)
     }
 
     private func emitContent(_ page: PageID) {
@@ -217,9 +209,9 @@ package final class Notebook {
         case .ready(let content):
             let seq = InkSeq(nextInkSeq); nextInkSeq += 1
             withContent(page) { $0.pendingEcho = seq }
-            snapshot = PageSnapshot(id: page, ink: content.ink, layers: content.layers, faults: [], isEditable: true, inkSeq: seq)
+            snapshot = .editable(id: page, ink: content.ink, layers: content.layers, inkSeq: seq)
         case .unreadable(let faults):
-            snapshot = PageSnapshot(id: page, ink: nil, layers: [], faults: faults, isEditable: false, inkSeq: InkSeq(0))
+            snapshot = .placeholder(id: page, faults: faults)
         case .unloaded, .loading:
             return
         }
@@ -251,12 +243,8 @@ package final class Notebook {
             return
         }
         content.pendingEcho = nil
-        content.history.recordEdit(previous: content.ink)
-        content.ink = ink
-        content.hasInk = true
-        content.editSeq += 1
+        content.setInk(ink, recordingHistory: true)
         states[page] = .ready(content)
-        recountDirty()
         markDirty()
     }
 
@@ -265,42 +253,31 @@ package final class Notebook {
 
     package func undo(on page: PageID) {
         guard case .ready(var content) = states[page], let previous = content.history.undo(current: content.ink) else { return }
-        content.ink = previous
-        content.editSeq += 1
-        restore(page, &content)
+        restore(page, &content, to: previous)
     }
 
     package func redo(on page: PageID) {
         guard case .ready(var content) = states[page], let next = content.history.redo(current: content.ink) else { return }
-        content.ink = next
-        content.editSeq += 1
-        restore(page, &content)
+        restore(page, &content, to: next)
     }
 
-    private func restore(_ page: PageID, _ content: inout PageContent) {
+    private func restore(_ page: PageID, _ content: inout PageContent, to ink: PKDrawing) {
+        content.setInk(ink, recordingHistory: false)
         let seq = InkSeq(nextInkSeq); nextInkSeq += 1
         content.pendingEcho = seq
         states[page] = .ready(content)
-        changes.append(.inkRestored(page, content.ink ?? PKDrawing(), seq: seq))
-        recountDirty()
+        changes.append(.inkRestored(page, ink, seq: seq))
         markDirty()
     }
 
     /// The runtime's final report for a retired canvas. `finalInk` nil means
     /// the canvas was a placeholder and held nothing.
     package func retired(_ page: PageID, finalInk: PKDrawing?) {
-        retiresAwaited.remove(page)
-        if let finalInk, case .ready(let content) = states[page] {
-            if content.ink.map({ $0.dataRepresentation() != finalInk.dataRepresentation() }) ?? !finalInk.strokes.isEmpty {
-                inkChanged(on: page, finalInk, echoOf: nil)
-            }
+        if let finalInk, case .ready(let content) = states[page], content.ink != finalInk {
+            inkChanged(on: page, finalInk, echoOf: nil)
         }
         withContent(page) { $0.retired = true }
     }
-
-    package func expectRetire(of page: PageID) { retiresAwaited.insert(page) }
-
-    package var outstandingRetires: Set<PageID> { retiresAwaited }
 
     /// Drops content for pages the runtime has retired, that are outside the
     /// window, and that are clean. History goes with the content.
@@ -344,14 +321,13 @@ package final class Notebook {
             pages.append(record)
         }
         index = index.withPages(pages)
-        var content = PageContent(ink: nil, layers: [], hasInk: false, inkIndex: 0)
-        content.editSeq = 1
+        var content = PageContent(ink: PKDrawing(), layers: [], hasInk: false, inkIndex: 0)
+        content.edited()
         states[record.id] = .ready(content)
         wanted.insert(record.id)
         indexSeq += 1
         emitStructure(answering: answering)
         emitContent(record.id)
-        recountDirty()
         markDirty()
         return record.id
     }
@@ -365,7 +341,6 @@ package final class Notebook {
         if currentPageID == page { currentPageID = index.pageIDs[0]; scheduleViewWrite() }
         indexSeq += 1
         emitStructure(answering: nil)
-        recountDirty()
         markDirty()
     }
 
@@ -406,10 +381,9 @@ package final class Notebook {
             content.layers.insert(layer, at: content.inkIndex)
             content.inkIndex += 1
             content.pendingLayerFiles.insert(layer.id)
-            content.editSeq += 1
+            content.edited()
         }
         emitContent(page)
-        recountDirty()
         markDirty()
     }
 
@@ -420,9 +394,8 @@ package final class Notebook {
         do { _ = try moved.validated() } catch { return .refused(reason: "\(error)") }
         content.layers[position] = moved
         content.pendingLayerFiles.insert(layerID)
-        content.editSeq += 1
+        content.edited()
         states[page] = .ready(content)
-        recountDirty()
         markDirty()
         return .accepted
     }
@@ -432,22 +405,18 @@ package final class Notebook {
         content.layers.remove(at: position)
         if position < content.inkIndex { content.inkIndex -= 1 }
         content.pendingLayerFiles.remove(layerID)
-        content.editSeq += 1
+        content.edited()
         states[page] = .ready(content)
         emitContent(page)
-        recountDirty()
         markDirty()
     }
 
     // MARK: The save engine
 
-    private func recountDirty() {
-        dirtyPageCount = states.values.reduce(0) { $0 + (($1.content?.isDirty ?? false) ? 1 : 0) }
-    }
-
-    /// Arms the debounce unless a pass is running; the running pass re-arms
-    /// at its exit, which is the single owner of re-arming.
+    /// Recounts the mirror and arms the debounce unless a pass is running;
+    /// the running pass re-arms at its exit, the single owner of re-arming.
     private func markDirty() {
+        dirtyPageCount = states.values.count(where: \.isDirty)
         if firstDirtyAt == nil { firstDirtyAt = .now }
         guard currentSave == nil, debounce == nil else { return }
         let interval = nextInterval()
@@ -469,9 +438,10 @@ package final class Notebook {
     private struct Captured: Sendable {
         let page: PageID
         let file: PageFile
+        /// The ink to write, or nil when the container is unchanged.
         let ink: PKDrawing?
-        let inkChanged: Bool
         let editSeq: UInt64
+        let inkSeq: UInt64
         let layerFiles: [Layer]
     }
 
@@ -482,9 +452,10 @@ package final class Notebook {
         for page in index.pageIDs {
             guard case .ready(let content) = states[page], content.isDirty else { continue }
             let file = PageFile(pageID: page, hasInk: content.hasInk, inkIndex: content.inkIndex, layers: content.layers.map(\.id))
-            let inkChanged = content.hasInk && (content.savedSeq == 0 || content.editSeq > content.savedSeq)
             captured.append(Captured(
-                page: page, file: file, ink: content.ink, inkChanged: inkChanged, editSeq: content.editSeq,
+                page: page, file: file,
+                ink: content.hasInk && content.inkIsDirty ? content.ink : nil,
+                editSeq: content.editSeq, inkSeq: content.inkSeq,
                 layerFiles: content.layers.filter { content.pendingLayerFiles.contains($0.id) }
             ))
         }
@@ -500,32 +471,31 @@ package final class Notebook {
     }
 
     private func performSave(captured: [Captured], intended: NotebookIndex, indexChanged: Bool, capturedIndexSeq: UInt64, retry: [PageID: (seq: UInt64, bytes: Data)]) async {
-        var writes: [PageWrite] = []
+        // One hop off the main actor serializes every drawing this pass
+        // writes; a buffered archive from a failed pass is reused as long
+        // as the ink has not changed since.
         var serialized: [PageID: (seq: UInt64, bytes: Data)] = [:]
-        let clock = ContinuousClock()
-        var serializeTotal: Duration = .zero
+        var toSerialize: [(PageID, UInt64, PKDrawing)] = []
         for item in captured {
-            var inkWrite: InkWrite = .unchanged
-            if item.inkChanged, let ink = item.ink {
-                if let buffered = retry[item.page], buffered.seq == item.editSeq {
-                    inkWrite = .archive(buffered.bytes)
-                    serialized[item.page] = buffered
-                } else {
-                    let started = clock.now
-                    let bytes = await Task.detached(priority: .utility) { ink.dataRepresentation() }.value
-                    serializeTotal += started.duration(to: clock.now)
-                    inkWrite = .archive(bytes)
-                    serialized[item.page] = (item.editSeq, bytes)
-                }
-            } else if item.inkChanged {
-                // hasInk with no drawing value: an empty drawing is still written.
-                let bytes = PKDrawing().dataRepresentation()
-                inkWrite = .archive(bytes)
-                serialized[item.page] = (item.editSeq, bytes)
+            guard let ink = item.ink else { continue }
+            if let buffered = retry[item.page], buffered.seq == item.inkSeq {
+                serialized[item.page] = buffered
+            } else {
+                toSerialize.append((item.page, item.inkSeq, ink))
             }
-            writes.append(PageWrite(file: item.file, ink: inkWrite, layerFiles: item.layerFiles))
         }
-        if serializeTotal > .zero { lastSerialize = serializeTotal }
+        if !toSerialize.isEmpty {
+            let clock = ContinuousClock()
+            let started = clock.now
+            let encoded = await Task.detached(priority: .utility) {
+                toSerialize.map { ($0.0, $0.1, $0.2.dataRepresentation()) }
+            }.value
+            lastSerialize = started.duration(to: clock.now)
+            for (page, seq, bytes) in encoded { serialized[page] = (seq, bytes) }
+        }
+        let writes = captured.map { item in
+            PageWrite(file: item.file, ink: serialized[item.page].map { .archive($0.bytes) } ?? .unchanged, layerFiles: item.layerFiles)
+        }
 
         let batch = SaveBatch(index: intended, indexChanged: indexChanged, pages: writes)
         do {
@@ -533,6 +503,7 @@ package final class Notebook {
             for item in captured where report.committed.contains(item.page) && report.refusals[item.page] == nil {
                 withContent(item.page) { content in
                     content.savedSeq = max(content.savedSeq, item.editSeq)
+                    content.savedInkSeq = max(content.savedInkSeq, item.inkSeq)
                     content.pendingLayerFiles.subtract(item.layerFiles.map(\.id))
                 }
                 retryBuffer[item.page] = nil
@@ -541,10 +512,20 @@ package final class Notebook {
                 TNLog.event(.notebook, "page \(page) refused: \(refusal)")
             }
             if report.indexWritten { savedIndexSeq = max(savedIndexSeq, capturedIndexSeq) }
-            lastSaveError = report.refusals.isEmpty && !report.indexWithheld ? nil : "\(report.refusals.count) page(s) refused"
+            if report.indexWithheld {
+                lastSaveError = .indexWithheld
+            } else if !report.refusals.isEmpty {
+                lastSaveError = .pagesRefused(report.refusals)
+            } else {
+                lastSaveError = nil
+            }
             backoff = nil
         } catch {
-            lastSaveError = error.description
+            if case .insufficientSpace(let needed, let available) = error {
+                lastSaveError = .insufficientSpace(needed: needed, available: available)
+            } else {
+                lastSaveError = .io(error)
+            }
             var total = 0
             for (page, entry) in serialized {
                 total += entry.bytes.count
@@ -553,14 +534,10 @@ package final class Notebook {
             backoff = min((backoff ?? schedule.idleFloor) * 2, schedule.backoffCap)
             TNLog.event(.notebook, "save failed: \(error); backoff \(String(describing: backoff))")
         }
-        recountDirty()
         currentSave = nil
-        if isDirty {
-            firstDirtyAt = nil
-            markDirty()
-        } else {
-            firstDirtyAt = nil
-        }
+        firstDirtyAt = nil
+        dirtyPageCount = states.values.count(where: \.isDirty)
+        if isDirty { markDirty() }
     }
 
     /// Runs a pass now and waits for it, and for any pass already running.
@@ -580,7 +557,6 @@ package final class Notebook {
         viewWrite?.cancel()
         try? await store.writeView(ViewState(currentPageID: currentPageID))
         isClosed = true
-        let dirty = dirtyPages
-        return dirty.isEmpty && indexSeq <= savedIndexSeq ? .clean : .dirty(dirty)
+        return isDirty ? .dirty(pages: dirtyPages, indexUnsaved: indexSeq > savedIndexSeq) : .clean
     }
 }

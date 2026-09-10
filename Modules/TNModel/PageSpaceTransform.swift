@@ -33,7 +33,7 @@ package struct PageSpaceTransform: Codable, Sendable, Equatable {
     package static let maximumTranslation: Double = 10 * PageBounds.maxEdge
 
     package var isValid: Bool {
-        [a, b, c, d, tx, ty].allSatisfy(\.isFinite)
+        a.isFinite && b.isFinite && c.isFinite && d.isFinite && tx.isFinite && ty.isFinite
             && abs(determinant) > Self.minimumDeterminant
             && abs(tx) <= Self.maximumTranslation
             && abs(ty) <= Self.maximumTranslation

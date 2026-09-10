@@ -26,34 +26,44 @@ package struct ReportSeq: Hashable, Sendable, Comparable {
 package struct PageDescriptor: Sendable, Equatable, Identifiable {
     package let id: PageID
     package let geometry: PageGeometry
-    package let paper: Paper?
+    /// `PaperKind`, not `Paper`: a placeholder for unknown paper names it.
+    package let paper: PaperKind
 
-    package init(id: PageID, geometry: PageGeometry, paper: Paper?) {
+    package init(id: PageID, geometry: PageGeometry, paper: PaperKind) {
         self.id = id
         self.geometry = geometry
         self.paper = paper
     }
 }
 
-/// One page's content, pushed down as a value. `ink == nil` means the page
-/// has no ink yet (a blank page is editable). A page with faults is a
-/// placeholder and `isEditable` is false.
+/// One page's content, pushed down as a value. Two shapes, two factories:
+/// an editable page carries ink (empty means no strokes) and a sequence;
+/// a placeholder carries faults and no ink. The memberwise form is private
+/// so no third shape can be built.
 package struct PageSnapshot: Sendable, Equatable {
     package let id: PageID
     package let ink: PKDrawing?
     package let layers: [Layer]
     package let faults: [PageFault]
-    package let isEditable: Bool
-    package let inkSeq: InkSeq
+    package let inkSeq: InkSeq?
 
-    package init(id: PageID, ink: PKDrawing?, layers: [Layer], faults: [PageFault], isEditable: Bool, inkSeq: InkSeq) {
+    private init(id: PageID, ink: PKDrawing?, layers: [Layer], faults: [PageFault], inkSeq: InkSeq?) {
         self.id = id
         self.ink = ink
         self.layers = layers
         self.faults = faults
-        self.isEditable = isEditable
         self.inkSeq = inkSeq
     }
+
+    package static func editable(id: PageID, ink: PKDrawing, layers: [Layer], inkSeq: InkSeq) -> PageSnapshot {
+        PageSnapshot(id: id, ink: ink, layers: layers, faults: [], inkSeq: inkSeq)
+    }
+
+    package static func placeholder(id: PageID, faults: [PageFault]) -> PageSnapshot {
+        PageSnapshot(id: id, ink: nil, layers: [], faults: faults, inkSeq: nil)
+    }
+
+    package var isEditable: Bool { faults.isEmpty }
 }
 
 package enum TransformOutcome: Sendable, Equatable {

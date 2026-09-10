@@ -15,17 +15,24 @@ package enum PageState: Sendable {
         if case .ready(let content) = self { return content }
         return nil
     }
+
+    package var isDirty: Bool { content?.isDirty ?? false }
 }
 
 /// A page's content in custody, and the bookkeeping that makes dirty a
-/// derived fact: `editSeq > savedSeq`.
+/// derived fact. Two sequence pairs, because two files: `editSeq` says the
+/// page file needs rewriting, `inkSeq` says the ink container does.
 package struct PageContent: Sendable {
-    package var ink: PKDrawing?
+    /// Once a page is ready its ink is a value; empty means no strokes.
+    package var ink: PKDrawing
     package var layers: [Layer]
+    /// The durable flag: once true, every save writes the container.
     package var hasInk: Bool
     package var inkIndex: Int
     package var editSeq: UInt64
     package var savedSeq: UInt64
+    package var inkSeq: UInt64
+    package var savedInkSeq: UInt64
     package var history: InkHistory
     /// Layers whose files must be written by the next save.
     package var pendingLayerFiles: Set<LayerID>
@@ -35,18 +42,35 @@ package struct PageContent: Sendable {
     package var retired: Bool
 
     package var isDirty: Bool { editSeq > savedSeq }
+    package var inkIsDirty: Bool { inkSeq > savedInkSeq }
 
-    package init(ink: PKDrawing?, layers: [Layer], hasInk: Bool, inkIndex: Int, editSeq: UInt64 = 0, savedSeq: UInt64 = 0) {
+    package init(ink: PKDrawing, layers: [Layer], hasInk: Bool, inkIndex: Int) {
         self.ink = ink
         self.layers = layers
         self.hasInk = hasInk
         self.inkIndex = inkIndex
-        self.editSeq = editSeq
-        self.savedSeq = savedSeq
+        self.editSeq = 0
+        self.savedSeq = 0
+        self.inkSeq = 0
+        self.savedInkSeq = 0
         self.history = InkHistory()
         self.pendingLayerFiles = []
         self.pendingEcho = nil
         self.retired = false
+    }
+
+    /// An ink change: history, both sequences, the durable flag.
+    package mutating func setInk(_ newInk: PKDrawing, recordingHistory: Bool) {
+        if recordingHistory { history.recordEdit(previous: ink) }
+        ink = newInk
+        hasInk = true
+        editSeq += 1
+        inkSeq += 1
+    }
+
+    /// A non-ink change: layers, index. The page file is due, the ink is not.
+    package mutating func edited() {
+        editSeq += 1
     }
 }
 
@@ -59,8 +83,8 @@ package struct PageContent: Sendable {
 package struct InkHistory: Sendable {
     package static let maximumEntries = 50
 
-    package private(set) var undoStack: [PKDrawing?] = []
-    package private(set) var redoStack: [PKDrawing?] = []
+    package private(set) var undoStack: [PKDrawing] = []
+    package private(set) var redoStack: [PKDrawing] = []
 
     package init() {}
 
@@ -69,21 +93,21 @@ package struct InkHistory: Sendable {
 
     /// Records `previous` as the state an undo returns to. A new edit
     /// clears redo, as every undo model does.
-    package mutating func recordEdit(previous: PKDrawing?) {
+    package mutating func recordEdit(previous: PKDrawing) {
         undoStack.append(previous)
         if undoStack.count > Self.maximumEntries { undoStack.removeFirst() }
         redoStack.removeAll()
     }
 
-    package mutating func undo(current: PKDrawing?) -> PKDrawing?? {
+    package mutating func undo(current: PKDrawing) -> PKDrawing? {
         guard let previous = undoStack.popLast() else { return nil }
         redoStack.append(current)
-        return .some(previous)
+        return previous
     }
 
-    package mutating func redo(current: PKDrawing?) -> PKDrawing?? {
+    package mutating func redo(current: PKDrawing) -> PKDrawing? {
         guard let next = redoStack.popLast() else { return nil }
         undoStack.append(current)
-        return .some(next)
+        return next
     }
 }

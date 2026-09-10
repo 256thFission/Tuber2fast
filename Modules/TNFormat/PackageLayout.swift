@@ -31,11 +31,12 @@ package struct PackageLayout: Sendable, Equatable {
 
     package var directories: [URL] { [root, pagesDirectory, inkDirectory, layersDirectory, assetsDirectory] }
 
-    /// The identity a file name carries, if it is one of ours.
-    package static func pageID(fromFileName name: String, extension ext: String) -> PageID? {
+    /// The identity a file name carries, if it is one of ours. Generic over
+    /// the brand, so a layer file name becomes a `LayerID` and never a
+    /// `PageID` re-branded.
+    package static func identity<ID: BrandedID>(fromFileName name: String, extension ext: String) -> ID? {
         guard name.hasSuffix(".\(ext)") else { return nil }
         let stem = String(name.dropLast(ext.count + 1))
-        guard let uuid = UUID(uuidString: stem), uuid.uuidString == stem else { return nil }
-        return PageID(raw: uuid)
+        return UUID.canonical(stem).map(ID.init(raw:))
     }
 }

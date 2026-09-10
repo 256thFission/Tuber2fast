@@ -55,6 +55,17 @@ package enum InkContainer {
         return Decoded(notebookID: notebookID, pageID: pageID, archive: Data(payload))
     }
 
+    /// The same container under a new notebook identity. The payload and
+    /// its checksum are untouched; only sixteen header bytes change, so a
+    /// page need not be decodable for its identity to be corrected.
+    package static func rewritingNotebookID(_ data: Data, to notebookID: NotebookID) throws(InkContainerFault) -> Data {
+        guard data.count >= headerLength else { throw .tooShort }
+        guard Array(data.prefix(4)) == magic else { throw .badMagic }
+        var copy = data
+        copy.replaceSubrange(8..<24, with: uuidBytes(notebookID.raw))
+        return copy
+    }
+
     private static func uuidBytes(_ uuid: UUID) -> [UInt8] {
         Swift.withUnsafeBytes(of: uuid.uuid) { Array($0) }
     }
@@ -95,11 +106,13 @@ package enum CRC32 {
         return crc
     }
 
-    package static func checksum<C: Collection>(_ bytes: C) -> UInt32 where C.Element == UInt8 {
-        var crc: UInt32 = 0xFFFF_FFFF
-        for byte in bytes {
-            crc = table[Int((crc ^ UInt32(byte)) & 0xFF)] ^ (crc >> 8)
+    package static func checksum<C: ContiguousBytes>(_ bytes: C) -> UInt32 {
+        bytes.withUnsafeBytes { buffer in
+            var crc: UInt32 = 0xFFFF_FFFF
+            for byte in buffer {
+                crc = table[Int((crc ^ UInt32(byte)) & 0xFF)] ^ (crc >> 8)
+            }
+            return crc ^ 0xFFFF_FFFF
         }
-        return crc ^ 0xFFFF_FFFF
     }
 }

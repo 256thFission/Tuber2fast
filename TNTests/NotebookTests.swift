@@ -6,27 +6,28 @@ import UIKit
 @testable import TNModel
 @testable import TNNotebook
 
-/// A real store whose `save` waits until released.
-final class HeldStore: PackageStoring, @unchecked Sendable {
+/// Forwards every `PackageStoring` call to a real store. The doubles below
+/// override exactly the one method they exist to bend.
+class ForwardingStore: PackageStoring, @unchecked Sendable {
     let base: PackageStore
-    private let gate = Gate()
-    var layout: PackageLayout { base.layout }
-
     init(_ base: PackageStore) { self.base = base }
-    func hold() async { await gate.close() }
-    func release() async { await gate.open() }
-
     func load() async throws(FormatFault) -> LoadedNotebook { try await base.load() }
     func loadPage(_ page: PageID) async throws(FormatFault) -> PageBytes { try await base.loadPage(page) }
-    func save(_ batch: SaveBatch) async throws(FormatFault) -> SaveReport {
+    func save(_ batch: SaveBatch) async throws(FormatFault) -> SaveReport { try await base.save(batch) }
+    func writeAsset(_ data: Data, _ ref: AssetRef) async throws(FormatFault) { try await base.writeAsset(data, ref) }
+    func readView() async -> ViewState? { await base.readView() }
+    func writeView(_ view: ViewState) async throws(FormatFault) { try await base.writeView(view) }
+}
+
+/// A real store whose `save` waits until released.
+final class HeldStore: ForwardingStore, @unchecked Sendable {
+    private let gate = Gate()
+    func hold() async { await gate.close() }
+    func release() async { await gate.open() }
+    override func save(_ batch: SaveBatch) async throws(FormatFault) -> SaveReport {
         await gate.wait()
         return try await base.save(batch)
     }
-    func writeAsset(_ data: Data, _ ref: AssetRef) async throws(FormatFault) { try await base.writeAsset(data, ref) }
-    func readAsset(_ ref: AssetRef) async throws(FormatFault) -> Data { try await base.readAsset(ref) }
-    func readView() async -> ViewState? { await base.readView() }
-    func writeView(_ view: ViewState) async throws(FormatFault) { try await base.writeView(view) }
-    func compact(now: Date) async throws(FormatFault) -> CompactReport { try await base.compact(now: now) }
 }
 
 actor Gate {
@@ -48,27 +49,17 @@ actor Gate {
 /// Drops every write for a page that has no file yet, so the real store
 /// commits an index without it, then reports it refused: a refused *new*
 /// page, whatever its identity.
-final class RefusingNewPagesStore: PackageStoring, @unchecked Sendable {
-    let base: PackageStore
-    var layout: PackageLayout { base.layout }
-    init(_ base: PackageStore) { self.base = base }
-    func load() async throws(FormatFault) -> LoadedNotebook { try await base.load() }
-    func loadPage(_ page: PageID) async throws(FormatFault) -> PageBytes { try await base.loadPage(page) }
-    func save(_ batch: SaveBatch) async throws(FormatFault) -> SaveReport {
+final class RefusingNewPagesStore: ForwardingStore, @unchecked Sendable {
+    override func save(_ batch: SaveBatch) async throws(FormatFault) -> SaveReport {
         let fs = PosixFileSystem()
-        let isNew: (PageWrite) -> Bool = { !fs.exists(self.layout.pageURL($0.pageID)) }
+        let isNew: (PageWrite) -> Bool = { !fs.exists(self.base.layout.pageURL($0.pageID)) }
         let refusedIDs = batch.pages.filter(isNew).map(\.pageID)
         let filtered = SaveBatch(index: batch.index, indexChanged: batch.indexChanged, pages: batch.pages.filter { !isNew($0) })
         let report = try await base.save(filtered)
         var refusals = report.refusals
-        for id in refusedIDs { refusals[id] = .staging("refused by the test") }
+        for id in refusedIDs { refusals[id] = .encodeFailed("refused by the test") }
         return SaveReport(committed: report.committed, refusals: refusals, indexWritten: report.indexWritten, indexWithheld: report.indexWithheld)
     }
-    func writeAsset(_ data: Data, _ ref: AssetRef) async throws(FormatFault) { try await base.writeAsset(data, ref) }
-    func readAsset(_ ref: AssetRef) async throws(FormatFault) -> Data { try await base.readAsset(ref) }
-    func readView() async -> ViewState? { await base.readView() }
-    func writeView(_ view: ViewState) async throws(FormatFault) { try await base.writeView(view) }
-    func compact(now: Date) async throws(FormatFault) -> CompactReport { try await base.compact(now: now) }
 }
 
 enum Ink {
@@ -114,7 +105,7 @@ struct NotebookTests {
         notebook.windowChanged(to: [page])
         try await waitUntil { notebook.state(of: page)?.content != nil }
         var changes = notebook.drainChanges()
-        #expect(changes.contains { if case .content(let s) = $0 { s.id == page && s.ink == nil && s.isEditable } else { false } })
+        #expect(changes.contains { if case .content(let s) = $0 { s.id == page && s.ink?.strokes.isEmpty == true && s.isEditable } else { false } })
 
         notebook.inkChanged(on: page, Ink.drawing(strokes: 3), echoOf: nil)
         #expect(notebook.dirtyPageCount == 1)
@@ -126,7 +117,7 @@ struct NotebookTests {
         let reopened = try await Notebook.open(store: PackageStore(root: scratch.packageURL), schedule: fast)
         reopened.windowChanged(to: [page])
         try await waitUntil { reopened.state(of: page)?.content != nil }
-        #expect(reopened.state(of: page)?.content?.ink?.strokes.count == 3)
+        #expect(reopened.state(of: page)?.content?.ink.strokes.count == 3)
         #expect(reopened.state(of: page)?.content?.hasInk == true)
     }
 
@@ -191,10 +182,10 @@ struct NotebookTests {
         // The runtime reports PencilKit's callback for the programmatic set.
         notebook.inkChanged(on: page, ink, echoOf: seq)
         #expect(notebook.state(of: page)!.content!.editSeq == editSeqBefore + 1, "the echo is not an edit")
-        #expect(notebook.state(of: page)!.content!.ink?.strokes.count == 1)
+        #expect(notebook.state(of: page)!.content!.ink.strokes.count == 1)
         #expect(notebook.canRedo(on: page))
         notebook.redo(on: page)
-        #expect(notebook.state(of: page)!.content!.ink?.strokes.count == 2)
+        #expect(notebook.state(of: page)!.content!.ink.strokes.count == 2)
         #expect(!notebook.canRedo(on: page))
     }
 
@@ -221,7 +212,7 @@ struct NotebookTests {
         notebook.inkChanged(on: first, Ink.drawing(strokes: 1), echoOf: nil)
         let refusedPage = notebook.appendPage()
         await notebook.flush()
-        #expect(notebook.lastSaveError != nil)
+        if case .pagesRefused(let refused) = notebook.lastSaveError { #expect(refused.keys.contains(refusedPage)) } else { Issue.record("expected pagesRefused, got \(String(describing: notebook.lastSaveError))") }
         #expect(notebook.state(of: refusedPage)?.content?.isDirty == true, "the refused page stays dirty")
         #expect(notebook.state(of: first)?.content?.isDirty == false, "the other page committed")
         let onDisk = try await PackageStore(root: scratch.packageURL).load()
@@ -267,6 +258,18 @@ struct NotebookTests {
         let reopened = try await PackageStore(root: scratch.packageURL).load()
         #expect(reopened.index.pageIDs == [first, second])
         #expect(reopened.index.pages[1].paper == .known(.blank))
+
+        notebook.setPaper(.grid, on: second)
+        notebook.movePage(second, before: first)
+        await notebook.flush()
+        var again = try await PackageStore(root: scratch.packageURL).load()
+        #expect(again.index.pageIDs == [second, first])
+        #expect(again.index.pages[0].paper == .known(.grid))
+        notebook.deletePage(second)
+        #expect(notebook.currentPageID == first)
+        await notebook.flush()
+        again = try await PackageStore(root: scratch.packageURL).load()
+        #expect(again.index.pageIDs == [first])
     }
 
     @Test("A layer import publishes the asset first, sits beneath the ink, and round-trips")
@@ -284,7 +287,11 @@ struct NotebookTests {
         await notebook.flush()
         let bytes = try await PackageStore(root: scratch.packageURL).loadPage(page)
         #expect(bytes.file.layers == [layer.id] && bytes.file.inkIndex == 1)
-        guard case .success(let saved) = try #require(bytes.layers.first) else { Issue.record("layer refused"); return }
-        #expect(saved.transform == .translation(x: 5, y: 5))
+        #expect(bytes.layers.first?.transform == .translation(x: 5, y: 5))
+        notebook.deleteLayer(layer.id, on: page)
+        #expect(notebook.state(of: page)?.content?.inkIndex == 0)
+        await notebook.flush()
+        let after = try await PackageStore(root: scratch.packageURL).loadPage(page)
+        #expect(after.file.layers.isEmpty && after.file.inkIndex == 0)
     }
 }

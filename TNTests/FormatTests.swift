@@ -178,7 +178,7 @@ struct StoreTests {
         #expect(page0.faults.isEmpty)
         let page1 = try await reopened.loadPage(index.pageIDs[1])
         #expect(page1.inkArchive == Fixture.archive(2))
-        #expect(page1.layers == [.success(layer)])
+        #expect(page1.layers == [layer])
         #expect(page1.file.inkIndex == 1)
         let page2 = try await reopened.loadPage(index.pageIDs[2])
         #expect(page2.inkArchive == nil)
@@ -290,7 +290,7 @@ struct StoreTests {
     func freeSpacePreflight() async throws {
         let scratch = try Scratch("nospace")
         _ = try await Fixture.populated(at: scratch.packageURL)
-        let store = PackageStore(root: scratch.packageURL, fileSystem: NoSpaceFileSystem())
+        let store = PackageStore(root: scratch.packageURL, fileSystem: FaultingFileSystem(faults: [.noSpace]))
         let loaded = try await store.load()
         let batch = SaveBatch(index: loaded.index, indexChanged: false, pages: [
             PageWrite(file: PageFile(pageID: loaded.index.pageIDs[0], hasInk: true, inkIndex: 0, layers: []), ink: .archive(Fixture.archive(8)), layerFiles: []),
@@ -358,8 +358,8 @@ struct WriteOrderSweep {
             #expect(!(loaded.pageFaults[page] ?? []).contains(.missingPageFile), "\(context): index reaches a missing page file")
             let bytes = try await store.loadPage(page)
             #expect(!bytes.faults.contains(.missingInk), "\(context): hasInk with no container")
-            for case .failure(let fault) in bytes.layers {
-                if case .fileMissing = fault { Issue.record("\(context): page file names a missing layer file") }
+            for case .layerRefused(.fileMissing) in bytes.faults {
+                Issue.record("\(context): page file names a missing layer file")
             }
             if !faultAllowed {
                 #expect(bytes.faults.isEmpty, "\(context): unexpected page fault \(bytes.faults)")
@@ -456,7 +456,7 @@ struct CompactTests {
     @Test("A layer this build cannot open suspends asset reclamation for the whole notebook")
     func unknownKindSuspends() async throws {
         let scratch = try Scratch("suspend")
-        let (store, index, layer) = try await Fixture.populated(at: scratch.packageURL)
+        let (store, _, layer) = try await Fixture.populated(at: scratch.packageURL)
         let layout = store.layout
         var object = try jsonObject(try PosixFileSystem().read(layout.layerURL(layer.id)))
         object["kind"] = "hologram"
@@ -468,6 +468,5 @@ struct CompactTests {
         let report = try await store.compact()
         #expect(report.assetReclamationSuspended)
         #expect(PosixFileSystem().exists(orphanAsset))
-        _ = index
     }
 }

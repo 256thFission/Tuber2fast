@@ -27,7 +27,7 @@ package struct AssetRef: Hashable, Sendable, Codable {
     package init?(fileName: String) {
         let parts = fileName.split(separator: ".", maxSplits: 1).map(String.init)
         guard parts.count == 2,
-              let uuid = UUID(uuidString: parts[0]), uuid.uuidString == parts[0],
+              let uuid = UUID.canonical(parts[0]),
               let format = AssetFormat(rawValue: parts[1])
         else { return nil }
         self.init(id: AssetID(raw: uuid), format: format)
@@ -73,7 +73,7 @@ package struct PageRect: Codable, Sendable, Equatable {
         self.x = x; self.y = y; self.width = width; self.height = height
     }
     package var isValid: Bool {
-        [x, y, width, height].allSatisfy(\.isFinite) && width > 0 && height > 0
+        x.isFinite && y.isFinite && width.isFinite && height.isFinite && width > 0 && height > 0
     }
 }
 
@@ -100,8 +100,7 @@ package struct SourceExtent: Codable, Sendable, Equatable {
         self.x = x; self.y = y; self.width = width; self.height = height; self.rotation = rotation
     }
     package var isValid: Bool {
-        [x, y, width, height].allSatisfy(\.isFinite) && width > 0 && height > 0
-            && [0, 90, 180, 270].contains(rotation)
+        PageRect(x: x, y: y, width: width, height: height).isValid && [0, 90, 180, 270].contains(rotation)
     }
 }
 
@@ -232,7 +231,8 @@ package struct Layer: Sendable, Equatable, Identifiable {
     }
 }
 
-/// Why a layer was refused. The page carrying one is a placeholder.
+/// Why a layer was refused. Every case names its layer; the page carrying
+/// one is a placeholder.
 package enum LayerFault: Error, Sendable, Equatable {
     case unknownKind(LayerID, kind: String)
     case fileMissing(LayerID)
@@ -246,15 +246,16 @@ package enum LayerFault: Error, Sendable, Equatable {
     case invalidLinkRect(LayerID)
     case danglingAsset(LayerID, AssetRef)
     case sourceExtentDisagrees(LayerID)
-}
 
-/// A layer that could not be read or is invalid, kept by identity so the
-/// page can name it and the repair intention can remove it.
-package struct RefusedLayer: Sendable, Equatable {
-    package let id: LayerID
-    package let fault: LayerFault
-    package init(id: LayerID, fault: LayerFault) {
-        self.id = id
-        self.fault = fault
+    package var layerID: LayerID {
+        switch self {
+        case .unknownKind(let id, _), .fileMissing(let id), .fileUnreadable(let id, _),
+             .invalidTransform(let id), .invalidNaturalSize(let id), .negativeSourcePageIndex(let id),
+             .invalidSourceExtent(let id), .linkTransformNotIdentity(let id), .invalidLinkRect(let id),
+             .danglingAsset(let id, _), .sourceExtentDisagrees(let id):
+            id
+        case .idMismatch(let expected, _):
+            expected
+        }
     }
 }

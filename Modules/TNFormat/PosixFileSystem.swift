@@ -116,32 +116,39 @@ package struct PosixFileSystem: PackageFileSystem {
         let fd = Darwin.open(path, O_RDONLY | O_CLOEXEC)
         guard fd >= 0 else { throw FileSystemError(.read, path, code: errno) }
         defer { _ = Darwin.close(fd) }
-        var info = stat()
+        var info = Darwin.stat()
         guard fstat(fd, &info) == 0 else { throw FileSystemError(.stat, path, code: errno) }
-        var data = Data(capacity: Int(info.st_size))
-        var buffer = [UInt8](repeating: 0, count: 1 << 16)
-        while true {
-            let count = buffer.withUnsafeMutableBytes { Darwin.read(fd, $0.baseAddress, $0.count) }
+        var data = Data(count: Int(info.st_size))
+        var filled = 0
+        while filled < data.count {
+            let count = data.withUnsafeMutableBytes { buffer in
+                Darwin.read(fd, buffer.baseAddress! + filled, buffer.count - filled)
+            }
             if count < 0 {
                 if errno == EINTR { continue }
                 throw FileSystemError(.read, path, code: errno)
             }
             if count == 0 { break }
-            data.append(contentsOf: buffer[0..<count])
+            filled += count
         }
+        if filled < data.count { data.removeSubrange(filled...) }
         return data
     }
 
     package func exists(_ url: URL) -> Bool {
-        var info = stat()
-        return stat(url.path, &info) == 0
+        (try? Self.fileInfo(of: url)) != nil
     }
 
     package func modificationTime(_ url: URL) throws -> Date {
-        var info = stat()
+        let modified = try Self.fileInfo(of: url)
+        return Date(timeIntervalSince1970: Double(modified.tv_sec) + Double(modified.tv_nsec) / 1e9)
+    }
+
+    /// The file's modification time, or a throw if it does not exist.
+    private static func fileInfo(of url: URL) throws -> timespec {
+        var info = Darwin.stat()
         guard stat(url.path, &info) == 0 else { throw FileSystemError(.stat, url.path, code: errno) }
-        let seconds = Double(info.st_mtimespec.tv_sec) + Double(info.st_mtimespec.tv_nsec) / 1e9
-        return Date(timeIntervalSince1970: seconds)
+        return info.st_mtimespec
     }
 
     package func list(_ directory: URL) throws -> [String] {
@@ -188,6 +195,8 @@ package final class FaultingFileSystem: PackageFileSystem {
         case discardAfterPublish(nth: Int)
         /// The Nth `syncDirectory` throws.
         case failSync(nth: Int)
+        /// The volume reports no free space.
+        case noSpace
     }
 
     package struct Counts: Sendable, Equatable {
@@ -267,6 +276,9 @@ package final class FaultingFileSystem: PackageFileSystem {
     package func modificationTime(_ url: URL) throws -> Date { try base.modificationTime(url) }
     package func list(_ directory: URL) throws -> [String] { try base.list(directory) }
     package func remove(_ url: URL) throws { try base.remove(url) }
-    package func availableBytes(at url: URL) throws -> Int64 { try base.availableBytes(at: url) }
+    package func availableBytes(at url: URL) throws -> Int64 {
+        if state.withLock({ $0.faults.contains(.noSpace) }) { return 0 }
+        return try base.availableBytes(at: url)
+    }
 }
 #endif

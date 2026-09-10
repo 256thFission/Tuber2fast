@@ -12,6 +12,14 @@ public protocol BrandedID: Hashable, Codable, Sendable, CustomStringConvertible 
     init(raw: UUID)
 }
 
+extension UUID {
+    /// The one canonical spelling the format accepts: uppercase, hyphenated.
+    public static func canonical(_ string: String) -> UUID? {
+        guard let uuid = UUID(uuidString: string), uuid.uuidString == string else { return nil }
+        return uuid
+    }
+}
+
 extension BrandedID {
     public init() { self.init(raw: UUID()) }
     public var description: String { raw.uuidString }
@@ -19,7 +27,7 @@ extension BrandedID {
     public init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
         let string = try container.decode(String.self)
-        guard let uuid = UUID(uuidString: string), uuid.uuidString == string else {
+        guard let uuid = UUID.canonical(string) else {
             throw DecodingError.dataCorruptedError(
                 in: container,
                 debugDescription: "\(Self.self) is not a canonical uppercase UUID: \(string)"

@@ -4,24 +4,43 @@ import TNModel
 /// JSON exactly one way: sorted keys, ISO-8601 dates, no pretty printing.
 /// The key-set pins depend on this being the only encoder the format uses.
 package enum Codecs {
-    package static func encoder() -> JSONEncoder {
+    // One configured instance each. JSONEncoder/Decoder are reference types
+    // that are never mutated after configuration, which is what makes the
+    // shared instances safe.
+    private static let sharedEncoder: JSONEncoder = {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
         return encoder
-    }
+    }()
 
-    package static func decoder() -> JSONDecoder {
+    private static let sharedDecoder: JSONDecoder = {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         return decoder
+    }()
+
+    package static func encode<T: Encodable>(_ value: T) throws(FormatFault) -> Data {
+        do {
+            return try sharedEncoder.encode(value)
+        } catch {
+            throw .corruptJSON("encode failed: \(error)")
+        }
     }
 
-    /// The exact top-level key set every durable JSON type must carry. A
-    /// missing key refuses naming the key; an extra key refuses naming it
-    /// too, because a key nothing in this build reads is a key some other
-    /// build wrote without the version bump D9 requires.
-    package static func topLevelKeys(of data: Data) throws(FormatFault) -> Set<String> {
+    package static func decode<T: Decodable>(_ type: T.Type, from data: Data) throws(FormatFault) -> T {
+        do {
+            return try sharedDecoder.decode(type, from: data)
+        } catch let error as DecodingError {
+            throw FormatFault(decoding: error)
+        } catch {
+            throw .corruptJSON(String(describing: error))
+        }
+    }
+
+    /// The parsed top-level object, for key checks that must run before a
+    /// typed decode (an unknown layer kind is seen here, not as corruption).
+    package static func topLevelObject(of data: Data) throws(FormatFault) -> [String: Any] {
         let object: Any
         do {
             object = try JSONSerialization.jsonObject(with: data)
@@ -31,7 +50,16 @@ package enum Codecs {
         guard let dictionary = object as? [String: Any] else {
             throw .corruptJSON("top level is not an object")
         }
-        return Set(dictionary.keys)
+        return dictionary
+    }
+
+    /// The one implementation of "the exact key set": a missing key refuses
+    /// naming it, then an extra key refuses naming it. Missing wins so a
+    /// file from a build that forgot the version bump is reported by what
+    /// this build needs, not by what it added.
+    package static func checkKeys(_ keys: Set<String>, against expected: Set<String>) throws(FormatFault) {
+        if let missing = expected.subtracting(keys).sorted().first { throw .missingKey(missing) }
+        if let extra = keys.subtracting(expected).sorted().first { throw .unknownKey(extra) }
     }
 
     package static func decodeStrict<T: Decodable>(
@@ -39,28 +67,8 @@ package enum Codecs {
         from data: Data,
         expectedKeys: Set<String>
     ) throws(FormatFault) -> T {
-        let keys = try topLevelKeys(of: data)
-        if let missing = expectedKeys.subtracting(keys).sorted().first {
-            throw .missingKey(missing)
-        }
-        if let extra = keys.subtracting(expectedKeys).sorted().first {
-            throw .unknownKey(extra)
-        }
-        do {
-            return try decoder().decode(type, from: data)
-        } catch let error as DecodingError {
-            throw FormatFault(decoding: error)
-        } catch {
-            throw .corruptJSON(String(describing: error))
-        }
-    }
-
-    package static func encode<T: Encodable>(_ value: T) throws(FormatFault) -> Data {
-        do {
-            return try encoder().encode(value)
-        } catch {
-            throw .corruptJSON("encode failed: \(error)")
-        }
+        try checkKeys(Set(try topLevelObject(of: data).keys), against: expectedKeys)
+        return try decode(type, from: data)
     }
 }
 

@@ -84,21 +84,6 @@ enum Fixture {
     }
 }
 
-/// Forwards everything and reports no free space.
-struct NoSpaceFileSystem: PackageFileSystem {
-    let base = PosixFileSystem()
-    func createDirectory(_ url: URL) throws { try base.createDirectory(url) }
-    func stage(_ data: Data, at temp: URL) throws { try base.stage(data, at: temp) }
-    func publish(_ temp: URL, to final: URL) throws { try base.publish(temp, to: final) }
-    func syncDirectory(_ url: URL) throws { try base.syncDirectory(url) }
-    func read(_ url: URL) throws -> Data { try base.read(url) }
-    func exists(_ url: URL) -> Bool { base.exists(url) }
-    func modificationTime(_ url: URL) throws -> Date { try base.modificationTime(url) }
-    func list(_ directory: URL) throws -> [String] { try base.list(directory) }
-    func remove(_ url: URL) throws { try base.remove(url) }
-    func availableBytes(at url: URL) throws -> Int64 { 0 }
-}
-
 func jsonObject(_ data: Data) throws -> [String: Any] {
     try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
 }
