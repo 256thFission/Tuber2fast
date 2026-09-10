@@ -50,7 +50,25 @@ final class Workspace {
             TNPrecondition.fail("the library store could not be created: \(error)")
         }
         Task { await self.refreshIdentities() }
+        #if DEBUG
+        // `-TNSmokeNotebook`: create a notebook named Smoke if absent and open
+        // it, so a simulator launch reaches the editor with no taps. Debug
+        // only; a smoke launch is not a user path.
+        if ProcessInfo.processInfo.arguments.contains("-TNSmokeNotebook") {
+            Task { await self.openSmokeNotebook() }
+        }
+        #endif
     }
+
+    #if DEBUG
+    private func openSmokeNotebook() async {
+        let path = "Smoke.tubernotes"
+        if (try? await library.store.list(folder: "").contains { $0.relativePath == path }) != true {
+            _ = try? await library.store.createNotebook(named: "Smoke", in: "")
+        }
+        await open(path: path, name: "Smoke")
+    }
+    #endif
 
     // MARK: Identity
 

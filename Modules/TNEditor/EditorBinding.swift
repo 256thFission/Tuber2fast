@@ -88,6 +88,8 @@ import UIKit
     /// The designated initializer. A test passes its own surface; the
     /// production path passes the runtime and the forwarder that reports
     /// back into it.
+    private let forwarder: ReportForwarder?
+
     package init(
         notebook: Notebook,
         surface: any CanvasSurface,
@@ -101,6 +103,9 @@ import UIKit
         // whose surface is the runtime, reaches `EditorViewModel`.
         self.host = (surface as? UIViewController) ?? UIViewController()
         self.onLinkActivated = onLinkActivated
+        // The runtime holds the forwarder unowned, so the binding must own
+        // it for as long as it owns the runtime.
+        self.forwarder = forwarder
         forwarder?.binding = self
 
         // The opening push. `StructureSeq(0)` is below every sequence the
