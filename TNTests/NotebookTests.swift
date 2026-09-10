@@ -15,6 +15,7 @@ class ForwardingStore: PackageStoring, @unchecked Sendable {
     func loadPage(_ page: PageID) async throws(FormatFault) -> PageBytes { try await base.loadPage(page) }
     func save(_ batch: SaveBatch) async throws(FormatFault) -> SaveReport { try await base.save(batch) }
     func writeAsset(_ data: Data, _ ref: AssetRef) async throws(FormatFault) { try await base.writeAsset(data, ref) }
+    func readAsset(_ ref: AssetRef) async throws(FormatFault) -> Data { try await base.readAsset(ref) }
     func readView() async -> ViewState? { await base.readView() }
     func writeView(_ view: ViewState) async throws(FormatFault) { try await base.writeView(view) }
 }

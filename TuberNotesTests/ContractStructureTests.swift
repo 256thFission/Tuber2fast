@@ -481,6 +481,9 @@ struct ContractStructureTests {
         "Modules/TNFormat",
         "Modules/TNNotebook",
         "Modules/TNLibrary",
+        "Modules/TNRender",
+        "Modules/TNCanvas",
+        "Modules/TNEditor",
     ]
 
     /// The module a policed path belongs to: the last component of its
@@ -730,6 +733,13 @@ struct ContractStructureTests {
         // The tree and the trash, in Foundation. Holds Notebooks (PencilKit
         // arrives transitively) but writes no UI import.
         "TNLibrary": ["PencilKit"],
+        // Composites and thumbnails: CoreGraphics (CoreText and ImageIO are
+        // not policed), PencilKit for a thumbnail's ink. No UIKit.
+        "TNRender": ["CoreGraphics", "PencilKit"],
+        // The driven runtime: everything that owns frame-frequency state.
+        "TNCanvas": ["UIKit", "PencilKit", "CoreGraphics"],
+        // The binding and the editor view model.
+        "TNEditor": ["UIKit", "PencilKit", "CoreGraphics"],
     ]
 
     /// Files whose **module** is the claim, not merely their imports.

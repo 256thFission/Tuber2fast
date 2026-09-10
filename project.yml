@@ -187,6 +187,18 @@ targets:
       - target: TNModel
       - target: TNCore
 
+  # Composites, paper, thumbnails, import normalization: CoreGraphics,
+  # CoreText, ImageIO, PencilKit for thumbnails. No UIKit, no view, no
+  # frame-frequency state.
+  TNRender:
+    templates: [Framework]
+    sources:
+      - path: Modules/TNRender
+    dependencies:
+      - target: TNFormat
+      - target: TNModel
+      - target: TNCore
+
   # The notebook: custody, page states, the save engine, history. PencilKit
   # for the PKDrawing value only; no UIKit written, no I/O (the store seam).
   TNNotebook:
@@ -194,6 +206,7 @@ targets:
     sources:
       - path: Modules/TNNotebook
     dependencies:
+      - target: TNRender
       - target: TNFormat
       - target: TNModel
       - target: TNCore
@@ -206,6 +219,31 @@ targets:
       - path: Modules/TNLibrary
     dependencies:
       - target: TNNotebook
+      - target: TNFormat
+      - target: TNModel
+      - target: TNCore
+
+  # The driven canvas runtime. Depends on TNModel only: it cannot name the
+  # format, the notebook, or the library.
+  TNCanvas:
+    templates: [Framework]
+    sources:
+      - path: Modules/TNCanvas
+    dependencies:
+      - target: TNModel
+      - target: TNCore
+
+  # The one target that names both TNCanvas and TNNotebook: the binding
+  # and the editor view model. The app depends on this and never on
+  # TNCanvas directly.
+  TNEditor:
+    templates: [Framework]
+    sources:
+      - path: Modules/TNEditor
+    dependencies:
+      - target: TNCanvas
+      - target: TNNotebook
+      - target: TNRender
       - target: TNFormat
       - target: TNModel
       - target: TNCore

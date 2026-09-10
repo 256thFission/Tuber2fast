@@ -4,6 +4,7 @@ import PencilKit
 import TNCore
 import TNFormat
 import TNModel
+import TNRender
 
 /// The timing constants of the save engine, carried as values so a test
 /// can run the engine at speed. The defaults carry the spec's numbers.
@@ -38,7 +39,10 @@ package final class Notebook {
     // MARK: Custody
 
     @ObservationIgnored package let store: any PackageStoring
+    @ObservationIgnored package let renderer: Renderer
     @ObservationIgnored package let notebookID: NotebookID
+    /// The scale composites are first rendered at: a 2x display at fit width.
+    package static let baseCompositeScale: CGFloat = 2
     @ObservationIgnored package private(set) var index: NotebookIndex
     @ObservationIgnored private var indexSeq: UInt64 = 0
     @ObservationIgnored private var savedIndexSeq: UInt64 = 0
@@ -66,6 +70,7 @@ package final class Notebook {
 
     private init(store: any PackageStoring, loaded: LoadedNotebook, view: ViewState?, schedule: SaveSchedule) {
         self.store = store
+        self.renderer = Renderer(assets: store)
         self.schedule = schedule
         self.index = loaded.index
         self.notebookID = loaded.index.notebookID
@@ -146,6 +151,7 @@ package final class Notebook {
         nextGeneration += 1
         states[page] = .loading(generation: generation)
         let store = self.store
+        let record = index.record(of: page)
         loads[page] = Task { [weak self] in
             let bytes: PageBytes
             do {
@@ -175,6 +181,9 @@ package final class Notebook {
                 )
                 // An adopted container is recorded by the next save.
                 if bytes.inkRecordNeeded { content.edited() }
+                if let record, let renderer = self?.renderer {
+                    content.composite = await renderer.composite(geometry: record.geometry, paper: record.paper.paper, layers: bytes.layers, scale: Notebook.baseCompositeScale)
+                }
                 self?.installLoaded(page, generation: generation, result: .ready(content))
             } else {
                 self?.installLoaded(page, generation: generation, result: .faults(faults))
@@ -208,6 +217,7 @@ package final class Notebook {
             pendingRestores[page] = nil
         }
         emitContent(page)
+        onAsyncChange?()
     }
 
     private func emitContent(_ page: PageID) {
@@ -217,7 +227,7 @@ package final class Notebook {
         case .ready(let content):
             let seq = InkSeq(nextInkSeq); nextInkSeq += 1
             withContent(page) { $0.pendingEcho = seq }
-            snapshot = .editable(id: page, ink: content.ink, layers: content.layers, inkSeq: seq)
+            snapshot = .editable(id: page, ink: content.ink, layers: content.layers, composite: content.composite, inkSeq: seq)
         case .unreadable(let faults):
             snapshot = .placeholder(id: page, faults: faults)
         case .unloaded, .loading:
@@ -352,6 +362,7 @@ package final class Notebook {
         emitStructure(answering: answering)
         emitContent(record.id)
         markDirty()
+        rerenderComposite(of: record.id)
         return record.id
     }
 
@@ -387,6 +398,36 @@ package final class Notebook {
         indexSeq += 1
         emitStructure(answering: nil)
         markDirty()
+        rerenderComposite(of: page)
+    }
+
+    package func paper(of page: PageID) -> Paper? { index.record(of: page)?.paper.paper }
+
+    // MARK: Composites
+
+    /// Re-renders a page's backdrop after its layers or paper changed, or
+    /// at a sharper scale on request. A result for a page no longer ready
+    /// is dropped.
+    package func rerenderComposite(of page: PageID, scale: CGFloat = Notebook.baseCompositeScale) {
+        guard case .ready(let content) = states[page], let record = index.record(of: page) else { return }
+        let layers = content.layers
+        let renderer = self.renderer
+        Task { [weak self] in
+            guard let composite = await renderer.composite(geometry: record.geometry, paper: record.paper.paper, layers: layers, scale: scale) else { return }
+            guard let self, case .ready = self.states[page] else { return }
+            self.withContent(page) { $0.composite = composite }
+            self.changes.append(.compositeUpdated(page, composite))
+            self.onAsyncChange?()
+        }
+    }
+
+    /// Called when a change lands outside an intention (a composite arrived,
+    /// a load installed). The binding drains on it.
+    @ObservationIgnored package var onAsyncChange: (@MainActor () -> Void)?
+
+    package func detailNeeded(for page: PageID, scale: CGFloat) {
+        guard case .ready(let content) = states[page], (content.composite?.scale ?? 0) < scale else { return }
+        rerenderComposite(of: page, scale: scale)
     }
 
     // MARK: Layers
@@ -406,8 +447,69 @@ package final class Notebook {
             content.pendingLayerFiles.insert(layer.id)
             content.edited()
         }
-        emitContent(page)
         markDirty()
+        rerenderComposite(of: page)
+    }
+
+    /// An image, normalized to HEIC, placed centered at up to 60% of the
+    /// page width, beneath the ink.
+    package func importImage(_ data: Data, on page: PageID) async throws(FormatFault) {
+        guard let normalized = await Task.detached(priority: .userInitiated, operation: { ImageImport.normalize(data) }).value else {
+            throw .invalidWrite("image could not be decoded")
+        }
+        guard let record = index.record(of: page) else { throw .invalidWrite("no such page") }
+        let fit = min(record.geometry.width * 0.6 / Double(normalized.size.width), record.geometry.height * 0.6 / Double(normalized.size.height))
+        let width = Double(normalized.size.width) * fit, height = Double(normalized.size.height) * fit
+        let transform = PageSpaceTransform.placing(
+            sourceWidth: Double(normalized.size.width), sourceHeight: Double(normalized.size.height),
+            at: ((record.geometry.width - width) / 2, (record.geometry.height - height) / 2), scale: fit)
+        let layer = Layer(id: LayerID(), transform: transform, payload: .image(ImageLayer(asset: AssetRef(id: AssetID(), format: .heic), naturalSize: normalized.size)))
+        try await addLayer(layer, assetData: normalized.heic, on: page)
+    }
+
+    /// One new page per PDF page, inserted after the current page, each
+    /// sized to its source extent on `none` paper. The asset is written once.
+    package func importPDF(_ data: Data) async throws(FormatFault) {
+        guard let source = PDFSource(data: data), source.pageCount > 0 else { throw .invalidWrite("PDF could not be opened") }
+        let asset = AssetRef(id: AssetID(), format: .pdf)
+        try await store.writeAsset(data, asset)
+        var after = currentPageID
+        for pageIndex in 0..<source.pageCount {
+            guard let page = source.page(at: pageIndex), let extent = PDFSource.displayExtent(of: page) else { continue }
+            let geometry = PageGeometry(width: extent.width, height: extent.height)
+            guard geometry.isWithinBounds else { throw .invalidWrite("PDF page \(pageIndex + 1) is outside the page bounds") }
+            let record = PageRecord(id: PageID(), geometry: geometry, paper: Paper.none)
+            var pages = index.pages
+            let position = pages.firstIndex { $0.id == after }.map { $0 + 1 } ?? pages.count
+            pages.insert(record, at: position)
+            index = index.withPages(pages)
+            let layer = Layer(id: LayerID(),
+                              transform: .unitSquare(to: PageRect(x: 0, y: 0, width: geometry.width, height: geometry.height)),
+                              payload: .pdf(PDFLayer(asset: asset, sourcePageIndex: pageIndex, sourceExtent: extent)))
+            var content = PageContent(ink: PKDrawing(), layers: [layer], hasInk: false, inkIndex: 1)
+            content.pendingLayerFiles = [layer.id]
+            content.edited()
+            states[record.id] = .ready(content)
+            wanted.insert(record.id)
+            after = record.id
+        }
+        indexSeq += 1
+        emitStructure(answering: nil)
+        for page in index.pageIDs where states[page]?.content?.pendingLayerFiles.isEmpty == false {
+            emitContent(page)
+            rerenderComposite(of: page)
+        }
+        markDirty()
+    }
+
+    package func addTextLayer(on page: PageID, rect: PageRect, runs: [TextRun]) async throws(FormatFault) {
+        let layer = Layer(id: LayerID(), transform: .identity, payload: .text(TextLayer(rect: rect, runs: runs, alignment: .leading)))
+        try await addLayer(layer, assetData: nil, on: page)
+    }
+
+    package func addLinkLayer(on page: PageID, rect: PageRect, target: LinkTarget) async throws(FormatFault) {
+        let layer = Layer(id: LayerID(), transform: .identity, payload: .link(LinkLayer(rect: rect, style: .button, target: target)))
+        try await addLayer(layer, assetData: nil, on: page)
     }
 
     package func transformLayer(on page: PageID, layer layerID: LayerID, to transform: PageSpaceTransform) -> TransformOutcome {
@@ -420,6 +522,7 @@ package final class Notebook {
         content.edited()
         states[page] = .ready(content)
         markDirty()
+        rerenderComposite(of: page)
         return .accepted
     }
 
@@ -430,8 +533,8 @@ package final class Notebook {
         content.pendingLayerFiles.remove(layerID)
         content.edited()
         states[page] = .ready(content)
-        emitContent(page)
         markDirty()
+        rerenderComposite(of: page)
     }
 
     // MARK: The save engine

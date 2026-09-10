@@ -76,6 +76,11 @@ package struct PageSpaceTransform: Codable, Sendable, Equatable {
         )
     }
 
+    /// The transform that maps the unit square onto a page-space rectangle.
+    package static func unitSquare(to rect: PageRect) -> PageSpaceTransform {
+        PageSpaceTransform(a: rect.width, b: 0, c: 0, d: rect.height, tx: rect.x, ty: rect.y)
+    }
+
     /// The array form the format writes: `[a, b, c, d, tx, ty]`.
     package init(from decoder: Decoder) throws {
         var container = try decoder.unkeyedContainer()

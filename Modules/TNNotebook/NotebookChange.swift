@@ -9,6 +9,7 @@ package enum NotebookChange: Sendable {
     case structure([PageDescriptor], seq: StructureSeq, answering: ReportSeq?)
     case content(PageSnapshot)
     case inkRestored(PageID, PKDrawing, seq: InkSeq)
+    case compositeUpdated(PageID, Composite)
 }
 
 /// Why the last save did not fully succeed. Typed, so the app can choose

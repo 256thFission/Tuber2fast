@@ -29,6 +29,8 @@ package struct PageContent: Sendable {
     /// The durable flag: once true, every save writes the container.
     package var hasInk: Bool
     package var inkIndex: Int
+    /// The rendered backdrop, a value the renderer produced.
+    package var composite: Composite?
     package var editSeq: UInt64
     package var savedSeq: UInt64
     package var inkSeq: UInt64
@@ -48,6 +50,7 @@ package struct PageContent: Sendable {
         self.layers = layers
         self.hasInk = hasInk
         self.inkIndex = inkIndex
+        self.composite = nil
         self.editSeq = 0
         self.savedSeq = 0
         self.inkSeq = 0

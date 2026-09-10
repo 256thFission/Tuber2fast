@@ -1,12 +1,16 @@
 import Foundation
 import TNModel
 
-/// What the notebook asks of its store, and nothing more. A seam because
-/// the ink and durability proofs need a store that can be held open or
-/// refuse on cue. `PackageStore` is the one production conformer; compact
-/// and asset reads are the library's and renderer's business on the
-/// concrete type.
-package protocol PackageStoring: Sendable {
+/// What the notebook and its renderer ask of a store. A seam because the
+/// ink and durability proofs need a store that can be held open or refuse
+/// on cue. `PackageStore` is the one production conformer; compact is the
+/// library's business on the concrete type.
+/// What a renderer reads: asset bytes.
+package protocol AssetReading: Sendable {
+    func readAsset(_ ref: AssetRef) async throws(FormatFault) -> Data
+}
+
+package protocol PackageStoring: AssetReading {
     func load() async throws(FormatFault) -> LoadedNotebook
     func loadPage(_ page: PageID) async throws(FormatFault) -> PageBytes
     func save(_ batch: SaveBatch) async throws(FormatFault) -> SaveReport
