@@ -112,11 +112,24 @@ package struct PosixFileSystem: PackageFileSystem {
     }
 
     package func read(_ url: URL) throws -> Data {
-        do {
-            return try Data(contentsOf: url, options: [])
-        } catch let error as NSError {
-            throw FileSystemError(.read, url.path, code: Int32(truncatingIfNeeded: error.code))
+        let path = url.path
+        let fd = Darwin.open(path, O_RDONLY | O_CLOEXEC)
+        guard fd >= 0 else { throw FileSystemError(.read, path, code: errno) }
+        defer { _ = Darwin.close(fd) }
+        var info = stat()
+        guard fstat(fd, &info) == 0 else { throw FileSystemError(.stat, path, code: errno) }
+        var data = Data(capacity: Int(info.st_size))
+        var buffer = [UInt8](repeating: 0, count: 1 << 16)
+        while true {
+            let count = buffer.withUnsafeMutableBytes { Darwin.read(fd, $0.baseAddress, $0.count) }
+            if count < 0 {
+                if errno == EINTR { continue }
+                throw FileSystemError(.read, path, code: errno)
+            }
+            if count == 0 { break }
+            data.append(contentsOf: buffer[0..<count])
         }
+        return data
     }
 
     package func exists(_ url: URL) -> Bool {

@@ -16,6 +16,14 @@ package struct PageSpaceTransform: Codable, Sendable, Equatable {
 
     package static let identity = PageSpaceTransform(a: 1, b: 0, c: 0, d: 1, tx: 0, ty: 0)
 
+    package static func scale(_ factor: Double) -> PageSpaceTransform {
+        PageSpaceTransform(a: factor, b: 0, c: 0, d: factor, tx: 0, ty: 0)
+    }
+
+    package static func translation(x: Double, y: Double) -> PageSpaceTransform {
+        PageSpaceTransform(a: 1, b: 0, c: 0, d: 1, tx: x, ty: y)
+    }
+
     package var isIdentity: Bool { self == .identity }
     package var determinant: Double { a * d - b * c }
 

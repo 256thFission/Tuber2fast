@@ -29,8 +29,10 @@ only two; local-only forever; iPad, one window; PencilKit is the ink engine.
 ## Decisions taken tonight (D1 to D14)
 
 D1. Undo is the notebook's. Per-page history of ink values, one entry per
-tool-use session, capped at 50 entries or 32 MB per page, dropped when the
-page's content is pruned. Layer transforms join the same history. Page
+tool-use session, capped at 50 entries or 32 MB per page. History lives
+as long as the page's content does: the decoded window plus dirty pages.
+Scroll two pages away and back and the undo stack is gone. That is a
+product verdict, stated here so it is chosen rather than discovered. Layer transforms join the same history. Page
 operations are not undoable in v2.0; deletion confirms. The mechanism for
 keeping the system gestures (three-finger swipe, shake, Cmd-Z) is a
 filtering `UndoManager` vended by the page controller that drops
@@ -71,16 +73,27 @@ migrator that rewrites the package by staged copy and atomic swap inside
 `load()`. v2.0 ships the ladder with zero migrators. A newer version
 refuses by number and is never swept.
 
-D10. The commit protocol is stage, barrier, publish. Every file is written
-to a temp path, `F_BARRIERFSYNC` is issued on its descriptor before close,
-then it is published by rename. Two barriers per save: one before the leaf
-renames, one before the index rename. Directories are fsync'd after their
-renames. `Data.write(.atomic)` is not used anywhere in the package.
+D10. The commit protocol is stage, then publish in three ordered phases.
+Every file is written to a temp path with `F_BARRIERFSYNC` on its
+descriptor before close, so its bytes precede any rename. Publish then
+renames all leaves (ink, layers), syncs their directories, renames all
+page files, syncs `pages/`, renames the index if it changed, syncs the
+root. Three ordering points, one per phase. Per-file barriers order data
+before names; directory syncs order the phases. `Data.write(.atomic)` is
+not used anywhere in the package. There is no per-page atomicity across
+the phases: a crash between phases leaves new leaves under an old page
+file, or a page file naming a leaf that is not there, and both are
+page-scoped faults, never notebook ones.
 
-D11. The open sweeps page-scoped orphans only. Layer and asset reclamation
-is a separate compact pass that runs at idle, never on the open path. Both
-delete only files older than `notebook.json` and matching the known name
-patterns in the known directories.
+D11. One deletion authority: `compact()`. Nothing is deleted on the open
+path and nothing is deleted by a save. Compact runs at idle after open,
+reads every page and layer file, and deletes files no committed page
+reaches: orphan layers and assets, orphan page and ink files, and staging
+temps. A file younger than twenty-four hours is left alone, so a crashed
+save's uncommitted ink survives a day for inspection. If any layer file
+is unreadable or names an unknown kind, asset reclamation is suspended
+for the whole notebook: an unreclaimed asset is heavy, a reclaimed live
+one is lost.
 
 D12. The zoom cap is a code constant, not a durable field. It is pinned to
 PencilKit's silent clamp of `maximumZoomScale` at 10 on a 2x display.
@@ -114,15 +127,21 @@ value. A report that says "changed, come ask" is forbidden.
 An install is never an edit. Pushing ink down (content arrival, undo
 restore) stamps a sequence number; the runtime stamps the same number on
 the report PencilKit fires for the programmatic set, and the notebook
-drops that echo. A boolean would lose a stroke that lands during the
-install; a sequence does not.
+drops that echo. The guarantee rests on installs running only when no
+stroke is in flight and on the main actor serializing the set and its
+callback; the latch clears on the first change after the set or at the
+end of the turn, whichever comes first, so a set that fires no callback
+cannot arm it forever. Whether the callback is synchronous and single is
+part of stage 4's spike.
 
-The final report. A page controller has one release path, `release()`,
+The final report. A page controller has one retire path, `retire()`,
 which delivers its final ink report synchronously and records that it
 did. `deinit` reads that record and traps through `TNPrecondition` if it
-is unset. The notebook asserts, in the same main-actor turn it asked for
-a release, that the report arrived. A leaked controller is caught by the
-second check, a dropped one by the first.
+is unset. `retire()` is refusable: while a stroke is in flight it answers
+"deferred" and delivers the report when the stroke ends. The notebook
+asserts that every retire it asked for has reported, deferring the check
+by exactly the retires that were deferred. A leaked controller is caught
+by the notebook's check, a dropped one by `deinit`.
 
 A save that lies is ink loss. "Saved" is claimed only after the publish
 rename returns. Close reports clean only when no write is outstanding.
@@ -140,10 +159,13 @@ Answers are returned, never inferred. A request fulfilled later
 (`windowChanged` asking for content) is answered by a push, never by a
 synchronous pull.
 
-No re-entry. A seam callee never calls back through the seam
-synchronously. The notebook queues its changes and the binding drains
-them at the end of the main-actor turn that produced them, never inside a
-report.
+No re-entry into a mutation. Each side finishes its own state change
+before it delivers a message, and reports are the last thing a runtime
+callback does. That is what makes a synchronous answer safe: the binding
+drains the notebook's queued changes as soon as the report's handler
+returns, still inside the same turn, so an append answers before the
+next frame. `setPages` is applied as a diff keyed by page identity and
+carries the sequence of the report it answers, if any.
 
 Placeholder, never blank.
 
@@ -156,16 +178,17 @@ page with ink, one file per static layer, one file per asset. Opening
 costs O(pages) stats and reads no page, ink, or layer file.
 
 Plan, then stage, then publish. A save validates and plans before any
-I/O; stages every file it will write; barriers; publishes by rename,
-leaves before roots; barriers; publishes the index if it changed. A page
-that fails to stage is dropped from the publish whole, so a page is
-all-or-nothing.
+I/O, then stages every file, then publishes in the three phases of D10.
+A page that fails to stage is dropped from the publish whole and
+reported refused; nothing of it is published this save.
 
 The index commits what is present. The index write is the commit point
 when the index changed. Its content is the intended page list intersected
 with the pages whose files are present after publish. A refused new page
-is absent from this commit and stays dirty in memory. The index never
-names a file that is not there, and no page's ink waits on another's.
+is absent from this commit and stays dirty in memory. If the intersection
+is empty the index is withheld and the whole save is reported refused.
+The index never names a page file that is not there, and no page's ink
+waits on another's.
 
 Strict current version. A current-version file missing a required key
 refuses, naming the key. Key sets are pinned by a delete-each-key test.
@@ -173,10 +196,11 @@ refuses, naming the key. Key sets are pinned by a delete-each-key test.
 Apple's ink, our container.
 
 Identity is minted by one function, called from create, duplicate, and
-import. Duplicate re-mints during the staged copy. A colliding
-`notebookID` on arrival is re-minted for the newcomer. Derived data keys
-on identity; page-scoped derived data keys on `(notebookID, pageID)`,
-because duplicated notebooks share page identities.
+import. Duplicate re-mints the notebook identity during the staged copy
+and preserves every page identity, which is what keeps internal links
+internal. A colliding `notebookID` on arrival is re-minted for the
+newcomer. Derived data keys on identity; page-scoped derived data keys
+on `(notebookID, pageID)`, because duplicates share page identities.
 
 Derived data is disposable. Every cache declares owner, bound, and
 evictor. Deleting all of it loses nothing.
@@ -206,15 +230,18 @@ Never block on bytes. No file, encode, decode, PDF, or image work on an
 interaction path or the main actor.
 
 One slot per page, one viewport wide. Pages vary in size inside their
-slot; slots do not vary. Paging stays the framework's. There is no
-resting position between two pages. The current page is the slot the
-viewport rests on.
+slot; slots do not vary. Slot width is the current bounds width; a bounds
+change relayouts and re-anchors on the current page. Paging stays the
+framework's. There is no resting position between two pages. A turn is
+available at fit-width, or once a pan reaches the page's own horizontal
+edge; zoomed in and away from an edge, a horizontal drag pans. The
+current page is the slot the viewport rests on.
 
 Window from viewport. The live window is the slots intersecting the
 viewport plus one on each side; the decoded window is one more each side.
 Both are one expression in one place. The runtime tells the notebook the
-complete wanted set with `windowChanged(to:)`; the notebook prunes only
-pages the runtime has released.
+complete decoded window with `windowChanged(to:)` and installs the subset
+it shows; the notebook prunes only pages the runtime has retired.
 
 Never interrupt a stroke. `isStrokeInFlight` is set at
 `canvasViewDidBeginUsingTool` and cleared after the drawing change that
@@ -274,8 +301,10 @@ Programmer-error traps route through `TNPrecondition`, swappable under
 Validation, each refusing by name at notebook scope: version is 2; every
 key present; at least one page; page IDs unique; each edge finite and
 inside the bounds. An unknown paper kind refuses that page, not the
-notebook. A new page copies the current page's geometry and paper. A new
-notebook has one page, US Letter, blank paper.
+notebook. Paper kinds are `none` (a PDF-backed page shows its source),
+`blank`, `lined`, `grid`, `dotted`. A new page copies the current page's
+geometry and paper, except that `none` becomes `blank`. A new notebook
+has one page, US Letter, blank paper.
 
 The index changes on: insert, append, delete, move, paper change. Nothing
 else rewrites it.
@@ -286,8 +315,9 @@ else rewrites it.
 { "currentPageID": "UUID" }
 ```
 
-Written on page turn, debounced one second, no barrier. Missing or
-invalid means the first page.
+Written on page turn, debounced one second, by temp and rename with no
+barrier. Disposable, so it is outside the version ladder. Missing,
+invalid, or naming a page not in the index means the first page.
 
 ## pages/<PageID>.json
 
@@ -296,13 +326,19 @@ invalid means the first page.
   "layers": ["LayerID", "LayerID"] }
 ```
 
-`layers` is bottom to top. `inkIndex` is the ink's position in that
-stack, `0...layers.count`, default `layers.count`. `hasInk` records
-whether the page has ever committed ink. Rules: `hasInk` true and no
+`layers` is bottom to top and paper is below all of it. `inkIndex` is
+the ink's position in that stack, `0...layers.count`. A new page has no
+layers and `inkIndex` 0. An import inserts at `inkIndex` and increments
+it, so ink stays above everything imported; moving a layer above the ink
+is a later intention that decrements it. `hasInk` records whether the
+page has ever committed ink and never returns to false: once true, every
+save of that page writes the container, an empty drawing included, and
+the container is deleted only with the page. `hasInk` true and no
 container means `unreadable(.missingInk)`; `hasInk` false and a valid
-container present means the container is the ink (a crash between the
-two renames) and the next save records true. The container is its own
-integrity authority.
+container present means the container is the ink (a crash between two
+publish phases), the page is marked dirty, and the next save records
+true. A page file naming a layer file that is not there refuses that
+layer. The container is its own integrity authority.
 
 ## ink/<PageID>.tnink
 
@@ -345,27 +381,24 @@ External links to the containing notebook are never minted by the UI.
 ## One save
 
 ```
-plan     validate intent · free-space preflight · per-page plan · no I/O
-stage    per page: assets → ink → layers → page file, each to a temp path,
-         F_BARRIERFSYNC before close; a page that fails to stage is dropped
-         whole and recorded as refused
-publish  per page, leaf to root: rename ink, layers, page file;
-         fsync each directory touched
-index    if changed: content = intent ∩ present; stage; barrier; rename;
-         fsync package directory
-reclaim  one pass over this batch's pages: delete layer and asset files
-         no longer reachable, root to leaf, best effort
-report   per-page refusals to the caller
+plan      validate intent · free-space preflight (volumeAvailableCapacity
+          ForImportantUsage against the batch's byte size) · per-page plan ·
+          no I/O
+stage     per page: ink → layers → page file, each to a temp path with
+          F_BARRIERFSYNC before close; a page that fails to stage is dropped
+          whole and recorded as refused (assets were published at import)
+publish 1 rename every staged ink and layer file; fsync ink/ and layers/
+publish 2 rename every staged page file; fsync pages/
+publish 3 if the index changed: content = intent ∩ present (withheld if
+          empty); stage; rename; fsync the package root
+report    per-page refusals to the caller; nothing is deleted
 ```
 
 ## Open
 
 Read and validate `notebook.json`. Stat every page file; a missing one is
-`unreadable(.missingPageFile)` for that page. Sweep `pages/` and `ink/`
-of files whose ID is not in the index and whose mtime is older than
-`notebook.json`. Read nothing else. Schedule `compact()` at idle: read
-every page and layer file, delete unreachable layer and asset files older
-than `notebook.json`.
+`unreadable(.missingPageFile)` for that page. Read nothing else, delete
+nothing. Schedule `compact()` at idle (D11).
 
 ## Proof
 
@@ -389,8 +422,8 @@ A transform commit returns `TransformOutcome`: accepted, or refused with
 a reason. Refused means the runtime restores its gesture-local prior
 transform, which dies with the gesture and is never a second authority.
 
-Delete removes the layer from the list; the next save's reclaim pass
-removes the file and, if nothing else reaches it, the asset.
+Delete removes the layer from the list; compact removes the file and,
+if no page reaches it, the asset.
 
 Repair. A page carrying a refused layer is a placeholder and cannot be
 edited. The one exit is the intention "remove this layer": the page file
@@ -400,9 +433,11 @@ is rewritten without it, the layer file is retained until compact.
 
 # Part 4: the notebook
 
-`Notebook` is `@MainActor @Observable`. Ink, composites, and history are
-`@ObservationIgnored`; observed facts are page count, current page, dirty,
-and the last save error.
+`Notebook` is `@MainActor @Observable`. Page states, ink, composites, and
+history are `@ObservationIgnored`. The observed facts are stored mirrors
+the notebook writes: `pageCount`, `currentPageID`, `dirtyPageCount`,
+`lastSaveError`. A computed property over ignored storage would never
+invalidate a view.
 
 `PageState`: `unloaded(PageDescriptor)`, `loading(generation)`,
 `ready(PageContent)`, `unreadable([PageFault])`. `PageContent` holds the
@@ -420,15 +455,23 @@ on arrival.
 The save engine: capture synchronously (values and sequence numbers);
 serialize detached at utility priority; write on the store actor; on
 success set `savedSeq` per written page; on refusal keep the page dirty;
-on I/O failure keep the serialized bytes and retry with exponential
-backoff capped at five seconds; re-arm only at the pass's exit. The idle
+on I/O failure keep the serialized bytes (up to 64 MB across the batch;
+past that the bytes are dropped and re-serialized on retry) and retry with
+exponential backoff capped at five seconds; re-arm only at the pass's
+exit. The forced backgrounding pass runs no compact. The idle
 debounce is four times the last serialize duration, clamped to
 `[0.5 s, 2 s]`, with a five-second ceiling from first dirty. A forced
 pass runs on backgrounding, tab switch, and close.
 
-Close: the tab drops the binding and the runtime first, then the notebook
-runs the final pass and releases the checkout. No intention path exists
-during close because nothing holds the notebook but the tab.
+Close: the tab drops the binding and the runtime first (retiring every
+page, deferred retires included), then the notebook runs the final pass
+and releases the checkout. No intention path exists during close because
+nothing holds the notebook but the tab.
+
+If spike zero shows reading `canvasView.drawing` at stroke end is too
+slow, the fallback is a report on a short coalescing timer that still
+carries the value. Custody stays with the notebook either way; the old
+"changed, come ask" shape is not the fallback.
 
 An ink report for a page not in `ready` is a programmer error and traps.
 
@@ -443,7 +486,7 @@ An ink report for a page not in `ready` is a programmer error and traps.
     func restoreInk(on page: PageID, _ ink: PKDrawing, seq: InkSeq)
     func apply(_ environment: CanvasEnvironment)
     func scroll(to page: PageID)
-    func release(_ page: PageID)                            // final report follows
+    func retire(_ page: PageID) -> RetireOutcome            // .retired | .deferred
 }
 
 @MainActor package protocol CanvasReporting: AnyObject {
@@ -453,9 +496,9 @@ An ink report for a page not in `ready` is a programmer error and traps.
     func pageBecameCurrent(_ page: PageID)
     func windowChanged(to pages: [PageID])                  // complete set
     func detailNeeded(for page: PageID, scale: CGFloat)
-    func endBoundaryReached()                               // setPages follows
+    func endBoundaryReached(seq: ReportSeq)                 // setPages answers it
     func linkActivated(on page: PageID, layer: LayerID)
-    func released(_ page: PageID, finalInk: PKDrawing?)
+    func retired(_ page: PageID, finalInk: PKDrawing?)       // nil: was a placeholder
 }
 ```
 
@@ -463,12 +506,15 @@ An ink report for a page not in `ready` is a programmer error and traps.
 `setPages` push arrives at the end of the turn; until then the runtime
 rubber-bands, and if no push arrives it settles back.
 
-Types. `PageDescriptor { id, geometry, paper }`. `PageSnapshot { id,
-ink: PKDrawing?, composite: CGImage?, layers: [Layer], inkSeq }`.
-`CanvasEnvironment { tool: PKTool, isEditable }`. `Layer { id, kind
-payload, transform }`. `PageFault` names the ink, page-file, and
-per-layer faults. `PageBytes { inkArchive: Data?, layers: [LayerFile] }`
-is what `TNFormat` returns and what `TNNotebook` decodes off-main.
+Types. `TNModel` on disk is the type appendix; the ones the seam adds:
+`PageDescriptor { id, geometry, paper }`. `PageSnapshot { id, ink:
+PKDrawing?, composite: Composite?, layers: [Layer], isEditable, inkSeq }`
+where `Composite` wraps an immutable `CGImage`. `CanvasEnvironment { tool:
+PKTool }`. `StructureSeq`, `InkSeq`, `ReportSeq` are monotonic `UInt64`
+wrappers. `TransformOutcome` is `.accepted` or `.refused(reason)`.
+`RetireOutcome` is `.retired` or `.deferred`. `PageBytes { inkArchive:
+Data?, layers: [Result<Layer, LayerFault>] }` is what `TNFormat` returns
+and what `TNNotebook` decodes off-main.
 
 ---
 
@@ -497,9 +543,11 @@ Sidecars: `library.json` and `.folder.json` are durable and versioned;
 `favorites.json` is derived and rebuilt on mismatch.
 
 `modifiedAt` for listing is the newest of the package's `notebook.json`,
-`pages/`, `ink/`, and `layers/` mtimes. Thumbnails render the first page
-and key on `(notebookID, firstPageID, ink container length and CRC,
-layer IDs)`.
+`pages/`, `ink/`, and `layers/` mtimes; it works because every publish is
+a rename into one of those directories, and compact can bump it.
+Thumbnails live in the caches directory, outside the package, and key on
+`(notebookID, firstPageID, paper, geometry, and the size and mtime of the
+page file, the container, and each layer file)`: stats, no reads.
 
 ---
 
@@ -514,13 +562,15 @@ layer IDs)`.
 | Layer refused | page | placeholder naming the layer; "remove this layer" offered |
 | Transform refused | gesture | layer snaps back; reason logged |
 | Save I/O failure | pages | persistent banner; retry with backoff; close offers "discard unsaved and close" |
+| Free-space preflight refuses | save | banner "Not enough space to save"; nothing written; pages stay dirty |
+| Append refused (free space) | intention | rubber-band settles back; banner "Not enough space for a new page" |
 | Lease expired with writes outstanding | notebook | logged; the format is resumable, the next open recovers |
 | Link target missing | intention | "The linked page is no longer in your library" |
 | Link target trashed | intention | "Restore and open" |
 | Identity index not ready | intention | "Still loading your library" |
 | Library mutation on open notebook | intention | "Close *name* first" |
 | Double-tap open | intention | focuses the existing tab |
-| Second checkout, unknown identity, ink on non-ready page, release without report | programmer | `TNPrecondition` |
+| Re-entrant checkout, unknown identity, ink on non-ready page, retire without report | programmer | `TNPrecondition` |
 
 ---
 
@@ -600,7 +650,7 @@ file-primitive seam under `#if DEBUG`.
 | No observation/task/hop/file/encode per input sample | kept |
 | Caches declare owner, bound, evictor | kept |
 | No placeholder fields | kept; every field has a shipped reader |
-| No durable derived artifact | kept; the CRC is inside the ink container, not a table |
+| No durable derived artifact | kept, with one stated exception: `hasInk` restates which of two histories produced the state, which the files alone cannot say; the CRC is inside the ink container, not a table |
 
 ---
 
@@ -611,8 +661,8 @@ framework policy, I/O allowlist including `open(`, `fcntl`, `fsync`,
 `rename`) to the `TN*` modules. Add `TNTests`. Commit.
 
 Stage 1. `TNCore`, `TNModel`, `TNFormat`. Key-set pins, delete-each-key
-refusals, the write-order sweep under three fault modes, container
-round trip, open sweep and compact.
+refusals, the write-order sweep under three fault modes across the three
+publish phases, container round trip, compact's conservatism.
 
 Stage 2. `TNNotebook` headless: draw-during-close lands; a refused new
 page is absent from the committed index and stays dirty; stale
