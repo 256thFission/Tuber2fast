@@ -56,14 +56,6 @@ package final class Notebook {
     @ObservationIgnored private var history = InkHistory()
     /// An undo whose page was not loaded: applied when the page arrives.
     @ObservationIgnored private var pendingRestores: [PageID: PKDrawing] = [:]
-    /// Height over width for every asset paper this notebook has published.
-    ///
-    /// `setPaper` sets the page's geometry from the asset's aspect, and it
-    /// is synchronous, so the aspect cannot be measured there: reading the
-    /// asset is I/O. Every asset paper is published by one of the three
-    /// intentions below, so each records the aspect it already knows, and a
-    /// paper whose aspect is unknown is refused rather than guessed at.
-    @ObservationIgnored private var assetPaperAspect: [Paper: Double] = [:]
 
     // MARK: Save engine
 
@@ -407,12 +399,14 @@ package final class Notebook {
     /// Drawn paper applies to any page. Asset paper applies only to a page
     /// that is loaded and empty, and takes the page's geometry with it: the
     /// asset fills the page rectangle, so the rectangle is the asset's shape.
-    package func setPaper(_ paper: Paper, on page: PageID) throws(PaperRefusal) {
+    package func setPaper(_ paper: Paper, on page: PageID) async throws(PaperRefusal) {
         guard let record = index.record(of: page) else { throw .pageNotLoaded }
         var geometry = record.geometry
         if paper.isAsset {
             try checkAssetPaperTarget(page)
-            guard let aspect = assetPaperAspect[paper] else { throw .assetAspectUnknown }
+            guard let aspect = await renderer.aspect(of: paper) else { throw .assetUnreadable }
+            // The page may have changed while the asset was being measured.
+            try checkAssetPaperTarget(page)
             let sized = PageGeometry(width: record.geometry.width, height: record.geometry.width * aspect)
             guard sized.isWithinBounds else { throw .geometryOutOfBounds }
             geometry = sized
@@ -511,9 +505,7 @@ package final class Notebook {
             guard let page = source.page(at: pageIndex), let extent = PDFSource.displayExtent(of: page) else { continue }
             let geometry = PageGeometry(width: extent.width, height: extent.height)
             guard geometry.isWithinBounds else { throw .invalidWrite("PDF page \(pageIndex + 1) is outside the page bounds") }
-            let paper = Paper.pdf(asset, sourcePageIndex: pageIndex)
-            assetPaperAspect[paper] = extent.height / extent.width
-            let record = PageRecord(id: PageID(), geometry: geometry, paper: paper)
+            let record = PageRecord(id: PageID(), geometry: geometry, paper: .pdf(asset, sourcePageIndex: pageIndex))
             var pages = index.pages
             let position = pages.firstIndex { $0.id == after }.map { $0 + 1 } ?? pages.count
             pages.insert(record, at: position)
@@ -543,9 +535,7 @@ package final class Notebook {
         guard normalized.size.isValid else { throw .invalidWrite("image is outside the asset bounds") }
         let asset = AssetRef(id: AssetID(), format: .heic)
         try await store.writeAsset(normalized.heic, asset)
-        let paper = Paper.image(asset)
-        assetPaperAspect[paper] = Double(normalized.size.height) / Double(normalized.size.width)
-        do { try setPaper(paper, on: page) } catch { throw .invalidWrite("paper refused: \(error)") }
+        do { try await setPaper(.image(asset), on: page) } catch { throw .invalidWrite("paper refused: \(error)") }
     }
 
     /// A page's composite and ink rendered to one asset at asset resolution.
@@ -559,9 +549,6 @@ package final class Notebook {
         ) else { throw .invalidWrite("page \(page) could not be flattened") }
         let asset = AssetRef(id: AssetID(), format: .heic)
         try await store.writeAsset(heic, asset)
-        // The flattened pixels are the page rectangle, so its aspect is the
-        // asset's, without decoding what was just encoded.
-        assetPaperAspect[.image(asset)] = record.geometry.height / record.geometry.width
         return asset
     }
 
@@ -759,7 +746,5 @@ package enum PaperRefusal: Error, Sendable, Equatable {
     case pageNotLoaded
     case pageNotEmpty
     case geometryOutOfBounds
-    /// The asset was not published by this notebook in this session, so the
-    /// geometry it implies is not known here. See `assetPaperAspect`.
-    case assetAspectUnknown
+    case assetUnreadable
 }

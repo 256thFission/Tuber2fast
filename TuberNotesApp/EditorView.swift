@@ -141,7 +141,7 @@ struct EditorView: View {
         Menu {
             ForEach(DrawnPaper.allCases, id: \.self) { paper in
                 Button {
-                    editor.setPaper(paper)
+                    Task { await editor.setPaper(paper) }
                 } label: {
                     if editor.currentPaper == .drawn(paper) {
                         Label(Self.paperName(paper), systemImage: "checkmark")

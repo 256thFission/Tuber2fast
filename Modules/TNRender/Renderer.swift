@@ -97,6 +97,24 @@ package actor Renderer {
         }
     }
 
+    /// Height over width of an asset paper, from the decoded asset. Drawn
+    /// paper has no aspect of its own.
+    package func aspect(of paper: Paper) async -> Double? {
+        switch paper {
+        case .drawn:
+            return nil
+        case .image(let ref):
+            guard case .image(let image, _)? = await decodedAsset(ref), image.width > 0 else { return nil }
+            return Double(image.height) / Double(image.width)
+        case .pdf(let ref, let sourcePageIndex):
+            guard case .pdf(let source, _)? = await decodedAsset(ref),
+                  let page = source.page(at: sourcePageIndex),
+                  let extent = PDFSource.displayExtent(of: page), extent.width > 0
+            else { return nil }
+            return extent.height / extent.width
+        }
+    }
+
     /// A page's composite and its ink as one HEIC at asset resolution: the
     /// long edge at `maximumLongEdgePixels`, which is what a flattened page
     /// becomes as paper. The page it renders is not changed.

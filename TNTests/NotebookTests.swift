@@ -286,7 +286,7 @@ struct NotebookTests {
         #expect(reopened.index.pageIDs == [first, second])
         #expect(reopened.index.pages[1].paper == .known(.drawn(.blank)))
 
-        try notebook.setPaper(.drawn(.grid), on: second)
+        try await notebook.setPaper(.drawn(.grid), on: second)
         notebook.movePage(second, before: first)
         await notebook.flush()
         var again = try await PackageStore(root: scratch.packageURL).load()
@@ -339,26 +339,27 @@ struct NotebookTests {
         #expect(flattened.format == .heic)
 
         notebook.inkChanged(on: letter, Ink.drawing(strokes: 1), echoOf: nil)
-        #expect(throws: PaperRefusal.pageNotEmpty) { try notebook.setPaper(.image(flattened), on: letter) }
+        await #expect(throws: PaperRefusal.pageNotEmpty) { try await notebook.setPaper(.image(flattened), on: letter) }
         #expect(notebook.paper(of: letter) == .drawn(.blank))
         // Drawn paper still applies to a page with ink on it.
-        try notebook.setPaper(.drawn(.lined), on: letter)
+        try await notebook.setPaper(.drawn(.lined), on: letter)
         #expect(notebook.paper(of: letter) == .drawn(.lined))
 
         let empty = notebook.appendPage(after: letter)
         await notebook.flush()
         #expect(!notebook.isDirty)
-        try notebook.setPaper(.image(flattened), on: empty)
+        try await notebook.setPaper(.image(flattened), on: empty)
         #expect(notebook.isDirty, "geometry and paper live in the index")
         let record = try #require(notebook.index.record(of: empty))
-        #expect(record.geometry == PageGeometry(width: 612, height: 612 * 600 / 400))
+        // The aspect is the asset's pixels, which rounded when it was rendered.
+        #expect(record.geometry.width == 612 && abs(record.geometry.height - 918) < 1)
         #expect(record.paper == .known(.image(flattened)))
 
         await notebook.flush()
         let reopened = try await PackageStore(root: scratch.packageURL).load()
         #expect(reopened.pageFaults.isEmpty)
         let saved = try #require(reopened.index.record(of: empty))
-        #expect(saved.paper == .known(.image(flattened)) && saved.height == 918)
+        #expect(saved.paper == .known(.image(flattened)) && abs(saved.height - 918) < 1)
     }
 
     @Test("Flattening leaves the source page alone; a photo becomes paper and a new page after it is blank")
