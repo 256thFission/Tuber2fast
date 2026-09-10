@@ -18,7 +18,7 @@ Nothing in `Docs/Contract.md` changed; no agent wrote a rule.
 4. I rewrote the spec with every blocking finding closed, and a fourth
    reviewer verified the closures and found the residue: three deletion
    authorities that disagreed. Collapsed to one.
-5. Built stages 0, 1, 2. Full suite green (471 old tests + 35 new).
+5. Built stages 0, 1, 2, 3. Full suite green (471 old tests + 42 new).
 6. Ran a four-angle simplification pass on the new code (see the last
    section for what changed and what I skipped). Full suite green after
    it: 471 + 35.
@@ -71,6 +71,8 @@ Each is cheap to reverse today and a migration tomorrow.
 | D11 nothing deletes but `compact()`, and it leaves files younger than 24 h alone | `PackageStore.compact` |
 | D12 the zoom cap is a code constant, not a durable field | `ZoomCap` |
 | D13 `currentPageID` lives in disposable `view.json`, so a page turn never rewrites the index | `ViewState`, `Notebook.pageBecameCurrent` |
+| Trash containers are named by the notebook or folder identity; recovery falls back to the root when the origin folder is gone | `LibraryStore.trash`, `recover` |
+| A colliding notebook identity found by the scan is re-minted in place, in the second package found | `LibraryStore.scanIdentities` |
 | D2 `maxPageEdge = 4096 pt`; `minPageEdge = 137.6` derived | `PageBounds` |
 | D4 vocabulary: Notebook, Paper (with `none` for PDF pages), branded IDs | `TNModel` |
 | D1 undo is the notebook's, history dies when a page leaves the decoded window | `InkHistory`, `Notebook.prune` |
@@ -84,7 +86,7 @@ Each is cheap to reverse today and a migration tomorrow.
 | 0 modules policed, hostless test bundle | done, committed | `ContractStructureTests` passes with `TN*` in `moduleDirectories` |
 | 1 `TNCore`, `TNModel`, `TNFormat` | done, committed | 26 tests: key-set pins, delete-each-key, container tampering, the fault sweep, compact conservatism |
 | 2 `TNNotebook` | done, committed | 9 tests: draw-during-held-save, close waits for the write, undo without echo, stale load dropped, refused new page, prune |
-| 3 `TNLibrary` | not started | ledger, tree, trash v2, identity index, duplicate-with-remint |
+| 3 `TNLibrary` | done, committed | 7 tests: exclusive checkout with `.alreadyOpen`, ancestor locks, mutations refuse on an open notebook, trash restores the original name and suffixes only on collision, duplicate re-mints and keeps page IDs, identity index resolves live/trashed/missing, a collision is re-minted |
 | 4 `TNCanvas` | not started | needs the device spikes below first |
 | 5 `TNRender` | not started | |
 | 6 app swap, tabs, delete `Tuber*`, links | not started | |
@@ -111,6 +113,8 @@ None of stages 1 to 3 depend on these, but stages 4 to 6 do.
 - `PageSnapshot` carries no composite yet; `TNRender` is stage 5.
 - `Notebook` has no background-lease handling; that is `Workspace`,
   stage 6.
+- `TNLibrary` has no favorites or library-prefs sidecars yet; both are
+  ports of existing v1 features and land with the app swap (6a).
 - The spec's Part 9 migration table maps every `Contract.md` rule to its
   v2 fate. Nothing is deleted from `Contract.md` by this branch.
 
