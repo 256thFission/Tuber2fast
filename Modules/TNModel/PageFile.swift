@@ -42,6 +42,8 @@ package enum PageFault: Error, Sendable, Equatable {
     case duplicateLayerID(LayerID)
     case missingInk
     case inkContainerInvalid(InkContainerFault)
+    /// The container was sound and PencilKit refused its archive.
+    case inkArchiveUndecodable(String)
     case unknownPaper(String)
     case layerRefused(RefusedLayer)
 }

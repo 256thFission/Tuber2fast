@@ -187,6 +187,17 @@ targets:
       - target: TNModel
       - target: TNCore
 
+  # The notebook: custody, page states, the save engine, history. PencilKit
+  # for the PKDrawing value only; no UIKit written, no I/O (the store seam).
+  TNNotebook:
+    templates: [Framework]
+    sources:
+      - path: Modules/TNNotebook
+    dependencies:
+      - target: TNFormat
+      - target: TNModel
+      - target: TNCore
+
   TuberNotes:
     type: application
     platform: iOS
@@ -252,6 +263,7 @@ targets:
     sources:
       - path: TNTests
     dependencies:
+      - target: TNNotebook
       - target: TNFormat
       - target: TNModel
       - target: TNCore

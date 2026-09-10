@@ -3,7 +3,8 @@ import Foundation
 /// The paper a page is ruled with: a name and nothing more. Spacing, colour,
 /// and margins are rendering constants of the build that draws them.
 package enum Paper: String, Codable, Sendable, Equatable, CaseIterable {
-    case blank, lined, grid, dotted
+    /// `none`: a PDF-backed page shows its source and no paper is drawn.
+    case none, blank, lined, grid, dotted
 }
 
 /// What the index carries: a known paper, or the name of one this build

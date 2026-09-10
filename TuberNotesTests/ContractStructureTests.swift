@@ -479,6 +479,7 @@ struct ContractStructureTests {
         "Modules/TNCore",
         "Modules/TNModel",
         "Modules/TNFormat",
+        "Modules/TNNotebook",
     ]
 
     /// The module a policed path belongs to: the last component of its
@@ -723,6 +724,8 @@ struct ContractStructureTests {
         "TNCore": [],
         "TNModel": ["PencilKit", "CoreGraphics"],
         "TNFormat": [],
+        // Custody holds PKDrawing values; nothing here draws or touches a file.
+        "TNNotebook": ["PencilKit"],
     ]
 
     /// Files whose **module** is the claim, not merely their imports.
