@@ -83,6 +83,7 @@ package enum DurableKeys {
     package static let image: Set<String> = ["asset", "naturalSize"]
     package static let pdf: Set<String> = ["asset", "sourcePageIndex", "sourceExtent"]
     package static let link: Set<String> = ["rect", "style", "target"]
+    package static let text: Set<String> = ["rect", "runs", "alignment"]
 }
 
 /// Why the format refused, at file scope. Page-scoped faults are `PageFault`.

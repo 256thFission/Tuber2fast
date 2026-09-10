@@ -175,7 +175,7 @@ struct NotebookTests {
         notebook.inkChanged(on: page, Ink.drawing(strokes: 1), echoOf: nil)
         notebook.inkChanged(on: page, Ink.drawing(strokes: 2), echoOf: nil)
         let editSeqBefore = notebook.state(of: page)!.content!.editSeq
-        notebook.undo(on: page)
+        #expect(notebook.undo() == page)
         let changes = notebook.drainChanges()
         guard case .inkRestored(let restoredPage, let ink, let seq) = try #require(changes.last) else { Issue.record("no restore"); return }
         #expect(restoredPage == page && ink.strokes.count == 1)
@@ -183,10 +183,36 @@ struct NotebookTests {
         notebook.inkChanged(on: page, ink, echoOf: seq)
         #expect(notebook.state(of: page)!.content!.editSeq == editSeqBefore + 1, "the echo is not an edit")
         #expect(notebook.state(of: page)!.content!.ink.strokes.count == 1)
-        #expect(notebook.canRedo(on: page))
-        notebook.redo(on: page)
+        #expect(notebook.canRedo)
+        #expect(notebook.redo() == page)
         #expect(notebook.state(of: page)!.content!.ink.strokes.count == 2)
-        #expect(!notebook.canRedo(on: page))
+        #expect(!notebook.canRedo)
+    }
+
+    @Test("Undo survives a page leaving the window: the stack is the notebook's and the page comes back")
+    func undoAcrossPages() async throws {
+        let scratch = try Scratch("nb-undo-pages")
+        let store = try await PackageStore.create(root: scratch.packageURL, index: Fixture.index(pages: 2))
+        let notebook = try await Notebook.open(store: store, schedule: fast)
+        let (a, b) = (notebook.pageIDs[0], notebook.pageIDs[1])
+        notebook.windowChanged(to: [a, b])
+        try await waitUntil { notebook.state(of: a)?.content != nil && notebook.state(of: b)?.content != nil }
+        notebook.inkChanged(on: a, Ink.drawing(strokes: 1), echoOf: nil)
+        notebook.inkChanged(on: b, Ink.drawing(strokes: 2), echoOf: nil)
+        await notebook.flush()
+        // Page a leaves the window and is pruned; its history entry survives.
+        notebook.windowChanged(to: [b])
+        notebook.retired(a, finalInk: nil)
+        notebook.prune()
+        if case .unloaded = notebook.state(of: a)! {} else { Issue.record("a should be pruned") }
+        #expect(notebook.undo() == b, "the newest edit is on b")
+        #expect(notebook.state(of: b)?.content?.ink.strokes.isEmpty == true)
+        #expect(notebook.undo() == a, "the older edit is on a, which is not loaded")
+        try await waitUntil { notebook.state(of: a)?.content != nil }
+        #expect(notebook.state(of: a)?.content?.ink.strokes.isEmpty == true, "restored on arrival")
+        #expect(notebook.state(of: a)?.content?.isDirty == true)
+        #expect(notebook.redo() == a)
+        #expect(notebook.state(of: a)?.content?.ink.strokes.count == 1)
     }
 
     @Test("A load whose page left the window is dropped on arrival")

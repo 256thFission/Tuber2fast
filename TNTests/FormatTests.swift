@@ -30,6 +30,7 @@ struct KeySetPins {
             (Fixture.imageLayer(), DurableKeys.image),
             (Fixture.pdfLayer(), DurableKeys.pdf),
             (Fixture.linkLayer(to: PageID()), DurableKeys.link),
+            (Fixture.textLayer(), DurableKeys.text),
         ]
         for (layer, payloadKeys) in cases {
             let top = try jsonObject(try LayerFile.encode(layer))
@@ -102,7 +103,7 @@ struct StrictDecode {
 
     @Test("A layer file missing a key, or of unknown kind, refuses the layer and names why")
     func layerFileRefusals() throws {
-        for layer in [Fixture.imageLayer(), Fixture.pdfLayer(), Fixture.linkLayer(to: PageID())] {
+        for layer in [Fixture.imageLayer(), Fixture.pdfLayer(), Fixture.linkLayer(to: PageID()), Fixture.textLayer()] {
             let base = try jsonObject(try LayerFile.encode(layer))
             for key in DurableKeys.layerFile(kind: layer.payload.kind.rawValue) where key != "layerID" && key != "kind" {
                 var object = base
@@ -115,11 +116,11 @@ struct StrictDecode {
             }
         }
         var unknown = try jsonObject(try LayerFile.encode(Fixture.imageLayer()))
-        unknown["kind"] = "text"
-        unknown["text"] = ["body": "hi"]
+        unknown["kind"] = "hologram"
+        unknown["hologram"] = ["body": "hi"]
         unknown.removeValue(forKey: "image")
         let id = LayerID(raw: UUID(uuidString: unknown["layerID"] as! String)!)
-        #expect(LayerFile.decode(try jsonData(unknown), expecting: id) == .failure(.unknownKind(id, kind: "text")))
+        #expect(LayerFile.decode(try jsonData(unknown), expecting: id) == .failure(.unknownKind(id, kind: "hologram")))
     }
 
     @Test("A link layer with a non-identity transform, or an external target, round-trips or refuses as specified")
@@ -130,6 +131,17 @@ struct StrictDecode {
         #expect(LayerFile.decode(try LayerFile.encode(external), expecting: external.id) == .success(external))
         let skewed = Fixture.linkLayer(to: PageID()).withTransform(.scale(2))
         #expect(LayerFile.decode(try LayerFile.encode(skewed), expecting: skewed.id) == .failure(.linkTransformNotIdentity(skewed.id)))
+    }
+
+    @Test("A text layer round-trips its runs and refuses a bad color or a non-identity transform")
+    func textShapes() throws {
+        let text = Fixture.textLayer()
+        #expect(LayerFile.decode(try LayerFile.encode(text), expecting: text.id) == .success(text))
+        let bad = Layer(id: LayerID(), transform: .identity, payload: .text(TextLayer(
+            rect: PageRect(x: 0, y: 0, width: 10, height: 10), runs: [TextRun(string: "x", color: "red")], alignment: .center)))
+        #expect(LayerFile.decode(try LayerFile.encode(bad), expecting: bad.id) == .failure(.invalidText(bad.id)))
+        let moved = text.withTransform(.translation(x: 1, y: 1))
+        #expect(LayerFile.decode(try LayerFile.encode(moved), expecting: moved.id) == .failure(.textTransformNotIdentity(moved.id)))
     }
 }
 

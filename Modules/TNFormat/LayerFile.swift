@@ -12,6 +12,7 @@ package enum LayerFile {
         case .image(let image): try Codecs.encode(Body(layer: layer, payload: image))
         case .pdf(let pdf): try Codecs.encode(Body(layer: layer, payload: pdf))
         case .link(let link): try Codecs.encode(Body(layer: layer, payload: link))
+        case .text(let text): try Codecs.encode(Body(layer: layer, payload: text))
         }
     }
 
@@ -48,6 +49,9 @@ package enum LayerFile {
             case .link:
                 let body = try Codecs.decode(Body<LinkLayer>.self, from: data)
                 layer = Layer(id: body.layerID, transform: body.transform, payload: .link(body.payload))
+            case .text:
+                let body = try Codecs.decode(Body<TextLayer>.self, from: data)
+                layer = Layer(id: body.layerID, transform: body.transform, payload: .text(body.payload))
             }
             return .success(try layer.validated())
         } catch let fault as LayerFault {

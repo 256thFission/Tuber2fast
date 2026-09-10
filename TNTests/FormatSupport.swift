@@ -58,6 +58,17 @@ enum Fixture {
         )
     }
 
+    static func textLayer() -> Layer {
+        Layer(
+            id: LayerID(),
+            transform: .identity,
+            payload: .text(TextLayer(
+                rect: PageRect(x: 30, y: 30, width: 300, height: 80),
+                runs: [TextRun(string: "Hello, "), TextRun(string: "world", bold: true, color: "#1971C2FF")],
+                alignment: .leading))
+        )
+    }
+
     static func linkLayer(to page: PageID) -> Layer {
         Layer(
             id: LayerID(),

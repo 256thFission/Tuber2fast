@@ -4,7 +4,7 @@ import Foundation
 /// kinds is closed in code and open on disk: an unknown kind refuses the
 /// layer, and the page carrying it is a placeholder.
 package enum LayerKind: String, Codable, Sendable, CaseIterable {
-    case image, pdf, link
+    case image, pdf, link, text
 }
 
 package enum AssetFormat: String, Codable, Sendable, CaseIterable {
@@ -176,16 +176,65 @@ package struct LinkLayer: Codable, Sendable, Equatable {
     }
 }
 
+/// One run of a text box: a string with its own style. Rich text as our
+/// own JSON, never an archived attributed string, so the bytes stay
+/// readable and the style vocabulary is ours to extend by version bump.
+package struct TextRun: Codable, Sendable, Equatable {
+    package let string: String
+    package let font: String
+    package let size: Double
+    package let bold: Bool
+    package let italic: Bool
+    package let underline: Bool
+    /// `#RRGGBBAA`.
+    package let color: String
+
+    package init(string: String, font: String = "system", size: Double = 16, bold: Bool = false, italic: Bool = false, underline: Bool = false, color: String = "#000000FF") {
+        self.string = string
+        self.font = font
+        self.size = size
+        self.bold = bold
+        self.italic = italic
+        self.underline = underline
+        self.color = color
+    }
+
+    package var isValid: Bool {
+        size.isFinite && size > 0 && size <= 1024 && !font.isEmpty
+            && color.count == 9 && color.hasPrefix("#") && color.dropFirst().allSatisfy(\.isHexDigit)
+    }
+}
+
+package enum TextAlignment: String, Codable, Sendable, CaseIterable {
+    case leading, center, trailing
+}
+
+/// A text box: a page-space rect, runs, alignment. The transform is
+/// identity, as for a link; the rect is the placement.
+package struct TextLayer: Codable, Sendable, Equatable {
+    package let rect: PageRect
+    package let runs: [TextRun]
+    package let alignment: TextAlignment
+
+    package init(rect: PageRect, runs: [TextRun], alignment: TextAlignment) {
+        self.rect = rect
+        self.runs = runs
+        self.alignment = alignment
+    }
+}
+
 package enum LayerPayload: Sendable, Equatable {
     case image(ImageLayer)
     case pdf(PDFLayer)
     case link(LinkLayer)
+    case text(TextLayer)
 
     package var kind: LayerKind {
         switch self {
         case .image: .image
         case .pdf: .pdf
         case .link: .link
+        case .text: .text
         }
     }
 
@@ -193,7 +242,7 @@ package enum LayerPayload: Sendable, Equatable {
         switch self {
         case .image(let image): image.asset
         case .pdf(let pdf): pdf.asset
-        case .link: nil
+        case .link, .text: nil
         }
     }
 }
@@ -222,6 +271,9 @@ package struct Layer: Sendable, Equatable, Identifiable {
         case .link(let link):
             guard transform.isIdentity else { throw .linkTransformNotIdentity(id) }
             guard link.rect.isValid else { throw .invalidLinkRect(id) }
+        case .text(let text):
+            guard transform.isIdentity else { throw .textTransformNotIdentity(id) }
+            guard text.rect.isValid, text.runs.allSatisfy(\.isValid) else { throw .invalidText(id) }
         }
         return self
     }
@@ -246,13 +298,16 @@ package enum LayerFault: Error, Sendable, Equatable {
     case invalidLinkRect(LayerID)
     case danglingAsset(LayerID, AssetRef)
     case sourceExtentDisagrees(LayerID)
+    case textTransformNotIdentity(LayerID)
+    case invalidText(LayerID)
 
     package var layerID: LayerID {
         switch self {
         case .unknownKind(let id, _), .fileMissing(let id), .fileUnreadable(let id, _),
              .invalidTransform(let id), .invalidNaturalSize(let id), .negativeSourcePageIndex(let id),
              .invalidSourceExtent(let id), .linkTransformNotIdentity(let id), .invalidLinkRect(let id),
-             .danglingAsset(let id, _), .sourceExtentDisagrees(let id):
+             .danglingAsset(let id, _), .sourceExtentDisagrees(let id), .textTransformNotIdentity(let id),
+             .invalidText(let id):
             id
         case .idMismatch(let expected, _):
             expected

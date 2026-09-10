@@ -49,6 +49,9 @@ package final class Notebook {
     @ObservationIgnored private var nextStructureSeq: UInt64 = 1
     @ObservationIgnored private var nextInkSeq: UInt64 = 1
     @ObservationIgnored private var changes: [NotebookChange] = []
+    @ObservationIgnored private var history = InkHistory()
+    /// An undo whose page was not loaded: applied when the page arrives.
+    @ObservationIgnored private var pendingRestores: [PageID: PKDrawing] = [:]
 
     // MARK: Save engine
 
@@ -193,11 +196,16 @@ package final class Notebook {
             return
         }
         switch result {
-        case .ready(let content):
+        case .ready(var content):
+            if let restore = pendingRestores.removeValue(forKey: page) {
+                history.pushRedo(HistoryEntry(page: page, ink: content.ink))
+                content.setInk(restore)
+            }
             states[page] = .ready(content)
             if content.isDirty { markDirty() }
         case .faults(let faults):
             states[page] = .unreadable(faults)
+            pendingRestores[page] = nil
         }
         emitContent(page)
     }
@@ -243,30 +251,45 @@ package final class Notebook {
             return
         }
         content.pendingEcho = nil
-        content.setInk(ink, recordingHistory: true)
+        history.recordEdit(on: page, previous: content.ink)
+        content.setInk(ink)
         states[page] = .ready(content)
         markDirty()
     }
 
-    package func canUndo(on page: PageID) -> Bool { states[page]?.content?.history.canUndo ?? false }
-    package func canRedo(on page: PageID) -> Bool { states[page]?.content?.history.canRedo ?? false }
+    package var canUndo: Bool { history.canUndo }
+    package var canRedo: Bool { history.canRedo }
 
-    package func undo(on page: PageID) {
-        guard case .ready(var content) = states[page], let previous = content.history.undo(current: content.ink) else { return }
-        restore(page, &content, to: previous)
+    /// One notebook-wide stack, GoodNotes-shaped: an undo restores the page
+    /// it happened on, whichever page is current, and the binding scrolls
+    /// there. Returns that page, or nil when there is nothing to undo.
+    @discardableResult
+    package func undo() -> PageID? {
+        guard let entry = history.undo(current: { self.states[$0]?.content?.ink }) else { return nil }
+        restore(entry)
+        return entry.page
     }
 
-    package func redo(on page: PageID) {
-        guard case .ready(var content) = states[page], let next = content.history.redo(current: content.ink) else { return }
-        restore(page, &content, to: next)
+    @discardableResult
+    package func redo() -> PageID? {
+        guard let entry = history.redo(current: { self.states[$0]?.content?.ink }) else { return nil }
+        restore(entry)
+        return entry.page
     }
 
-    private func restore(_ page: PageID, _ content: inout PageContent, to ink: PKDrawing) {
-        content.setInk(ink, recordingHistory: false)
+    private func restore(_ entry: HistoryEntry) {
+        guard case .ready(var content) = states[entry.page] else {
+            // The page left the window; bring it back and apply on arrival.
+            pendingRestores[entry.page] = entry.ink
+            wanted.insert(entry.page)
+            if case .unloaded = states[entry.page] { startLoad(entry.page) }
+            return
+        }
+        content.setInk(entry.ink)
         let seq = InkSeq(nextInkSeq); nextInkSeq += 1
         content.pendingEcho = seq
-        states[page] = .ready(content)
-        changes.append(.inkRestored(page, ink, seq: seq))
+        states[entry.page] = .ready(content)
+        changes.append(.inkRestored(entry.page, entry.ink, seq: seq))
         markDirty()
     }
 
