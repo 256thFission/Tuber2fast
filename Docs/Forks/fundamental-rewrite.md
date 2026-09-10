@@ -26,24 +26,32 @@ only two; local-only forever; iPad, one window; PencilKit is the ink engine.
 6. Links anchor to a page: `(notebookID, pageID)`.
 7. Backlinks, if ever, are a rebuilt index, never bytes.
 
+Six more, 2026-09-10 morning, closing the proposal's open questions:
+
+8. Undo: whatever GoodNotes has. One notebook-wide stack that survives
+   page turns and dies when the notebook closes.
+9. Page bounds: flexible, found empirically. The derived minimum stands;
+   the maximum is a placeholder until the device says otherwise.
+10. Typed text is a required tool. A `text` layer kind is in the format.
+11. Recognition is derived data. Confirmed; no format provision.
+12. Notebooks, paper. Confirmed.
+13. Composites as values, with the stated fallback. D7 stands.
+
 ## Decisions taken tonight (D1 to D14)
 
-D1. Undo is the notebook's. Per-page history of ink values, one entry per
-tool-use session, capped at 50 entries or 32 MB per page. History lives
-as long as the page's content does: the decoded window plus dirty pages.
-Scroll two pages away and back and the undo stack is gone. That is a
-product verdict, stated here so it is chosen rather than discovered. Layer transforms join the same history. Page
-operations are not undoable in v2.0; deletion confirms. The mechanism for
-keeping the system gestures (three-finger swipe, shake, Cmd-Z) is a
-filtering `UndoManager` vended by the page controller that drops
-PencilKit's registrations and forwards undo/redo to the notebook. The
-policy is locked; the mechanism is stage 4's device spike.
+D1. Undo is the notebook's, GoodNotes-shaped (verdict 8). One
+notebook-wide stack of ink values, one entry per tool-use session, capped
+at 100 entries; an undo restores the page it happened on, whichever page
+is current, and the binding scrolls there. Entries are values, so the
+stack survives a page leaving the window: an undo on a page that is not
+loaded brings it back and applies on arrival. The stack dies when the
+notebook closes. The byte bound waits on spike zero's measurement.
 
-D2. Page bounds. `minPageEdge = 137.6 pt`, derived: widest supported
-viewport (1376 pt) times the zoom cap (0.05 pt per px) times the display
-scale (2). `maxPageEdge = 4096 pt`, chosen so a pixel-capped composite is
-still legible at fit-width; the number needs device evidence and is the
-one constant here Phillip should expect to move. No area bound.
+D2. Page bounds, found empirically (verdict 9). `minPageEdge = 137.6
+pt`, derived: widest supported viewport (1376 pt) times the zoom cap
+(0.05 pt per px) times the display scale (2). `maxPageEdge = 4096 pt` is
+a placeholder until the device says otherwise; the format carries no
+other bound, so raising it is a constant, not a version bump.
 
 D3. Ink is not a layer. A page is ink plus a stack of static layers, with
 `inkIndex` naming where the ink sits in the stack. This deletes the four
@@ -54,8 +62,11 @@ identities: `NotebookID`, `PageID`, `LayerID`, `AssetID`. Package
 extension `.tubernotes`. Library root `Notebooks/` under Application
 Support.
 
-D5. Typed text is not built. Layer kinds are an open set on disk and a
-closed enum in code. An unknown kind refuses the layer.
+D5. Typed text is a required tool (verdict 10), so the `text` layer
+kind is in the format: a page-space rect, rich text as our own runs
+(string, font, size, bold, italic, underline, color), and an alignment.
+Never an archived attributed string. Layer kinds stay an open set on disk
+and a closed enum in code; an unknown kind refuses the layer.
 
 D6. Recognition is derived data with no format provision.
 
@@ -364,12 +375,19 @@ the page. Ink outside the page rectangle is preserved, never clipped.
   "link": { "rect": { "x": 40, "y": 40, "width": 160, "height": 44 },
             "style": "button",
             "target": { "scope": "internal", "pageID": "UUID" } } }
+
+{ "layerID": "UUID", "kind": "text", "transform": [1, 0, 0, 1, 0, 0],
+  "text": { "rect": { "x": 30, "y": 30, "width": 300, "height": 80 },
+            "alignment": "leading",
+            "runs": [ { "string": "Hello, ", "font": "system", "size": 16,
+                        "bold": false, "italic": false, "underline": false,
+                        "color": "#000000FF" } ] } }
 ```
 
 The payload object is keyed by the kind name so an unknown kind is seen
 before its payload is parsed. `transform` maps the source unit square
 into page space for image and pdf; it must be finite, `|det| > 1e-9`,
-and `|tx|, |ty| <= 10 × maxPageEdge`. For link it must be identity; the
+and `|tx|, |ty| <= 10 × maxPageEdge`. For link and text it must be identity; the
 rect is page space. `rotation` is degrees, one of 0, 90, 180, 270. The
 render path re-derives `sourceExtent` and refuses the layer on
 disagreement. `asset` is the file name and the only statement of the

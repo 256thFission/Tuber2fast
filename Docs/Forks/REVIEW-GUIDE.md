@@ -118,6 +118,21 @@ None of stages 1 to 3 depend on these, but stages 4 to 6 do.
 - The spec's Part 9 migration table maps every `Contract.md` rule to its
   v2 fate. Nothing is deleted from `Contract.md` by this branch.
 
+## Your morning verdicts, applied
+
+You answered the proposal's six open questions before reading this.
+Applied in commit `1982553`:
+
+- Undo is GoodNotes-shaped: one notebook-wide stack surviving page turns;
+  an undo on a page outside the window brings it back and restores on
+  arrival. `Notebook.undo()` and `redo()` return the page they touched.
+- `text` is a layer kind in the format: page-space rect, our own rich-text
+  runs, alignment. Key set pinned, round trip and refusals tested.
+- Page bounds stay as built, marked empirical; `maxPageEdge` is a constant,
+  not a version bump.
+- Recognition derived, Notebooks and paper: confirmed. Composites as
+  values: D7 stands.
+
 ## Commits
 
 ```
