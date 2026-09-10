@@ -300,6 +300,16 @@ enum ContractChecker {
         "String(contentsOfFile:",
         "fopen(",
         "freopen(",
+        // POSIX, qualified: the v2 commit protocol needs a barrier the
+        // Foundation APIs above cannot issue, and the qualification is what
+        // keeps `rename(` from matching the library's rename intention.
+        "fcntl(",
+        "fsync(",
+        "Darwin.open(",
+        "Darwin.rename(",
+        "Darwin.unlink(",
+        "Darwin.mkdir(",
+        "opendir(",
     ]
 
     static func fileIOTokens(in code: String) -> [String] {
@@ -464,6 +474,11 @@ struct ContractStructureTests {
         "Modules/TuberRender",
         "Modules/TuberCanvas",
         "TuberNotesApp",
+        // v2 (Docs/Forks/fundamental-rewrite.md, Part 8). Policed from the
+        // first commit, so the rewrite is never a module nobody watches.
+        "Modules/TNCore",
+        "Modules/TNModel",
+        "Modules/TNFormat",
     ]
 
     /// The module a policed path belongs to: the last component of its
@@ -612,10 +627,10 @@ struct ContractStructureTests {
                 .map { String($0.dropFirst("- path: ".count)) }
         )
         #expect(
-            declared.subtracting(Self.moduleDirectories).subtracting(["TuberNotesTests"]).isEmpty,
+            declared.subtracting(Self.moduleDirectories).subtracting(["TuberNotesTests", "TNTests"]).isEmpty,
             """
             project.yml declares source paths this checker does not police: \
-            \(declared.subtracting(Self.moduleDirectories).subtracting(["TuberNotesTests"]).sorted()). \
+            \(declared.subtracting(Self.moduleDirectories).subtracting(["TuberNotesTests", "TNTests"]).sorted()). \
             A new module policed by nothing is the silence the split was supposed to end — add it \
             to moduleDirectories and to moduleUIFrameworkPolicy.
             """
@@ -702,6 +717,12 @@ struct ContractStructureTests {
         // — and `EditorSession`. This module is where SwiftUI is allowed, and
         // it is allowed nowhere else by the compiler rather than by this table.
         "TuberNotesApp": ["UIKit", "PencilKit", "CoreGraphics"],
+        // v2. TNModel carries PencilKit and CoreGraphics for value types that
+        // cross the seams (PKDrawing, CGImage); the format touches files in
+        // Foundation and POSIX and draws nothing.
+        "TNCore": [],
+        "TNModel": ["PencilKit", "CoreGraphics"],
+        "TNFormat": [],
     ]
 
     /// Files whose **module** is the claim, not merely their imports.
@@ -767,6 +788,9 @@ struct ContractStructureTests {
         "Modules/TuberStore/DocumentStore.swift",
         "Modules/TuberStore/LibraryStore.swift",
         "TuberNotesApp/ImportPickers.swift",
+        // v2: the one file that names a file API. The store above it uses the
+        // seam this file defines.
+        "Modules/TNFormat/PosixFileSystem.swift",
     ]
 
     @Test("Each module imports only the frameworks its place in the graph allows")

@@ -158,6 +158,35 @@ targets:
       - target: TuberModel
       - target: TuberCore
 
+  # ---- v2 modules (D14: coexist beside Tuber*, swap in 6a, delete Tuber* in 6c) ----
+
+  # Logging and the one trap. Foundation + os.
+  TNCore:
+    templates: [Framework]
+    sources:
+      - path: Modules/TNCore
+
+  # Durable values and identities. PencilKit and CoreGraphics for value types
+  # only (PKDrawing, CGImage cross the seams as immutable values). No UIKit,
+  # no I/O.
+  TNModel:
+    templates: [Framework]
+    sources:
+      - path: Modules/TNModel
+    dependencies:
+      - target: TNCore
+
+  # The package format: layout, codecs, the ink container, the planner, the
+  # store actor, and the file-primitive seam. The only v2 module that names a
+  # file API.
+  TNFormat:
+    templates: [Framework]
+    sources:
+      - path: Modules/TNFormat
+    dependencies:
+      - target: TNModel
+      - target: TNCore
+
   TuberNotes:
     type: application
     platform: iOS
@@ -214,6 +243,24 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: $(TN_BUNDLE_ID_PREFIX).tests
         GENERATE_INFOPLIST_FILE: YES
 
+  # v2 logic tests: no host app, so a run is the frameworks and the tests and
+  # nothing else. Frameworks are embedded because there is no app to carry
+  # them.
+  TNTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: TNTests
+    dependencies:
+      - target: TNFormat
+      - target: TNModel
+      - target: TNCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(TN_BUNDLE_ID_PREFIX).v2tests
+        GENERATE_INFOPLIST_FILE: YES
+        TARGETED_DEVICE_FAMILY: "2"
+
 schemes:
   TuberNotes:
     build:
@@ -225,3 +272,4 @@ schemes:
       config: Debug
       targets:
         - TuberNotesTests
+        - TNTests
