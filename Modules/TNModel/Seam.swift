@@ -111,6 +111,8 @@ package enum RetireOutcome: Sendable, Equatable {
     func retire(_ page: PageID) -> RetireOutcome
     /// A sharper or refreshed backdrop for a live page; ink is untouched.
     func updateComposite(on page: PageID, _ composite: Composite)
+    /// The tool and any other chrome fact, pushed, never parked here.
+    func apply(_ environment: CanvasEnvironment)
 }
 
 /// Up: value reports and answered questions.

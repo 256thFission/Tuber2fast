@@ -1,0 +1,29 @@
+import Foundation
+import TNCanvas
+import TNModel
+import TNNotebook
+import UIKit
+
+// The only file in this target that names `TNCanvas`. Everything else in
+// `TNEditor` drives an `any CanvasSurface`, which is what lets a test
+// stand a recorder in the runtime's place, and what keeps the concrete
+// runtime out of the app's vocabulary.
+
+extension PagedCanvasController: CanvasRuntime {}
+
+extension EditorBinding {
+    /// The production binding: it makes the runtime it drives, and hands
+    /// it a forwarder so the pair does not retain each other.
+    package convenience init(
+        notebook: Notebook,
+        onLinkActivated: @escaping @MainActor (LinkTarget) -> Void
+    ) {
+        let forwarder = ReportForwarder()
+        self.init(
+            notebook: notebook,
+            surface: PagedCanvasController(reporter: forwarder),
+            forwarder: forwarder,
+            onLinkActivated: onLinkActivated
+        )
+    }
+}

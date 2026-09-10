@@ -682,7 +682,10 @@ package final class Notebook {
         await flush()
         viewWrite?.cancel()
         try? await store.writeView(ViewState(currentPageID: currentPageID))
+        // A dirty close leaves the notebook open: the checkout stays, the
+        // banner shows, and the next flush retries. Only a clean close ends it.
+        if isDirty { return .dirty(pages: dirtyPages, indexUnsaved: indexSeq > savedIndexSeq) }
         isClosed = true
-        return isDirty ? .dirty(pages: dirtyPages, indexUnsaved: indexSeq > savedIndexSeq) : .clean
+        return .clean
     }
 }

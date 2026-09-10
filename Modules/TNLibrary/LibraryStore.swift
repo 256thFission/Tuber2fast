@@ -97,11 +97,22 @@ package actor LibraryStore {
         self.base = base
         for directory in [notebooksRoot, trashRoot, stagingRoot] {
             do {
-                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                // Complete-until-first-unlock: a background save after the
+                // device locks must not fail with EPERM.
+                try FileManager.default.createDirectory(
+                    at: directory, withIntermediateDirectories: true,
+                    attributes: [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication]
+                )
             } catch {
                 throw .io("create \(directory.path): \(error)")
             }
         }
+    }
+
+    /// `Application Support/TuberNotes`: backed up, never file-shared.
+    package static func defaultBase() -> URL {
+        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        return support.appendingPathComponent("TuberNotes", isDirectory: true)
     }
 
     // MARK: Paths and names

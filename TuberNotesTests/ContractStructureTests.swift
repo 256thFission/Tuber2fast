@@ -468,14 +468,8 @@ struct ContractStructureTests {
     /// silently — and every entry was a hardcoded path that expired the moment
     /// anything moved.
     static let moduleDirectories = [
-        "Modules/TuberCore",
-        "Modules/TuberModel",
-        "Modules/TuberStore",
-        "Modules/TuberRender",
-        "Modules/TuberCanvas",
         "TuberNotesApp",
-        // v2 (Docs/Forks/fundamental-rewrite.md, Part 8). Policed from the
-        // first commit, so the rewrite is never a module nobody watches.
+        // Docs/Forks/fundamental-rewrite.md, Part 8.
         "Modules/TNCore",
         "Modules/TNModel",
         "Modules/TNFormat",
@@ -698,29 +692,9 @@ struct ContractStructureTests {
     /// CoreGraphics, so aliasing either away (the trick `project.yml` uses for
     /// SwiftUI) breaks the transitive load as well as the written import.
     static let moduleUIFrameworkPolicy: [String: Set<String>] = [
-        // Foundation and os. The floor of the graph imports nothing else.
-        "TuberCore": [],
-        // PencilKit, and only for `DrawingSnapshot` — the immutable box that
-        // carries a drawing out of the canvas runtime. Phillip's decision of
-        // 2026-08-07 (`project.yml`, TuberModel): this project no longer claims
-        // that no durable value type imports PencilKit. CoreGraphics is still
-        // refused here, which is the half of the old rule that was really about
-        // durable values acquiring a drawing vocabulary.
-        "TuberModel": ["PencilKit"],
-        // The one target that touches files, and it does so in Foundation.
-        "TuberStore": [],
-        // Off-main decode and composite: CoreGraphics and ImageIO, no view, no
-        // layer, no frame-frequency state. `PDFSource` opens a source PDF with
-        // `CGPDFDocument` — PDFKit would bring a whole document *view* stack
-        // for a page count and a page box, and `project.yml` does not link it.
-        "TuberRender": ["CoreGraphics"],
-        // The canvas runtime: everything that owns frame-frequency state. This
-        // is the module the two named exceptions in *Owners* describe.
-        "TuberCanvas": ["UIKit", "PencilKit", "CoreGraphics"],
-        // The SwiftUI shell, the pickers, `EditorLifecycle` — which imports
-        // UIKit for the background-execution lease, the second named exception
-        // — and `EditorSession`. This module is where SwiftUI is allowed, and
-        // it is allowed nowhere else by the compiler rather than by this table.
+        // The SwiftUI shell and the workspace. This module is where SwiftUI
+        // is allowed, and it is allowed nowhere else by the compiler rather
+        // than by this table.
         "TuberNotesApp": ["UIKit", "PencilKit", "CoreGraphics"],
         // v2. TNModel carries PencilKit and CoreGraphics for value types that
         // cross the seams (PKDrawing, CGImage); the format touches files in
@@ -744,22 +718,21 @@ struct ContractStructureTests {
 
     /// Files whose **module** is the claim, not merely their imports.
     ///
-    /// The per-module policy above cannot express this. It permits `TuberCanvas`
-    /// UIKit, so `PaperTemplateRenderer.swift` moved into the canvas runtime
-    /// would satisfy every other rule in this file while being exactly what the
+    /// The per-module policy above cannot express this. It permits `TNCanvas`
+    /// UIKit, so `PaperRenderer.swift` moved into the canvas runtime would
+    /// satisfy every other rule in this file while being exactly what the
     /// design forbids: paper drawn where frame-frequency work lives, one
-    /// refactor from a `CAShapeLayer` on the main thread. And `PageTemplate` is
-    /// a durable value — `Contract.md` — Owners: "Durable value types import
-    /// Foundation only" — so the vocabulary it may not acquire is *all* of it,
-    /// CoreGraphics included, however `TuberModel`'s row above reads.
+    /// refactor from a `CAShapeLayer` on the main thread. And `Paper` is a
+    /// durable value, so the vocabulary it may not acquire is all of it,
+    /// CoreGraphics included, however `TNModel`'s row above reads.
     ///
     /// Two entries rather than a rule, because two files is what there is; a
     /// third would be the moment to ask what the rule really is. Neither can
     /// outlive its file: the test below requires **exactly one** match per
     /// name, so a rename fails here rather than passing over nothing.
     static let filesPlacedByDesign: [String: (module: String, forbidden: Set<String>)] = [
-        "PageTemplate.swift": ("TuberModel", ["UIKit", "PencilKit", "CoreGraphics"]),
-        "PaperTemplateRenderer.swift": ("TuberRender", ["UIKit", "PencilKit"]),
+        "Paper.swift": ("TNModel", ["UIKit", "PencilKit", "CoreGraphics"]),
+        "PaperRenderer.swift": ("TNRender", ["UIKit", "PencilKit"]),
     ]
 
     @Test("A template is a name in the model and marks in the renderer, and nowhere else")
@@ -798,18 +771,16 @@ struct ContractStructureTests {
     /// and then the store, which remains the one writer.
     ///
     /// Still a file-path allowlist rather than a module one, deliberately:
-    /// TuberStore is a whole module that may touch files, but the app target's
-    /// one permitted read is a single file's business and naming the module
-    /// would licence the whole SwiftUI shell.
+    /// A file-path allowlist rather than a module one, deliberately: the app
+    /// target's one permitted read is a single file's business, and naming
+    /// the module would licence the whole SwiftUI shell.
     static let fileIOAllowlist: Set<String> = [
-        "Modules/TuberStore/DocumentStore.swift",
-        "Modules/TuberStore/LibraryStore.swift",
-        "TuberNotesApp/ImportPickers.swift",
-        // v2: the one file that names a file API. The store above it uses the
-        // seam this file defines.
+        // The one file that names a file API inside a package.
         "Modules/TNFormat/PosixFileSystem.swift",
-        // v2: the library tree, trash, and staging moves.
+        // The library tree, trash, and staging moves.
         "Modules/TNLibrary/LibraryStore.swift",
+        // The import picker's security-scoped read.
+        "TuberNotesApp/ImportReader.swift",
     ]
 
     @Test("Each module imports only the frameworks its place in the graph allows")
@@ -831,13 +802,11 @@ struct ContractStructureTests {
         }
     }
 
-    /// File I/O is confined to `TuberStore`'s actors, one per storage domain —
-    /// `DocumentStore` for a document's insides, `LibraryStore` for the
-    /// library tree — plus the import picker's security-scoped read, each
-    /// named individually in the allowlist. `Docs/Contract.md`, golden rules
-    /// 3 and 4; the library rows are staged in `Docs/Contract.proposed.md`,
-    /// L2.
-    @Test("File I/O is confined to TuberStore's actors, one per storage domain")
+    /// File I/O is confined to the file-primitive seam (`PosixFileSystem`,
+    /// which `PackageStore` drives), `LibraryStore` for the library tree,
+    /// and the import picker's security-scoped read, each named individually
+    /// in the allowlist (Docs/Forks/fundamental-rewrite.md, Part 8).
+    @Test("File I/O is confined to the two store files and the import reader")
     func fileIOIsConfinedToTheStorageActors() throws {
         for source in try Self.appSources() where !Self.fileIOAllowlist.contains(source.path) {
             let hits = ContractChecker.fileIOTokens(in: source.code)
@@ -845,7 +814,7 @@ struct ContractStructureTests {
                 hits.isEmpty,
                 """
                 \(source.path) performs file I/O (\(hits.joined(separator: ", "))). \
-                TuberStore's actors are the writers of durable state, one per storage \
+                PackageStore and LibraryStore are the writers of durable state, one per storage \
                 domain; everything else receives and returns values.
                 """
             )

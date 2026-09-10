@@ -2,6 +2,9 @@ name: TuberNotes
 
 options:
   bundleIdPrefix: com.tubernotes.greenfield
+  # A framework two levels down (TNCanvas under TNEditor) must still be
+  # embedded in the app, or dyld refuses to launch it.
+  transitivelyLinkDependencies: true
   deploymentTarget:
     iOS: "26.0"
   createIntermediateGroups: true
@@ -38,17 +41,14 @@ settings:
     Release:
       SWIFT_ACTIVE_COMPILATION_CONDITIONS: ""
 
-# The module graph, bottom first. It exists to make golden rule 2's *import*
-# half a compile error rather than a token scan: see `noSwiftUI` below and
-# `Docs/Forks/ContractPass/08-Modules.md`.
+# The module graph, bottom first (Docs/Forks/fundamental-rewrite.md, Part 8):
 #
-#   TuberCore   <- TuberModel <- TuberStore <- TuberRender <- TuberCanvas
-#        \____________\______________\______________\____________\__ TuberNotes
+#   TNCore <- TNModel <- TNFormat <- TNRender <- TNNotebook <- TNEditor <- TuberNotes
+#                    \__ TNCanvas <-------------------------/         TNLibrary <-/
 #
-# TuberCanvas deliberately does *not* depend on TuberStore. The canvas runtime
-# never sees the store — it holds a `StaticLayerRenderer`, and the renderer
-# holds the store. Keep it that way: a canvas that can name `DocumentStoring`
-# is one refactor away from breaking golden rule 4.
+# TNCanvas depends on TNModel and TNCore only: the runtime cannot name the
+# format, the notebook, or the library. The app depends on TNEditor and
+# never on TNCanvas. Both are compile errors, not review notes.
 targetTemplates:
   # Every framework target below the app. Same product shape, same warnings.
   Framework:
@@ -89,74 +89,6 @@ targetTemplates:
         OTHER_SWIFT_FLAGS: $(inherited) -module-alias SwiftUI=TuberSwiftUIIsNotBelowTheAppTarget
 
 targets:
-
-  # The floor: structured logging and the crash handler. Foundation + os.
-  # It is imported by the store, the renderer, the snapshot, and the canvas
-  # runtime, so it cannot live anywhere but the bottom.
-  TuberCore:
-    templates: [Framework]
-    sources:
-      - path: Modules/TuberCore
-
-  # The durable value types, and the box that carries a drawing out of the
-  # canvas runtime.
-  #
-  # **TuberModel links PencilKit, by Phillip's decision (2026-08-07).** The
-  # dropped claim, stated so nobody re-derives it: *this project no longer
-  # claims that no durable value type ever imports PencilKit.* `DrawingSnapshot`
-  # is the `PKDrawing` box and it crosses every seam the graph draws; the
-  # alternative was a sixth target holding one 56-line file. TuberNotes is an
-  # iPad-and-Pencil application forever, so PencilKit at the model layer costs
-  # nothing this project would otherwise have kept. There is no TuberInk.
-  #
-  # UIKit and SwiftUI remain out: UIKit arrives transitively with PencilKit and
-  # so cannot be banned by the compiler, but no file here writes the import and
-  # `ContractStructureTests` says so.
-  TuberModel:
-    templates: [Framework]
-    sources:
-      - path: Modules/TuberModel
-    dependencies:
-      - target: TuberCore
-
-  # `DocumentStore`, the `DocumentStoring` seam its consumers declare, and the
-  # durable file form. The only target that touches the file system.
-  TuberStore:
-    templates: [Framework]
-    sources:
-      - path: Modules/TuberStore
-    dependencies:
-      - target: TuberModel
-      - target: TuberCore
-
-  # Off-main decode and composite: `StaticLayerRenderer`, `PDFSource`, the
-  # lens. Depends on TuberStore because the renderer holds the store — through
-  # `DocumentStoring`, so the edge is to a surface rather than to an actor.
-  #
-  # PDFKit is deliberately not linked and never should be: `PDFSource.swift`
-  # records the decision to open a source PDF with `CGPDFDocument` instead,
-  # because PDFKit brings a whole document *view* stack for a page count and a
-  # page box.
-  TuberRender:
-    templates: [Framework]
-    sources:
-      - path: Modules/TuberRender
-    dependencies:
-      - target: TuberStore
-      - target: TuberModel
-      - target: TuberCore
-
-  # The canvas runtime: everything that owns frame-frequency state.
-  #
-  # No TuberStore edge, on purpose — see the graph comment above.
-  TuberCanvas:
-    templates: [Framework]
-    sources:
-      - path: Modules/TuberCanvas
-    dependencies:
-      - target: TuberRender
-      - target: TuberModel
-      - target: TuberCore
 
   # ---- v2 modules (D14: coexist beside Tuber*, swap in 6a, delete Tuber* in 6c) ----
 
@@ -254,20 +186,22 @@ targets:
     sources:
       - path: TuberNotesApp
     dependencies:
-      - target: TuberCanvas
-      - target: TuberRender
-      - target: TuberStore
-      - target: TuberModel
-      - target: TuberCore
+      - target: TNEditor
+      - target: TNLibrary
+      - target: TNNotebook
+      - target: TNRender
+      - target: TNFormat
+      - target: TNModel
+      - target: TNCore
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(TN_BUNDLE_ID_PREFIX)
         PRODUCT_NAME: TuberNotes
         TARGETED_DEVICE_FAMILY: "2"
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
-        # The spike has one fixed document and no same-document coordinator.
-        # Multiple scenes are enabled only after the despiking architecture
-        # supplies scene-scoped sessions and serialized document commits.
+        # One window is a contract rule (Docs/Forks/fundamental-rewrite.md,
+        # "One window"); the checkout ledger is what would make revisiting
+        # it safe.
         INFOPLIST_KEY_UIApplicationSupportsMultipleScenes: NO
         # All four orientations: the library browser letterboxed on a landscape
         # iPad, and Phillip lifted the portrait pin on 2026-08-08. The coupled
@@ -289,15 +223,21 @@ targets:
       - target: TuberNotes
       # Linked but not embedded: the host app already carries them, and a
       # second copy inside the test bundle is a second copy of every global.
-      - target: TuberCanvas
+      - target: TNEditor
         embed: false
-      - target: TuberRender
+      - target: TNCanvas
         embed: false
-      - target: TuberStore
+      - target: TNLibrary
         embed: false
-      - target: TuberModel
+      - target: TNNotebook
         embed: false
-      - target: TuberCore
+      - target: TNRender
+        embed: false
+      - target: TNFormat
+        embed: false
+      - target: TNModel
+        embed: false
+      - target: TNCore
         embed: false
     settings:
       base:
@@ -313,8 +253,11 @@ targets:
     sources:
       - path: TNTests
     dependencies:
+      - target: TNEditor
+      - target: TNCanvas
       - target: TNLibrary
       - target: TNNotebook
+      - target: TNRender
       - target: TNFormat
       - target: TNModel
       - target: TNCore
