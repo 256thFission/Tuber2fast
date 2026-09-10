@@ -480,6 +480,7 @@ struct ContractStructureTests {
         "Modules/TNModel",
         "Modules/TNFormat",
         "Modules/TNNotebook",
+        "Modules/TNLibrary",
     ]
 
     /// The module a policed path belongs to: the last component of its
@@ -726,6 +727,9 @@ struct ContractStructureTests {
         "TNFormat": [],
         // Custody holds PKDrawing values; nothing here draws or touches a file.
         "TNNotebook": ["PencilKit"],
+        // The tree and the trash, in Foundation. Holds Notebooks (PencilKit
+        // arrives transitively) but writes no UI import.
+        "TNLibrary": ["PencilKit"],
     ]
 
     /// Files whose **module** is the claim, not merely their imports.
@@ -794,6 +798,8 @@ struct ContractStructureTests {
         // v2: the one file that names a file API. The store above it uses the
         // seam this file defines.
         "Modules/TNFormat/PosixFileSystem.swift",
+        // v2: the library tree, trash, and staging moves.
+        "Modules/TNLibrary/LibraryStore.swift",
     ]
 
     @Test("Each module imports only the frameworks its place in the graph allows")

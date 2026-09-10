@@ -198,6 +198,18 @@ targets:
       - target: TNModel
       - target: TNCore
 
+  # The library: the tree, the trash, the checkout ledger, the identity
+  # index. LibraryStore is the one file that names a file API.
+  TNLibrary:
+    templates: [Framework]
+    sources:
+      - path: Modules/TNLibrary
+    dependencies:
+      - target: TNNotebook
+      - target: TNFormat
+      - target: TNModel
+      - target: TNCore
+
   TuberNotes:
     type: application
     platform: iOS
@@ -263,6 +275,7 @@ targets:
     sources:
       - path: TNTests
     dependencies:
+      - target: TNLibrary
       - target: TNNotebook
       - target: TNFormat
       - target: TNModel
