@@ -697,6 +697,11 @@ Stage 5. `TNRender` as an actor.
 Stage 6a. Single-notebook app swap through `TNEditor`. 6b. `Workspace`
 and tabs. 6c. Delete `Tuber*`. 6d. Link UI.
 
+Status 2026-09-10 afternoon: stages 4, 5, 6a, 6b, and 6c are built on
+best estimates (Phillip's instruction); 6d's link UI is not. The old
+modules are deleted. The spikes below are now checks of shipped
+estimates rather than prerequisites.
+
 Device spikes Phillip runs before trusting stages 4 to 6: spike zero,
 the cost of reading `canvasView.drawing` at stroke end at 20k strokes;
 D7, the zoom-detail push at 120 Hz on a `maxPageEdge` page; D1, the

@@ -87,16 +87,51 @@ Each is cheap to reverse today and a migration tomorrow.
 | 1 `TNCore`, `TNModel`, `TNFormat` | done, committed | 26 tests: key-set pins, delete-each-key, container tampering, the fault sweep, compact conservatism |
 | 2 `TNNotebook` | done, committed | 9 tests: draw-during-held-save, close waits for the write, undo without echo, stale load dropped, refused new page, prune |
 | 3 `TNLibrary` | done, committed | 7 tests: exclusive checkout with `.alreadyOpen`, ancestor locks, mutations refuse on an open notebook, trash restores the original name and suffixes only on collision, duplicate re-mints and keeps page IDs, identity index resolves live/trashed/missing, a collision is re-minted |
-| 4 `TNCanvas` | not started | needs the device spikes below first |
-| 5 `TNRender` | not started | |
-| 6 app swap, tabs, delete `Tuber*`, links | not started | |
+| 4 `TNCanvas` | done, committed | 8 hosted tests: slot layout, window derivation, setPages diff with final reports, install then retire delivers the drawing, a placeholder never becomes a canvas, restoreInk echo suppression |
+| 5 `TNRender` | done, committed | paper, PDF, images, text, links composited at a capped scale; exercised by every notebook test that loads a page |
+| 6 app swap, tabs, delete `Tuber*` | done, committed | 4 binding tests; the app launches on the simulator, opens a notebook (`-TNSmokeNotebook`), and shows the editor; `Modules/Tuber*` and the old app and tests are gone |
 
-The old app builds and passes exactly as before; the `TN*` targets sit
-beside it and nothing in the app names them yet.
+**The app now runs on the new engine.** Every `Tuber*` module is deleted;
+the contract checker polices the `TN*` graph, the app cannot name
+`TNCanvas`, and there is exactly one `PKCanvasView` construction site.
+
+## Best estimates in the top half (Phillip asked for them)
+
+Each is marked `KNOWN DEFECT` or documented in place; each is the
+device spike it stands in for.
+
+- **Per-stroke drawing read.** `canvasViewDrawingDidChange` reads
+  `canvasView.drawing` and reports it. The canvas agent measured on the
+  simulator that a programmatic set fires the callback synchronously and
+  exactly once, which the echo latch depends on. Cost at 20k strokes is
+  unmeasured.
+- **Undo.** A `FilteringUndoManager` vended from the page controller
+  drops PencilKit's registrations and routes the system gestures to the
+  notebook. Whether PencilKit really registers through the responder
+  chain is unproven on a device.
+- **Composites as values.** A sharper backdrop is pushed on
+  `detailNeeded`; zoom past the cap shows the base composite until the
+  push lands. 120 Hz feel is unmeasured.
+- **Backdrop as a PKCanvasView subview.** Registration with the ink
+  through a fast pinch is unproven; the old sibling-layer approach is the
+  named fallback.
+- **Not built:** layer selection and transform gestures (layers render
+  and import; moving them is a later intention), text-box editing (text
+  renders; the box is inserted with placeholder runs), link creation UI
+  (links render and activate; nothing mints one yet), thumbnails, GoodNotes
+  tool-picker parity, page-size UI (pages inherit geometry or come from a
+  PDF).
+
+Run it on the simulator without tapping:
+
+```bash
+xcrun simctl launch booted com.tubernotes.greenfield -TNSmokeNotebook
+```
 
 ## Device spikes only you can run
 
-None of stages 1 to 3 depend on these, but stages 4 to 6 do.
+The top half is built on estimates for all three; each is now a check
+rather than a prerequisite.
 
 1. **Spike zero.** Read `canvasView.drawing` inside
    `canvasViewDrawingDidChange` at 20k strokes. If it hitches, the
