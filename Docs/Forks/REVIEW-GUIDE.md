@@ -20,7 +20,8 @@ Nothing in `Docs/Contract.md` changed; no agent wrote a rule.
    authorities that disagreed. Collapsed to one.
 5. Built stages 0, 1, 2. Full suite green (471 old tests + 35 new).
 6. Ran a four-angle simplification pass on the new code (see the last
-   section for what changed).
+   section for what changed and what I skipped). Full suite green after
+   it: 471 + 35.
 
 ## Review in 30 minutes, in this order
 
@@ -120,3 +121,41 @@ git log --oneline 4035bf7..v2-rewrite
 ```
 
 One commit per stage, each green. The spec is committed with stage 1.
+
+## The simplification pass
+
+Four Opus reviewers (reuse, simplification, efficiency, altitude) over
+the new code. Applied, in commit `27528b6`:
+
+- one key-set checker (`Codecs.checkKeys`) and one JSON encoder for every
+  durable file; the layer file no longer round-trips through
+  `JSONSerialization` and is parsed once, not three times
+- `LayerFault` carries its own layer ID, so `RefusedLayer` and a
+  twelve-arm switch in the store are gone; `PageBytes` states each
+  refusal once
+- the store caches only the notebook identity, never the index;
+  `rewriteNotebookID` patches container headers instead of replaying the
+  save protocol
+- ink is a non-optional value once a page is ready, with its own
+  `inkSeq`, so a layer nudge no longer rewrites the container
+- `retired()` compares drawings with `==` instead of serializing both on
+  the main actor; one detached hop serializes every drawing in a pass
+- `lastSaveError` is a typed `SaveFailure`; `CloseOutcome.dirty` says
+  whether the index is unsaved too
+- `PageSnapshot` has two factories (`editable`, `placeholder`) and a
+  private memberwise init; `PageDescriptor` carries `PaperKind` so a
+  placeholder can name unknown paper
+- the test doubles share one forwarding base; "no space" is a
+  `FaultingFileSystem` fault; the untested intentions (`deletePage`,
+  `movePage`, `setPaper`, `deleteLayer`) now have tests
+
+Skipped, deliberately:
+
+- a `LayerStack` value type maintaining `inkIndex` by construction:
+  right idea, larger than a night; the invariant is checked at save
+- `PageSpaceTransform` via `CGAffineTransform`: keeps TNModel free of a
+  drawing vocabulary for now
+- caching the presence set and the last page-file bytes in the store:
+  the stats are per structural save, not per stroke
+- a `Validated<T>` wrapper: the re-validation on save is cheap
+- incremental dirty counting: a dictionary walk per stroke is microseconds
