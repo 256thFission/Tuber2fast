@@ -214,14 +214,21 @@ package actor LibraryStore {
         return file.folderID
     }
 
-    /// A new one-page notebook, committed. Returns its listing item.
-    package func createNotebook(named name: String, in folder: String) async throws(LibraryError) -> LibraryItem {
+    /// A new one-page notebook, committed. Its page is US Letter and blank
+    /// paper unless told otherwise. Returns its listing item.
+    package func createNotebook(
+        named name: String, in folder: String,
+        geometry: PageGeometry = .letter, paper: DrawnPaper = .blank
+    ) async throws(LibraryError) -> LibraryItem {
         try Self.validate(name: name)
         let parent = url(of: folder)
         guard folder.isEmpty || kind(at: parent) == .folder else { throw .notAFolder(folder) }
         let target = parent.appendingPathComponent(Self.packageName(name), isDirectory: true)
         guard kind(at: target) == nil else { throw .alreadyExists(name) }
-        let index = NotebookIndex.new(notebookID: NotebookID(), firstPage: PageID(), createdAt: Date())
+        let index = NotebookIndex.new(
+            notebookID: NotebookID(), firstPage: PageID(), createdAt: Date(),
+            geometry: geometry, paper: paper
+        )
         do {
             _ = try await PackageStore.create(root: target, index: index)
         } catch {

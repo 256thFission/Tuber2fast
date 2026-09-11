@@ -1,8 +1,8 @@
 import Foundation
 
 /// One page's record in the index: identity, geometry, paper. Geometry is
-/// immutable after creation; paper may change, and the change rewrites the
-/// index.
+/// chosen at creation and changes only with asset paper on an empty page;
+/// paper may change, and the change rewrites the index.
 package struct PageRecord: Codable, Sendable, Equatable, Identifiable {
     package let id: PageID
     package let width: Double
@@ -66,12 +66,15 @@ package struct NotebookIndex: Codable, Sendable, Equatable {
         pages.first { $0.id == page }
     }
 
-    /// A one-page notebook on US Letter, blank paper.
-    package static func new(notebookID: NotebookID, firstPage: PageID, createdAt: Date) -> NotebookIndex {
+    /// A one-page notebook, US Letter and blank paper unless told otherwise.
+    package static func new(
+        notebookID: NotebookID, firstPage: PageID, createdAt: Date,
+        geometry: PageGeometry = .letter, paper: DrawnPaper = .blank
+    ) -> NotebookIndex {
         NotebookIndex(
             notebookID: notebookID,
             createdAt: createdAt,
-            pages: [PageRecord(id: firstPage, geometry: .letter, paper: .drawn(.blank))]
+            pages: [PageRecord(id: firstPage, geometry: geometry, paper: .drawn(paper))]
         )
     }
 

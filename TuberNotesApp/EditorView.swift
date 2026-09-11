@@ -15,9 +15,19 @@ struct EditorView: View {
     let editor: EditorViewModel
 
     @State private var isPickingPhoto = false
+    @State private var photoDestination = PhotoDestination.layerOnCurrentPage
     @State private var photoItem: PhotosPickerItem?
     @State private var isPickingPDF = false
     @State private var isConfirmingPageDelete = false
+    @State private var isAddingPage = false
+    @State private var pendingPage: (choice: NewPagePaperChoice, size: PageSize, orientation: PageOrientation)?
+
+    /// What the picked photo is for. The picker serves two destinations, and
+    /// a second Bool beside `isPickingPhoto` could claim both at once.
+    private enum PhotoDestination {
+        case layerOnCurrentPage
+        case paperForNewPage(PageSize, PageOrientation)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -30,6 +40,14 @@ struct EditorView: View {
                 RefusalBar(message: "That couldn't be added: \(fault.description)")
             }
             CanvasHost(controller: editor.canvasHost)
+        }
+        // The choice is acted on after the sheet is gone: the photo leg
+        // presents a second sheet, and two presentations in one frame do not
+        // both survive.
+        .sheet(isPresented: $isAddingPage, onDismiss: addPendingPage) {
+            AddPageSheet(editor: editor) { choice, size, orientation in
+                pendingPage = (choice, size, orientation)
+            }
         }
         .photosPicker(isPresented: $isPickingPhoto, selection: $photoItem, matching: .images)
         .onChange(of: photoItem) { _, item in
@@ -112,7 +130,7 @@ struct EditorView: View {
             }
             .disabled(editor.currentPageIndex >= editor.pageCount - 1)
 
-            Button { editor.addPage() } label: {
+            Button { isAddingPage = true } label: {
                 Label("Add page", systemImage: "plus.rectangle.portrait").labelStyle(.iconOnly)
             }
         }
@@ -125,9 +143,9 @@ struct EditorView: View {
                     Task { await editor.setPaper(paper) }
                 } label: {
                     if editor.currentPaper == .drawn(paper) {
-                        Label(Self.paperName(paper), systemImage: "checkmark")
+                        Label(PageNames.paper(paper), systemImage: "checkmark")
                     } else {
-                        Text(Self.paperName(paper))
+                        Text(PageNames.paper(paper))
                     }
                 }
             }
@@ -141,6 +159,7 @@ struct EditorView: View {
     private var insertMenu: some View {
         Menu {
             Button {
+                photoDestination = .layerOnCurrentPage
                 isPickingPhoto = true
             } label: {
                 Label("Photo", systemImage: "photo")
@@ -160,13 +179,21 @@ struct EditorView: View {
         }
     }
 
-    private static func paperName(_ paper: DrawnPaper) -> String {
-        switch paper {
-        case .none: "None"
-        case .blank: "Blank"
-        case .lined: "Lined"
-        case .grid: "Grid"
-        case .dotted: "Dotted"
+    // MARK: Pages
+
+    private func addPendingPage() {
+        guard let pending = pendingPage else { return }
+        pendingPage = nil
+        switch pending.choice {
+        case .sameAsThisPage:
+            Task { await editor.addPage(size: pending.size, orientation: pending.orientation) }
+        case .drawn(let paper):
+            Task { await editor.addPage(size: pending.size, orientation: pending.orientation, paper: paper) }
+        case .from(let page):
+            Task { await editor.addPage(size: pending.size, orientation: pending.orientation, paperFrom: page) }
+        case .photo:
+            photoDestination = .paperForNewPage(pending.size, pending.orientation)
+            isPickingPhoto = true
         }
     }
 
@@ -179,7 +206,12 @@ struct EditorView: View {
                 workspace.banner = "That photo couldn't be read."
                 return
             }
-            await editor.importImage(data)
+            switch photoDestination {
+            case .layerOnCurrentPage:
+                await editor.importImage(data)
+            case .paperForNewPage(let size, let orientation):
+                await editor.addPage(size: size, orientation: orientation, photo: data)
+            }
         } catch {
             workspace.banner = "That photo couldn't be read: \(error.localizedDescription)"
         }

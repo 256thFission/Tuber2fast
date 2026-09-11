@@ -17,8 +17,7 @@ struct LibraryView: View {
 
     @State private var newFolderName = ""
     @State private var isNamingFolder = false
-    @State private var newNotebookName = ""
-    @State private var isNamingNotebook = false
+    @State private var isCreatingNotebook = false
     @State private var renameTarget: LibraryItem?
     @State private var renameText = ""
     @State private var isShowingTrash = false
@@ -40,10 +39,10 @@ struct LibraryView: View {
             Button("Cancel", role: .cancel) {}
             Button("Create") { Task { await createFolder() } }
         }
-        .alert("New notebook", isPresented: $isNamingNotebook) {
-            TextField("Name", text: $newNotebookName)
-            Button("Cancel", role: .cancel) {}
-            Button("Create") { Task { await createNotebook() } }
+        .sheet(isPresented: $isCreatingNotebook) {
+            NewNotebookSheet { name, geometry, paper in
+                Task { await createNotebook(named: name, geometry: geometry, paper: paper) }
+            }
         }
         .alert("Rename", isPresented: isRenaming, presenting: renameTarget) { item in
             TextField("Name", text: $renameText)
@@ -64,8 +63,7 @@ struct LibraryView: View {
                 .lineLimit(1)
             Spacer()
             Button {
-                newNotebookName = "New notebook"
-                isNamingNotebook = true
+                isCreatingNotebook = true
             } label: {
                 Label("New notebook", systemImage: "square.and.pencil")
             }
@@ -161,9 +159,9 @@ struct LibraryView: View {
         }
     }
 
-    private func createNotebook() async {
+    private func createNotebook(named name: String, geometry: PageGeometry, paper: DrawnPaper) async {
         do {
-            _ = try await library.store.createNotebook(named: newNotebookName, in: folder)
+            _ = try await library.store.createNotebook(named: name, in: folder, geometry: geometry, paper: paper)
             await reload()
         } catch {
             workspace.banner = "\(error)"

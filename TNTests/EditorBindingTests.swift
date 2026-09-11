@@ -137,10 +137,14 @@ struct EditorBindingTests {
         _ = await notebook.close()
     }
 
-    @Test("The end boundary is answered by a page order carrying that report's sequence")
+    @Test("The end boundary is answered by a page order carrying that report's sequence, and the pulled page copies its template")
     func endBoundaryAnswersWithSetPages() async throws {
         let scratch = try Scratch("editor-boundary")
-        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        // A4 landscape, so the copied geometry is not the default one.
+        let a4Landscape = try #require(PageSize.a4.geometry(.landscape))
+        let notebook = try await Notebook.create(at: scratch.packageURL, geometry: a4Landscape, schedule: fast)
+        let first = notebook.pageIDs[0]
+        try await notebook.setPaper(.drawn(.lined), on: first)
         let surface = RecordingSurface()
         let binding = EditorBinding(notebook: notebook, surface: surface)
         let before = notebook.pageIDs
@@ -150,6 +154,11 @@ struct EditorBindingTests {
         let answer = try #require(surface.answered(ReportSeq(7)), "the append answered no report")
         #expect(answer.count == before.count + 1)
         #expect(Array(answer.prefix(before.count)) == before)
+
+        // The pull still takes the template's paper and size with it.
+        let pulled = try #require(answer.last)
+        #expect(notebook.paper(of: pulled) == .drawn(.lined))
+        #expect(notebook.index.record(of: pulled)?.geometry == a4Landscape)
         _ = await notebook.close()
     }
 }

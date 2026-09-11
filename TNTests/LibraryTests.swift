@@ -1,6 +1,7 @@
 import Foundation
 import PencilKit
 import Testing
+@testable import TNEditor
 @testable import TNFormat
 @testable import TNLibrary
 @testable import TNModel
@@ -132,6 +133,21 @@ struct LibraryTests {
         try await library.store.deletePermanently(entry)
         try await library.refreshIdentities()
         #expect(library.identities.resolve(id) == .missing)
+    }
+
+    @Test("A notebook created at a stated size and paper has exactly that one page on disk")
+    func createNotebookAtAStatedSizeAndPaper() async throws {
+        let (scratch, library) = try makeLibrary("lib-page-size")
+        defer { withExtendedLifetime(scratch) {} }
+        let a5 = try #require(PageSize.a5.geometry(.portrait))
+        let item = try await library.store.createNotebook(named: "Pocket", in: "", geometry: a5, paper: .lined)
+
+        let loaded = try await PackageStore(root: library.store.url(of: item.relativePath)).load()
+        #expect(loaded.pageFaults.isEmpty)
+        #expect(loaded.index.pages.count == 1)
+        let record = try #require(loaded.index.pages.first)
+        #expect(record.geometry == a5)
+        #expect(record.paper == .known(.drawn(.lined)))
     }
 
     @Test("Two packages with one identity: the scan re-mints the second")

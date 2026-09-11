@@ -38,6 +38,26 @@ struct TNCanvasTests {
         #expect(layout.isPastEnd(offsetX: 4121))
     }
 
+    @Test("A page fills the slot on the edge that binds and is centred on the other, whichever way round each is")
+    func pageFitCentresOnTheFreeEdge() {
+        // Both cases fit by the same ratio, 1032 over 842, so both have the
+        // same free-edge length.
+        let shortEdge: CGFloat = 595 * 1032 / 842
+
+        let landscapeInPortrait = PageFit.rect(PageGeometry(width: 842, height: 595), in: CGSize(width: 1032, height: 1376))
+        #expect(abs(landscapeInPortrait.width - 1032) < 1e-6)
+        #expect(abs(landscapeInPortrait.height - shortEdge) < 1e-6)
+        #expect(landscapeInPortrait.origin.x == 0)
+        // The origin is rounded, so the centre is the nearest whole point.
+        #expect(abs(landscapeInPortrait.origin.y - ((1376 - shortEdge) / 2).rounded()) < 1e-6)
+
+        let portraitInLandscape = PageFit.rect(PageGeometry(width: 595, height: 842), in: CGSize(width: 1376, height: 1032))
+        #expect(abs(portraitInLandscape.height - 1032) < 1e-6)
+        #expect(abs(portraitInLandscape.width - shortEdge) < 1e-6)
+        #expect(portraitInLandscape.origin.y == 0)
+        #expect(abs(portraitInLandscape.origin.x - ((1376 - shortEdge) / 2).rounded()) < 1e-6)
+    }
+
     @Test("The window is derived from the offset, rounded and clamped")
     func windowDerivation() {
         let layout = SlotLayout(slot: CGSize(width: 800, height: 1000), pageCount: 6)
