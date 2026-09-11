@@ -170,6 +170,47 @@ struct LibraryTests {
         #expect(folder.createdAt > Date(timeIntervalSince1970: 1_800_000_000))
     }
 
+    @Test("A star round-trips, and the listing mixes kinds across parents")
+    func favorites() async throws {
+        let (scratch, library) = try makeLibrary("lib-favorites")
+        defer { withExtendedLifetime(scratch) {} }
+        let work = try await library.store.createFolder(named: "Work", in: "")
+        let plan = try await library.store.createNotebook(named: "Plan", in: "Work")
+        _ = try await library.store.createNotebook(named: "Loose", in: "")
+        #expect(try await library.store.favorites().isEmpty)
+
+        let folderIdentity = try #require(work.identity)
+        let notebookIdentity = try #require(plan.identity)
+        try await library.store.setFavorite(folderIdentity, true)
+        try await library.store.setFavorite(notebookIdentity, true)
+        #expect(try await library.store.favorites() == [folderIdentity, notebookIdentity])
+        #expect(try await library.store.listFavorites().map(\.relativePath) == ["Work", "Work/Plan.tubernotes"])
+
+        try await library.store.setFavorite(folderIdentity, false)
+        #expect(try await library.store.listFavorites().map(\.relativePath) == ["Work/Plan.tubernotes"])
+    }
+
+    @Test("A star follows the item through rename, move, trash, and recovery")
+    func favoriteSurvivesEveryMove() async throws {
+        let (scratch, library) = try makeLibrary("lib-favorite-survives")
+        defer { withExtendedLifetime(scratch) {} }
+        _ = try await library.store.createFolder(named: "Drafts", in: "")
+        let item = try await library.store.createNotebook(named: "Essay", in: "Drafts")
+        let identity = try #require(item.identity)
+        try await library.store.setFavorite(identity, true)
+
+        let renamed = try await library.rename(at: item.relativePath, to: "Essay II")
+        #expect(try await library.store.listFavorites().map(\.relativePath) == [renamed.relativePath])
+        let moved = try await library.move(at: renamed.relativePath, toFolder: "")
+        #expect(try await library.store.listFavorites().map(\.relativePath) == [moved.relativePath])
+
+        let entry = try await library.trash(at: moved.relativePath)
+        #expect(try await library.store.listFavorites().isEmpty)
+        #expect(try await library.store.favorites() == [identity])
+        let recovered = try await library.store.recover(entry)
+        #expect(try await library.store.listFavorites().map(\.relativePath) == [recovered.relativePath])
+    }
+
     @Test("Two packages with one identity: the scan re-mints the second")
     func collision() async throws {
         let (scratch, library) = try makeLibrary("lib-collide")

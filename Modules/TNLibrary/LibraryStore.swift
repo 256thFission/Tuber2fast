@@ -51,6 +51,25 @@ package struct LibraryItem: Sendable, Equatable, Identifiable {
     }
 }
 
+/// `Favorites.json` beside `Notebooks/`: which identities are starred.
+///
+/// Identities, not paths, so a star needs no rewriting when the item is
+/// renamed or moved. An identity that resolves to nothing is kept rather
+/// than pruned: the item is usually in the trash, and recovering it must
+/// bring its star back.
+package struct FavoritesFile: Codable, Sendable, Equatable {
+    package let formatVersion: UInt32
+    package let notebooks: [NotebookID]
+    package let folders: [FolderID]
+    package static let currentFormatVersion: UInt32 = 1
+
+    package init(notebooks: [NotebookID], folders: [FolderID]) {
+        self.formatVersion = Self.currentFormatVersion
+        self.notebooks = notebooks
+        self.folders = folders
+    }
+}
+
 /// `Trash/<container>/origin.json`.
 package struct TrashOrigin: Codable, Sendable, Equatable {
     package let formatVersion: UInt32
@@ -109,6 +128,7 @@ package actor LibraryStore {
     private let fm = FileManager.default
     private static let folderSidecar = ".folder.json"
     private static let originSidecar = "origin.json"
+    private static let favoritesKeys: Set<String> = ["formatVersion", "notebooks", "folders"]
 
     package init(base: URL) throws(LibraryError) {
         self.base = base
@@ -291,6 +311,72 @@ package actor LibraryStore {
         do { try fm.moveItem(at: source, to: target) } catch { throw .io("move \(relativePath): \(error)") }
         let path = folder.isEmpty ? source.lastPathComponent : "\(folder)/\(source.lastPathComponent)"
         return item(at: path, url: target, kind: kind)
+    }
+
+    // MARK: Favorites
+
+    package nonisolated var favoritesURL: URL { base.appendingPathComponent("Favorites.json") }
+
+    /// The starred identities. No file means nothing is starred.
+    package func favorites() throws(LibraryError) -> Set<ItemIdentity> {
+        guard fm.fileExists(atPath: favoritesURL.path) else { return [] }
+        let data: Data
+        do { data = try Data(contentsOf: favoritesURL) } catch { throw .io("read favorites: \(error)") }
+        let file: FavoritesFile
+        do {
+            file = try Codecs.decodeStrict(FavoritesFile.self, from: data, expectedKeys: Self.favoritesKeys)
+        } catch {
+            throw .format(error)
+        }
+        guard file.formatVersion == FavoritesFile.currentFormatVersion else {
+            throw .format(.corruptJSON("Favorites.json is version \(file.formatVersion)"))
+        }
+        return Set(file.notebooks.map(ItemIdentity.notebook) + file.folders.map(ItemIdentity.folder))
+    }
+
+    /// Reads the set, changes one identity, writes the whole file. A set has
+    /// no partial state worth recovering, so the write is atomic and total.
+    package func setFavorite(_ identity: ItemIdentity, _ starred: Bool) throws(LibraryError) {
+        var set = try favorites()
+        if starred { set.insert(identity) } else { set.remove(identity) }
+        var notebooks: [NotebookID] = []
+        var folders: [FolderID] = []
+        for identity in set {
+            switch identity {
+            case .notebook(let id): notebooks.append(id)
+            case .folder(let id): folders.append(id)
+            }
+        }
+        // A set has no order; sorting gives the file one, so an unchanged
+        // set of stars writes unchanged bytes.
+        let file = FavoritesFile(
+            notebooks: notebooks.sorted { $0.description < $1.description },
+            folders: folders.sorted { $0.description < $1.description }
+        )
+        do {
+            try Codecs.encode(file).write(to: favoritesURL, options: .atomic)
+        } catch let fault as FormatFault {
+            throw .format(fault)
+        } catch {
+            throw .io("write favorites: \(error)")
+        }
+    }
+
+    /// Every starred item that is still in the tree, in tree order. A star on
+    /// a trashed item is kept in the file and shows nowhere until it comes
+    /// back.
+    package func listFavorites() throws(LibraryError) -> [LibraryItem] {
+        let starred = try favorites()
+        guard !starred.isEmpty else { return [] }
+        var found: [LibraryItem] = []
+        func walk(_ folder: String) throws(LibraryError) {
+            for item in try list(folder: folder) {
+                if let identity = item.identity, starred.contains(identity) { found.append(item) }
+                if item.kind == .folder { try walk(item.relativePath) }
+            }
+        }
+        try walk("")
+        return found
     }
 
     // MARK: Trash
