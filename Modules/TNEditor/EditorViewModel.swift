@@ -76,13 +76,6 @@ package final class EditorViewModel {
 
     // MARK: Pages
 
-    /// A new page after the current one, and the reader is taken to it.
-    package func addPage() {
-        var created: PageID?
-        binding.intention { created = notebook.appendPage(after: notebook.currentPageID) }
-        if let created { binding.surface.scroll(to: created) }
-    }
-
     // A new page at a chosen size. The four say which paper; `append` below
     // is the one that talks to the notebook.
 
@@ -167,15 +160,26 @@ package final class EditorViewModel {
 
     package var currentPaper: Paper? { notebook.paper(of: notebook.currentPageID) }
 
-    /// The pages a new page could take its asset paper from. A page whose
-    /// state is `.unreadable` is omitted: `paper(of:)` reads the index, so
-    /// such a row would offer an asset that can only fail.
-    package var pagesWithAssetPaper: [(page: PageID, paper: Paper)] {
-        notebook.pageIDs.compactMap { page -> (page: PageID, paper: Paper)? in
-            guard let paper = notebook.paper(of: page), paper.isAsset else { return nil }
+    /// The pages a new page could take its asset paper from, each with its
+    /// place in the notebook, which is what a row is labelled by. A page
+    /// whose state is `.unreadable` is omitted: `paper(of:)` reads the index,
+    /// so such a row would offer an asset that can only fail.
+    package var pagesWithAssetPaper: [(page: PageID, number: Int)] {
+        notebook.pageIDs.enumerated().compactMap { position, page -> (page: PageID, number: Int)? in
+            guard notebook.paper(of: page)?.isAsset == true else { return nil }
             if let state = notebook.state(of: page), case .unreadable = state { return nil }
-            return (page, paper)
+            return (page, position + 1)
         }
+    }
+
+    /// The current page's size as the catalogue names it, which is what a
+    /// creation sheet opens on: a page added without asking is the size of
+    /// the one it follows.
+    package var currentPageSize: (size: PageSize, orientation: PageOrientation) {
+        guard let geometry = notebook.index.record(of: notebook.currentPageID)?.geometry else {
+            TNPrecondition.fail("the current page \(notebook.currentPageID) has no record")
+        }
+        return PageSize.matching(geometry)
     }
 
     /// Drawn paper only: the two asset papers are intentions of their own,

@@ -36,6 +36,18 @@ package enum PageSize: Sendable, Hashable {
         return stated.isWithinBounds ? stated : nil
     }
 
+    /// What a page of this shape would be chosen as, so a sheet can open on
+    /// the size the page already is. A shape no named size states is custom,
+    /// and a custom size is stated as typed, which is portrait by convention.
+    package static func matching(_ geometry: PageGeometry) -> (size: PageSize, orientation: PageOrientation) {
+        for named in named {
+            for orientation in PageOrientation.allCases where named.geometry(orientation) == geometry {
+                return (named, orientation)
+            }
+        }
+        return (.custom(width: geometry.width, height: geometry.height), .portrait)
+    }
+
     /// The named sizes are stated portrait, so landscape is the transpose.
     private static func turned(_ geometry: PageGeometry, _ orientation: PageOrientation) -> PageGeometry {
         switch orientation {
