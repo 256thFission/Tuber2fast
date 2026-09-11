@@ -2,6 +2,7 @@ import Foundation
 import PencilKit
 import Testing
 import UIKit
+@testable import TNEditor
 @testable import TNFormat
 @testable import TNModel
 @testable import TNNotebook
@@ -419,5 +420,100 @@ struct NotebookTests {
         await notebook.flush()
         let after = try await PackageStore(root: scratch.packageURL).loadPage(page)
         #expect(after.file.layers.isEmpty && after.file.inkIndex == 0)
+    }
+
+    @Test("A page appended at a stated size and paper lands that record and survives a reopen")
+    func appendAtAStatedSizeAndPaper() async throws {
+        let scratch = try Scratch("nb-append-size")
+        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        let first = notebook.pageIDs[0]
+        let a4Landscape = try #require(PageSize.a4.geometry(.landscape))
+        let page = try await notebook.appendPage(after: first, geometry: a4Landscape, paper: .drawn(.grid))
+        #expect(notebook.index.record(of: page)?.geometry == PageGeometry(width: 842, height: 595))
+        #expect(notebook.index.record(of: page)?.paper == .known(.drawn(.grid)))
+
+        await notebook.flush()
+        let reopened = try await PackageStore(root: scratch.packageURL).load()
+        #expect(reopened.pageFaults.isEmpty)
+        #expect(reopened.index.pageIDs == [first, page])
+        let saved = try #require(reopened.index.record(of: page))
+        #expect(saved.width == 842 && saved.height == 595)
+        #expect(saved.paper == .known(.drawn(.grid)))
+        // The first page kept the size it was created at.
+        #expect(reopened.index.record(of: first)?.geometry == .letter)
+    }
+
+    @Test("Inherited paper after a page that draws no paper at all is blank")
+    func inheritedPaperAfterNoneIsBlank() async throws {
+        let scratch = try Scratch("nb-inherit-none")
+        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        let first = notebook.pageIDs[0]
+        try await notebook.setPaper(.drawn(DrawnPaper.none), on: first)
+        #expect(notebook.paper(of: first) == .drawn(DrawnPaper.none))
+
+        let page = try await notebook.appendPage(after: first, geometry: .letter, paper: .inheritTemplate)
+        #expect(notebook.paper(of: page) == .drawn(.blank))
+    }
+
+    @Test("Asset paper on a new page keeps the chosen width, takes the asset's aspect, and is one structure change")
+    func appendWithAssetPaperIsOneChange() async throws {
+        let scratch = try Scratch("nb-append-asset")
+        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        let first = notebook.pageIDs[0]
+        let asset = try await notebook.storeImageAsset(try Fixture.imageData(width: 200, height: 100))
+        _ = notebook.drainChanges()
+
+        let page = try await notebook.appendPage(after: first, geometry: .letter, paper: .asset(.image(asset)))
+        let record = try #require(notebook.index.record(of: page))
+        // Half as high as it is wide, at the width that was asked for.
+        #expect(record.geometry == PageGeometry(width: 612, height: 306))
+        #expect(record.paper == .known(.image(asset)))
+        let structures = notebook.drainChanges().filter { if case .structure = $0 { true } else { false } }
+        #expect(structures.count == 1, "the size and the paper are one change, not an append and then a paper change")
+
+        await notebook.flush()
+        let reopened = try await PackageStore(root: scratch.packageURL).load()
+        #expect(reopened.pageFaults.isEmpty)
+        let saved = try #require(reopened.index.record(of: page))
+        #expect(saved.geometry == PageGeometry(width: 612, height: 306))
+        #expect(saved.paper == .known(.image(asset)))
+    }
+
+    @Test("An append whose asset paper names nothing in the package is refused and leaves no page behind")
+    func appendWithAnUnreadableAssetCreatesNothing() async throws {
+        let scratch = try Scratch("nb-append-missing-asset")
+        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        let before = notebook.pageIDs
+        let indexBefore = notebook.index
+        let missing = AssetRef(id: AssetID(), format: .heic)
+        _ = notebook.drainChanges()
+
+        await #expect(throws: NewPageRefusal.assetUnreadable(missing)) {
+            try await notebook.appendPage(after: before[0], geometry: .letter, paper: .asset(.image(missing)))
+        }
+        // The refusal is observed by what did not happen: no record, no
+        // emission, and an index equal to the one before the call.
+        #expect(notebook.pageIDs == before)
+        #expect(notebook.pageCount == before.count)
+        #expect(notebook.index == indexBefore)
+        #expect(!notebook.drainChanges().contains { if case .structure = $0 { true } else { false } })
+    }
+
+    @Test("An append outside the page bounds is refused and leaves no page behind")
+    func appendOutOfBoundsCreatesNothing() async throws {
+        let scratch = try Scratch("nb-append-bounds")
+        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        let before = notebook.pageIDs
+        let indexBefore = notebook.index
+        let tooTall = PageGeometry(width: 612, height: PageBounds.maxEdge + 1)
+        _ = notebook.drainChanges()
+
+        await #expect(throws: NewPageRefusal.geometryOutOfBounds(width: 612, height: PageBounds.maxEdge + 1)) {
+            try await notebook.appendPage(after: nil, geometry: tooTall, paper: .drawn(.grid))
+        }
+        #expect(notebook.pageIDs == before)
+        #expect(notebook.pageCount == before.count)
+        #expect(notebook.index == indexBefore)
+        #expect(!notebook.drainChanges().contains { if case .structure = $0 { true } else { false } })
     }
 }
