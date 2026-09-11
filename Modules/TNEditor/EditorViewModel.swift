@@ -83,6 +83,91 @@ package final class EditorViewModel {
         if let created { binding.surface.scroll(to: created) }
     }
 
+    // A new page at a chosen size. Each of these does its `do`/`catch` at
+    // method scope, for the reason the comment above `importImage` gives,
+    // and reports a refusal through `lastContentError` like any other
+    // content change. A refused append creates nothing.
+
+    package func addPage(size: PageSize, orientation: PageOrientation, paper: DrawnPaper) async {
+        lastContentError = nil
+        guard let geometry = size.geometry(orientation) else {
+            lastContentError = Self.sizeOutOfBounds
+            return
+        }
+        var created: PageID?
+        do {
+            created = try await notebook.appendPage(after: notebook.currentPageID, geometry: geometry, paper: .drawn(paper))
+        } catch {
+            lastContentError = Self.fault(error)
+        }
+        binding.drain()
+        if let created { binding.surface.scroll(to: created) }
+    }
+
+    /// The new page takes another page's asset paper: the chosen width, the
+    /// asset's aspect.
+    package func addPage(size: PageSize, orientation: PageOrientation, paperFrom page: PageID) async {
+        lastContentError = nil
+        guard let geometry = size.geometry(orientation) else {
+            lastContentError = Self.sizeOutOfBounds
+            return
+        }
+        guard let paper = notebook.paper(of: page), paper.isAsset else {
+            lastContentError = .invalidWrite("page \(page) has no asset paper to take")
+            return
+        }
+        var created: PageID?
+        do {
+            created = try await notebook.appendPage(after: notebook.currentPageID, geometry: geometry, paper: .asset(paper))
+        } catch {
+            lastContentError = Self.fault(error)
+        }
+        binding.drain()
+        if let created { binding.surface.scroll(to: created) }
+    }
+
+    /// A photo becomes the new page's paper. The asset is published first,
+    /// so the append that follows only has to measure it.
+    package func addPage(size: PageSize, orientation: PageOrientation, photo data: Data) async {
+        lastContentError = nil
+        guard let geometry = size.geometry(orientation) else {
+            lastContentError = Self.sizeOutOfBounds
+            return
+        }
+        var stored: AssetRef?
+        do { stored = try await notebook.storeImageAsset(data) } catch { lastContentError = error }
+        guard let stored else { return }
+        var created: PageID?
+        do {
+            created = try await notebook.appendPage(after: notebook.currentPageID, geometry: geometry, paper: .asset(.image(stored)))
+        } catch {
+            lastContentError = Self.fault(error)
+        }
+        binding.drain()
+        if let created { binding.surface.scroll(to: created) }
+    }
+
+    /// The sheet refuses a size `geometry(_:)` returns nil for before it
+    /// offers to create anything; this is the same refusal, stated for a
+    /// caller that got here anyway.
+    private static let sizeOutOfBounds = FormatFault.invalidWrite(
+        "page size is outside \(EditorViewModel.bounds) points")
+
+    /// `%g` rather than interpolation: `minEdge` is derived and prints its
+    /// binary tail as `137.60000000000002`.
+    private static let bounds = String(format: "%g to %g", PageBounds.minEdge, PageBounds.maxEdge)
+
+    /// `lastContentError` is a `FormatFault`, the one channel a refused
+    /// content change speaks through, so an append's refusal joins it.
+    private static func fault(_ refusal: NewPageRefusal) -> FormatFault {
+        switch refusal {
+        case .geometryOutOfBounds(let width, let height):
+            .invalidWrite("page \(width) x \(height) is outside \(Self.bounds) points")
+        case .assetUnreadable(let asset):
+            .invalidWrite("paper asset \(asset.fileName) could not be read")
+        }
+    }
+
     /// The last page cannot be deleted; the notebook refuses it, silently,
     /// because a notebook with no pages has no state to return to.
     package func deleteCurrentPage() {
@@ -90,6 +175,17 @@ package final class EditorViewModel {
     }
 
     package var currentPaper: Paper? { notebook.paper(of: notebook.currentPageID) }
+
+    /// The pages a new page could take its asset paper from. A page whose
+    /// state is `.unreadable` is omitted: `paper(of:)` reads the index, so
+    /// such a row would offer an asset that can only fail.
+    package var pagesWithAssetPaper: [(page: PageID, paper: Paper)] {
+        notebook.pageIDs.compactMap { page -> (page: PageID, paper: Paper)? in
+            guard let paper = notebook.paper(of: page), paper.isAsset else { return nil }
+            if let state = notebook.state(of: page), case .unreadable = state { return nil }
+            return (page, paper)
+        }
+    }
 
     /// Drawn paper only: the two asset papers are intentions of their own,
     /// and neither is a menu item the user picks from a list.

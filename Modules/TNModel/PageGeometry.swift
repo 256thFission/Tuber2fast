@@ -1,7 +1,8 @@
 import Foundation
 
 /// One page's extent in page points. Origin top-left, x right, y down.
-/// Immutable after the page is created.
+/// Chosen when the page is created, and changed only by asset paper on an
+/// empty page.
 package struct PageGeometry: Codable, Sendable, Equatable {
     package let width: Double
     package let height: Double

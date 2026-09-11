@@ -99,9 +99,10 @@ package final class Notebook {
         return notebook
     }
 
-    /// A new notebook: one page, US Letter, blank paper, committed.
-    package static func create(at root: URL, fileSystem: any PackageFileSystem = PosixFileSystem(), schedule: SaveSchedule = SaveSchedule()) async throws(FormatFault) -> Notebook {
-        let index = NotebookIndex.new(notebookID: NotebookID(), firstPage: PageID(), createdAt: Date())
+    /// A new notebook: one page, US Letter and blank paper unless told
+    /// otherwise, committed.
+    package static func create(at root: URL, geometry: PageGeometry = .letter, paper: DrawnPaper = .blank, fileSystem: any PackageFileSystem = PosixFileSystem(), schedule: SaveSchedule = SaveSchedule()) async throws(FormatFault) -> Notebook {
+        let index = NotebookIndex.new(notebookID: NotebookID(), firstPage: PageID(), createdAt: Date(), geometry: geometry, paper: paper)
         let store = try await PackageStore.create(root: root, index: index, fileSystem: fileSystem)
         return try await open(store: store, schedule: schedule)
     }
@@ -342,6 +343,9 @@ package final class Notebook {
 
     /// A new page after `after` (or at the end), copying the current page's
     /// geometry and paper (`none` becomes `blank`). Returns its identity.
+    ///
+    /// Synchronous, and it must stay so: `EditorBinding.endBoundaryReached`
+    /// answers a report in the same turn and cannot await.
     @discardableResult
     package func appendPage(after: PageID? = nil, answering: ReportSeq? = nil) -> PageID {
         let template = index.record(of: currentPageID) ?? index.pages[0]
@@ -349,7 +353,51 @@ package final class Notebook {
         // to, whose geometry it set.
         let inherited = template.paper.paper?.drawn ?? .blank
         let paper = Paper.drawn(inherited == .none ? .blank : inherited)
-        let record = PageRecord(id: PageID(), geometry: template.geometry, paper: paper)
+        return insertPage(after: after, geometry: template.geometry, paper: paper, answering: answering)
+    }
+
+    /// A new page after `after` (or at the end), at a stated size and with a
+    /// stated paper. Asset paper is measured before anything is inserted, so
+    /// a refused append creates nothing.
+    @discardableResult
+    package func appendPage(after: PageID?, geometry: PageGeometry, paper: NewPagePaper) async throws(NewPageRefusal) -> PageID {
+        guard geometry.isWithinBounds else {
+            throw .geometryOutOfBounds(width: geometry.width, height: geometry.height)
+        }
+        let sized: PageGeometry
+        let resolved: Paper
+        switch paper {
+        case .inheritTemplate:
+            let template = index.record(of: currentPageID) ?? index.pages[0]
+            let inherited = template.paper.paper?.drawn ?? .blank
+            sized = geometry
+            resolved = .drawn(inherited == .none ? .blank : inherited)
+        case .drawn(let drawn):
+            // Taken as typed, `.none` included: the `none` to `blank` rule
+            // belongs to inheritance, not to a paper the user picked.
+            sized = geometry
+            resolved = .drawn(drawn)
+        case .asset(let asset):
+            guard let ref = asset.asset else {
+                TNPrecondition.fail("appendPage: .asset carries drawn paper \(asset)")
+            }
+            guard let aspect = await renderer.aspect(of: asset) else { throw .assetUnreadable(ref) }
+            // The asset fills the page rectangle, so the rectangle is the
+            // asset's shape at the chosen width, as `setPaper` sizes it.
+            let measured = PageGeometry(width: geometry.width, height: geometry.width * aspect)
+            guard measured.isWithinBounds else {
+                throw .geometryOutOfBounds(width: measured.width, height: measured.height)
+            }
+            sized = measured
+            resolved = asset
+        }
+        return insertPage(after: after, geometry: sized, paper: resolved, answering: nil)
+    }
+
+    /// The one place a page is inserted, so anything every new page must do
+    /// is written once.
+    private func insertPage(after: PageID?, geometry: PageGeometry, paper: Paper, answering: ReportSeq?) -> PageID {
+        let record = PageRecord(id: PageID(), geometry: geometry, paper: paper)
         var pages = index.pages
         if let after, let position = pages.firstIndex(where: { $0.id == after }) {
             pages.insert(record, at: position + 1)
@@ -526,15 +574,22 @@ package final class Notebook {
         markDirty()
     }
 
-    /// A photo as a page's paper: normalized to HEIC, published, applied.
-    package func importImageAsPaper(_ data: Data, on page: PageID) async throws(FormatFault) {
-        do { try checkAssetPaperTarget(page) } catch { throw .invalidWrite("paper refused: \(error)") }
+    /// A photo normalized to HEIC and published as an asset, ready to be a
+    /// page's paper.
+    package func storeImageAsset(_ data: Data) async throws(FormatFault) -> AssetRef {
         guard let normalized = await Task.detached(priority: .userInitiated, operation: { ImageImport.normalize(data) }).value else {
             throw .invalidWrite("image could not be decoded")
         }
         guard normalized.size.isValid else { throw .invalidWrite("image is outside the asset bounds") }
         let asset = AssetRef(id: AssetID(), format: .heic)
         try await store.writeAsset(normalized.heic, asset)
+        return asset
+    }
+
+    /// A photo as a page's paper: normalized to HEIC, published, applied.
+    package func importImageAsPaper(_ data: Data, on page: PageID) async throws(FormatFault) {
+        do { try checkAssetPaperTarget(page) } catch { throw .invalidWrite("paper refused: \(error)") }
+        let asset = try await storeImageAsset(data)
         do { try await setPaper(.image(asset), on: page) } catch { throw .invalidWrite("paper refused: \(error)") }
     }
 
@@ -738,6 +793,25 @@ package final class Notebook {
         isClosed = true
         return .clean
     }
+}
+
+/// A new page's paper.
+package enum NewPagePaper: Sendable, Equatable {
+    /// The existing rule: the current page's drawn paper, `none` becomes
+    /// `blank`, asset becomes `blank`. Named for what it does, not for which
+    /// page: `after:` may not be the current page.
+    case inheritTemplate
+    case drawn(DrawnPaper)
+    /// An asset already in the package. The page keeps the chosen width and
+    /// takes the asset's aspect, the rule `setPaper` applies to an empty page.
+    case asset(Paper)
+}
+
+/// Why a new page was refused. Both are decided before anything is
+/// inserted, so a refusal leaves nothing behind.
+package enum NewPageRefusal: Error, Sendable, Equatable {
+    case geometryOutOfBounds(width: Double, height: Double)
+    case assetUnreadable(AssetRef)
 }
 
 /// Why a paper change was refused. Drawn paper is never refused on a page
