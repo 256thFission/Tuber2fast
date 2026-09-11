@@ -116,6 +116,13 @@ Nothing here is a reason not to ship. It is a reason not to be surprised.
 - **Pencil feel, stroke fidelity, palm rejection, and Pencil/touch separation
   are unrendered.** They are Phillip's verdict alone, and no mechanical evidence
   substitutes.
+- **Every width the tool strip offers is a guess.** `InkKind.points` and
+  `EditorTool.pixelEraserPoints` are twelve numbers nobody has held a Pencil to:
+  three per ink kind and three for the pixel eraser. The tests prove the three
+  of a kind differ and that each reaches PencilKit unchanged, which is
+  arithmetic, not taste. Whether thin is thin, whether the highlighter covers a
+  line of handwriting, and whether the pixel eraser bites at the size it looks
+  are a device's answer and Phillip's verdict.
 - **No Release build has ever been seen to emit a trace.** `CanvasLog`'s stderr
   mirror now ships in every configuration, gated on `TN_TRACE` alone, and a
   Release build compiles — but no iPad has been watched printing through it, and
