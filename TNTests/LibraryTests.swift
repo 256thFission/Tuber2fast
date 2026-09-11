@@ -154,8 +154,12 @@ struct LibraryTests {
     func identityAndCreationDate() async throws {
         let (scratch, library) = try makeLibrary("lib-identity")
         defer { withExtendedLifetime(scratch) {} }
+        // File system dates carry second resolution on some volumes, so the
+        // bound is the second the folder was made in, not the instant.
+        let before = Date(timeIntervalSince1970: Date().timeIntervalSince1970.rounded(.down))
         _ = try await library.store.createFolder(named: "Term", in: "")
         _ = try await library.store.createNotebook(named: "Physics", in: "Term")
+        let after = Date()
 
         let notebook = try #require(try await library.store.list(folder: "Term").first)
         let loaded = try await PackageStore(root: library.store.url(of: notebook.relativePath)).load()
@@ -167,7 +171,7 @@ struct LibraryTests {
         #expect(folder.notebookID == nil)
         #expect(folder.folderID == (await library.store.folderID(of: "Term")))
         #expect(folder.identity == .folder(try #require(folder.folderID)))
-        #expect(folder.createdAt > Date(timeIntervalSince1970: 1_800_000_000))
+        #expect(folder.createdAt >= before && folder.createdAt <= after)
     }
 
     @Test("A cover source is the first page, at the version the listing shows")
