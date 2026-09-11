@@ -68,6 +68,10 @@ final class Workspace {
         #endif
     }
 
+    isolated deinit {
+        if let memoryWarnings { NotificationCenter.default.removeObserver(memoryWarnings) }
+    }
+
     #if DEBUG
     private func openSmokeNotebook() async {
         let path = "Smoke.tubernotes"

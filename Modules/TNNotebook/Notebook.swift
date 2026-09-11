@@ -310,23 +310,29 @@ package final class Notebook {
     }
 
     private func restore(_ entry: HistoryEntry) {
-        // The stash is a promise that the page will differ when it loads, so
-        // it bumps the version now: a thumbnail taken of the unloaded page
-        // reads the stash and is keyed by the ink it will have.
-        bumpContentVersion(of: entry.page)
-        guard case .ready(var content) = states[entry.page] else {
+        switch states[entry.page] {
+        case .ready(var content):
+            content.setInk(entry.ink)
+            let seq = InkSeq(nextInkSeq); nextInkSeq += 1
+            content.pendingEcho = seq
+            states[entry.page] = .ready(content)
+            bumpContentVersion(of: entry.page)
+            changes.append(.inkRestored(entry.page, entry.ink, seq: seq))
+            markDirty()
+        case .unloaded, .loading:
             // The page left the window; bring it back and apply on arrival.
+            // The stash is a promise that the page will differ when it loads,
+            // so it bumps the version now: a thumbnail taken of the unloaded
+            // page reads the stash and is keyed by the ink it will have.
             pendingRestores[entry.page] = entry.ink
             wanted.insert(entry.page)
+            bumpContentVersion(of: entry.page)
             if case .unloaded = states[entry.page] { startLoad(entry.page) }
+        case .unreadable, nil:
+            // A page that cannot take ink, or one that was deleted: the entry
+            // is swallowed (the `KNOWN DEFECT` at `deletePage`).
             return
         }
-        content.setInk(entry.ink)
-        let seq = InkSeq(nextInkSeq); nextInkSeq += 1
-        content.pendingEcho = seq
-        states[entry.page] = .ready(content)
-        changes.append(.inkRestored(entry.page, entry.ink, seq: seq))
-        markDirty()
     }
 
     /// The runtime's final report for a retired canvas. `finalInk` nil means

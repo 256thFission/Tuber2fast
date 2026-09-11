@@ -443,7 +443,12 @@ struct NotebookTests {
         notebook.windowChanged(to: [a, b])
         try await waitUntil { notebook.state(of: a)?.content != nil }
         #expect(notebook.state(of: a)?.content?.ink.strokes.isEmpty == true)
+        // A new version after the load, so the render comes from custody and
+        // not from the cache entry the unloaded path made.
+        try await notebook.setPaper(.drawn(.blank), on: a)
+        #expect(notebook.contentVersion(of: a) == before + 2)
         let loaded = try #require(await notebook.thumbnail(of: a))
+        #expect(loaded !== unloaded, "rendered again, from the ready page")
         #expect(luminance(of: loaded, x: Int(40 * scale), y: Int(10 * scale)) == 255)
     }
 

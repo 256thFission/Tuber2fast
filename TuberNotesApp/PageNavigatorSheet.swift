@@ -6,6 +6,14 @@ import UniformTypeIdentifiers
 
 /// The drag payload. A retroactive `Transferable` on `PageID` would be a
 /// warning, and warnings are errors; a local wrapper is not.
+///
+/// KNOWN DEFECT: the representation is `public.data`, so every cell and the
+/// "+" tile light up as drop targets for any data item dragged in from
+/// another app. Such a drop decodes to nothing and moves nothing; only the
+/// highlight is wrong. The fix is an exported custom `UTType`, which needs a
+/// declaration in the app's Info.plist, and the plist is generated from
+/// build settings today (`project.yml`, `GENERATE_INFOPLIST_FILE`), so that
+/// is a build change rather than a line here.
 private struct DraggedPage: Transferable, Codable {
     let id: PageID
 
