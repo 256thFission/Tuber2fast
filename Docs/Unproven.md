@@ -125,6 +125,11 @@ Nothing here is a reason not to ship. It is a reason not to be surprised.
   arithmetic. Whether thin is thin, whether the highlighter covers a line of
   handwriting, and whether the pixel eraser bites at the size it looks are a
   device's answer and Phillip's verdict.
+- **The text tool's numbers are taste too.** `TextStyle.body` (the system face
+  at 16 pt, black), the seven sizes the text popover offers, and the 240 by 96
+  box `Notebook.createTextBox` opens at the tap have met no Pencil and no
+  finger. Whether a new box reads as a note and whether the sizes cover a
+  heading and a caption are Phillip's verdict on the iPad.
 - **No Release build has ever been seen to emit a trace.** `CanvasLog`'s stderr
   mirror now ships in every configuration, gated on `TN_TRACE` alone, and a
   Release build compiles — but no iPad has been watched printing through it, and

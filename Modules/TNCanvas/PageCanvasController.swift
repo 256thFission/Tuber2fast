@@ -14,6 +14,36 @@ protocol PageCanvasOwner: AnyObject {
     func pageDidRetire(_ page: PageID, finalInk: PKDrawing)
     func pageStrokeDidEnd(_ page: PageID)
     func pageDidActivateLink(_ page: PageID, layer: LayerID)
+    func pageDidRequestTextBox(_ page: PageID, at point: PagePoint, style: TextStyle, alignment: TextAlignment)
+    func pageDidRequestTextEdit(_ page: PageID, layer: LayerID)
+    func pageDidEndTextEditing(_ page: PageID, layer: LayerID, _ text: TextLayer)
+    /// The outer page-turn pan, which a border drag must not start.
+    func pagingPanGestureRecognizer() -> UIGestureRecognizer?
+}
+
+/// The runtime's text session. The draft is the canvas's until it ends,
+/// the way a stroke in flight is PencilKit's.
+enum TextEditPhase {
+    case idle
+    /// Reported a request; no view yet. The overlay goes up when the
+    /// omitting composite lands. A create request has no layer id until the
+    /// notebook answers, so the case names none.
+    case opening
+    /// The overlay is up and first responder.
+    case editing(layer: LayerID, view: TextEditingView)
+}
+
+struct HitRect: Equatable {
+    enum Kind { case link, text }
+    let id: LayerID
+    let rect: CGRect
+    let kind: Kind
+}
+
+/// What a tap with the text tool means.
+enum TextTap: Equatable {
+    case edit(LayerID)
+    case create(PagePoint)
 }
 
 /// The live runtime for exactly one page.
@@ -40,9 +70,20 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
     private var geometry: PageGeometry
     private unowned let owner: any PageCanvasOwner
 
-    /// The `.link` layers of the installed snapshot, in stack order. A tap that
-    /// lands inside one is an intention, reported and never acted on here.
-    private var linkRects: [(id: LayerID, rect: CGRect)] = []
+    /// The `.link` and `.text` layers of the installed snapshot, in stack
+    /// order. A tap that lands inside one is an intention, reported and never
+    /// acted on here.
+    private var hitRects: [HitRect] = []
+
+    private var tool: CanvasTool?
+    private(set) var phase: TextEditPhase = .idle
+    /// Overlays whose end was reported and whose composite has not landed.
+    /// Inert. A side map, not a phase: closing A and editing B happen in one
+    /// tap.
+    private(set) var closing: [LayerID: TextEditingView] = [:]
+    /// How much of the viewport the software keyboard covers.
+    private var keyboardOverlap: CGFloat = 0
+    private var keyboardObservers: [any NSObjectProtocol] = []
 
     /// Set at `canvasViewDidBeginUsingTool`, cleared after the drawing change
     /// that follows `canvasViewDidEndUsingTool`. Installs, window changes, and
@@ -76,7 +117,7 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         inkSeq: InkSeq?,
         composite: Composite?,
         layers: [Layer],
-        tool: PKTool?,
+        tool: CanvasTool?,
         canUndo: Bool,
         canRedo: Bool,
         owner: any PageCanvasOwner,
@@ -116,7 +157,9 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         clearEchoLatchAtEndOfTurn(inkSeq)
 
         setLayers(layers)
-        if let tool { canvasView.tool = tool }
+        // The drawing gesture is PencilKit's and exists once the view loads;
+        // the tool is applied there.
+        self.tool = tool
         if let composite { backdropView.image = UIImage(cgImage: composite.image) }
     }
 
@@ -201,6 +244,19 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
         tap.delegate = self
         canvasView.addGestureRecognizer(tap)
+
+        if let tool { apply(tool: tool) }
+
+        // A finger-typed session is covered by the keyboard on the first
+        // keystroke without this.
+        let center = NotificationCenter.default
+        for name in [UIResponder.keyboardWillShowNotification, UIResponder.keyboardWillHideNotification] {
+            keyboardObservers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] notification in
+                let showing = notification.name == UIResponder.keyboardWillShowNotification
+                let frame = (notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue
+                MainActor.assumeIsolated { self?.keyboardWillChange(showing: showing, frame: frame) }
+            })
+        }
     }
 
     package override func viewDidLayoutSubviews() {
@@ -217,17 +273,108 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
     }
 
     func setLayers(_ layers: [Layer]) {
-        linkRects = layers.compactMap { layer in
-            guard case .link(let link) = layer.payload else { return nil }
-            return (
-                layer.id,
-                CGRect(x: link.rect.x, y: link.rect.y, width: link.rect.width, height: link.rect.height)
-            )
+        hitRects = layers.compactMap { layer in
+            switch layer.payload {
+            case .link(let link):
+                HitRect(id: layer.id, rect: CGRect(x: link.rect.x, y: link.rect.y, width: link.rect.width, height: link.rect.height), kind: .link)
+            case .text(let text):
+                HitRect(id: layer.id, rect: CGRect(x: text.rect.x, y: text.rect.y, width: text.rect.width, height: text.rect.height), kind: .text)
+            case .image, .pdf:
+                nil
+            }
         }
     }
 
-    func apply(tool: PKTool) {
-        canvasView.tool = tool
+    /// The drawing gesture follows the tool, not the session: there is no
+    /// window where the text tool is selected and the Pencil draws. Switching
+    /// to ink commits an open session before the gesture comes back, so a
+    /// stroke never lands under a live overlay.
+    func apply(tool: CanvasTool) {
+        self.tool = tool
+        switch tool {
+        case .ink(let pkTool):
+            commitSession()
+            canvasView.tool = pkTool
+            canvasView.drawingGestureRecognizer.isEnabled = true
+        case .text(let style, let alignment):
+            canvasView.drawingGestureRecognizer.isEnabled = false
+            if case .editing(_, let view) = phase {
+                view.applyStyle(style, alignment: alignment)
+            }
+        }
+    }
+
+    /// The omitting composite has landed; the overlay goes up over it.
+    ///
+    /// A begin the runtime cannot honour, because a tool switch or a retire
+    /// raced the render, is answered with the value unchanged: the notebook's
+    /// session closes the one way a session closes, and the picture regains
+    /// the layer.
+    func beginTextEditing(_ start: TextEditStart) {
+        guard case .opening = phase else {
+            owner.pageDidEndTextEditing(pageID, layer: start.layer, start.text)
+            return
+        }
+        let typing: TextStyle = if case .text(let style, _) = tool { style } else { .body }
+        let view = TextEditingView(text: start.text, typing: typing)
+        canvasView.addSubview(view)
+        setOverlayScale(view)
+        // A border drag neither pans the page nor turns it. Turning the page
+        // would retire this canvas and destroy the view mid-gesture.
+        for pan in [canvasView.panGestureRecognizer, owner.pagingPanGestureRecognizer()].compactMap({ $0 }) {
+            pan.require(toFail: view.moveRecognizer)
+            pan.require(toFail: view.resizeRecognizer)
+        }
+        phase = .editing(layer: start.layer, view: view)
+        view.becomeFirstResponder()
+        TNLog.event(.canvas, "text editing began on page \(pageID)")
+    }
+
+    /// The committed composite has landed; the inert overlay comes down.
+    func endTextEditing(layer: LayerID) {
+        closing.removeValue(forKey: layer)?.removeFromSuperview()
+    }
+
+    /// Reports the draft whole and leaves the view up, inert, until the
+    /// composite that has the text lands. State settles before the report
+    /// leaves.
+    private func commitSession() {
+        guard case .editing(let layer, let view) = phase else { return }
+        view.resignFirstResponder()
+        closing[layer] = view
+        phase = .idle
+        TNLog.event(.canvas, "text editing ended on page \(pageID)")
+        owner.pageDidEndTextEditing(pageID, layer: layer, view.committedLayer)
+    }
+
+    /// Glyphs rasterize at the zoom, once per gesture, never per frame.
+    private func setOverlayScale(_ view: UIView) {
+        let scale = canvasView.zoomScale * traitCollection.displayScale
+        view.contentScaleFactor = scale
+        for subview in view.subviews { subview.contentScaleFactor = scale }
+    }
+
+    package func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) {
+        if case .editing(_, let overlay) = phase { setOverlayScale(overlay) }
+        for overlay in closing.values { setOverlayScale(overlay) }
+    }
+
+    // MARK: - Keyboard
+
+    func keyboardWillChange(showing: Bool, frame: CGRect?) {
+        guard isViewLoaded, let window = view.window else { return }
+        var overlap: CGFloat = 0
+        if showing, let frame {
+            let covered = view.convert(frame, from: window).intersection(view.bounds)
+            overlap = covered.isNull ? 0 : covered.height
+        }
+        guard overlap != keyboardOverlap else { return }
+        keyboardOverlap = overlap
+        centerPageInViewport()
+        if overlap > 0, case .editing(_, let overlay) = phase {
+            let zoom = canvasView.zoomScale
+            canvasView.scrollRectToVisible(overlay.frame.applying(CGAffineTransform(scaleX: zoom, y: zoom)), animated: true)
+        }
     }
 
     func setUndoAvailability(canUndo: Bool, canRedo: Bool) {
@@ -241,6 +388,8 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         self.geometry = geometry
         canvasView.contentSize = CGSize(width: geometry.width, height: geometry.height)
         backdropView.frame = CGRect(x: 0, y: 0, width: geometry.width, height: geometry.height)
+        // The overlay's frame is its rect in page space, which a geometry
+        // change does not move.
         zoomRangeBounds = nil
         view.setNeedsLayout()
     }
@@ -277,6 +426,15 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
     func retire() -> RetireOutcome {
         if isStrokeInFlight { return .deferred }
         guard !hasRetired else { return .retired }
+        // The draft goes home before the ink does. A session still opening
+        // has no draft; the begin that arrives later finds no canvas, and the
+        // owner answers it.
+        commitSession()
+        phase = .idle
+        for view in closing.values { view.removeFromSuperview() }
+        closing.removeAll()
+        for observer in keyboardObservers { NotificationCenter.default.removeObserver(observer) }
+        keyboardObservers.removeAll()
         hasRetired = true
         canvasView.delegate = nil
         owner.pageDidRetire(pageID, finalInk: canvasView.drawing)
@@ -350,26 +508,59 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         let content = canvasView.contentSize
         let horizontal = max(0, (bounds.width - content.width) / 2)
         let vertical = max(0, (bounds.height - content.height) / 2)
-        let inset = UIEdgeInsets(top: vertical, left: horizontal, bottom: vertical, right: horizontal)
+        let inset = UIEdgeInsets(top: vertical, left: horizontal, bottom: max(vertical, keyboardOverlap), right: horizontal)
         guard canvasView.contentInset != inset else { return }
         canvasView.contentInset = inset
     }
 
-    // MARK: - Links
+    // MARK: - Taps
 
     @objc private func handleTap(_ recognizer: UITapGestureRecognizer) {
-        guard !linkRects.isEmpty, recognizer.state == .ended else { return }
+        guard recognizer.state == .ended else { return }
         let zoom = canvasView.zoomScale
         guard zoom > 0 else { return }
         // `location(in:)` on a scroll view answers in zoomed content
         // coordinates; page space is that divided by the scale.
         let point = recognizer.location(in: canvasView)
-        let pagePoint = CGPoint(x: point.x / zoom, y: point.y / zoom)
-        // Topmost first: the stack is bottom-to-top and the layer a finger
-        // lands on is the one drawn last.
-        guard let hit = linkRects.last(where: { $0.rect.contains(pagePoint) }) else { return }
-        TNLog.event(.canvas, "link activated on page \(pageID)")
-        owner.pageDidActivateLink(pageID, layer: hit.id)
+        tapped(at: CGPoint(x: point.x / zoom, y: point.y / zoom))
+    }
+
+    /// A tap in page space. With the text tool a text rect is edited and
+    /// paper gets a box, either one after the open session commits; with an
+    /// ink tool a link is activated. Links are the ink tools' affair.
+    func tapped(at pagePoint: CGPoint) {
+        switch tool {
+        case .text(let style, let alignment):
+            guard let hit = Self.textHit(at: pagePoint, rects: hitRects) else { return }
+            commitSession()
+            phase = .opening
+            switch hit {
+            case .edit(let layer):
+                owner.pageDidRequestTextEdit(pageID, layer: layer)
+            case .create(let point):
+                owner.pageDidRequestTextBox(pageID, at: point, style: style, alignment: alignment)
+            }
+        case .ink, nil:
+            guard let hit = Self.linkHit(at: pagePoint, rects: hitRects) else { return }
+            TNLog.event(.canvas, "link activated on page \(pageID)")
+            owner.pageDidActivateLink(pageID, layer: hit)
+        }
+    }
+
+    /// Topmost first: the stack is bottom-to-top and the layer a finger lands
+    /// on is the one drawn last. A link under the text tool is nothing.
+    static func textHit(at point: CGPoint, rects: [HitRect]) -> TextTap? {
+        guard let hit = rects.last(where: { $0.rect.contains(point) }) else {
+            return .create(PagePoint(x: point.x, y: point.y))
+        }
+        switch hit.kind {
+        case .text: return .edit(hit.id)
+        case .link: return nil
+        }
+    }
+
+    static func linkHit(at point: CGPoint, rects: [HitRect]) -> LayerID? {
+        rects.last(where: { $0.kind == .link && $0.rect.contains(point) })?.id
     }
 
     package func gestureRecognizer(
@@ -377,6 +568,14 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer
     ) -> Bool {
         true
+    }
+
+    /// Caret placement and selection inside the live box are the text
+    /// view's. This also kills the re-begin loop where a tap in the open
+    /// box's own rect would request the layer already open.
+    package func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard case .editing(_, let view) = phase else { return true }
+        return !view.bounds.contains(gestureRecognizer.location(in: view))
     }
 
     // MARK: - PKCanvasViewDelegate

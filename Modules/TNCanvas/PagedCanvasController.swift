@@ -55,7 +55,7 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
     /// changes and never per frame.
     private var reportedWindow: [PageID] = []
 
-    private var tool: PKTool?
+    private var tool: CanvasTool?
     private var canUndo = false
     private var canRedo = false
 
@@ -230,7 +230,7 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
         )
     }
 
-    package func updateComposite(on page: PageID, _ composite: Composite) {
+    package func updateComposite(on page: PageID, _ composite: Composite, layers: [Layer]) {
         TNPrecondition.require(
             descriptors[page] != nil,
             "a composite arrived for page \(page), which this runtime has not been told about"
@@ -240,12 +240,34 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
             snapshots[page] = PageSnapshot.editable(
                 id: page,
                 ink: ink,
-                layers: snapshot.layers,
+                layers: layers,
                 composite: composite,
                 inkSeq: inkSeq
             )
         }
-        canvases[page]?.updateComposite(composite)
+        if let canvas = canvases[page] {
+            canvas.setLayers(layers)
+            canvas.updateComposite(composite)
+        }
+    }
+
+    package func beginTextEditing(on page: PageID, _ start: TextEditStart) {
+        TNPrecondition.require(
+            descriptors[page] != nil,
+            "text editing began on page \(page), which this runtime has not been told about"
+        )
+        guard let canvas = canvases[page] else {
+            // The page left the live window between the request and the
+            // render. Answered on the canvas's behalf with the value unchanged,
+            // so the notebook's session closes the one way a session closes.
+            reporter.textEditingEnded(on: page, layer: start.layer, start.text)
+            return
+        }
+        canvas.beginTextEditing(start)
+    }
+
+    package func endTextEditing(on page: PageID, layer: LayerID) {
+        canvases[page]?.endTextEditing(layer: layer)
     }
 
     package func scroll(to page: PageID) {
@@ -516,13 +538,16 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
     /// all go, and exactly one final report is delivered for it.
     private func retireDepartedPage(_ page: PageID) {
         if let canvas = canvases[page] {
+            // Held aside before the retire, so every report the retire makes
+            // on the way out, a text session committing in particular, is a
+            // dead letter: the notebook has already let the page go.
+            canvases[page] = nil
+            retiring[page] = canvas
             switch canvas.retire() {
             case .deferred:
                 // Never interrupt a stroke, even for a page that is gone: the
-                // canvas is held aside, out of the layout, until the stroke
+                // canvas stays aside, out of the layout, until the stroke
                 // commits and its ink can be reported.
-                canvases[page] = nil
-                retiring[page] = canvas
                 pagesToRetireWhenStrokeEnds.insert(page)
             case .retired:
                 releaseCanvas(page, canvas)
@@ -554,6 +579,28 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
         // stroke's end carries the whole drawing in its final report.
         guard retiring[page] == nil else { return }
         reporter.inkChanged(on: page, ink, echoOf: echoOf)
+    }
+
+    // The same rule for the text reports: a canvas in `retiring` is a dead
+    // letter. A draft it commits on the way out is not carried anywhere; the
+    // page is gone, and so is the box.
+    func pageDidRequestTextBox(_ page: PageID, at point: PagePoint, style: TextStyle, alignment: TextAlignment) {
+        guard retiring[page] == nil else { return }
+        reporter.textBoxRequested(on: page, at: point, style: style, alignment: alignment)
+    }
+
+    func pageDidRequestTextEdit(_ page: PageID, layer: LayerID) {
+        guard retiring[page] == nil else { return }
+        reporter.textEditRequested(on: page, layer: layer)
+    }
+
+    func pageDidEndTextEditing(_ page: PageID, layer: LayerID, _ text: TextLayer) {
+        guard retiring[page] == nil else { return }
+        reporter.textEditingEnded(on: page, layer: layer, text)
+    }
+
+    func pagingPanGestureRecognizer() -> UIGestureRecognizer? {
+        scrollView.panGestureRecognizer
     }
 
     /// The canvas's one final report, on its way to the notebook.

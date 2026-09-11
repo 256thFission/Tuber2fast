@@ -54,10 +54,31 @@ package struct Composite: @unchecked Sendable, Equatable {
     }
 }
 
+/// A point in page space.
+package struct PagePoint: Sendable, Equatable {
+    package let x: Double
+    package let y: Double
+    package init(x: Double, y: Double) { self.x = x; self.y = y }
+}
+
+/// What the runtime is told to open: the layer as the notebook holds it.
+package struct TextEditStart: Sendable, Equatable {
+    package let layer: LayerID
+    package let text: TextLayer
+    package init(layer: LayerID, text: TextLayer) { self.layer = layer; self.text = text }
+}
+
+/// Ink is a `PKTool`; text is a style to type with, and the drawing
+/// gesture is off.
+package enum CanvasTool: @unchecked Sendable {
+    case ink(PKTool)
+    case text(TextStyle, TextAlignment)
+}
+
 /// What the runtime is told about the editing environment: the tool.
 package struct CanvasEnvironment: @unchecked Sendable {
-    package let tool: PKTool
-    package init(tool: PKTool) { self.tool = tool }
+    package let tool: CanvasTool
+    package init(tool: CanvasTool) { self.tool = tool }
 }
 
 /// One page's content, pushed down as a value. Two shapes, two factories:
@@ -109,8 +130,16 @@ package enum RetireOutcome: Sendable, Equatable {
     func restoreInk(on page: PageID, _ ink: PKDrawing, seq: InkSeq)
     func scroll(to page: PageID)
     func retire(_ page: PageID) -> RetireOutcome
-    /// A sharper or refreshed backdrop for a live page; ink is untouched.
-    func updateComposite(on page: PageID, _ composite: Composite)
+    /// A sharper or refreshed backdrop for a live page, with the layer list
+    /// it was rendered from, so the runtime's hit rects match the picture.
+    /// Ink is untouched.
+    func updateComposite(on page: PageID, _ composite: Composite, layers: [Layer])
+    /// The layer and its value; arrives with the composite that omits the
+    /// layer, and the runtime raises a live text view over it.
+    func beginTextEditing(on page: PageID, _ start: TextEditStart)
+    /// Arrives with the composite that has the committed text; the runtime
+    /// takes the live view down.
+    func endTextEditing(on page: PageID, layer: LayerID)
     /// The tool and any other chrome fact, pushed, never parked here.
     func apply(_ environment: CanvasEnvironment)
 }
@@ -127,4 +156,12 @@ package enum RetireOutcome: Sendable, Equatable {
     /// The system undo gesture or the toolbar, arriving through the runtime.
     func undoRequested()
     func redoRequested()
+    /// A tap on paper with the text tool; the tool's style rides with it.
+    /// Answered by `beginTextEditing` once the composite omits the layer.
+    func textBoxRequested(on page: PageID, at point: PagePoint, style: TextStyle, alignment: TextAlignment)
+    /// A tap in a text rect with the text tool. Answered the same way.
+    func textEditRequested(on page: PageID, layer: LayerID)
+    /// The whole committed value. Answered by `endTextEditing` once the
+    /// composite has the text.
+    func textEditingEnded(on page: PageID, layer: LayerID, _ text: TextLayer)
 }

@@ -19,19 +19,40 @@ package struct ToolPaletteRecord: Equatable, Sendable, Codable {
     package var eraserMode: EraserMode
     package var pixelEraserWidth: ToolWidth
     package var recentColors: [ToolColor]
+    package var text: TextPreset
 
     package init(
         lastKind: ToolPalette.Kind,
         inks: [InkKind: InkPreset],
         eraserMode: EraserMode,
         pixelEraserWidth: ToolWidth,
-        recentColors: [ToolColor]
+        recentColors: [ToolColor],
+        text: TextPreset
     ) {
         self.lastKind = lastKind
         self.inks = inks
         self.eraserMode = eraserMode
         self.pixelEraserWidth = pixelEraserWidth
         self.recentColors = recentColors
+        self.text = text
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case lastKind, inks, eraserMode, pixelEraserWidth, recentColors, text
+    }
+
+    // The text slot arrived after the palette first shipped, so a record
+    // written without it is a whole palette somebody keeps, not a record
+    // that cannot be used: it reads back with the built-in text preset. An
+    // ink slot is different, and `isComplete` says why.
+    package init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        lastKind = try container.decode(ToolPalette.Kind.self, forKey: .lastKind)
+        inks = try container.decode([InkKind: InkPreset].self, forKey: .inks)
+        eraserMode = try container.decode(EraserMode.self, forKey: .eraserMode)
+        pixelEraserWidth = try container.decode(ToolWidth.self, forKey: .pixelEraserWidth)
+        recentColors = try container.decode([ToolColor].self, forKey: .recentColors)
+        text = try container.decodeIfPresent(TextPreset.self, forKey: .text) ?? .body
     }
 
     /// What a first launch opens on, and what an unreadable preference
@@ -45,7 +66,8 @@ package struct ToolPaletteRecord: Equatable, Sendable, Codable {
         ],
         eraserMode: .object,
         pixelEraserWidth: .medium,
-        recentColors: []
+        recentColors: [],
+        text: .body
     )
 
     /// Whether every ink kind has a slot.
@@ -85,6 +107,7 @@ package protocol ToolPaletteStore: Sendable {
     package enum Kind: Equatable, Sendable, Codable {
         case ink(InkKind)
         case eraser
+        case text
     }
 
     package private(set) var lastKind: Kind
@@ -95,6 +118,8 @@ package protocol ToolPaletteStore: Sendable {
     /// colour `ToolColor.defaults` already shows. A colour becomes recent
     /// when a stroke lands in it, not when it is picked.
     package private(set) var recentColors: [ToolColor]
+    /// The style and alignment the text tool last typed with.
+    package private(set) var text: TextPreset
 
     /// Eight, which is one row beside the defaults on the narrowest strip
     /// the popover draws.
@@ -111,6 +136,7 @@ package protocol ToolPaletteStore: Sendable {
         self.eraserMode = record.eraserMode
         self.pixelEraserWidth = record.pixelEraserWidth
         self.recentColors = record.recentColors
+        self.text = record.text
     }
 
     // MARK: The tools it names
@@ -120,8 +146,11 @@ package protocol ToolPaletteStore: Sendable {
         switch lastKind {
         case .ink(let kind): tool(for: kind)
         case .eraser: eraserTool
+        case .text: textTool
         }
     }
+
+    package var textTool: EditorTool { .text(text.style, text.alignment) }
 
     package func tool(for kind: InkKind) -> EditorTool {
         guard let preset = inks[kind] else {
@@ -151,6 +180,11 @@ package protocol ToolPaletteStore: Sendable {
             eraserMode = .pixel
             pixelEraserWidth = width
             lastKind = .eraser
+        case .text(let style, let alignment):
+            // A colour typed with is never a recent; `used(_:)` is the ink
+            // report's and no text report calls it.
+            text = TextPreset(style: style, alignment: alignment)
+            lastKind = .text
         case .lasso:
             // Lasso has nothing to remember and is not a `Kind`, so there
             // is nothing to write and no reason to touch the store.
@@ -178,7 +212,8 @@ package protocol ToolPaletteStore: Sendable {
             inks: inks,
             eraserMode: eraserMode,
             pixelEraserWidth: pixelEraserWidth,
-            recentColors: recentColors
+            recentColors: recentColors,
+            text: text
         ))
     }
 }

@@ -221,7 +221,7 @@ enum ContractChecker {
     /// exists (`project.yml`, the `Framework` template), so `import SwiftUI` in
     /// the canvas runtime is a build failure, not a test failure. A rule the
     /// link graph holds does not belong in a token scanner.
-    static let uiFrameworkModules: Set<String> = ["UIKit", "PencilKit", "CoreGraphics"]
+    static let uiFrameworkModules: Set<String> = ["UIKit", "PencilKit", "CoreGraphics", "CoreText"]
 
     /// Declaration kinds Swift permits in a scoped import: `import struct UIKit.X`.
     private static let importKindSpecifiers: Set<String> = [
@@ -731,11 +731,11 @@ struct ContractStructureTests {
         // The tree and the trash, in Foundation. Holds Notebooks (PencilKit
         // arrives transitively) but writes no UI import.
         "TNLibrary": ["PencilKit"],
-        // Composites and thumbnails: CoreGraphics (CoreText and ImageIO are
-        // not policed), PencilKit for a thumbnail's ink. No UIKit.
-        "TNRender": ["CoreGraphics", "PencilKit"],
+        // Composites and thumbnails: CoreGraphics, CoreText (ImageIO is not
+        // policed), PencilKit for a thumbnail's ink. No UIKit.
+        "TNRender": ["CoreGraphics", "PencilKit", "CoreText"],
         // The driven runtime: everything that owns frame-frequency state.
-        "TNCanvas": ["UIKit", "PencilKit", "CoreGraphics"],
+        "TNCanvas": ["UIKit", "PencilKit", "CoreGraphics", "CoreText"],
         // The binding and the editor view model.
         "TNEditor": ["UIKit", "PencilKit", "CoreGraphics"],
     ]
@@ -750,14 +750,28 @@ struct ContractStructureTests {
     /// durable value, so the vocabulary it may not acquire is all of it,
     /// CoreGraphics included, however `TNModel`'s row above reads.
     ///
-    /// Two entries rather than a rule, because two files is what there is; a
-    /// third would be the moment to ask what the rule really is. Neither can
-    /// outlive its file: the test below requires **exactly one** match per
-    /// name, so a rename fails here rather than passing over nothing.
+    /// The third entry made this a rule: a file named here is governed by
+    /// its own row and not by its module's. `TextTypesetting.swift` is the
+    /// one typesetting builder the renderer and the live text view share,
+    /// and `TNModel` is the only module both can see, so it imports UIKit
+    /// where nothing else in `TNModel` may. No entry can outlive its file:
+    /// the test below requires **exactly one** match per name, so a rename
+    /// fails here rather than passing over nothing.
     static let filesPlacedByDesign: [String: (module: String, forbidden: Set<String>)] = [
         "Paper.swift": ("TNModel", ["UIKit", "PencilKit", "CoreGraphics"]),
         "PaperRenderer.swift": ("TNRender", ["UIKit", "PencilKit"]),
+        "TextTypesetting.swift": ("TNModel", ["PencilKit"]),
     ]
+
+    /// What a source may import: its own row when it is placed by design,
+    /// its module's row otherwise.
+    static func permittedUIFrameworks(for path: String) -> Set<String> {
+        let name = String(path.split(separator: "/").last ?? "")
+        if let rule = filesPlacedByDesign[name] {
+            return ContractChecker.uiFrameworkModules.subtracting(rule.forbidden)
+        }
+        return moduleUIFrameworkPolicy[module(of: path)] ?? []
+    }
 
     @Test("A template is a name in the model and marks in the renderer, and nowhere else")
     func templateFilesArePlacedByDesign() throws {
@@ -816,7 +830,7 @@ struct ContractStructureTests {
     func eachModuleImportsOnlyWhatItsPlaceAllows() throws {
         for source in try Self.appSources() {
             let module = Self.module(of: source.path)
-            let permitted = Self.moduleUIFrameworkPolicy[module] ?? []
+            let permitted = Self.permittedUIFrameworks(for: source.path)
             let violations = Set(ContractChecker.importedUIFrameworks(in: source.code))
                 .subtracting(permitted)
             #expect(
@@ -1168,6 +1182,17 @@ struct ContractCheckerOwnTests {
                 in: ContractChecker.codeOnly("// PKToolPicker is deliberately not used.\nlet x = 1\n")
             )
         )
+    }
+
+    @Test("A file placed by design is judged by its own row, not its module's")
+    func placedFilesAreJudgedByTheirOwnRow() {
+        let placed = "Modules/TNModel/TextTypesetting.swift"
+        #expect(ContractStructureTests.permittedUIFrameworks(for: placed).contains("UIKit"))
+        #expect(!ContractStructureTests.permittedUIFrameworks(for: placed).contains("PencilKit"))
+        #expect(!ContractStructureTests.permittedUIFrameworks(for: "Modules/TNModel/Layer.swift").contains("UIKit"))
+        let violating = Set(ContractChecker.importedUIFrameworks(in: "import PencilKit\n"))
+            .subtracting(ContractStructureTests.permittedUIFrameworks(for: placed))
+        #expect(violating == ["PencilKit"])
     }
 
     @Test("A stale allowlist entry is reported")

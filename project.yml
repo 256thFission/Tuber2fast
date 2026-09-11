@@ -99,8 +99,9 @@ targets:
       - path: Modules/TNCore
 
   # Durable values and identities. PencilKit and CoreGraphics for value types
-  # only (PKDrawing, CGImage cross the seams as immutable values). No UIKit,
-  # no I/O.
+  # only (PKDrawing, CGImage cross the seams as immutable values). No I/O.
+  # No UIKit, except TextTypesetting.swift: the typesetting builder the
+  # renderer and the live text view share, which the checker names by file.
   TNModel:
     templates: [Framework]
     sources:
