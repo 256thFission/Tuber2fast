@@ -361,8 +361,11 @@ struct NotebookTests {
         try await notebook.setPaper(.drawn(.grid), on: page)
         expectBump("paper")
         try await notebook.addTextLayer(on: page, rect: PageRect(x: 10, y: 10, width: 100, height: 40), runs: [TextRun(string: "t")])
-        expectBump("a layer added")
-        let layer = try #require(notebook.state(of: page)?.content?.layers.first)
+        expectBump("a text layer added")
+        // Text refuses a transform; an image layer takes one.
+        let layer = Fixture.imageLayer()
+        try await notebook.addLayer(layer, assetData: Fixture.archive(1, count: 128), on: page)
+        expectBump("an image layer added")
         #expect(notebook.transformLayer(on: page, layer: layer.id, to: .translation(x: 1, y: 1)) == .accepted)
         expectBump("a layer moved")
         notebook.deleteLayer(layer.id, on: page)
