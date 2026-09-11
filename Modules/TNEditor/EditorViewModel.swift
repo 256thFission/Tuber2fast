@@ -83,63 +83,54 @@ package final class EditorViewModel {
         if let created { binding.surface.scroll(to: created) }
     }
 
-    // A new page at a chosen size. Each of these does its `do`/`catch` at
-    // method scope, for the reason the comment above `importImage` gives,
-    // and reports a refusal through `lastContentError` like any other
-    // content change. A refused append creates nothing.
+    // A new page at a chosen size. The four say which paper; `append` below
+    // is the one that talks to the notebook.
+
+    /// The paper the boundary pull would have given it: the current page's
+    /// drawn paper, which the notebook decides and nothing here restates.
+    package func addPage(size: PageSize, orientation: PageOrientation) async {
+        await append(size, orientation, .inheritTemplate)
+    }
 
     package func addPage(size: PageSize, orientation: PageOrientation, paper: DrawnPaper) async {
-        lastContentError = nil
-        guard let geometry = size.geometry(orientation) else {
-            lastContentError = Self.sizeOutOfBounds
-            return
-        }
-        var created: PageID?
-        do {
-            created = try await notebook.appendPage(after: notebook.currentPageID, geometry: geometry, paper: .drawn(paper))
-        } catch {
-            lastContentError = Self.fault(error)
-        }
-        binding.drain()
-        if let created { binding.surface.scroll(to: created) }
+        await append(size, orientation, .drawn(paper))
     }
 
     /// The new page takes another page's asset paper: the chosen width, the
     /// asset's aspect.
     package func addPage(size: PageSize, orientation: PageOrientation, paperFrom page: PageID) async {
-        lastContentError = nil
-        guard let geometry = size.geometry(orientation) else {
-            lastContentError = Self.sizeOutOfBounds
-            return
-        }
         guard let paper = notebook.paper(of: page), paper.isAsset else {
             lastContentError = .invalidWrite("page \(page) has no asset paper to take")
             return
         }
-        var created: PageID?
-        do {
-            created = try await notebook.appendPage(after: notebook.currentPageID, geometry: geometry, paper: .asset(paper))
-        } catch {
-            lastContentError = Self.fault(error)
-        }
-        binding.drain()
-        if let created { binding.surface.scroll(to: created) }
+        await append(size, orientation, .asset(paper))
     }
 
     /// A photo becomes the new page's paper. The asset is published first,
     /// so the append that follows only has to measure it.
     package func addPage(size: PageSize, orientation: PageOrientation, photo data: Data) async {
         lastContentError = nil
+        let stored: AssetRef
+        do { stored = try await notebook.storeImageAsset(data) } catch {
+            lastContentError = error
+            return
+        }
+        await append(size, orientation, .asset(.image(stored)))
+    }
+
+    /// The `do`/`catch` sits at method scope, for the reason the comment
+    /// above `importImage` gives, and a refusal is reported through
+    /// `lastContentError` like any other content change. A refused append
+    /// creates nothing, so there is nothing to take the reader to.
+    private func append(_ size: PageSize, _ orientation: PageOrientation, _ paper: NewPagePaper) async {
+        lastContentError = nil
         guard let geometry = size.geometry(orientation) else {
             lastContentError = Self.sizeOutOfBounds
             return
         }
-        var stored: AssetRef?
-        do { stored = try await notebook.storeImageAsset(data) } catch { lastContentError = error }
-        guard let stored else { return }
         var created: PageID?
         do {
-            created = try await notebook.appendPage(after: notebook.currentPageID, geometry: geometry, paper: .asset(.image(stored)))
+            created = try await notebook.appendPage(after: notebook.currentPageID, geometry: geometry, paper: paper)
         } catch {
             lastContentError = Self.fault(error)
         }
