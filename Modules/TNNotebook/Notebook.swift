@@ -281,9 +281,7 @@ package final class Notebook {
         content.pendingEcho = nil
         let captured = content.revision
         content.setInk(ink)
-        if content.revision != captured {
-            history.record(HistoryEntry(page: page, before: captured, after: content.revision))
-        }
+        recordEdit(on: page, from: captured, to: content.revision)
         states[page] = .ready(content)
         bumpContentVersion(of: page)
         markDirty()
@@ -301,6 +299,13 @@ package final class Notebook {
 
     package var canUndo: Bool { history.canUndo }
     package var canRedo: Bool { history.canRedo }
+
+    /// Every edit records through here, and only when the revision moved:
+    /// an entry that restores nothing would still clear redo on the way in.
+    private func recordEdit(on page: PageID, from captured: PageRevision, to revision: PageRevision) {
+        guard revision != captured else { return }
+        history.record(HistoryEntry(page: page, before: captured, after: revision))
+    }
 
     /// One notebook-wide stack, GoodNotes-shaped: an undo restores the page
     /// it happened on, whichever page is current, and the binding scrolls
@@ -612,14 +617,15 @@ package final class Notebook {
     /// Validates and inserts a layer beneath the ink, synchronously: the tap
     /// that makes a text box gets its layer in the same pass.
     package func insertLayer(_ layer: Layer, on page: PageID) throws(FormatFault) {
-        guard case .ready = states[page] else { throw .invalidWrite("page \(page) is not ready") }
+        guard case .ready(var content) = states[page] else { throw .invalidWrite("page \(page) is not ready") }
         do { _ = try layer.validated() } catch { throw .invalidWrite("layer invalid: \(error)") }
-        withContent(page) { content in
-            content.layers.insert(layer, at: content.inkIndex)
-            content.inkIndex += 1
-            content.pendingLayerFiles.insert(layer.id)
-            content.edited()
-        }
+        let captured = content.revision
+        content.layers.insert(layer, at: content.inkIndex)
+        content.inkIndex += 1
+        content.pendingLayerFiles.insert(layer.id)
+        content.edited()
+        recordEdit(on: page, from: captured, to: content.revision)
+        states[page] = .ready(content)
         bumpContentVersion(of: page)
         markDirty()
         rerenderComposite(of: page)
@@ -752,7 +758,14 @@ package final class Notebook {
         }
         TNPrecondition.require(content.textEditing == nil, "text editing began on page \(page) while layer \(String(describing: content.textEditing)) was open")
         guard let found = content.layers.first(where: { $0.id == layer }), case .text(let text) = found.payload else {
-            TNPrecondition.fail("text editing began on page \(page) for layer \(layer), which is not a text layer it holds")
+            // Hit rects are one render stale between a restore and the
+            // composite it queued, so a tap there can ask for a box the
+            // restore removed. The runtime is waiting in `.opening`; the end
+            // is what releases it, as it is for a begin the runtime cannot
+            // honour.
+            TNLog.event(.notebook, "text editing was requested on page \(page) for layer \(layer), which is not a text layer it holds")
+            changes.append(.textEditingEnded(page, layer))
+            return
         }
         content.textEditing = layer
         content.afterRender.append(.textEditingBegan(page, TextEditStart(layer: layer, text: text)))
@@ -761,10 +774,9 @@ package final class Notebook {
     }
 
     /// KNOWN DEFECT: a committed text edit is not on the notebook's undo
-    /// stack; no layer change is (`insertLayer`, `transformLayer`,
-    /// `deleteLayer` call `edited()` and never `history.record`). Joining
-    /// it is a `CONTRACT:` change to Undo and to `HistoryEntry`, step two of
-    /// `Docs/Forks/plans/text-editing.md` section 1, Phillip's to sign.
+    /// stack. The box `createTextBox` made is, as the insert it was, and
+    /// step 3 of `Docs/Forks/plans/undo.md` replaces that entry with one for
+    /// the whole session.
     package func endTextEditing(on page: PageID, layer: LayerID, _ text: TextLayer) {
         guard case .ready(var content) = states[page] else {
             TNPrecondition.fail("text editing ended on page \(page) which is not ready: \(String(describing: states[page]))")
@@ -805,9 +817,11 @@ package final class Notebook {
         guard let position = content.layers.firstIndex(where: { $0.id == layerID }) else { return .refused(reason: "no such layer") }
         let moved = content.layers[position].withTransform(transform)
         do { _ = try moved.validated() } catch { return .refused(reason: "\(error)") }
+        let captured = content.revision
         content.layers[position] = moved
         content.pendingLayerFiles.insert(layerID)
         content.edited()
+        recordEdit(on: page, from: captured, to: content.revision)
         states[page] = .ready(content)
         bumpContentVersion(of: page)
         markDirty()
@@ -817,10 +831,12 @@ package final class Notebook {
 
     package func deleteLayer(_ layerID: LayerID, on page: PageID) {
         guard case .ready(var content) = states[page], let position = content.layers.firstIndex(where: { $0.id == layerID }) else { return }
+        let captured = content.revision
         content.layers.remove(at: position)
         if position < content.inkIndex { content.inkIndex -= 1 }
         content.pendingLayerFiles.remove(layerID)
         content.edited()
+        recordEdit(on: page, from: captured, to: content.revision)
         states[page] = .ready(content)
         bumpContentVersion(of: page)
         markDirty()

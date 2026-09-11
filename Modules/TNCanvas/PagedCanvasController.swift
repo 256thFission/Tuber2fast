@@ -213,21 +213,27 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
             descriptors[page] != nil,
             "ink was restored on page \(page), which this runtime has not been told about"
         )
-        if let canvas = canvases[page] {
-            canvas.restoreInk(ink, seq: seq)
+        // The value is remembered whether or not the page is live: a canvas
+        // built when the page enters the window carries the restored ink
+        // rather than the ink the last install described, and a live canvas
+        // takes it from here when a stroke in flight has deferred it.
+        if let snapshot = snapshots[page], snapshot.isEditable {
+            snapshots[page] = PageSnapshot.editable(
+                id: page,
+                ink: ink,
+                layers: snapshot.layers,
+                composite: snapshot.composite,
+                inkSeq: seq
+            )
+        }
+        // A restore waits for a stroke the way an install does: the canvas
+        // is what must not be touched, and the notebook's value is already
+        // the truth. `pageStrokeDidEnd` applies it.
+        if isAnyStrokeInFlight {
+            windowRefreshDeferred = true
             return
         }
-        // The page is not live. The value is remembered so the canvas built
-        // when it enters the window carries the restored ink rather than the
-        // ink the last install described.
-        guard let snapshot = snapshots[page], snapshot.isEditable else { return }
-        snapshots[page] = PageSnapshot.editable(
-            id: page,
-            ink: ink,
-            layers: snapshot.layers,
-            composite: snapshot.composite,
-            inkSeq: seq
-        )
+        canvases[page]?.restoreInk(ink, seq: seq)
     }
 
     package func updateComposite(on page: PageID, _ composite: Composite, layers: [Layer]) {
@@ -244,6 +250,12 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
                 composite: composite,
                 inkSeq: inkSeq
             )
+        }
+        // The same wait as a restore, so the picture and the hit rects that
+        // answer one land on the canvas with it.
+        if isAnyStrokeInFlight {
+            windowRefreshDeferred = true
+            return
         }
         if let canvas = canvases[page] {
             canvas.setLayers(layers)
@@ -443,9 +455,10 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
     /// Gives a page the surface its snapshot describes: a canvas for editable
     /// content inside the live window, a placeholder for everything else.
     ///
-    /// An existing canvas is never rebuilt and its ink is never touched — only
-    /// its backdrop and its layers are restated, because the live ink is the
-    /// runtime's working copy and an install is not an edit.
+    /// An existing canvas is never rebuilt, and its ink is touched only when
+    /// the notebook has pushed ink the canvas has not taken. Its backdrop and
+    /// its layers are restated, because the live ink is the runtime's working
+    /// copy and an install is not an edit; a restore a stroke deferred is.
     private func applyContent(for page: PageID) {
         guard let snapshot = snapshots[page], let descriptor = descriptors[page] else { return }
 
@@ -466,6 +479,12 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
             canvas.setLayers(snapshot.layers)
             if let composite = snapshot.composite {
                 canvas.updateComposite(composite)
+            }
+            // The sequence names the ink value the notebook last pushed, and
+            // the canvas holds the one it last took; they differ only when a
+            // stroke deferred a restore.
+            if let ink = snapshot.ink, let seq = snapshot.inkSeq, seq != canvas.inkSeq {
+                canvas.restoreInk(ink, seq: seq)
             }
             canvas.setUndoAvailability(canUndo: canUndo, canRedo: canRedo)
             return
@@ -578,6 +597,11 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
         // for it. The stroke's ink is not lost: the retire that follows the
         // stroke's end carries the whole drawing in its final report.
         guard retiring[page] == nil else { return }
+        // A restore this stroke deferred is about to replace the drawing the
+        // stroke committed into. The notebook already holds the restored
+        // value; this report would be taken for an edit of it, and the echo
+        // that follows for another.
+        if let canvas = canvases[page], let seq = snapshots[page]?.inkSeq, seq != canvas.inkSeq { return }
         reporter.inkChanged(on: page, ink, echoOf: echoOf)
     }
 

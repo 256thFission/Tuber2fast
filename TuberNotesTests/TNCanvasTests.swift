@@ -279,6 +279,56 @@ struct TNCanvasTests {
         _ = runtime.retireAll()
     }
 
+    @Test("A restore and a composite that arrive during a stroke land when it ends, and the restore's report carries its sequence")
+    func restoreAndCompositeWaitForTheStroke() throws {
+        let reporter = RecordingReporter()
+        let runtime = hosted(reporter)
+        let pages = descriptors(1)
+        runtime.setPages(pages, seq: StructureSeq(1), answering: nil)
+        runtime.installContent(
+            .editable(id: pages[0].id, ink: PKDrawing(), layers: [], composite: nil, inkSeq: InkSeq(1))
+        )
+        let canvas = try #require(runtime.canvases[pages[0].id])
+        canvas.canvasViewDidBeginUsingTool(canvas.canvasView)
+
+        let box = textLayer("hi", x: 100, y: 100)
+        let composite = Composite(image: try solidImage(), scale: 2)
+        runtime.restoreInk(on: pages[0].id, strokeDrawing(strokes: 2), seq: InkSeq(7))
+        runtime.updateComposite(on: pages[0].id, composite, layers: [box])
+        #expect(canvas.canvasView.drawing.strokes.isEmpty, "the canvas is not touched under the stroke")
+        #expect(backdrop(of: canvas)?.cgImage !== composite.image)
+        #expect(reporter.inkChanges.isEmpty)
+
+        canvas.canvasView.drawing = strokeDrawing(strokes: 1)
+        canvas.canvasViewDidEndUsingTool(canvas.canvasView)
+        canvas.canvasViewDrawingDidChange(canvas.canvasView)
+
+        #expect(canvas.canvasView.drawing.strokes.count == 2, "the restore landed over the stroke's drawing")
+        #expect(backdrop(of: canvas)?.cgImage === composite.image)
+        #expect(reporter.inkChanges.count == 1, "the stroke the restore replaced is not reported")
+        #expect(reporter.inkChanges.first?.echoOf == InkSeq(7))
+        #expect(reporter.inkChanges.first?.ink.strokes.count == 2)
+        runtime.apply(CanvasEnvironment(tool: .text(.body, .leading)))
+        canvas.tapped(at: CGPoint(x: 110, y: 110))
+        #expect(reporter.textEditRequests.map(\.layer) == [box.id], "the hit rects landed with the picture")
+
+        _ = runtime.retireAll()
+    }
+
+    private func backdrop(of canvas: PageCanvasController) -> UIImage? {
+        canvas.canvasView.subviews.compactMap { $0 as? UIImageView }.first?.image
+    }
+
+    private func solidImage() throws -> CGImage {
+        let context = try #require(CGContext(
+            data: nil, width: 4, height: 4, bitsPerComponent: 8, bytesPerRow: 16,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ))
+        context.setFillColor(UIColor.red.cgColor)
+        context.fill(CGRect(x: 0, y: 0, width: 4, height: 4))
+        return try #require(context.makeImage())
+    }
+
     // MARK: - Fixtures
 
     // MARK: - The tool

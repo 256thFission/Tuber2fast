@@ -91,6 +91,11 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
     /// piece of ink no report can carry until it commits.
     private(set) var isStrokeInFlight = false
 
+    /// The sequence of the ink this canvas last took from the notebook, at
+    /// build or restore. The owner reads it against the snapshot's to find a
+    /// restore a stroke deferred.
+    private(set) var inkSeq: InkSeq?
+
     /// The tool use ended and its drawing change has not arrived yet.
     private var awaitingChangeAfterToolUse = false
 
@@ -126,6 +131,7 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         self.pageID = pageID
         self.geometry = geometry
         self.owner = owner
+        self.inkSeq = inkSeq
         // The one report this controller does not route through its owner: the
         // undo manager is handed to the responder chain and answers UIKit
         // directly, so it carries the reporter rather than a hop through here.
@@ -330,8 +336,12 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         TNLog.event(.canvas, "text editing began on page \(pageID)")
     }
 
-    /// The committed composite has landed; the inert overlay comes down.
+    /// The committed composite has landed; the inert overlay comes down. An
+    /// end for a layer with no overlay coming down answers a begin instead:
+    /// the notebook refused it because the tap landed on a rect a restore
+    /// had already removed, and the session it never opened is over.
     func endTextEditing(layer: LayerID) {
+        if closing[layer] == nil, case .opening = phase { phase = .idle }
         closing.removeValue(forKey: layer)?.removeFromSuperview()
     }
 
@@ -402,6 +412,7 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
             !isStrokeInFlight,
             "ink was installed on page \(pageID) while a stroke was in flight"
         )
+        inkSeq = seq
         pendingEcho = seq
         canvasView.drawing = ink
         clearEchoLatchAtEndOfTurn(seq)

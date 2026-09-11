@@ -149,6 +149,28 @@ struct EditorBindingTests {
         _ = await notebook.close()
     }
 
+    @Test("An undo whose entry is a layer change scrolls to that page, with no ink to restore")
+    func undoOfALayerChangeScrolls() async throws {
+        let scratch = try Scratch("editor-undo-layer")
+        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        let surface = RecordingSurface()
+        let binding = EditorBinding(notebook: notebook, surface: surface)
+        let page = notebook.pageIDs[0]
+
+        binding.windowChanged(to: [page])
+        try await waitUntil { surface.installed.contains(page) }
+        try notebook.insertLayer(textLayer("hi"), on: page)
+        binding.drain()
+        try await waitUntil { surface.layersSeen[page]?.count == 1 }
+        #expect(notebook.canUndo)
+
+        binding.undoRequested()
+        #expect(surface.calls.last == .scroll(page), "the scroll answers the undo, after the drain")
+        #expect(!surface.calls.contains { if case .restoreInk = $0 { true } else { false } })
+        #expect(notebook.state(of: page)?.content?.layers.isEmpty == true)
+        _ = await notebook.close()
+    }
+
     @Test("A move pushes one page order; a self-drop, a next-neighbour drop, and the last page onto the end push nothing")
     func movePageGuards() async throws {
         let (scratch, notebook) = try await reopened("editor-move", pages: 3)
