@@ -105,8 +105,11 @@ package final class EditorViewModel {
     }
 
     private func refreshMirrors() {
-        canUndo = notebook.canUndo
-        canRedo = notebook.canRedo
+        // While a box is open the buttons drive the text view's own manager,
+        // whose depth is not reported up: a report per keystroke is what the
+        // Structure rule forbids. So they stay enabled for the session.
+        canUndo = notebook.canUndo || notebook.hasTextSession
+        canRedo = notebook.canRedo || notebook.hasTextSession
         pageCount = notebook.pageCount
         currentPageIndex = notebook.pageIDs.firstIndex(of: notebook.currentPageID) ?? 0
         let records = notebook.index.pages
@@ -358,13 +361,16 @@ package final class EditorViewModel {
     package func importImage(_ data: Data) async {
         let page = notebook.currentPageID
         lastContentError = nil
+        guard !notebook.hasTextSession(on: page) else { lastContentError = Self.textBoxOpen(page); return }
         do { try await notebook.importImage(data, on: page) } catch { lastContentError = error }
         binding.drain()
     }
 
     /// One new page per PDF page, after the current one.
     package func importPDF(_ data: Data) async {
+        let page = notebook.currentPageID
         lastContentError = nil
+        guard !notebook.hasTextSession(on: page) else { lastContentError = Self.textBoxOpen(page); return }
         do { try await notebook.importPDF(data) } catch { lastContentError = error }
         binding.drain()
     }
@@ -373,8 +379,16 @@ package final class EditorViewModel {
         let page = notebook.currentPageID
         let rect = Self.defaultRect(width: 160, height: 44, on: notebook.index.record(of: page)?.geometry)
         lastContentError = nil
+        guard !notebook.hasTextSession(on: page) else { lastContentError = Self.textBoxOpen(page); return }
         do { try notebook.addLinkLayer(on: page, rect: rect, target: target) } catch { lastContentError = error }
         binding.drain()
+    }
+
+    /// An insert while a box is open would record an entry out of order
+    /// with the session's. Nothing here closes the box; the person editing
+    /// it does.
+    private static func textBoxOpen(_ page: PageID) -> FormatFault {
+        .invalidWrite("page \(page) has a text box open")
     }
 
     /// The inset is a page point count, not a fraction: a new box sits the

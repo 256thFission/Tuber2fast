@@ -53,9 +53,10 @@ package final class Notebook {
     @ObservationIgnored private var nextStructureSeq: UInt64 = 1
     @ObservationIgnored private var nextInkSeq: UInt64 = 1
     @ObservationIgnored private var changes: [NotebookChange] = []
-    @ObservationIgnored private var history = InkHistory()
-    /// An undo whose page was not loaded: applied when the page arrives.
-    @ObservationIgnored private var pendingRestores: [PageID: PKDrawing] = [:]
+    @ObservationIgnored private var history = EditHistory()
+    /// An undo or redo whose page was not loaded: applied when the page
+    /// arrives. One slot: the last stash is the revision the page will have.
+    @ObservationIgnored private var pendingRestores: [PageID: PageRevision] = [:]
     /// Bumped by every change that alters what a page looks like: ink,
     /// layers, paper. Never reset by unload, because content is only dropped
     /// when clean (`prune()`), so the version on reload still describes the
@@ -219,17 +220,22 @@ package final class Notebook {
         }
         switch result {
         case .ready(var content):
-            if let restore = pendingRestores.removeValue(forKey: page) {
-                history.pushRedo(HistoryEntry(page: page, ink: content.ink))
-                content.setInk(restore)
-            }
+            // Folded in here rather than through `apply`, so the snapshot
+            // `emitContent` builds carries the restored ink and layers under
+            // its one echo sequence. A second push would be a second
+            // sequence, and the canvas would report the first as an edit.
+            let restored = pendingRestores.removeValue(forKey: page).map { content.adopt($0) }
             states[page] = .ready(content)
             if content.isDirty { markDirty() }
+            emitContent(page)
+            // The composite the load built came from the layers on disk.
+            if restored?.layers == true { rerenderComposite(of: page) }
         case .faults(let faults):
             states[page] = .unreadable(faults)
             pendingRestores[page] = nil
+            history.forget(page)
+            emitContent(page)
         }
-        emitContent(page)
         onAsyncChange?()
     }
 
@@ -274,8 +280,9 @@ package final class Notebook {
             return
         }
         content.pendingEcho = nil
-        history.recordEdit(on: page, previous: content.ink)
+        let captured = content.revision
         content.setInk(ink)
+        recordEdit(on: page, from: captured, to: content.revision)
         states[page] = .ready(content)
         bumpContentVersion(of: page)
         markDirty()
@@ -294,46 +301,82 @@ package final class Notebook {
     package var canUndo: Bool { history.canUndo }
     package var canRedo: Bool { history.canRedo }
 
+    /// Whether any page has a text session open. The binding routes undo by
+    /// it, whichever page the session is on.
+    package var hasTextSession: Bool {
+        states.values.contains { $0.content?.textEditing != nil }
+    }
+
+    /// An insert on a page with a session open is refused until it ends.
+    package func hasTextSession(on page: PageID) -> Bool {
+        states[page]?.content?.textEditing != nil
+    }
+
+    /// Every edit records through here, and only when the revision moved:
+    /// an entry that restores nothing would still clear redo on the way in.
+    private func recordEdit(on page: PageID, from captured: PageRevision, to revision: PageRevision) {
+        guard revision != captured else { return }
+        history.record(HistoryEntry(page: page, before: captured, after: revision))
+    }
+
     /// One notebook-wide stack, GoodNotes-shaped: an undo restores the page
     /// it happened on, whichever page is current, and the binding scrolls
     /// there. Returns that page, or nil when there is nothing to undo.
     @discardableResult
     package func undo() -> PageID? {
-        guard let entry = history.undo(current: { self.states[$0]?.content?.ink }) else { return nil }
-        restore(entry)
+        guard let entry = history.undo() else { return nil }
+        apply(entry.before, to: entry.page)
         return entry.page
     }
 
     @discardableResult
     package func redo() -> PageID? {
-        guard let entry = history.redo(current: { self.states[$0]?.content?.ink }) else { return nil }
-        restore(entry)
+        guard let entry = history.redo() else { return nil }
+        apply(entry.after, to: entry.page)
         return entry.page
     }
 
-    private func restore(_ entry: HistoryEntry) {
-        switch states[entry.page] {
+    /// Moves a page to a revision, touching only what differs. Paper is not
+    /// in a revision, so the index is never touched and no structure change
+    /// is emitted.
+    private func apply(_ revision: PageRevision, to page: PageID) {
+        switch states[page] {
         case .ready(var content):
-            content.setInk(entry.ink)
-            let seq = InkSeq(nextInkSeq); nextInkSeq += 1
-            content.pendingEcho = seq
-            states[entry.page] = .ready(content)
-            bumpContentVersion(of: entry.page)
-            changes.append(.inkRestored(entry.page, entry.ink, seq: seq))
+            // A restore rewrites the layer list and can remove the layer a
+            // session is open on, after which `endTextEditing` traps on a
+            // layer the page no longer holds.
+            TNPrecondition.require(content.textEditing == nil, "a restore on page \(page) under an open text session on layer \(String(describing: content.textEditing?.layer))")
+            let delta = content.adopt(revision)
+            guard delta.ink || delta.layers else { return }
+            if delta.ink {
+                let seq = InkSeq(nextInkSeq); nextInkSeq += 1
+                content.pendingEcho = seq
+                changes.append(.inkRestored(page, revision.ink, seq: seq))
+            }
+            states[page] = .ready(content)
+            bumpContentVersion(of: page)
             markDirty()
+            if delta.layers { rerenderComposite(of: page) }
         case .unloaded, .loading:
             // The page left the window; bring it back and apply on arrival.
             // The stash is a promise that the page will differ when it loads,
             // so it bumps the version now: a thumbnail taken of the unloaded
-            // page reads the stash and is keyed by the ink it will have.
-            pendingRestores[entry.page] = entry.ink
-            wanted.insert(entry.page)
-            bumpContentVersion(of: entry.page)
-            if case .unloaded = states[entry.page] { startLoad(entry.page) }
-        case .unreadable, nil:
-            // A page that cannot take ink, or one that was deleted: the entry
-            // is swallowed (the `KNOWN DEFECT` at `deletePage`).
-            return
+            // page reads the stash and is keyed by the revision it will have.
+            pendingRestores[page] = revision
+            wanted.insert(page)
+            bumpContentVersion(of: page)
+            if case .unloaded = states[page] { startLoad(page) }
+        case .unreadable:
+            // A page can become unreadable at a load the entry predates. The
+            // refusal forgot what was on the stacks; the entry in hand goes
+            // the same way, softly, because this is timing and not a broken
+            // invariant.
+            TNLog.event(.notebook, "a restore reached page \(page), which is unreadable; its history is dropped")
+            history.forget(page)
+        case nil:
+            // `deletePage` forgets the page's entries, and nothing else
+            // removes a page from `states`.
+            TNPrecondition.fail("a restore reached page \(page), which the notebook does not hold")
         }
     }
 
@@ -347,7 +390,9 @@ package final class Notebook {
     }
 
     /// Drops content for pages the runtime has retired, that are outside the
-    /// window, and that are clean. History goes with the content.
+    /// window, and that are clean. History does not go with it: the stack is
+    /// notebook-wide, and an undo into a pruned page loads it back and
+    /// restores on arrival.
     package func prune() {
         for (page, state) in states {
             guard case .ready(let content) = state, content.retired, !wanted.contains(page), !content.isDirty else { continue }
@@ -451,12 +496,10 @@ package final class Notebook {
         return record.id
     }
 
-    /// KNOWN DEFECT: history entries and a pending restore for the deleted
-    /// page are left behind, so an undo that reaches one of them restores a
-    /// page that no longer exists and is swallowed by `restore`'s guard on
-    /// `states`. It stays until undo of layer and page operations is
-    /// designed; deleting a page is navigation, not an edit, and is not
-    /// itself undoable.
+    /// Deleting a page is navigation, not an edit, and is not itself
+    /// undoable: the entries and any pending restore that name the page go
+    /// with it, so no entry on either stack names a page the notebook does
+    /// not hold.
     package func deletePage(_ page: PageID) {
         guard index.pages.count > 1, let position = index.pageIDs.firstIndex(of: page) else { return }
         index = index.withPages(index.pages.filter { $0.id != page })
@@ -464,6 +507,8 @@ package final class Notebook {
         states[page] = nil
         contentVersions[page] = nil
         wanted.remove(page)
+        pendingRestores[page] = nil
+        history.forget(page)
         // The successor at the same position, clamped when the last page goes:
         // the page the runtime shows after the delete (`PagedCanvasController.setPages`),
         // so the notebook's current page and the viewport agree.
@@ -544,8 +589,8 @@ package final class Notebook {
             guard let bytes = try? await store.loadPage(page) else { return nil }
             if Task.isCancelled { return nil }
             guard case .ready(let content) = await Self.decode(bytes) else { return nil }
-            let ink = pendingRestores[page] ?? content.ink
-            return await renderer.thumbnail(key, geometry: record.geometry, paper: record.paper.paper, layers: content.layers, ink: ink)
+            let revision = pendingRestores[page] ?? content.revision
+            return await renderer.thumbnail(key, geometry: record.geometry, paper: record.paper.paper, layers: revision.layers, ink: revision.ink)
         case .loading, .unreadable, nil:
             return nil
         }
@@ -563,7 +608,7 @@ package final class Notebook {
         content.renderGeneration += 1
         states[page] = .ready(content)
         let generation = content.renderGeneration
-        let layers = content.layers.filter { $0.id != content.textEditing }
+        let layers = content.layers.filter { $0.id != content.textEditing?.layer }
         let renderer = self.renderer
         Task { [weak self] in
             let composite = await renderer.composite(geometry: record.geometry, paper: record.paper.paper, layers: layers, scale: scale)
@@ -591,16 +636,19 @@ package final class Notebook {
     // MARK: Layers
 
     /// Validates and inserts a layer beneath the ink, synchronously: the tap
-    /// that makes a text box gets its layer in the same pass.
-    package func insertLayer(_ layer: Layer, on page: PageID) throws(FormatFault) {
-        guard case .ready = states[page] else { throw .invalidWrite("page \(page) is not ready") }
+    /// that makes a text box gets its layer in the same pass. `recording`
+    /// is false for a text box, whose session records the insert as part
+    /// of one step at its end.
+    package func insertLayer(_ layer: Layer, on page: PageID, recording: Bool = true) throws(FormatFault) {
+        guard case .ready(var content) = states[page] else { throw .invalidWrite("page \(page) is not ready") }
         do { _ = try layer.validated() } catch { throw .invalidWrite("layer invalid: \(error)") }
-        withContent(page) { content in
-            content.layers.insert(layer, at: content.inkIndex)
-            content.inkIndex += 1
-            content.pendingLayerFiles.insert(layer.id)
-            content.edited()
-        }
+        let captured = content.revision
+        content.layers.insert(layer, at: content.inkIndex)
+        content.inkIndex += 1
+        content.pendingLayerFiles.insert(layer.id)
+        content.edited()
+        if recording { recordEdit(on: page, from: captured, to: content.revision) }
+        states[page] = .ready(content)
         bumpContentVersion(of: page)
         markDirty()
         rerenderComposite(of: page)
@@ -711,46 +759,69 @@ package final class Notebook {
 
     /// An empty text box at `point`, and a session opened on it. The style
     /// rides with the request for the runtime's sake; an empty layer stores
-    /// none, and the runtime types with its tool's.
+    /// none, and the runtime types with its tool's. The session's `before`
+    /// is captured ahead of the insert, so the box and what is typed in it
+    /// undo as one step.
     package func createTextBox(on page: PageID, at point: PagePoint, style: TextStyle, alignment: TextAlignment) {
+        guard case .ready(let content) = states[page] else {
+            TNPrecondition.fail("a text box was requested on page \(page) which is not ready: \(String(describing: states[page]))")
+        }
+        let before = content.revision
         let layer = Layer(
             id: LayerID(), transform: .identity,
             payload: .text(TextLayer(rect: PageRect(x: point.x, y: point.y, width: 240, height: 96), runs: [], alignment: alignment))
         )
         do {
-            try insertLayer(layer, on: page)
+            try insertLayer(layer, on: page, recording: false)
         } catch {
             TNPrecondition.fail("a text box was requested on page \(page), which refused it: \(error)")
         }
-        beginTextEditing(on: page, layer: layer.id)
+        openTextSession(on: page, layer: layer.id, before: before)
+    }
+
+    /// A session on a box the page already holds; the revision it records
+    /// against is the one it opens on.
+    package func beginTextEditing(on page: PageID, layer: LayerID) {
+        guard case .ready(let content) = states[page] else {
+            TNPrecondition.fail("text editing began on page \(page) which is not ready: \(String(describing: states[page]))")
+        }
+        openTextSession(on: page, layer: layer, before: content.revision)
     }
 
     /// The composite leaves the layer out from the next render on, and the
     /// runtime is told to raise its view once that picture has landed.
-    package func beginTextEditing(on page: PageID, layer: LayerID) {
+    private func openTextSession(on page: PageID, layer: LayerID, before: PageRevision) {
         guard case .ready(var content) = states[page] else {
             TNPrecondition.fail("text editing began on page \(page) which is not ready: \(String(describing: states[page]))")
         }
-        TNPrecondition.require(content.textEditing == nil, "text editing began on page \(page) while layer \(String(describing: content.textEditing)) was open")
+        TNPrecondition.require(content.textEditing == nil, "text editing began on page \(page) while layer \(String(describing: content.textEditing?.layer)) was open")
         guard let found = content.layers.first(where: { $0.id == layer }), case .text(let text) = found.payload else {
-            TNPrecondition.fail("text editing began on page \(page) for layer \(layer), which is not a text layer it holds")
+            // Hit rects are one render stale between a restore and the
+            // composite it queued, so a tap there can ask for a box the
+            // restore removed. The runtime is waiting in `.opening`; the end
+            // is what releases it, as it is for a begin the runtime cannot
+            // honour.
+            TNLog.event(.notebook, "text editing was requested on page \(page) for layer \(layer), which is not a text layer it holds")
+            changes.append(.textEditingEnded(page, layer))
+            return
         }
-        content.textEditing = layer
+        content.textEditing = TextSession(layer: layer, before: before)
         content.afterRender.append(.textEditingBegan(page, TextEditStart(layer: layer, text: text)))
         states[page] = .ready(content)
         rerenderComposite(of: page)
     }
 
-    /// KNOWN DEFECT: a committed text edit is not on the notebook's undo
-    /// stack; no layer change is (`insertLayer`, `transformLayer`,
-    /// `deleteLayer` call `edited()` and never `history.recordEdit`). Joining
-    /// it is a `CONTRACT:` change to Undo and to `HistoryEntry`, step two of
-    /// `Docs/Forks/plans/text-editing.md` section 1, Phillip's to sign.
+    /// The session is the edit: one entry from the revision the session
+    /// opened on to the one its commit leaves, and none when they are equal.
+    /// An abandoned empty box is equal by construction, since its insert
+    /// was not recorded and its removal returns the page to `before`.
     package func endTextEditing(on page: PageID, layer: LayerID, _ text: TextLayer) {
         guard case .ready(var content) = states[page] else {
             TNPrecondition.fail("text editing ended on page \(page) which is not ready: \(String(describing: states[page]))")
         }
-        TNPrecondition.require(content.textEditing == layer, "text editing ended on page \(page) for layer \(layer), which is not the open one (\(String(describing: content.textEditing)))")
+        guard let session = content.textEditing, session.layer == layer else {
+            TNPrecondition.fail("text editing ended on page \(page) for layer \(layer), which is not the open one (\(String(describing: content.textEditing?.layer)))")
+        }
         guard let position = content.layers.firstIndex(where: { $0.id == layer }) else {
             TNPrecondition.fail("text editing ended on page \(page) for layer \(layer), which it no longer holds")
         }
@@ -771,7 +842,12 @@ package final class Notebook {
             content.edited()
         }
         // An unchanged commit rewrites nothing: a save writes only what changed.
+        // Two questions, not one: whether this commit moved the page is what
+        // the save and the thumbnail need, and an abandoned empty box moved it
+        // twice, once to insert and once to remove. Whether the session moved
+        // the revision is what the stack needs, and that box did not.
         let changed = content.editSeq != (states[page]?.content?.editSeq ?? content.editSeq)
+        recordEdit(on: page, from: session.before, to: content.revision)
         content.afterRender.append(.textEditingEnded(page, layer))
         states[page] = .ready(content)
         if changed {
@@ -786,9 +862,11 @@ package final class Notebook {
         guard let position = content.layers.firstIndex(where: { $0.id == layerID }) else { return .refused(reason: "no such layer") }
         let moved = content.layers[position].withTransform(transform)
         do { _ = try moved.validated() } catch { return .refused(reason: "\(error)") }
+        let captured = content.revision
         content.layers[position] = moved
         content.pendingLayerFiles.insert(layerID)
         content.edited()
+        recordEdit(on: page, from: captured, to: content.revision)
         states[page] = .ready(content)
         bumpContentVersion(of: page)
         markDirty()
@@ -798,10 +876,12 @@ package final class Notebook {
 
     package func deleteLayer(_ layerID: LayerID, on page: PageID) {
         guard case .ready(var content) = states[page], let position = content.layers.firstIndex(where: { $0.id == layerID }) else { return }
+        let captured = content.revision
         content.layers.remove(at: position)
         if position < content.inkIndex { content.inkIndex -= 1 }
         content.pendingLayerFiles.remove(layerID)
         content.edited()
+        recordEdit(on: page, from: captured, to: content.revision)
         states[page] = .ready(content)
         bumpContentVersion(of: page)
         markDirty()
@@ -901,7 +981,15 @@ package final class Notebook {
                 withContent(item.page) { content in
                     content.savedSeq = max(content.savedSeq, item.editSeq)
                     content.savedInkSeq = max(content.savedInkSeq, item.inkSeq)
-                    content.pendingLayerFiles.subtract(item.layerFiles.map(\.id))
+                    // A restore that landed while this pass was writing
+                    // re-pends a layer it wrote; un-pending by id alone would
+                    // drop that value from the next page file and close clean
+                    // with the undone one on disk. Layers have no sequence,
+                    // so the value is the check.
+                    for written in item.layerFiles {
+                        let held = content.layers.first { $0.id == written.id }
+                        if held == nil || held == written { content.pendingLayerFiles.remove(written.id) }
+                    }
                 }
                 retryBuffer[item.page] = nil
             }

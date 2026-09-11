@@ -157,9 +157,6 @@ import UIKit
             surface.installContent(snapshot)
         case .inkRestored(let page, let ink, let seq):
             surface.restoreInk(on: page, ink, seq: seq)
-            // An undo restores the page it happened on, whichever page is
-            // current, so the reader is taken to the change they undid.
-            surface.scroll(to: page)
         case .compositeUpdated(let page, let composite, let layers):
             surface.updateComposite(on: page, composite, layers: layers)
         case .textEditingBegan(let page, let start):
@@ -259,14 +256,32 @@ import UIKit
     }
 
     package func undoRequested() {
-        notebook.undo()
-        // The `.inkRestored` change the undo queued carries the scroll.
+        // While a box is open the text view's own manager answers, and the
+        // stack is not touched: `Notebook.apply` requires no open session,
+        // and this routing is what keeps that true. The runtime is not
+        // asked whether its view exists yet; in that window typing has
+        // nothing to undo and the request is dropped there.
+        if notebook.hasTextSession {
+            surface.undoTyping()
+            return
+        }
+        let page = notebook.undo()
         drain()
+        // An undo restores the page it happened on, whichever page is
+        // current, so the reader is taken to the change they undid. The
+        // scroll answers the undo itself, not the ink restore it may or may
+        // not have queued: a layer-only undo queues none.
+        if let page { surface.scroll(to: page) }
     }
 
     package func redoRequested() {
-        notebook.redo()
+        if notebook.hasTextSession {
+            surface.redoTyping()
+            return
+        }
+        let page = notebook.redo()
         drain()
+        if let page { surface.scroll(to: page) }
     }
 
     package func textBoxRequested(on page: PageID, at point: PagePoint, style: TextStyle, alignment: TextAlignment) {
