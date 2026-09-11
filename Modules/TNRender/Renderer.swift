@@ -186,32 +186,11 @@ package actor Renderer {
         }
     }
 
+    /// One builder with the live text view, so the two engines lay the same
+    /// runs on the same lines. The frame is the rect with no inset; the
+    /// overlay copies that geometry.
     private static func drawText(_ text: TextLayer, in context: CGContext) {
-        let attributed = NSMutableAttributedString()
-        for run in text.runs {
-            var traits: CTFontSymbolicTraits = []
-            if run.bold { traits.insert(.boldTrait) }
-            if run.italic { traits.insert(.italicTrait) }
-            let base = run.font == "system" ? CTFontCreateUIFontForLanguage(.system, run.size, nil)! : CTFontCreateWithName(run.font as CFString, run.size, nil)
-            let font = CTFontCreateCopyWithSymbolicTraits(base, run.size, nil, traits, traits) ?? base
-            var attributes: [NSAttributedString.Key: Any] = [
-                NSAttributedString.Key(kCTFontAttributeName as String): font,
-                NSAttributedString.Key(kCTForegroundColorAttributeName as String): color(run.color),
-            ]
-            if run.underline { attributes[NSAttributedString.Key(kCTUnderlineStyleAttributeName as String)] = CTUnderlineStyle.single.rawValue }
-            attributed.append(NSAttributedString(string: run.string, attributes: attributes))
-        }
-        var alignment: CTTextAlignment = switch text.alignment {
-        case .leading: .left
-        case .center: .center
-        case .trailing: .right
-        }
-        let style = withUnsafeMutablePointer(to: &alignment) { pointer in
-            let settings = [CTParagraphStyleSetting(spec: .alignment, valueSize: MemoryLayout<CTTextAlignment>.size, value: pointer)]
-            return CTParagraphStyleCreate(settings, settings.count)
-        }
-        attributed.addAttribute(NSAttributedString.Key(kCTParagraphStyleAttributeName as String), value: style, range: NSRange(location: 0, length: attributed.length))
-
+        let attributed = TextTypesetting.attributed(text.runs, alignment: text.alignment)
         let rect = CGRect(x: text.rect.x, y: text.rect.y, width: text.rect.width, height: text.rect.height)
         context.saveGState()
         // CoreText draws y-up; flip within the rect.
@@ -222,13 +201,6 @@ package actor Renderer {
         let frame = CTFramesetterCreateFrame(framesetter, CFRange(location: 0, length: 0), path, nil)
         CTFrameDraw(frame, context)
         context.restoreGState()
-    }
-
-    private static func color(_ hex: String) -> CGColor {
-        var value: UInt64 = 0
-        Scanner(string: String(hex.dropFirst())).scanHexInt64(&value)
-        return CGColor(srgbRed: CGFloat((value >> 24) & 0xFF) / 255, green: CGFloat((value >> 16) & 0xFF) / 255,
-                       blue: CGFloat((value >> 8) & 0xFF) / 255, alpha: CGFloat(value & 0xFF) / 255)
     }
 
     private func decodedAsset(_ ref: AssetRef) async -> DecodedAsset? {
