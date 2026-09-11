@@ -1,9 +1,13 @@
 import Foundation
 import Observation
+// A cover is a `CGImage`, and `TNLibrary` may not import CoreGraphics:
+// PencilKit brings it, as it does for `TNNotebook`'s thumbnails.
+import PencilKit
 import TNCore
 import TNFormat
 import TNModel
 import TNNotebook
+import TNRender
 
 package enum CheckoutOutcome: Sendable {
     case opened(Notebook)
@@ -25,6 +29,17 @@ package final class Library {
     @ObservationIgnored private var reservations: Set<String> = []
     package private(set) var identities = IdentityIndex()
     package private(set) var openCount = 0
+
+    /// Cache: covers by path and package modification time. Owner: this
+    /// object. Bound: `coverCacheBound` bytes, evicting oldest first.
+    /// Evictor: `BoundedCache.insert`, on insert, and `purge()` on memory
+    /// pressure from the app.
+    @ObservationIgnored
+    private var covers = BoundedCache<CoverKey, CGImage>(
+        bound: Library.coverCacheBound, cost: { $0.bytesPerRow * $0.height }
+    )
+
+    package static let coverCacheBound = 32 * 1024 * 1024
 
     package init(store: LibraryStore) {
         self.store = store
@@ -112,4 +127,51 @@ package final class Library {
         try requireUnlocked(relativePath)
         return try await store.duplicateNotebook(at: relativePath)
     }
+
+    // MARK: Covers
+
+    /// A notebook's first page, small. An open notebook answers from custody,
+    /// so the browser shows the stroke that has not been saved yet; a closed
+    /// one is read by the store and rendered through a `Renderer` over its own
+    /// package, so asset paper draws.
+    ///
+    /// A throwaway renderer per closed cover costs one asset decode, which is
+    /// what an open notebook's first render costs. A `Notebook` is a checkout,
+    /// and there is one per package, so a cover cannot open one.
+    package func cover(of item: LibraryItem) async -> CGImage? {
+        guard item.kind == .notebook else { return nil }
+        if let notebook = openNotebooks[item.relativePath] {
+            guard let first = notebook.pageIDs.first else { return nil }
+            return await notebook.thumbnail(of: first)
+        }
+        // The listing already carries the modification time, so a hit costs
+        // no read; a miss reads the first page and re-keys on what it found.
+        let listedKey = CoverKey(path: item.relativePath, version: CoverSource.version(at: item.modifiedAt))
+        if let cached = covers[listedKey] { return cached }
+        guard let source = try? await store.coverSource(of: item.relativePath) else { return nil }
+        let key = CoverKey(path: item.relativePath, version: source.version)
+        if let cached = covers[key] { return cached }
+        if Task.isCancelled { return nil }
+        guard case .ready(let content) = await Notebook.decode(source.bytes) else { return nil }
+        if Task.isCancelled { return nil }
+        let renderer = Renderer(assets: PackageStore(root: store.url(of: item.relativePath)))
+        let image = await renderer.thumbnail(
+            ThumbnailKey(page: source.pageID, version: source.version),
+            geometry: source.geometry, paper: source.paper,
+            layers: content.layers, ink: content.ink
+        )
+        guard let image else { return nil }
+        covers.insert(image, for: key)
+        return image
+    }
+
+    package func purge() {
+        covers.removeAll()
+    }
+}
+
+/// A cover is the picture of one package at one modification time.
+package struct CoverKey: Hashable, Sendable {
+    package let path: String
+    package let version: UInt64
 }

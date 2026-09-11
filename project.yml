@@ -152,6 +152,7 @@ targets:
       - path: Modules/TNLibrary
     dependencies:
       - target: TNNotebook
+      - target: TNRender
       - target: TNFormat
       - target: TNModel
       - target: TNCore

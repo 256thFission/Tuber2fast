@@ -20,28 +20,29 @@ package struct ThumbnailKey: Hashable, Sendable {
     }
 }
 
-/// One shape for every bounded in-memory cache here: values by key, oldest
-/// evicted first once the byte total passes the bound. Each instance still
-/// declares its owner, bound, and evictor where it is declared, as the
-/// contract requires; this type is the mechanism, not the declaration.
-struct BoundedCache<Key: Hashable, Value> {
-    let bound: Int
-    let cost: (Value) -> Int
+/// One shape for every bounded in-memory cache in this project: values by
+/// key, oldest evicted first once the byte total passes the bound. Each
+/// instance still declares its owner, bound, and evictor where it is
+/// declared, as the contract requires; this type is the mechanism, not the
+/// declaration.
+package struct BoundedCache<Key: Hashable, Value> {
+    package let bound: Int
+    package let cost: (Value) -> Int
     private var values: [Key: Value] = [:]
     private var order: [Key] = []
-    private(set) var bytes = 0
+    package private(set) var bytes = 0
 
-    init(bound: Int, cost: @escaping (Value) -> Int) {
+    package init(bound: Int, cost: @escaping (Value) -> Int) {
         self.bound = bound
         self.cost = cost
     }
 
-    subscript(key: Key) -> Value? { values[key] }
+    package subscript(key: Key) -> Value? { values[key] }
 
-    var count: Int { values.count }
+    package var count: Int { values.count }
 
     /// A key already present is replaced and becomes the newest.
-    mutating func insert(_ value: Value, for key: Key) {
+    package mutating func insert(_ value: Value, for key: Key) {
         if let replaced = values.updateValue(value, forKey: key) {
             bytes -= cost(replaced)
             order.removeAll { $0 == key }
@@ -54,7 +55,7 @@ struct BoundedCache<Key: Hashable, Value> {
         }
     }
 
-    mutating func removeAll() {
+    package mutating func removeAll() {
         values.removeAll()
         order.removeAll()
         bytes = 0

@@ -181,16 +181,17 @@ package final class Notebook {
         }
     }
 
-    private enum LoadOutcome: Sendable {
+    package enum LoadOutcome: Sendable {
         case ready(PageContent)
         case faults([PageFault])
     }
 
     /// Bytes to content, or to the faults that refuse them. The one judgment
-    /// for both a load and a thumbnail of an unloaded page, so a corrupt page
-    /// reaches the same verdict on either path. Runs in the caller's task, on
-    /// the generic executor: a load's decode is cancelled with its window.
-    private nonisolated static func decode(_ bytes: PageBytes) async -> LoadOutcome {
+    /// for a load, a thumbnail of an unloaded page, and the library's cover of
+    /// a closed notebook, so a corrupt page reaches the same verdict on every
+    /// path. Runs in the caller's task, on the generic executor: a load's
+    /// decode is cancelled with its window.
+    package nonisolated static func decode(_ bytes: PageBytes) async -> LoadOutcome {
         var faults = bytes.faults
         var ink: PKDrawing?
         if let archive = bytes.inkArchive {

@@ -70,6 +70,21 @@ package struct FavoritesFile: Codable, Sendable, Equatable {
     }
 }
 
+/// What a closed notebook's cover is rendered from: its first page, read
+/// once. `version` is the package's newest modification time in
+/// milliseconds, so a save moves the key and the cover re-renders.
+package struct CoverSource: Sendable {
+    package let pageID: PageID
+    package let geometry: PageGeometry
+    package let paper: Paper?
+    package let bytes: PageBytes
+    package let version: UInt64
+
+    package static func version(at date: Date) -> UInt64 {
+        UInt64(max(0, (date.timeIntervalSince1970 * 1000).rounded()))
+    }
+}
+
 /// `Trash/<container>/origin.json`.
 package struct TrashOrigin: Codable, Sendable, Equatable {
     package let formatVersion: UInt32
@@ -316,6 +331,28 @@ package actor LibraryStore {
         do { try fm.moveItem(at: source, to: target) } catch { throw .io("move \(relativePath): \(error)") }
         let path = folder.isEmpty ? source.lastPathComponent : "\(folder)/\(source.lastPathComponent)"
         return item(at: path, url: target, kind: kind)
+    }
+
+    // MARK: Covers
+
+    /// The first page of a closed notebook, with the version its files are
+    /// at. A folder is not a notebook and says so.
+    package func coverSource(of relativePath: String) async throws(LibraryError) -> CoverSource {
+        let (url, kind) = try existing(relativePath)
+        guard kind == .notebook else { throw .notANotebook(relativePath) }
+        let packageStore = PackageStore(root: url)
+        let loaded: LoadedNotebook
+        do { loaded = try await packageStore.load() } catch { throw .format(error) }
+        guard let record = loaded.index.pages.first else { throw .format(.indexInvalid(.noPages)) }
+        let bytes: PageBytes
+        do { bytes = try await packageStore.loadPage(record.id) } catch { throw .format(error) }
+        return CoverSource(
+            pageID: record.id,
+            geometry: record.geometry,
+            paper: record.paper.paper,
+            bytes: bytes,
+            version: CoverSource.version(at: modifiedAt(url, kind: .notebook))
+        )
     }
 
     // MARK: Favorites

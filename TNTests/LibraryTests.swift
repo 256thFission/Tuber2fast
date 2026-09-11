@@ -170,6 +170,26 @@ struct LibraryTests {
         #expect(folder.createdAt > Date(timeIntervalSince1970: 1_800_000_000))
     }
 
+    @Test("A cover source is the first page, at the version the listing shows")
+    func coverSource() async throws {
+        let (scratch, library) = try makeLibrary("lib-cover-source")
+        defer { withExtendedLifetime(scratch) {} }
+        let a5 = try #require(PageSize.a5.geometry(.portrait))
+        let item = try await library.store.createNotebook(named: "Sketch", in: "", geometry: a5, paper: .grid)
+        _ = try await library.store.createFolder(named: "Box", in: "")
+
+        let source = try await library.store.coverSource(of: item.relativePath)
+        let loaded = try await PackageStore(root: library.store.url(of: item.relativePath)).load()
+        #expect(source.pageID == loaded.index.pageIDs[0])
+        #expect(source.geometry == a5)
+        #expect(source.paper == .drawn(.grid))
+        #expect(source.bytes.faults.isEmpty)
+        let listed = try #require(try await library.store.list(folder: "").first { $0.kind == .notebook })
+        #expect(source.version == CoverSource.version(at: listed.modifiedAt))
+
+        await #expect(throws: LibraryError.notANotebook("Box")) { try await library.store.coverSource(of: "Box") }
+    }
+
     @Test("listFolders sees folders only; emptyTrash leaves no container behind")
     func foldersAndEmptyTrash() async throws {
         let (scratch, library) = try makeLibrary("lib-folders-empty")
