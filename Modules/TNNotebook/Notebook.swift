@@ -390,7 +390,9 @@ package final class Notebook {
     }
 
     /// Drops content for pages the runtime has retired, that are outside the
-    /// window, and that are clean. History goes with the content.
+    /// window, and that are clean. History does not go with it: the stack is
+    /// notebook-wide, and an undo into a pruned page loads it back and
+    /// restores on arrival.
     package func prune() {
         for (page, state) in states {
             guard case .ready(let content) = state, content.retired, !wanted.contains(page), !content.isDirty else { continue }

@@ -148,10 +148,24 @@ package struct HistoryEntry: Sendable {
 /// Undo and redo as one notebook-wide stack of entries, bounded by count.
 /// An entry moves between the stacks whole; nothing here reads a page.
 ///
-/// KNOWN DEFECT: the byte bound the spec states is not enforced, because a
-/// PKDrawing's in-memory size is not observable without serializing it.
-/// The entry bound stands in until the device spike measures what an entry
-/// costs at 20k strokes.
+/// The bound is a count because the cost is measured and the count holds:
+/// `TuberNotesTests/HistoryEntryCostTests` puts a stroke appended to a
+/// 20k-stroke drawing at 406 KB an entry, twenty bytes a stroke, and a
+/// transform beside a long text layer at 400 bytes. A hundred entries is
+/// tens of megabytes. Every drawing that reaches custody comes from
+/// `canvasView.drawing`, including a PencilKit eraser pass, and a round
+/// trip through the canvas shares.
+///
+/// A drawing this app builds itself does not share: `PKDrawing(strokes:)`
+/// mints a stroke object per stroke, 8 MB an entry at 20k, 840 MB at the
+/// bound. Nothing takes that path today. The first lasso that does needs a
+/// byte bound summed at record time, and that test is the tripwire. It
+/// also needs its own answer to equality, which is on stroke identity: two
+/// rebuilds of one stroke array compare unequal, so "record iff the
+/// revision differs" would record a lasso that removed nothing.
+///
+/// The numbers above are the simulator's. The iPad's are the queue's third
+/// device check, and `Docs/Forks/plans/undo.md` step 5 names the run.
 package struct EditHistory: Sendable {
     package static let maximumEntries = 100
 
