@@ -30,7 +30,7 @@ package final class EditorViewModel {
     package private(set) var tool: EditorTool {
         didSet {
             guard tool != oldValue else { return }
-            binding.apply(CanvasEnvironment(tool: .ink(tool.pkTool)))
+            binding.apply(CanvasEnvironment(tool: tool.canvasTool))
             palette.remember(tool)
         }
     }
@@ -74,7 +74,7 @@ package final class EditorViewModel {
         refreshMirrors()
         // `didSet` does not run for the initial value, and the runtime
         // starts with no tool at all.
-        binding.apply(CanvasEnvironment(tool: .ink(tool.pkTool)))
+        binding.apply(CanvasEnvironment(tool: tool.canvasTool))
     }
 
     private func refreshMirrors() {
@@ -102,15 +102,32 @@ package final class EditorViewModel {
 
     package func selectLasso() { tool = .lasso }
 
+    /// The text tool, typing with what the palette last typed with.
+    package func selectText() { tool = palette.textTool }
+
+    package func setTextStyle(_ style: TextStyle) {
+        guard case .text(_, let alignment) = tool else {
+            TNPrecondition.fail("a text style was set on \(tool), which has none")
+        }
+        tool = .text(style, alignment)
+    }
+
+    package func setTextAlignment(_ alignment: TextAlignment) {
+        guard case .text(let style, _) = tool else {
+            TNPrecondition.fail("a text alignment was set on \(tool), which has none")
+        }
+        tool = .text(style, alignment)
+    }
+
     package func setWidth(_ width: ToolWidth) {
         switch tool {
         case .ink(let kind, let preset):
             tool = .ink(kind, InkPreset(color: preset.color, width: width))
         case .erasePixel:
             tool = .erasePixel(width)
-        case .eraseObject, .lasso:
-            // The strip offers no width for either, so reaching here is a
-            // view that drew a control the tool does not have.
+        case .eraseObject, .lasso, .text:
+            // The strip offers no width for any of these, so reaching here
+            // is a view that drew a control the tool does not have.
             TNPrecondition.fail("a width was set on \(tool), which has none")
         }
     }
@@ -167,7 +184,7 @@ package final class EditorViewModel {
 
     // A content mutation's `do`/`catch` sits at method scope, never inside
     // a closure: a closure literal loses the `throws(FormatFault)` and the
-    // catch binds `any Error`. So these four call `drain()` themselves
+    // catch binds `any Error`. So these three call `drain()` themselves
     // rather than run inside `binding.intention`, which is the same two
     // steps in the same order.
 
@@ -182,18 +199,6 @@ package final class EditorViewModel {
     package func importPDF(_ data: Data) async {
         lastContentError = nil
         do { try await notebook.importPDF(data) } catch { lastContentError = error }
-        binding.drain()
-    }
-
-    /// A text box near the top-left of the current page, sized to fit
-    /// however small the page is. Where the user wants it is a drag away;
-    /// this is where it starts.
-    package func addTextBox() async {
-        let page = notebook.currentPageID
-        let rect = Self.defaultRect(width: 240, height: 96, on: notebook.index.record(of: page)?.geometry)
-        lastContentError = nil
-        let layer = Layer(id: LayerID(), transform: .identity, payload: .text(TextLayer(rect: rect, runs: [TextRun(string: "Text")], alignment: .leading)))
-        do { try notebook.insertLayer(layer, on: page) } catch { lastContentError = error }
         binding.drain()
     }
 

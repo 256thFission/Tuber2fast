@@ -34,6 +34,27 @@ struct EditorViewModelTests {
         withExtendedLifetime(scratch) {}
     }
 
+    @Test("A tab opens on text if text was last, and the text intentions change only the text tool")
+    func textToolIntentions() async throws {
+        let bold = TextStyle(font: "system", size: 24, bold: true, italic: false, underline: false, color: TextStyle.body.color)
+        let (scratch, book) = try await notebook("vm-text")
+        let editor = EditorViewModel(notebook: book, palette: palette(lastTool: .text(bold, .center))) { _ in }
+        #expect(editor.tool == .text(bold, .center))
+
+        editor.select(kind: .pen)
+        editor.selectText()
+        #expect(editor.tool == .text(bold, .center), "selectText restores the last style and alignment")
+
+        let red = TextStyle(font: "system", size: 24, bold: true, italic: false, underline: false, color: RGBA8(red: 200, green: 0, blue: 0, alpha: 255))
+        editor.setTextStyle(red)
+        #expect(editor.tool == .text(red, .center))
+        editor.setTextAlignment(.trailing)
+        #expect(editor.tool == .text(red, .trailing))
+        #expect(editor.palette.text == TextPreset(style: red, alignment: .trailing))
+        #expect(editor.palette.recentColors.isEmpty, "a colour typed with is never a recent")
+        withExtendedLifetime(scratch) {}
+    }
+
     @Test("Two tabs over one palette open on the same tool")
     func twoTabsOpenOnTheSameTool() async throws {
         let eraser = EditorTool.erasePixel(.thin)

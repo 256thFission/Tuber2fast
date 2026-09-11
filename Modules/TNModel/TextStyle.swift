@@ -3,7 +3,7 @@ import TNCore
 
 /// A run minus its string: what a selection is styled with and what the
 /// caret types with. No format change; `TextRun` keeps its flat keys.
-package struct TextStyle: Sendable, Equatable {
+package struct TextStyle: Sendable, Equatable, Codable {
     package let font: String
     package let size: Double
     package let bold: Bool

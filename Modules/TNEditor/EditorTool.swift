@@ -145,10 +145,26 @@ package struct InkPreset: Equatable, Sendable, Codable {
     }
 }
 
+/// What the palette remembers for the text tool: a style to type with and
+/// an alignment, never a tool.
+package struct TextPreset: Equatable, Sendable, Codable {
+    package var style: TextStyle
+    package var alignment: TextAlignment
+
+    package init(style: TextStyle, alignment: TextAlignment) {
+        self.style = style
+        self.alignment = alignment
+    }
+
+    package static let body = TextPreset(style: .body, alignment: .leading)
+}
+
 /// What the editor is doing with the Pencil. The app picks one and the
-/// binding turns it into the `PKTool` the runtime applies.
+/// binding turns it into the `CanvasTool` the runtime applies: a `PKTool`
+/// for ink, a style to type with for text.
 package enum EditorTool: Equatable, Sendable {
     case ink(InkKind, InkPreset)
+    case text(TextStyle, TextAlignment)
     /// The object eraser deletes whole strokes and has no width, as
     /// GoodNotes' has none. Two cases, so a width on it is unrepresentable
     /// rather than ignored.
@@ -178,20 +194,22 @@ package enum EditorTool: Equatable, Sendable {
     /// `.highlighter` becomes `.marker` here and nowhere else: highlighter
     /// is the product word and the contract's, and one translation at the
     /// boundary is the whole tax.
-    package var pkTool: any PKTool {
+    package var canvasTool: CanvasTool {
         switch self {
         case .ink(let kind, let preset):
-            PKInkingTool(Self.inkType(kind), color: preset.color.uiColor, width: kind.points(preset.width))
+            .ink(PKInkingTool(Self.inkType(kind), color: preset.color.uiColor, width: kind.points(preset.width)))
+        case .text(let style, let alignment):
+            .text(style, alignment)
         case .eraseObject:
-            PKEraserTool(.vector)
+            .ink(PKEraserTool(.vector))
         case .erasePixel(let width):
             // `.fixedWidthBitmap`, spelled out. `PKEraserTool(.bitmap,
             // width:)` builds this type anyway and reports it back under
             // this name, so asking for `.bitmap` was asking for a tool
             // PencilKit does not make.
-            PKEraserTool(.fixedWidthBitmap, width: Self.pixelEraserPoints(width))
+            .ink(PKEraserTool(.fixedWidthBitmap, width: Self.pixelEraserPoints(width)))
         case .lasso:
-            PKLassoTool()
+            .ink(PKLassoTool())
         }
     }
 

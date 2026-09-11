@@ -1,5 +1,12 @@
 import CoreGraphics
 import Foundation
+
+/// The PencilKit tool an editor tool becomes, or nil for text.
+extension EditorTool {
+    var pkTool: (any PKTool)? {
+        if case .ink(let tool) = canvasTool { tool } else { nil }
+    }
+}
 import PencilKit
 import Testing
 import UIKit
@@ -116,6 +123,16 @@ struct EditorToolTests {
         #expect(EditorTool.lasso.pkTool is PKLassoTool)
     }
 
+    @Test("The text tool is a style to type with, not a PencilKit tool")
+    func textIsAStyle() {
+        let bold = TextStyle(font: "system", size: 24, bold: true, italic: false, underline: false, color: TextStyle.body.color)
+        guard case .text(let style, let alignment) = EditorTool.text(bold, .center).canvasTool else {
+            Issue.record("the text tool became an ink tool"); return
+        }
+        #expect(style == bold && alignment == .center)
+        #expect(EditorTool.text(bold, .center).pkTool == nil)
+    }
+
     // MARK: The record
 
     @Test("A palette record round-trips through a property list")
@@ -129,10 +146,20 @@ struct EditorToolTests {
             ],
             eraserMode: .pixel,
             pixelEraserWidth: .thick,
-            recentColors: [ToolColor(rgba: RGBA8(red: 1, green: 2, blue: 3, alpha: 0xFF))]
+            recentColors: [ToolColor(rgba: RGBA8(red: 1, green: 2, blue: 3, alpha: 0xFF))],
+            text: TextPreset(style: TextStyle(font: "system", size: 32, bold: false, italic: true, underline: true, color: RGBA8(red: 9, green: 8, blue: 7, alpha: 0xFF)), alignment: .trailing)
         )
         let data = try PropertyListEncoder().encode(record)
         #expect(try PropertyListDecoder().decode(ToolPaletteRecord.self, from: data) == record)
+    }
+
+    @Test("A record written before the text slot existed reads back with the built-in text preset")
+    func aRecordWithoutTextDecodes() throws {
+        let data = try PropertyListEncoder().encode(ToolPaletteRecord.builtIn)
+        var plist = try #require(try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])
+        #expect(plist.removeValue(forKey: "text") != nil)
+        let older = try PropertyListSerialization.data(fromPropertyList: plist, format: .binary, options: 0)
+        #expect(try PropertyListDecoder().decode(ToolPaletteRecord.self, from: older) == .builtIn)
     }
 
     @Test("A stored colour that is not opaque is an undecodable record")

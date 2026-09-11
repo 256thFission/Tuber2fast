@@ -73,7 +73,8 @@ struct ToolPaletteTests {
             inks: [.pen: InkPreset(color: .red, width: .thick)],
             eraserMode: .pixel,
             pixelEraserWidth: .thin,
-            recentColors: []
+            recentColors: [],
+            text: .body
         )
         #expect(!partial.isComplete)
         let palette = ToolPalette(store: MemoryPaletteStore(partial))
@@ -141,6 +142,25 @@ struct ToolPaletteTests {
 
         #expect(palette.lastKind == .ink(.pencil))
         #expect(store.stored == written)
+    }
+
+    @Test("Remembering text writes the text slot and the last kind, and touches no recent")
+    func rememberingTextWritesTheTextSlot() {
+        let store = MemoryPaletteStore()
+        let palette = ToolPalette(store: store)
+        palette.used(swatch(0x01))
+        let bold = TextStyle(font: "system", size: 24, bold: true, italic: false, underline: false, color: RGBA8(red: 9, green: 8, blue: 7, alpha: 0xFF))
+
+        palette.remember(.text(bold, .center))
+
+        #expect(palette.text == TextPreset(style: bold, alignment: .center))
+        #expect(palette.lastKind == .text)
+        #expect(palette.currentTool == .text(bold, .center))
+        #expect(palette.recentColors == [swatch(0x01)], "a colour typed with is never a recent")
+        #expect(store.stored?.text == TextPreset(style: bold, alignment: .center))
+
+        // A second palette over the store opens on text.
+        #expect(ToolPalette(store: store).currentTool == .text(bold, .center))
     }
 
     // MARK: used
