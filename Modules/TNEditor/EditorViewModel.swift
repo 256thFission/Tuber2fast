@@ -6,6 +6,22 @@ import TNModel
 import TNNotebook
 import UIKit
 
+/// One cell of the page navigator: what the grid draws before it has a
+/// thumbnail, and what its fetch is keyed by.
+package struct NavigatorPage: Identifiable, Sendable, Equatable {
+    package let id: PageID
+    package let geometry: PageGeometry
+    /// The notebook's content version, the cell's `.task(id:)`.
+    package let version: UInt64
+    package let isCurrent: Bool
+    /// False when it is the only page.
+    package let isDeletable: Bool
+    /// True while the notebook is loading the page. Part of the cell's task
+    /// id, so the cell asks again when the load settles instead of the
+    /// notebook polling its own state.
+    package let isLoading: Bool
+}
+
 /// What one open notebook looks like to the app: a canvas to put on
 /// screen, a few observed facts to draw a toolbar from, and intentions.
 ///
@@ -45,6 +61,9 @@ package final class EditorViewModel {
     package private(set) var canRedo = false
     package private(set) var pageCount = 0
     package private(set) var currentPageIndex = 0
+    /// Rebuilt on every drain like the others: a map over five-field structs
+    /// per drain is cheaper than a flag that can be stale.
+    package private(set) var navigatorPages: [NavigatorPage] = []
 
     /// The last refusal from an import or a layer addition. Cleared when
     /// the next one is attempted.
@@ -56,15 +75,23 @@ package final class EditorViewModel {
     package var isSaving: Bool { notebook.dirtyPageCount > 0 }
     package var lastSaveError: SaveFailure? { notebook.lastSaveError }
 
-    package init(
+    package convenience init(
         notebook: Notebook,
         palette: ToolPalette,
         onLinkActivated: @escaping @MainActor (LinkTarget) -> Void
     ) {
-        self.notebook = notebook
+        self.init(
+            binding: EditorBinding(notebook: notebook, onLinkActivated: onLinkActivated),
+            palette: palette
+        )
+    }
+
+    /// The designated initializer. Production passes the binding that made
+    /// the runtime; a test passes one over a recording surface.
+    package init(binding: EditorBinding, palette: ToolPalette) {
+        self.notebook = binding.notebook
         self.palette = palette
         self.tool = palette.currentTool
-        let binding = EditorBinding(notebook: notebook, onLinkActivated: onLinkActivated)
         self.binding = binding
         self.canvasHost = binding.host
         binding.onDrained = { [weak self] in self?.refreshMirrors() }
@@ -82,6 +109,19 @@ package final class EditorViewModel {
         canRedo = notebook.canRedo
         pageCount = notebook.pageCount
         currentPageIndex = notebook.pageIDs.firstIndex(of: notebook.currentPageID) ?? 0
+        let records = notebook.index.pages
+        navigatorPages = records.map { record in
+            let isLoading: Bool
+            if case .loading = notebook.state(of: record.id) { isLoading = true } else { isLoading = false }
+            return NavigatorPage(
+                id: record.id,
+                geometry: record.geometry,
+                version: notebook.contentVersion(of: record.id),
+                isCurrent: record.id == notebook.currentPageID,
+                isDeletable: records.count > 1,
+                isLoading: isLoading
+            )
+        }
     }
 
     // MARK: The tool
@@ -212,10 +252,46 @@ package final class EditorViewModel {
         }
     }
 
-    /// The last page cannot be deleted; the notebook refuses it, silently,
+
+    /// A new page after `page`, and the reader is taken to it. It inherits
+    /// the current page's paper and geometry, not `page`'s: that is what
+    /// `appendPage` copies today, and the navigator's label says so.
+    package func addPage(after page: PageID) {
+        var created: PageID?
+        binding.intention { created = notebook.appendPage(after: page) }
+        if let created { binding.surface.scroll(to: created) }
+    }
+
+    /// The only page cannot be deleted; the notebook refuses it, silently,
     /// because a notebook with no pages has no state to return to.
-    package func deleteCurrentPage() {
-        binding.intention { notebook.deletePage(notebook.currentPageID) }
+    package func deletePage(_ page: PageID) {
+        binding.intention { notebook.deletePage(page) }
+    }
+
+    package func deleteCurrentPage() { deletePage(notebook.currentPageID) }
+
+    /// Pixels for a navigator cell, keyed by the page's content version.
+    /// Cancelled with the cell's task; nil while the page is loading or when
+    /// it is unreadable.
+    package func thumbnail(of page: PageID) async -> CGImage? {
+        await notebook.thumbnail(of: page)
+    }
+
+    /// `page` goes before `target`, or to the end when `target` is nil.
+    ///
+    /// Three drops leave the order as it is and stop here, because the
+    /// notebook would otherwise rewrite and save an unchanged index, and a
+    /// self-drop would send the page to the end (`Notebook.movePage` removes
+    /// the page first, then fails to find it as the target). A drop on the
+    /// page's own next neighbour, and the last page dropped past the end,
+    /// are the other two; `next == nil` when the page is last, so the one
+    /// comparison covers both.
+    package func movePage(_ page: PageID, before target: PageID?) {
+        let pages = notebook.pageIDs
+        guard let from = pages.firstIndex(of: page) else { return }
+        let next = pages.indices.contains(from + 1) ? pages[from + 1] : nil
+        if target == page || target == next { return }
+        binding.intention { notebook.movePage(page, before: target) }
     }
 
     package var currentPaper: Paper? { notebook.paper(of: notebook.currentPageID) }

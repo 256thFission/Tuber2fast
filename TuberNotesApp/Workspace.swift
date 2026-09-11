@@ -43,6 +43,7 @@ final class Workspace {
     private(set) var identitiesReady = false
 
     private var leaseFlush: Task<Void, Never>?
+    private var memoryWarnings: (any NSObjectProtocol)?
 
     init() {
         do {
@@ -54,6 +55,13 @@ final class Workspace {
             TNPrecondition.fail("the library store could not be created: \(error)")
         }
         Task { await self.refreshIdentities() }
+        // The renderer caches declare "on memory pressure from the app" as an
+        // evictor; this is the one place that keeps the promise.
+        memoryWarnings = NotificationCenter.default.addObserver(
+            forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.purgeRenderers() }
+        }
         #if DEBUG
         // `-TNSmokeNotebook`: create a notebook named Smoke if absent and open
         // it, so a simulator launch reaches the editor with no taps. Debug
@@ -62,6 +70,10 @@ final class Workspace {
             Task { await self.openSmokeNotebook() }
         }
         #endif
+    }
+
+    isolated deinit {
+        if let memoryWarnings { NotificationCenter.default.removeObserver(memoryWarnings) }
     }
 
     #if DEBUG
@@ -73,6 +85,15 @@ final class Workspace {
         await open(path: path, name: "Smoke")
     }
     #endif
+
+    /// Every open notebook's renderer drops what it can rebuild: decoded
+    /// assets and thumbnails. Ink and pages are untouched.
+    private func purgeRenderers() {
+        for tab in tabs {
+            let renderer = tab.editor.notebook.renderer
+            Task { await renderer.purge() }
+        }
+    }
 
     // MARK: Identity
 

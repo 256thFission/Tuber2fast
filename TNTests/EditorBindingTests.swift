@@ -137,6 +137,73 @@ struct EditorBindingTests {
         _ = await notebook.close()
     }
 
+    @Test("A move pushes one page order; a self-drop, a next-neighbour drop, and the last page onto the end push nothing")
+    func movePageGuards() async throws {
+        let (scratch, notebook) = try await reopened("editor-move", pages: 3)
+        let surface = RecordingSurface()
+        let editor = EditorViewModel(binding: EditorBinding(notebook: notebook, surface: surface), palette: ToolPalette(store: MemoryPaletteStore()))
+        let (a, b, c) = (notebook.pageIDs[0], notebook.pageIDs[1], notebook.pageIDs[2])
+        let pushed = surface.pagesSet.count
+
+        editor.movePage(a, before: a)
+        editor.movePage(a, before: b)
+        editor.movePage(c, before: nil)
+        #expect(surface.pagesSet.count == pushed)
+        #expect(notebook.pageIDs == [a, b, c])
+        #expect(!notebook.isDirty, "an unchanged order is not a save")
+
+        editor.movePage(c, before: a)
+        #expect(surface.pagesSet.count == pushed + 1)
+        #expect(surface.pagesSet.last == [c, a, b])
+        _ = await notebook.close()
+        _ = scratch
+    }
+
+    @Test("Adding after a page pushes the order then scrolls to the new page; deleting the only page pushes nothing")
+    func addAfterAndDeleteLast() async throws {
+        let scratch = try Scratch("editor-add-delete")
+        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        let surface = RecordingSurface()
+        let editor = EditorViewModel(binding: EditorBinding(notebook: notebook, surface: surface), palette: ToolPalette(store: MemoryPaletteStore()))
+        let first = notebook.pageIDs[0]
+        let pushed = surface.pagesSet.count
+
+        editor.deletePage(first)
+        #expect(surface.pagesSet.count == pushed)
+        #expect(editor.navigatorPages.map(\.isDeletable) == [false])
+
+        editor.addPage(after: first)
+        let created = try #require(notebook.pageIDs.last)
+        #expect(surface.pagesSet.last == [first, created])
+        #expect(surface.calls.last == .scroll(created), "the scroll follows the push")
+        #expect(editor.navigatorPages.map(\.isDeletable) == [true, true])
+        #expect(editor.navigatorPages.map(\.version) == [0, 1])
+        _ = await notebook.close()
+    }
+
+    @Test("A navigator cell's loading flag follows the page's state across a window change")
+    func navigatorPagesFollowLoading() async throws {
+        let (scratch, notebook) = try await reopened("editor-navigator", pages: 2)
+        let surface = RecordingSurface()
+        let binding = EditorBinding(notebook: notebook, surface: surface)
+        let editor = EditorViewModel(binding: binding, palette: ToolPalette(store: MemoryPaletteStore()))
+        let (a, b) = (notebook.pageIDs[0], notebook.pageIDs[1])
+        #expect(editor.navigatorPages.map(\.isLoading) == [false, false])
+        #expect(editor.navigatorPages.map(\.isCurrent) == [true, false])
+
+        editor.scroll(toPageIndex: 1)
+        #expect(surface.calls.last == .scroll(b))
+        binding.pageBecameCurrent(b)
+        #expect(editor.navigatorPages.map(\.isCurrent) == [false, true])
+
+        binding.windowChanged(to: [a])
+        #expect(editor.navigatorPages.map(\.isLoading) == [true, false])
+        try await waitUntil { surface.installed.contains(a) }
+        #expect(editor.navigatorPages.map(\.isLoading) == [false, false])
+        _ = await notebook.close()
+        _ = scratch
+    }
+
     @Test("The end boundary is answered by a page order carrying that report's sequence, and the pulled page copies its template")
     func endBoundaryAnswersWithSetPages() async throws {
         let scratch = try Scratch("editor-boundary")

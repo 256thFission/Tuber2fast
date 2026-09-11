@@ -56,6 +56,12 @@ package final class Notebook {
     @ObservationIgnored private var history = InkHistory()
     /// An undo whose page was not loaded: applied when the page arrives.
     @ObservationIgnored private var pendingRestores: [PageID: PKDrawing] = [:]
+    /// Bumped by every change that alters what a page looks like: ink,
+    /// layers, paper. Never reset by unload, because content is only dropped
+    /// when clean (`prune()`), so the version on reload still describes the
+    /// page. There is no choke point that sees every such change, so the
+    /// bump sites are enumerated and `NotebookTests` is the enforcement.
+    @ObservationIgnored private var contentVersions: [PageID: UInt64] = [:]
 
     // MARK: Save engine
 
@@ -161,32 +167,15 @@ package final class Notebook {
                 self?.installLoaded(page, generation: generation, result: .faults([.pageFileUnreadable("\(error)")]))
                 return
             }
-            var faults = bytes.faults
-            var ink: PKDrawing?
-            if let archive = bytes.inkArchive {
-                let decoded = await Task.detached(priority: .userInitiated) { () -> Result<PKDrawing, any Error> in
-                    do { return .success(try PKDrawing(data: archive)) } catch { return .failure(error) }
-                }.value
-                switch decoded {
-                case .success(let drawing): ink = drawing
-                case .failure(let error): faults.append(.inkArchiveUndecodable("\(error)"))
-                }
-            }
             if Task.isCancelled { return }
-            if faults.isEmpty {
-                var content = PageContent(
-                    ink: ink ?? PKDrawing(),
-                    layers: bytes.layers,
-                    hasInk: bytes.file.hasInk || bytes.inkRecordNeeded,
-                    inkIndex: bytes.file.inkIndex
-                )
-                // An adopted container is recorded by the next save.
-                if bytes.inkRecordNeeded { content.edited() }
+            switch await Self.decode(bytes) {
+            case .ready(var content):
+                if Task.isCancelled { return }
                 if let record, let renderer = self?.renderer {
                     content.composite = await renderer.composite(geometry: record.geometry, paper: record.paper.paper, layers: bytes.layers, scale: Notebook.baseCompositeScale)
                 }
                 self?.installLoaded(page, generation: generation, result: .ready(content))
-            } else {
+            case .faults(let faults):
                 self?.installLoaded(page, generation: generation, result: .faults(faults))
             }
         }
@@ -195,6 +184,28 @@ package final class Notebook {
     private enum LoadOutcome: Sendable {
         case ready(PageContent)
         case faults([PageFault])
+    }
+
+    /// Bytes to content, or to the faults that refuse them. The one judgment
+    /// for both a load and a thumbnail of an unloaded page, so a corrupt page
+    /// reaches the same verdict on either path. Runs in the caller's task, on
+    /// the generic executor: a load's decode is cancelled with its window.
+    private nonisolated static func decode(_ bytes: PageBytes) async -> LoadOutcome {
+        var faults = bytes.faults
+        var ink: PKDrawing?
+        if let archive = bytes.inkArchive {
+            do { ink = try PKDrawing(data: archive) } catch { faults.append(.inkArchiveUndecodable("\(error)")) }
+        }
+        guard faults.isEmpty else { return .faults(faults) }
+        var content = PageContent(
+            ink: ink ?? PKDrawing(),
+            layers: bytes.layers,
+            hasInk: bytes.file.hasInk || bytes.inkRecordNeeded,
+            inkIndex: bytes.file.inkIndex
+        )
+        // An adopted container is recorded by the next save.
+        if bytes.inkRecordNeeded { content.edited() }
+        return .ready(content)
     }
 
     private func installLoaded(_ page: PageID, generation: UInt64, result: LoadOutcome) {
@@ -265,7 +276,18 @@ package final class Notebook {
         history.recordEdit(on: page, previous: content.ink)
         content.setInk(ink)
         states[page] = .ready(content)
+        bumpContentVersion(of: page)
         markDirty()
+    }
+
+    // MARK: Content versions
+
+    /// The version a thumbnail of `page` is keyed by. 0 for a page never
+    /// changed in this session.
+    package func contentVersion(of page: PageID) -> UInt64 { contentVersions[page] ?? 0 }
+
+    private func bumpContentVersion(of page: PageID) {
+        contentVersions[page, default: 0] += 1
     }
 
     package var canUndo: Bool { history.canUndo }
@@ -289,19 +311,29 @@ package final class Notebook {
     }
 
     private func restore(_ entry: HistoryEntry) {
-        guard case .ready(var content) = states[entry.page] else {
+        switch states[entry.page] {
+        case .ready(var content):
+            content.setInk(entry.ink)
+            let seq = InkSeq(nextInkSeq); nextInkSeq += 1
+            content.pendingEcho = seq
+            states[entry.page] = .ready(content)
+            bumpContentVersion(of: entry.page)
+            changes.append(.inkRestored(entry.page, entry.ink, seq: seq))
+            markDirty()
+        case .unloaded, .loading:
             // The page left the window; bring it back and apply on arrival.
+            // The stash is a promise that the page will differ when it loads,
+            // so it bumps the version now: a thumbnail taken of the unloaded
+            // page reads the stash and is keyed by the ink it will have.
             pendingRestores[entry.page] = entry.ink
             wanted.insert(entry.page)
+            bumpContentVersion(of: entry.page)
             if case .unloaded = states[entry.page] { startLoad(entry.page) }
+        case .unreadable, nil:
+            // A page that cannot take ink, or one that was deleted: the entry
+            // is swallowed (the `KNOWN DEFECT` at `deletePage`).
             return
         }
-        content.setInk(entry.ink)
-        let seq = InkSeq(nextInkSeq); nextInkSeq += 1
-        content.pendingEcho = seq
-        states[entry.page] = .ready(content)
-        changes.append(.inkRestored(entry.page, entry.ink, seq: seq))
-        markDirty()
     }
 
     /// The runtime's final report for a retired canvas. `finalInk` nil means
@@ -409,6 +441,7 @@ package final class Notebook {
         content.edited()
         states[record.id] = .ready(content)
         wanted.insert(record.id)
+        bumpContentVersion(of: record.id)
         indexSeq += 1
         emitStructure(answering: answering)
         emitContent(record.id)
@@ -417,13 +450,26 @@ package final class Notebook {
         return record.id
     }
 
+    /// KNOWN DEFECT: history entries and a pending restore for the deleted
+    /// page are left behind, so an undo that reaches one of them restores a
+    /// page that no longer exists and is swallowed by `restore`'s guard on
+    /// `states`. It stays until undo of layer and page operations is
+    /// designed; deleting a page is navigation, not an edit, and is not
+    /// itself undoable.
     package func deletePage(_ page: PageID) {
-        guard index.pages.count > 1, index.record(of: page) != nil else { return }
+        guard index.pages.count > 1, let position = index.pageIDs.firstIndex(of: page) else { return }
         index = index.withPages(index.pages.filter { $0.id != page })
         loads[page]?.cancel(); loads[page] = nil
         states[page] = nil
+        contentVersions[page] = nil
         wanted.remove(page)
-        if currentPageID == page { currentPageID = index.pageIDs[0]; scheduleViewWrite() }
+        // The successor at the same position, clamped when the last page goes:
+        // the page the runtime shows after the delete (`PagedCanvasController.setPages`),
+        // so the notebook's current page and the viewport agree.
+        if currentPageID == page {
+            currentPageID = index.pageIDs[min(position, index.pageIDs.count - 1)]
+            scheduleViewWrite()
+        }
         indexSeq += 1
         emitStructure(answering: nil)
         markDirty()
@@ -460,6 +506,7 @@ package final class Notebook {
             geometry = sized
         }
         index = index.withPages(index.pages.map { $0.id == page ? $0.with(paper: paper, geometry: geometry) : $0 })
+        bumpContentVersion(of: page)
         indexSeq += 1
         emitStructure(answering: nil)
         markDirty()
@@ -474,6 +521,34 @@ package final class Notebook {
     }
 
     package func paper(of page: PageID) -> Paper? { index.record(of: page)?.paper.paper }
+
+    // MARK: Thumbnails
+
+    /// A page rendered small, keyed by its content version. A ready page
+    /// renders from custody. An unloaded page renders from its files, decoded
+    /// in the caller's task and installed nowhere: the state stays
+    /// `.unloaded` and nothing is marked dirty. A pending restore is
+    /// preferred over the ink on disk, because it is the ink the page will
+    /// have. A loading page answers nil at once rather than waiting; the
+    /// caller asks again when the load settles. An unreadable page is nil.
+    package func thumbnail(of page: PageID) async -> CGImage? {
+        guard let record = index.record(of: page) else { return nil }
+        let key = ThumbnailKey(page: page, version: contentVersion(of: page))
+        if let cached = await renderer.cachedThumbnail(key) { return cached }
+        switch states[page] {
+        case .ready(let content):
+            return await renderer.thumbnail(key, geometry: record.geometry, paper: record.paper.paper, layers: content.layers, ink: content.ink)
+        case .unloaded:
+            if Task.isCancelled { return nil }
+            guard let bytes = try? await store.loadPage(page) else { return nil }
+            if Task.isCancelled { return nil }
+            guard case .ready(let content) = await Self.decode(bytes) else { return nil }
+            let ink = pendingRestores[page] ?? content.ink
+            return await renderer.thumbnail(key, geometry: record.geometry, paper: record.paper.paper, layers: content.layers, ink: ink)
+        case .loading, .unreadable, nil:
+            return nil
+        }
+    }
 
     // MARK: Composites
 
@@ -519,6 +594,7 @@ package final class Notebook {
             content.pendingLayerFiles.insert(layer.id)
             content.edited()
         }
+        bumpContentVersion(of: page)
         markDirty()
         rerenderComposite(of: page)
     }
@@ -562,6 +638,7 @@ package final class Notebook {
             content.edited()
             states[record.id] = .ready(content)
             wanted.insert(record.id)
+            bumpContentVersion(of: record.id)
             created.append(record.id)
             after = record.id
         }
@@ -626,6 +703,7 @@ package final class Notebook {
         content.pendingLayerFiles.insert(layerID)
         content.edited()
         states[page] = .ready(content)
+        bumpContentVersion(of: page)
         markDirty()
         rerenderComposite(of: page)
         return .accepted
@@ -638,6 +716,7 @@ package final class Notebook {
         content.pendingLayerFiles.remove(layerID)
         content.edited()
         states[page] = .ready(content)
+        bumpContentVersion(of: page)
         markDirty()
         rerenderComposite(of: page)
     }

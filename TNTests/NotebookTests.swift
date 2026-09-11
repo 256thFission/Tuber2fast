@@ -32,6 +32,18 @@ final class HeldStore: ForwardingStore, @unchecked Sendable {
     }
 }
 
+/// A real store whose `loadPage` waits until released, so a page can be
+/// held in `.loading` for as long as a test needs.
+final class HeldLoadStore: ForwardingStore, @unchecked Sendable {
+    private let gate = Gate()
+    func hold() async { await gate.close() }
+    func release() async { await gate.open() }
+    override func loadPage(_ page: PageID) async throws(FormatFault) -> PageBytes {
+        await gate.wait()
+        return try await base.loadPage(page)
+    }
+}
+
 actor Gate {
     private var isOpen = true
     private var waiters: [CheckedContinuation<Void, Never>] = []
@@ -298,6 +310,177 @@ struct NotebookTests {
         await notebook.flush()
         again = try await PackageStore(root: scratch.packageURL).load()
         #expect(again.index.pageIDs == [first])
+    }
+
+    @Test("Deleting the current page makes its successor at the same position current, clamped at the end")
+    func deleteSuccessorIsClamped() async throws {
+        let scratch = try Scratch("nb-delete-successor")
+        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        let first = notebook.pageIDs[0]
+        let second = notebook.appendPage()
+        let third = notebook.appendPage()
+        notebook.pageBecameCurrent(second)
+        notebook.deletePage(second)
+        #expect(notebook.currentPageID == third, "the page that slid into the deleted page's position")
+        notebook.deletePage(third)
+        #expect(notebook.currentPageID == first, "the last page went; the new last page is current")
+        notebook.deletePage(first)
+        #expect(notebook.pageIDs == [first], "the only page cannot be deleted")
+    }
+
+    // The content version has no choke point; this list is the invariant's
+    // enforcement. A mutation that changes what a page looks like and is
+    // missing here is a test to add, not a runtime check.
+    @Test("The content version rises on every change to a page's picture and on nothing else")
+    func contentVersionBumpSites() async throws {
+        let scratch = try Scratch("nb-version")
+        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        let page = notebook.pageIDs[0]
+        #expect(notebook.contentVersion(of: page) == 0, "a page never changed in this session")
+        notebook.windowChanged(to: [page])
+        try await waitUntil { notebook.state(of: page)?.content != nil }
+        var version = notebook.contentVersion(of: page)
+        func expectBump(_ what: String) {
+            let now = notebook.contentVersion(of: page)
+            #expect(now == version + 1, "\(what) should bump once, went \(version) to \(now)")
+            version = now
+        }
+        func expectSame(_ what: String) {
+            #expect(notebook.contentVersion(of: page) == version, "\(what) is not a change to the page")
+        }
+
+        _ = notebook.drainChanges()
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 1), echoOf: nil)
+        expectBump("ink")
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 2), echoOf: nil)
+        expectBump("ink again")
+        notebook.undo()
+        expectBump("undo into a loaded page")
+        guard case .inkRestored(_, let ink, let seq) = try #require(notebook.drainChanges().last) else { Issue.record("no restore"); return }
+        notebook.inkChanged(on: page, ink, echoOf: seq)
+        expectSame("the echo")
+        try await notebook.setPaper(.drawn(.grid), on: page)
+        expectBump("paper")
+        try await notebook.addTextLayer(on: page, rect: PageRect(x: 10, y: 10, width: 100, height: 40), runs: [TextRun(string: "t")])
+        expectBump("a text layer added")
+        // Text refuses a transform; an image layer takes one.
+        let layer = Fixture.imageLayer()
+        try await notebook.addLayer(layer, assetData: Fixture.archive(1, count: 128), on: page)
+        expectBump("an image layer added")
+        #expect(notebook.transformLayer(on: page, layer: layer.id, to: .translation(x: 1, y: 1)) == .accepted)
+        expectBump("a layer moved")
+        notebook.deleteLayer(layer.id, on: page)
+        expectBump("a layer deleted")
+
+        let second = notebook.appendPage()
+        expectSame("another page appended")
+        #expect(notebook.contentVersion(of: second) == 1, "creation is the new page's first version")
+        notebook.pageBecameCurrent(second)
+        expectSame("a page turn")
+        notebook.movePage(second, before: page)
+        expectSame("a reorder")
+        notebook.windowChanged(to: [second])
+        expectSame("leaving the window")
+
+        await notebook.flush()
+        notebook.retired(page, finalInk: nil)
+        notebook.prune()
+        if case .unloaded = notebook.state(of: page)! {} else { Issue.record("page should be pruned") }
+        expectSame("unload")
+        notebook.windowChanged(to: [page, second])
+        try await waitUntil { notebook.state(of: page)?.content != nil }
+        expectSame("reload")
+    }
+
+    @Test("A thumbnail of an unloaded page comes from its files and installs nothing")
+    func thumbnailOfUnloadedPage() async throws {
+        let scratch = try Scratch("nb-thumb-unloaded")
+        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        let page = notebook.pageIDs[0]
+        notebook.windowChanged(to: [page])
+        try await waitUntil { notebook.state(of: page)?.content != nil }
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 1), echoOf: nil)
+        await notebook.flush()
+        _ = await notebook.close()
+
+        let reopened = try await Notebook.open(store: PackageStore(root: scratch.packageURL), schedule: fast)
+        let image = try #require(await reopened.thumbnail(of: page))
+        let scale = Double(image.height) / PageGeometry.letter.height
+        #expect(luminance(of: image, x: Int(40 * scale), y: Int(10 * scale)) < 128, "the stroke on disk is in the thumbnail")
+        if case .unloaded = reopened.state(of: page)! {} else { Issue.record("a thumbnail must not load the page") }
+        #expect(reopened.dirtyPageCount == 0)
+        #expect(!reopened.isDirty)
+    }
+
+    @Test("An undo into an unloaded page is thumbnailed with the restored ink, before and after the load")
+    func thumbnailPrefersPendingRestore() async throws {
+        let scratch = try Scratch("nb-thumb-restore")
+        let store = try await PackageStore.create(root: scratch.packageURL, index: Fixture.index(pages: 2))
+        let notebook = try await Notebook.open(store: store, schedule: fast)
+        let (a, b) = (notebook.pageIDs[0], notebook.pageIDs[1])
+        notebook.windowChanged(to: [a, b])
+        try await waitUntil { notebook.state(of: a)?.content != nil && notebook.state(of: b)?.content != nil }
+        notebook.inkChanged(on: a, Ink.drawing(strokes: 1), echoOf: nil)
+        notebook.inkChanged(on: b, Ink.drawing(strokes: 1), echoOf: nil)
+        await notebook.flush()
+        notebook.windowChanged(to: [b])
+        notebook.retired(a, finalInk: nil)
+        notebook.prune()
+        let before = notebook.contentVersion(of: a)
+
+        #expect(notebook.undo() == b)
+        #expect(notebook.undo() == a, "the older edit is on a, which is not loaded")
+        #expect(notebook.contentVersion(of: a) == before + 1, "the stash bumps the version")
+        // The load the undo started is dropped when a leaves the window; the
+        // restore survives it.
+        notebook.windowChanged(to: [b])
+        if case .unloaded = notebook.state(of: a)! {} else { Issue.record("a should have dropped back to unloaded") }
+
+        let unloaded = try #require(await notebook.thumbnail(of: a))
+        let scale = Double(unloaded.height) / PageGeometry.letter.height
+        #expect(luminance(of: unloaded, x: Int(40 * scale), y: Int(10 * scale)) == 255, "the pending restore, not the stroke on disk")
+        if case .unloaded = notebook.state(of: a)! {} else { Issue.record("still unloaded") }
+
+        notebook.windowChanged(to: [a, b])
+        try await waitUntil { notebook.state(of: a)?.content != nil }
+        #expect(notebook.state(of: a)?.content?.ink.strokes.isEmpty == true)
+        // A new version after the load, so the render comes from custody and
+        // not from the cache entry the unloaded path made.
+        try await notebook.setPaper(.drawn(.blank), on: a)
+        #expect(notebook.contentVersion(of: a) == before + 2)
+        let loaded = try #require(await notebook.thumbnail(of: a))
+        #expect(loaded !== unloaded, "rendered again, from the ready page")
+        #expect(luminance(of: loaded, x: Int(40 * scale), y: Int(10 * scale)) == 255)
+    }
+
+    @Test("A page with a bad ink container thumbnails to nil, and its load reaches the same faults")
+    func thumbnailOfCorruptPageRefuses() async throws {
+        let scratch = try Scratch("nb-thumb-corrupt")
+        let (store, index, _) = try await Fixture.populated(at: scratch.packageURL)
+        let notebook = try await Notebook.open(store: store, schedule: fast)
+        let page = index.pageIDs[0]
+        #expect(await notebook.thumbnail(of: page) == nil)
+        if case .unloaded = notebook.state(of: page)! {} else { Issue.record("a refused thumbnail must not change the state") }
+        notebook.windowChanged(to: [page])
+        try await waitUntil { if case .unreadable = notebook.state(of: page)! { true } else { false } }
+        guard case .unreadable(let faults) = notebook.state(of: page)! else { return }
+        #expect(faults.contains { if case .inkArchiveUndecodable = $0 { true } else { false } })
+    }
+
+    @Test("A page that is loading answers nil at once rather than waiting")
+    func thumbnailOfLoadingPageIsNil() async throws {
+        let scratch = try Scratch("nb-thumb-loading")
+        let store = HeldLoadStore(try await PackageStore.create(root: scratch.packageURL, index: Fixture.index(pages: 1)))
+        let notebook = try await Notebook.open(store: store, schedule: fast)
+        let page = notebook.pageIDs[0]
+        await store.hold()
+        notebook.windowChanged(to: [page])
+        if case .loading = notebook.state(of: page)! {} else { Issue.record("should be loading") }
+        #expect(await notebook.thumbnail(of: page) == nil)
+        if case .loading = notebook.state(of: page)! {} else { Issue.record("still loading") }
+        await store.release()
+        try await waitUntil { notebook.state(of: page)?.content != nil }
+        #expect(await notebook.thumbnail(of: page) != nil)
     }
 
     @Test("Importing a PDF makes one page per PDF page, each with that page as paper and no layer")

@@ -7,20 +7,83 @@ import TNCore
 import TNFormat
 import TNModel
 
+/// What one thumbnail was rendered from. `version` is the notebook's per-page
+/// content version, so paper, geometry, layers, and ink are all folded into
+/// one number and the key never names them.
+package struct ThumbnailKey: Hashable, Sendable {
+    package let page: PageID
+    package let version: UInt64
+
+    package init(page: PageID, version: UInt64) {
+        self.page = page
+        self.version = version
+    }
+}
+
+/// One shape for every bounded in-memory cache here: values by key, oldest
+/// evicted first once the byte total passes the bound. Each instance still
+/// declares its owner, bound, and evictor where it is declared, as the
+/// contract requires; this type is the mechanism, not the declaration.
+struct BoundedCache<Key: Hashable, Value> {
+    let bound: Int
+    let cost: (Value) -> Int
+    private var values: [Key: Value] = [:]
+    private var order: [Key] = []
+    private(set) var bytes = 0
+
+    init(bound: Int, cost: @escaping (Value) -> Int) {
+        self.bound = bound
+        self.cost = cost
+    }
+
+    subscript(key: Key) -> Value? { values[key] }
+
+    var count: Int { values.count }
+
+    /// A key already present is replaced and becomes the newest.
+    mutating func insert(_ value: Value, for key: Key) {
+        if let replaced = values.updateValue(value, forKey: key) {
+            bytes -= cost(replaced)
+            order.removeAll { $0 == key }
+        }
+        order.append(key)
+        bytes += cost(value)
+        while bytes > bound, let oldest = order.first {
+            order.removeFirst()
+            if let removed = values.removeValue(forKey: oldest) { bytes -= cost(removed) }
+        }
+    }
+
+    mutating func removeAll() {
+        values.removeAll()
+        order.removeAll()
+        bytes = 0
+    }
+}
+
 /// Composites and thumbnails, off the main actor. A composite is paper plus
 /// every static layer as pixels; the ink is never in it.
 ///
 /// Cache: decoded assets by reference. Owner: this actor. Bound:
-/// `assetCacheBound` bytes, evicting oldest first. Evictor: `trimCache`,
-/// on insert and on memory pressure from the app.
+/// `assetCacheBound` bytes, evicting oldest first. Evictor:
+/// `BoundedCache.insert`, on insert, and `purge()` on memory pressure from
+/// the app.
+///
+/// Cache: page thumbnails by `ThumbnailKey`. Owner: this actor, one per
+/// notebook. Bound: `thumbnailCacheBound` bytes, evicting oldest first.
+/// Evictor: `BoundedCache.insert`, on insert, and `purge()` on memory
+/// pressure from the app.
 package actor Renderer {
     package static let maximumLongEdgePixels: CGFloat = 2800
     package static let assetCacheBound = 48 * 1024 * 1024
+    /// One value, so `ThumbnailKey` does not carry it. A US Letter thumbnail
+    /// is 371 by 480 pixels, about 710 KB; the bound holds about 45.
+    package static let thumbnailLongEdgePixels = 480
+    package static let thumbnailCacheBound = 32 * 1024 * 1024
 
     private let assets: any AssetReading
-    private var decoded: [AssetRef: DecodedAsset] = [:]
-    private var order: [AssetRef] = []
-    private var cachedBytes = 0
+    private var decoded = BoundedCache<AssetRef, DecodedAsset>(bound: Renderer.assetCacheBound, cost: \.bytes)
+    private var thumbnails = BoundedCache<ThumbnailKey, CGImage>(bound: Renderer.thumbnailCacheBound, cost: { $0.bytesPerRow * $0.height })
 
     private enum DecodedAsset {
         case image(CGImage, bytes: Int)
@@ -38,8 +101,7 @@ package actor Renderer {
 
     package func purge() {
         decoded.removeAll()
-        order.removeAll()
-        cachedBytes = 0
+        thumbnails.removeAll()
     }
 
     /// The scale that fits the long edge under the pixel cap, no more than
@@ -53,10 +115,15 @@ package actor Renderer {
     package func composite(geometry: PageGeometry, paper: Paper?, layers: [Layer], scale requested: CGFloat) async -> Composite? {
         let scale = Self.cappedScale(for: geometry, requested: requested)
         let width = Int((geometry.width * scale).rounded(.up)), height = Int((geometry.height * scale).rounded(.up))
-        guard width > 0, height > 0,
-              let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
-                                      space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
-        else { return nil }
+        guard let image = await compose(geometry: geometry, paper: paper, layers: layers, scale: scale, width: width, height: height) else { return nil }
+        return Composite(image: image, scale: scale)
+    }
+
+    /// Paper and layers into one bitmap of exactly `width` by `height`
+    /// pixels, drawn at `scale`. A composite rounds the pixels up from its
+    /// scale; a thumbnail picks its pixels first and derives the scale.
+    private func compose(geometry: PageGeometry, paper: Paper?, layers: [Layer], scale: CGFloat, width: Int, height: Int) async -> CGImage? {
+        guard width > 0, height > 0, let context = Self.bitmap(width: width, height: height) else { return nil }
         // Page space: origin top-left, y down.
         context.translateBy(x: 0, y: CGFloat(height))
         context.scaleBy(x: scale, y: -scale)
@@ -66,7 +133,60 @@ package actor Renderer {
         for layer in layers {
             await draw(layer, in: context)
         }
-        guard let image = context.makeImage() else { return nil }
+        return context.makeImage()
+    }
+
+    private static func bitmap(width: Int, height: Int) -> CGContext? {
+        CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                  space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+    }
+
+    /// The ink over the composite, pixel for pixel.
+    private static func overlay(_ ink: CGImage?, on composite: CGImage) -> CGImage? {
+        guard let ink else { return composite }
+        guard let context = bitmap(width: composite.width, height: composite.height) else { return nil }
+        let pixels = CGRect(x: 0, y: 0, width: composite.width, height: composite.height)
+        context.draw(composite, in: pixels)
+        context.draw(ink, in: pixels)
+        return context.makeImage()
+    }
+
+    // MARK: Thumbnails
+
+    /// The long edge is exactly `thumbnailLongEdgePixels`; the short edge is
+    /// the rounded proportion.
+    package static func thumbnailPixels(for geometry: PageGeometry) -> (width: Int, height: Int) {
+        let long = thumbnailLongEdgePixels
+        if geometry.width >= geometry.height {
+            return (long, max(1, Int((Double(long) * geometry.height / geometry.width).rounded())))
+        }
+        return (max(1, Int((Double(long) * geometry.width / geometry.height).rounded())), long)
+    }
+
+    package func cachedThumbnail(_ key: ThumbnailKey) -> CGImage? { thumbnails[key] }
+
+    /// The page rendered small: the compose step, then the ink rasterized in
+    /// the caller's task, so a cell that scrolls away cancels the work it
+    /// asked for. A cancelled render caches nothing.
+    package func thumbnail(_ key: ThumbnailKey, geometry: PageGeometry, paper: Paper?, layers: [Layer], ink: PKDrawing) async -> CGImage? {
+        if let hit = thumbnails[key] { return hit }
+        let (width, height) = Self.thumbnailPixels(for: geometry)
+        let scale = CGFloat(max(width, height)) / max(geometry.width, geometry.height)
+        if Task.isCancelled { return nil }
+        guard let composite = await compose(geometry: geometry, paper: paper, layers: layers, scale: scale, width: width, height: height) else { return nil }
+        if Task.isCancelled { return nil }
+        let pageRect = CGRect(x: 0, y: 0, width: geometry.width, height: geometry.height)
+        let inkImage = await Self.rasterize(ink, in: pageRect, scale: scale)
+        if Task.isCancelled { return nil }
+        guard let image = Self.overlay(inkImage?.image, on: composite) else { return nil }
+        thumbnails.insert(image, for: key)
+        return image
+    }
+
+    /// PencilKit rasterizes the ink on the generic executor, in the caller's
+    /// task: a thumbnail is droppable work, so it must inherit cancellation.
+    private nonisolated static func rasterize(_ ink: PKDrawing, in rect: CGRect, scale: CGFloat) async -> Composite? {
+        guard let image = ink.image(from: rect, scale: scale).cgImage else { return nil }
         return Composite(image: image, scale: scale)
     }
 
@@ -128,14 +248,7 @@ package actor Renderer {
             guard let image = ink.image(from: pageRect, scale: scale).cgImage else { return nil }
             return Composite(image: image, scale: scale)
         }.value
-        let width = composite.image.width, height = composite.image.height
-        guard let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
-                                      space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
-        else { return nil }
-        let pixels = CGRect(x: 0, y: 0, width: width, height: height)
-        context.draw(composite.image, in: pixels)
-        if let inkImage { context.draw(inkImage.image, in: pixels) }
-        guard let image = context.makeImage() else { return nil }
+        guard let image = Self.overlay(inkImage?.image, on: composite.image) else { return nil }
         return Self.heic(image)
     }
 
@@ -246,18 +359,8 @@ package actor Renderer {
             guard let source = PDFSource(data: data) else { return nil }
             asset = .pdf(source, bytes: data.count)
         }
-        decoded[ref] = asset
-        order.append(ref)
-        cachedBytes += asset.bytes
-        trimCache()
+        decoded.insert(asset, for: ref)
         return asset
-    }
-
-    private func trimCache() {
-        while cachedBytes > Self.assetCacheBound, let oldest = order.first {
-            order.removeFirst()
-            if let removed = decoded.removeValue(forKey: oldest) { cachedBytes -= removed.bytes }
-        }
     }
 }
 
