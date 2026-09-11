@@ -350,8 +350,11 @@ struct LibraryView: View {
     }
 
     /// Every mutation here moves an identity within the tree or adds one, so
-    /// the index a link resolves through is rebuilt after each.
+    /// the index a link resolves through is rebuilt after each. The refusal
+    /// is cleared first: twice refused with the same words is a value that
+    /// never changes, and the banner watches for a change.
     private func run(_ work: @escaping () async -> Void) {
+        browser.refusal = nil
         Task {
             await work()
             await workspace.refreshIdentities()

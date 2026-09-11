@@ -176,6 +176,7 @@ struct LibraryFavoriteStar: View {
 
     var body: some View {
         Button {
+            browser.refusal = nil
             Task { await browser.toggleFavorite(item) }
         } label: {
             Image(systemName: starred ? "star.fill" : "star")

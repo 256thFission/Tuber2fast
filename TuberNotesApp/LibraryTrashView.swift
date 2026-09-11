@@ -95,6 +95,7 @@ struct LibraryTrashView: View {
     /// Recovering and deleting move an identity in or out of the tree, so the
     /// index a link resolves through is rebuilt after each.
     private func run(_ work: @escaping () async -> Void) {
+        browser.refusal = nil
         Task {
             await work()
             await workspace.refreshIdentities()
