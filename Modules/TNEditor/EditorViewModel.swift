@@ -49,10 +49,15 @@ package final class EditorViewModel {
     package var isSaving: Bool { notebook.dirtyPageCount > 0 }
     package var lastSaveError: SaveFailure? { notebook.lastSaveError }
 
-    package init(notebook: Notebook, onLinkActivated: @escaping @MainActor (LinkTarget) -> Void) {
-        self.notebook = notebook
+    package convenience init(notebook: Notebook, onLinkActivated: @escaping @MainActor (LinkTarget) -> Void) {
+        self.init(binding: EditorBinding(notebook: notebook, onLinkActivated: onLinkActivated))
+    }
+
+    /// The designated initializer. Production passes the binding that made
+    /// the runtime; a test passes one over a recording surface.
+    package init(binding: EditorBinding) {
+        self.notebook = binding.notebook
         self.tool = .pen(color: .black, width: .medium)
-        let binding = EditorBinding(notebook: notebook, onLinkActivated: onLinkActivated)
         self.binding = binding
         self.canvasHost = binding.host
         binding.onDrained = { [weak self] in self?.refreshMirrors() }
@@ -87,6 +92,23 @@ package final class EditorViewModel {
     /// because a notebook with no pages has no state to return to.
     package func deleteCurrentPage() {
         binding.intention { notebook.deletePage(notebook.currentPageID) }
+    }
+
+    /// `page` goes before `target`, or to the end when `target` is nil.
+    ///
+    /// Three drops leave the order as it is and stop here, because the
+    /// notebook would otherwise rewrite and save an unchanged index, and a
+    /// self-drop would send the page to the end (`Notebook.movePage` removes
+    /// the page first, then fails to find it as the target). A drop on the
+    /// page's own next neighbour, and the last page dropped past the end,
+    /// are the other two; `next == nil` when the page is last, so the one
+    /// comparison covers both.
+    package func movePage(_ page: PageID, before target: PageID?) {
+        let pages = notebook.pageIDs
+        guard let from = pages.firstIndex(of: page) else { return }
+        let next = pages.indices.contains(from + 1) ? pages[from + 1] : nil
+        if target == page || target == next { return }
+        binding.intention { notebook.movePage(page, before: target) }
     }
 
     package var currentPaper: Paper? { notebook.paper(of: notebook.currentPageID) }

@@ -137,6 +137,28 @@ struct EditorBindingTests {
         _ = await notebook.close()
     }
 
+    @Test("A move pushes one page order; a self-drop, a next-neighbour drop, and the last page onto the end push nothing")
+    func movePageGuards() async throws {
+        let (scratch, notebook) = try await reopened("editor-move", pages: 3)
+        let surface = RecordingSurface()
+        let editor = EditorViewModel(binding: EditorBinding(notebook: notebook, surface: surface))
+        let (a, b, c) = (notebook.pageIDs[0], notebook.pageIDs[1], notebook.pageIDs[2])
+        let pushed = surface.pagesSet.count
+
+        editor.movePage(a, before: a)
+        editor.movePage(a, before: b)
+        editor.movePage(c, before: nil)
+        #expect(surface.pagesSet.count == pushed)
+        #expect(notebook.pageIDs == [a, b, c])
+        #expect(!notebook.isDirty, "an unchanged order is not a save")
+
+        editor.movePage(c, before: a)
+        #expect(surface.pagesSet.count == pushed + 1)
+        #expect(surface.pagesSet.last == [c, a, b])
+        _ = await notebook.close()
+        _ = scratch
+    }
+
     @Test("The end boundary is answered by a page order carrying that report's sequence")
     func endBoundaryAnswersWithSetPages() async throws {
         let scratch = try Scratch("editor-boundary")
