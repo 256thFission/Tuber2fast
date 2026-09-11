@@ -479,7 +479,7 @@ struct NotebookTests {
         notebook.beginTextEditing(on: page, layer: layer.id)
         #expect(notebook.state(of: page)?.content?.textEditing == layer.id)
         try await waitUntil { !isDark() }
-        var changes = notebook.drainChanges()
+        let changes = notebook.drainChanges()
         #expect(changes.count == 2)
         guard case .compositeUpdated(let p1, _, let layers) = try #require(changes.first) else { Issue.record("no composite first: \(changes)"); return }
         #expect(p1 == page && layers.map(\.id) == [layer.id], "the list carries the edited layer too")
@@ -498,7 +498,6 @@ struct NotebookTests {
         let bytes = try await PackageStore(root: scratch.packageURL).loadPage(page)
         guard case .text(let saved) = try #require(bytes.layers.first?.payload) else { Issue.record("not saved as text"); return }
         #expect(saved == stored)
-        changes = []
     }
 
     @Test("An unchanged commit writes nothing, and an all-empty commit deletes the layer")

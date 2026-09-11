@@ -649,17 +649,19 @@ package final class Notebook {
             if position < content.inkIndex { content.inkIndex -= 1 }
             content.pendingLayerFiles.remove(layer)
             content.edited()
-            bumpContentVersion(of: page)
         } else if content.layers[position].payload != .text(merged) {
             content.layers[position] = committed
             content.pendingLayerFiles.insert(layer)
             content.edited()
-            bumpContentVersion(of: page)
         }
         // An unchanged commit rewrites nothing: a save writes only what changed.
+        let changed = content.editSeq != (states[page]?.content?.editSeq ?? content.editSeq)
         content.afterRender.append(.textEditingEnded(page, layer))
         states[page] = .ready(content)
-        if content.isDirty { markDirty() }
+        if changed {
+            bumpContentVersion(of: page)
+            markDirty()
+        }
         rerenderComposite(of: page)
     }
 
