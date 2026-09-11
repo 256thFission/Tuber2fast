@@ -824,6 +824,9 @@ struct ContractStructureTests {
         // relationship to any other file, and an unreadable one is replaced
         // by the built-in default at the cost of a tap.
         "TuberNotesApp/ToolPaletteDefaults.swift",
+        // The browser's grid-or-list, sort key and direction: a preference
+        // on the tool palette's reasoning above.
+        "TuberNotesApp/LibraryViewDefaults.swift",
     ]
 
     @Test("Each module imports only the frameworks its place in the graph allows")

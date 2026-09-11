@@ -24,6 +24,10 @@ final class Workspace {
 
     let library: Library
 
+    /// The browser's place, options and selection, built here because the
+    /// library it reads is built here.
+    let browser: LibraryBrowser
+
     /// The tool presets, the colour recents, and the last kind, shared by
     /// every tab and kept between launches.
     let palette = ToolPalette(store: ToolPaletteDefaults(.standard))
@@ -54,13 +58,17 @@ final class Workspace {
             // refuse from, so this fails loud rather than running blind.
             TNPrecondition.fail("the library store could not be created: \(error)")
         }
+        browser = LibraryBrowser(library: library, optionsStore: LibraryViewDefaults(.standard))
         Task { await self.refreshIdentities() }
         // The renderer caches declare "on memory pressure from the app" as an
         // evictor; this is the one place that keeps the promise.
         memoryWarnings = NotificationCenter.default.addObserver(
             forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.purgeRenderers() }
+            MainActor.assumeIsolated {
+                self?.purgeRenderers()
+                self?.library.purge()
+            }
         }
         #if DEBUG
         // `-TNSmokeNotebook`: create a notebook named Smoke if absent and open
@@ -87,7 +95,8 @@ final class Workspace {
     #endif
 
     /// Every open notebook's renderer drops what it can rebuild: decoded
-    /// assets and thumbnails. Ink and pages are untouched.
+    /// assets and thumbnails. Ink and pages are untouched; the library's
+    /// covers go the same way, next door.
     private func purgeRenderers() {
         for tab in tabs {
             let renderer = tab.editor.notebook.renderer
