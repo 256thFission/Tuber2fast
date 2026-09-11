@@ -55,7 +55,7 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
     /// changes and never per frame.
     private var reportedWindow: [PageID] = []
 
-    private var tool: PKTool?
+    private var tool: CanvasTool?
     private var canUndo = false
     private var canRedo = false
 
@@ -230,7 +230,7 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
         )
     }
 
-    package func updateComposite(on page: PageID, _ composite: Composite) {
+    package func updateComposite(on page: PageID, _ composite: Composite, layers: [Layer]) {
         TNPrecondition.require(
             descriptors[page] != nil,
             "a composite arrived for page \(page), which this runtime has not been told about"
@@ -240,12 +240,34 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
             snapshots[page] = PageSnapshot.editable(
                 id: page,
                 ink: ink,
-                layers: snapshot.layers,
+                layers: layers,
                 composite: composite,
                 inkSeq: inkSeq
             )
         }
-        canvases[page]?.updateComposite(composite)
+        if let canvas = canvases[page] {
+            canvas.setLayers(layers)
+            canvas.updateComposite(composite)
+        }
+    }
+
+    package func beginTextEditing(on page: PageID, _ start: TextEditStart) {
+        TNPrecondition.require(
+            descriptors[page] != nil,
+            "text editing began on page \(page), which this runtime has not been told about"
+        )
+        guard let canvas = canvases[page] else {
+            // The page left the live window between the request and the
+            // render. Answered on the canvas's behalf with the value unchanged,
+            // so the notebook's session closes the one way a session closes.
+            reporter.textEditingEnded(on: page, layer: start.layer, start.text)
+            return
+        }
+        canvas.beginTextEditing(start)
+    }
+
+    package func endTextEditing(on page: PageID, layer: LayerID) {
+        canvases[page]?.endTextEditing(layer: layer)
     }
 
     package func scroll(to page: PageID) {

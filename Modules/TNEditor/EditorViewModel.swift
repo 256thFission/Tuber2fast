@@ -30,7 +30,7 @@ package final class EditorViewModel {
     package private(set) var tool: EditorTool {
         didSet {
             guard tool != oldValue else { return }
-            binding.apply(CanvasEnvironment(tool: tool.pkTool))
+            binding.apply(CanvasEnvironment(tool: .ink(tool.pkTool)))
             palette.remember(tool)
         }
     }
@@ -74,7 +74,7 @@ package final class EditorViewModel {
         refreshMirrors()
         // `didSet` does not run for the initial value, and the runtime
         // starts with no tool at all.
-        binding.apply(CanvasEnvironment(tool: tool.pkTool))
+        binding.apply(CanvasEnvironment(tool: .ink(tool.pkTool)))
     }
 
     private func refreshMirrors() {
@@ -192,7 +192,8 @@ package final class EditorViewModel {
         let page = notebook.currentPageID
         let rect = Self.defaultRect(width: 240, height: 96, on: notebook.index.record(of: page)?.geometry)
         lastContentError = nil
-        do { try await notebook.addTextLayer(on: page, rect: rect, runs: [TextRun(string: "Text")]) } catch { lastContentError = error }
+        let layer = Layer(id: LayerID(), transform: .identity, payload: .text(TextLayer(rect: rect, runs: [TextRun(string: "Text")], alignment: .leading)))
+        do { try notebook.insertLayer(layer, on: page) } catch { lastContentError = error }
         binding.drain()
     }
 
@@ -200,7 +201,7 @@ package final class EditorViewModel {
         let page = notebook.currentPageID
         let rect = Self.defaultRect(width: 160, height: 44, on: notebook.index.record(of: page)?.geometry)
         lastContentError = nil
-        do { try await notebook.addLinkLayer(on: page, rect: rect, target: target) } catch { lastContentError = error }
+        do { try notebook.addLinkLayer(on: page, rect: rect, target: target) } catch { lastContentError = error }
         binding.drain()
     }
 

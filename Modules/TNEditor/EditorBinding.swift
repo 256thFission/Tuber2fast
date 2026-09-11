@@ -48,6 +48,13 @@ import UIKit
     package func retired(_ page: PageID, finalInk: PKDrawing?) { binding?.retired(page, finalInk: finalInk) }
     package func undoRequested() { binding?.undoRequested() }
     package func redoRequested() { binding?.redoRequested() }
+    package func textBoxRequested(on page: PageID, at point: PagePoint, style: TextStyle, alignment: TextAlignment) {
+        binding?.textBoxRequested(on: page, at: point, style: style, alignment: alignment)
+    }
+    package func textEditRequested(on page: PageID, layer: LayerID) { binding?.textEditRequested(on: page, layer: layer) }
+    package func textEditingEnded(on page: PageID, layer: LayerID, _ text: TextLayer) {
+        binding?.textEditingEnded(on: page, layer: layer, text)
+    }
 }
 
 /// The one place the notebook and the canvas runtime meet.
@@ -153,8 +160,12 @@ import UIKit
             // An undo restores the page it happened on, whichever page is
             // current, so the reader is taken to the change they undid.
             surface.scroll(to: page)
-        case .compositeUpdated(let page, let composite):
-            surface.updateComposite(on: page, composite)
+        case .compositeUpdated(let page, let composite, let layers):
+            surface.updateComposite(on: page, composite, layers: layers)
+        case .textEditingBegan(let page, let start):
+            surface.beginTextEditing(on: page, start)
+        case .textEditingEnded(let page, let layer):
+            surface.endTextEditing(on: page, layer: layer)
         }
     }
 
@@ -255,6 +266,21 @@ import UIKit
 
     package func redoRequested() {
         notebook.redo()
+        drain()
+    }
+
+    package func textBoxRequested(on page: PageID, at point: PagePoint, style: TextStyle, alignment: TextAlignment) {
+        notebook.createTextBox(on: page, at: point, style: style, alignment: alignment)
+        drain()
+    }
+
+    package func textEditRequested(on page: PageID, layer: LayerID) {
+        notebook.beginTextEditing(on: page, layer: layer)
+        drain()
+    }
+
+    package func textEditingEnded(on page: PageID, layer: LayerID, _ text: TextLayer) {
+        notebook.endTextEditing(on: page, layer: layer, text)
         drain()
     }
 }

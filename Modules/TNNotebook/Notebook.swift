@@ -56,6 +56,12 @@ package final class Notebook {
     @ObservationIgnored private var history = InkHistory()
     /// An undo whose page was not loaded: applied when the page arrives.
     @ObservationIgnored private var pendingRestores: [PageID: PKDrawing] = [:]
+    /// Bumped by every change that alters what a page looks like: ink,
+    /// layers, paper. Never reset by unload, because content is only dropped
+    /// when clean (`prune()`), so the version on reload still describes the
+    /// page. There is no choke point that sees every such change, so the
+    /// bump sites are enumerated and `NotebookTests` is the enforcement.
+    @ObservationIgnored private var contentVersions: [PageID: UInt64] = [:]
 
     // MARK: Save engine
 
@@ -267,6 +273,16 @@ package final class Notebook {
         markDirty()
     }
 
+    // MARK: Content versions
+
+    /// The version a thumbnail of `page` is keyed by. 0 for a page never
+    /// changed in this session.
+    package func contentVersion(of page: PageID) -> UInt64 { contentVersions[page] ?? 0 }
+
+    private func bumpContentVersion(of page: PageID) {
+        contentVersions[page, default: 0] += 1
+    }
+
     package var canUndo: Bool { history.canUndo }
     package var canRedo: Bool { history.canRedo }
 
@@ -430,17 +446,27 @@ package final class Notebook {
     // MARK: Composites
 
     /// Re-renders a page's backdrop after its layers or paper changed, or
-    /// at a sharper scale on request. A result for a page no longer ready
-    /// is dropped.
+    /// at a sharper scale on request. A layer being edited is left out. A
+    /// result for a page no longer ready, or one a later render has
+    /// superseded, is dropped; the current one installs the picture and then
+    /// queues whatever `afterRender` holds, picture or not.
     package func rerenderComposite(of page: PageID, scale: CGFloat = Notebook.baseCompositeScale) {
-        guard case .ready(let content) = states[page], let record = index.record(of: page) else { return }
-        let layers = content.layers
+        guard case .ready(var content) = states[page], let record = index.record(of: page) else { return }
+        content.renderGeneration += 1
+        states[page] = .ready(content)
+        let generation = content.renderGeneration
+        let layers = content.layers.filter { $0.id != content.textEditing }
         let renderer = self.renderer
         Task { [weak self] in
-            guard let composite = await renderer.composite(geometry: record.geometry, paper: record.paper.paper, layers: layers, scale: scale) else { return }
-            guard let self, case .ready = self.states[page] else { return }
-            self.withContent(page) { $0.composite = composite }
-            self.changes.append(.compositeUpdated(page, composite))
+            let composite = await renderer.composite(geometry: record.geometry, paper: record.paper.paper, layers: layers, scale: scale)
+            guard let self, case .ready(var current) = self.states[page], current.renderGeneration == generation else { return }
+            if let composite {
+                current.composite = composite
+                self.changes.append(.compositeUpdated(page, composite, layers: current.layers))
+            }
+            self.changes.append(contentsOf: current.afterRender)
+            current.afterRender.removeAll()
+            self.states[page] = .ready(current)
             self.onAsyncChange?()
         }
     }
@@ -456,6 +482,22 @@ package final class Notebook {
 
     // MARK: Layers
 
+    /// Validates and inserts a layer beneath the ink, synchronously: the tap
+    /// that makes a text box gets its layer in the same pass.
+    package func insertLayer(_ layer: Layer, on page: PageID) throws(FormatFault) {
+        guard case .ready = states[page] else { throw .invalidWrite("page \(page) is not ready") }
+        do { _ = try layer.validated() } catch { throw .invalidWrite("layer invalid: \(error)") }
+        withContent(page) { content in
+            content.layers.insert(layer, at: content.inkIndex)
+            content.inkIndex += 1
+            content.pendingLayerFiles.insert(layer.id)
+            content.edited()
+        }
+        bumpContentVersion(of: page)
+        markDirty()
+        rerenderComposite(of: page)
+    }
+
     /// Adds a layer beneath the ink. The asset, if any, is published first.
     package func addLayer(_ layer: Layer, assetData: Data?, on page: PageID) async throws(FormatFault) {
         guard case .ready = states[page] else { throw .invalidWrite("page \(page) is not ready") }
@@ -464,15 +506,7 @@ package final class Notebook {
             guard let assetData else { throw .invalidWrite("layer names an asset with no bytes") }
             try await store.writeAsset(assetData, asset)
         }
-        guard case .ready = states[page] else { throw .invalidWrite("page \(page) left ready during import") }
-        withContent(page) { content in
-            content.layers.insert(layer, at: content.inkIndex)
-            content.inkIndex += 1
-            content.pendingLayerFiles.insert(layer.id)
-            content.edited()
-        }
-        markDirty()
-        rerenderComposite(of: page)
+        try insertLayer(layer, on: page)
     }
 
     /// An image, normalized to HEIC, placed centered at up to 60% of the
@@ -552,14 +586,81 @@ package final class Notebook {
         return asset
     }
 
-    package func addTextLayer(on page: PageID, rect: PageRect, runs: [TextRun]) async throws(FormatFault) {
-        let layer = Layer(id: LayerID(), transform: .identity, payload: .text(TextLayer(rect: rect, runs: runs, alignment: .leading)))
-        try await addLayer(layer, assetData: nil, on: page)
+    package func addLinkLayer(on page: PageID, rect: PageRect, target: LinkTarget) throws(FormatFault) {
+        let layer = Layer(id: LayerID(), transform: .identity, payload: .link(LinkLayer(rect: rect, style: .button, target: target)))
+        try insertLayer(layer, on: page)
     }
 
-    package func addLinkLayer(on page: PageID, rect: PageRect, target: LinkTarget) async throws(FormatFault) {
-        let layer = Layer(id: LayerID(), transform: .identity, payload: .link(LinkLayer(rect: rect, style: .button, target: target)))
-        try await addLayer(layer, assetData: nil, on: page)
+    // MARK: Text editing
+
+    /// An empty text box at `point`, and a session opened on it. The style
+    /// rides with the request for the runtime's sake; an empty layer stores
+    /// none, and the runtime types with its tool's.
+    package func createTextBox(on page: PageID, at point: PagePoint, style: TextStyle, alignment: TextAlignment) {
+        let layer = Layer(
+            id: LayerID(), transform: .identity,
+            payload: .text(TextLayer(rect: PageRect(x: point.x, y: point.y, width: 240, height: 96), runs: [], alignment: alignment))
+        )
+        do {
+            try insertLayer(layer, on: page)
+        } catch {
+            TNPrecondition.fail("a text box was requested on page \(page), which refused it: \(error)")
+        }
+        beginTextEditing(on: page, layer: layer.id)
+    }
+
+    /// The composite leaves the layer out from the next render on, and the
+    /// runtime is told to raise its view once that picture has landed.
+    package func beginTextEditing(on page: PageID, layer: LayerID) {
+        guard case .ready(var content) = states[page] else {
+            TNPrecondition.fail("text editing began on page \(page) which is not ready: \(String(describing: states[page]))")
+        }
+        TNPrecondition.require(content.textEditing == nil, "text editing began on page \(page) while layer \(String(describing: content.textEditing)) was open")
+        guard let found = content.layers.first(where: { $0.id == layer }), case .text(let text) = found.payload else {
+            TNPrecondition.fail("text editing began on page \(page) for layer \(layer), which is not a text layer it holds")
+        }
+        content.textEditing = layer
+        content.afterRender.append(.textEditingBegan(page, TextEditStart(layer: layer, text: text)))
+        states[page] = .ready(content)
+        rerenderComposite(of: page)
+    }
+
+    /// KNOWN DEFECT: a committed text edit is not on the notebook's undo
+    /// stack; no layer change is (`insertLayer`, `transformLayer`,
+    /// `deleteLayer` call `edited()` and never `history.recordEdit`). Joining
+    /// it is a `CONTRACT:` change to Undo and to `HistoryEntry`, step two of
+    /// `Docs/Forks/plans/text-editing.md` section 1, Phillip's to sign.
+    package func endTextEditing(on page: PageID, layer: LayerID, _ text: TextLayer) {
+        guard case .ready(var content) = states[page] else {
+            TNPrecondition.fail("text editing ended on page \(page) which is not ready: \(String(describing: states[page]))")
+        }
+        TNPrecondition.require(content.textEditing == layer, "text editing ended on page \(page) for layer \(layer), which is not the open one (\(String(describing: content.textEditing)))")
+        guard let position = content.layers.firstIndex(where: { $0.id == layer }) else {
+            TNPrecondition.fail("text editing ended on page \(page) for layer \(layer), which it no longer holds")
+        }
+        content.textEditing = nil
+        let merged = TextLayer(rect: text.rect, runs: TextRun.merging(text.runs), alignment: text.alignment)
+        let committed = Layer(id: layer, transform: .identity, payload: .text(merged))
+        // The overlay's gesture math cannot produce an invalid rect, and a
+        // clamp is forbidden.
+        do { _ = try committed.validated() } catch { TNPrecondition.fail("a committed text layer is invalid: \(error)") }
+        if merged.runs.allSatisfy(\.string.isEmpty) {
+            content.layers.remove(at: position)
+            if position < content.inkIndex { content.inkIndex -= 1 }
+            content.pendingLayerFiles.remove(layer)
+            content.edited()
+            bumpContentVersion(of: page)
+        } else if content.layers[position].payload != .text(merged) {
+            content.layers[position] = committed
+            content.pendingLayerFiles.insert(layer)
+            content.edited()
+            bumpContentVersion(of: page)
+        }
+        // An unchanged commit rewrites nothing: a save writes only what changed.
+        content.afterRender.append(.textEditingEnded(page, layer))
+        states[page] = .ready(content)
+        if content.isDirty { markDirty() }
+        rerenderComposite(of: page)
     }
 
     package func transformLayer(on page: PageID, layer layerID: LayerID, to transform: PageSpaceTransform) -> TransformOutcome {

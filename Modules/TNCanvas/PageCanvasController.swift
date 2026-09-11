@@ -76,7 +76,7 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         inkSeq: InkSeq?,
         composite: Composite?,
         layers: [Layer],
-        tool: PKTool?,
+        tool: CanvasTool?,
         canUndo: Bool,
         canRedo: Bool,
         owner: any PageCanvasOwner,
@@ -116,7 +116,7 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         clearEchoLatchAtEndOfTurn(inkSeq)
 
         setLayers(layers)
-        if let tool { canvasView.tool = tool }
+        if let tool { apply(tool: tool) }
         if let composite { backdropView.image = UIImage(cgImage: composite.image) }
     }
 
@@ -226,9 +226,15 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         }
     }
 
-    func apply(tool: PKTool) {
-        canvasView.tool = tool
+    func apply(tool: CanvasTool) {
+        if case .ink(let pkTool) = tool { canvasView.tool = pkTool }
     }
+
+    /// The overlay. Built by the canvas unit.
+    func beginTextEditing(_ start: TextEditStart) {}
+
+    /// The overlay. Built by the canvas unit.
+    func endTextEditing(layer: LayerID) {}
 
     func setUndoAvailability(canUndo: Bool, canRedo: Bool) {
         filteringUndoManager.setAvailability(canUndo: canUndo, canRedo: canRedo)

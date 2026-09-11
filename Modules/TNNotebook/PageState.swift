@@ -41,6 +41,19 @@ package struct PageContent: Sendable {
     package var pendingEcho: InkSeq?
     /// The runtime has retired this page's canvas; it may be pruned.
     package var retired: Bool
+    /// The layer a live text view is open over. Never saved; it is what
+    /// `rerenderComposite` reads to leave that layer out of the picture.
+    package var textEditing: LayerID?
+    /// Taken by every render; a result whose generation is no longer current
+    /// is dropped at install. Comparison is the whole answer here: the
+    /// renderer owns no droppable work of ours to cancel, and a stale
+    /// composite costs nothing but the bytes it already spent.
+    package var renderGeneration: UInt64
+    /// Changes that ride behind the next composite that lands current:
+    /// `.textEditingBegan` and `.textEditingEnded`. A superseded render
+    /// leaves them for the current one, so a begin and an end milliseconds
+    /// apart both arrive, in order, after the picture that reflects both.
+    package var afterRender: [NotebookChange]
 
     package var isDirty: Bool { editSeq > savedSeq }
     package var inkIsDirty: Bool { inkSeq > savedInkSeq }
@@ -58,6 +71,9 @@ package struct PageContent: Sendable {
         self.pendingLayerFiles = []
         self.pendingEcho = nil
         self.retired = false
+        self.textEditing = nil
+        self.renderGeneration = 0
+        self.afterRender = []
     }
 
     /// An ink change: both sequences and the durable flag. History is the

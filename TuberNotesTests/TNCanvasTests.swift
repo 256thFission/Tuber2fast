@@ -317,6 +317,11 @@ final class RecordingReporter: CanvasReporting {
     var links: [(page: PageID, layer: LayerID)] = []
     var undoRequests = 0
     var redoRequests = 0
+    var textBoxRequests: [(page: PageID, point: PagePoint, style: TextStyle, alignment: TextAlignment)] = []
+    var textEditRequests: [(page: PageID, layer: LayerID)] = []
+    var textEditsEnded: [(page: PageID, layer: LayerID, text: TextLayer)] = []
+    /// Every report by name, in order, so a test can assert what came first.
+    var sequence: [String] = []
 
     /// Answers the end-boundary question, the way the notebook does.
     var onEndBoundary: (@MainActor (ReportSeq) -> Void)?
@@ -336,7 +341,22 @@ final class RecordingReporter: CanvasReporting {
         onEndBoundary?(seq)
     }
     func linkActivated(on page: PageID, layer: LayerID) { links.append((page, layer)) }
-    func retired(_ page: PageID, finalInk: PKDrawing?) { retired.append((page, finalInk)) }
+    func retired(_ page: PageID, finalInk: PKDrawing?) {
+        retired.append((page, finalInk))
+        sequence.append("retired")
+    }
     func undoRequested() { undoRequests += 1 }
     func redoRequested() { redoRequests += 1 }
+    func textBoxRequested(on page: PageID, at point: PagePoint, style: TextStyle, alignment: TextAlignment) {
+        textBoxRequests.append((page, point, style, alignment))
+        sequence.append("textBoxRequested")
+    }
+    func textEditRequested(on page: PageID, layer: LayerID) {
+        textEditRequests.append((page, layer))
+        sequence.append("textEditRequested")
+    }
+    func textEditingEnded(on page: PageID, layer: LayerID, _ text: TextLayer) {
+        textEditsEnded.append((page, layer, text))
+        sequence.append("textEditingEnded")
+    }
 }

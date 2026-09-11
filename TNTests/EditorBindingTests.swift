@@ -16,6 +16,8 @@ enum SurfaceCall: Sendable, Equatable {
     case scroll(PageID)
     case retire(PageID)
     case updateComposite(PageID)
+    case beginTextEditing(PageID, LayerID)
+    case endTextEditing(PageID, LayerID)
 }
 
 /// A surface that records instead of drawing. It stands where
@@ -25,6 +27,8 @@ enum SurfaceCall: Sendable, Equatable {
 final class RecordingSurface: CanvasSurface {
     private(set) var calls: [SurfaceCall] = []
     private(set) var environments: [CanvasEnvironment] = []
+    private(set) var layersSeen: [PageID: [Layer]] = [:]
+    private(set) var starts: [TextEditStart] = []
     /// Pages whose retire this surface defers, as a stroke in flight does.
     var deferring: Set<PageID> = []
 
@@ -47,9 +51,17 @@ final class RecordingSurface: CanvasSurface {
         return deferring.contains(page) ? .deferred : .retired
     }
 
-    func updateComposite(on page: PageID, _ composite: Composite) {
+    func updateComposite(on page: PageID, _ composite: Composite, layers: [Layer]) {
         calls.append(.updateComposite(page))
+        layersSeen[page] = layers
     }
+
+    func beginTextEditing(on page: PageID, _ start: TextEditStart) {
+        calls.append(.beginTextEditing(page, start.layer))
+        starts.append(start)
+    }
+
+    func endTextEditing(on page: PageID, layer: LayerID) { calls.append(.endTextEditing(page, layer)) }
 
     func apply(_ environment: CanvasEnvironment) { environments.append(environment) }
 
@@ -150,6 +162,32 @@ struct EditorBindingTests {
         let answer = try #require(surface.answered(ReportSeq(7)), "the append answered no report")
         #expect(answer.count == before.count + 1)
         #expect(Array(answer.prefix(before.count)) == before)
+        _ = await notebook.close()
+    }
+
+    @Test("A text box request is answered by the omitting composite then the begin, and a commit by the composite then the end")
+    func textRequestsAreAnsweredAfterTheComposite() async throws {
+        let scratch = try Scratch("editor-text")
+        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        let surface = RecordingSurface()
+        let binding = EditorBinding(notebook: notebook, surface: surface)
+        let page = notebook.pageIDs[0]
+        binding.windowChanged(to: [page])
+        try await waitUntil { surface.installed.contains(page) }
+
+        binding.textBoxRequested(on: page, at: PagePoint(x: 30, y: 40), style: .body, alignment: .leading)
+        let layer = try #require(notebook.state(of: page)?.content?.layers.first)
+        #expect(layer.payload == .text(TextLayer(rect: PageRect(x: 30, y: 40, width: 240, height: 96), runs: [], alignment: .leading)))
+        try await waitUntil { surface.calls.contains(.beginTextEditing(page, layer.id)) }
+        #expect(Array(surface.calls.suffix(2)) == [.updateComposite(page), .beginTextEditing(page, layer.id)])
+        #expect(surface.layersSeen[page]?.map(\.id) == [layer.id])
+        let start = try #require(surface.starts.last)
+
+        let typed = TextLayer(rect: start.text.rect, runs: [TextRun(string: "typed", style: .body)], alignment: .leading)
+        binding.textEditingEnded(on: page, layer: layer.id, typed)
+        try await waitUntil { surface.calls.contains(.endTextEditing(page, layer.id)) }
+        #expect(Array(surface.calls.suffix(2)) == [.updateComposite(page), .endTextEditing(page, layer.id)])
+        #expect(notebook.state(of: page)?.content?.layers.first?.payload == .text(typed))
         _ = await notebook.close()
     }
 }

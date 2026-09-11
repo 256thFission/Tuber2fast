@@ -63,6 +63,42 @@ final class RefusingNewPagesStore: ForwardingStore, @unchecked Sendable {
     }
 }
 
+/// A real store whose `readAsset` parks every call until the test releases
+/// it by index, so two renders of one page can be made to land in either
+/// order.
+final class GatedAssetStore: ForwardingStore, @unchecked Sendable {
+    let gate = CallGate()
+    override func readAsset(_ ref: AssetRef) async throws(FormatFault) -> Data {
+        await gate.park()
+        return try await base.readAsset(ref)
+    }
+}
+
+actor CallGate {
+    private var parked: [CheckedContinuation<Void, Never>?] = []
+    var arrivals: Int { parked.count }
+    func park() async {
+        await withCheckedContinuation { parked.append($0) }
+    }
+    func release(_ index: Int) {
+        parked[index]?.resume()
+        parked[index] = nil
+    }
+}
+
+/// One pixel of a composite, as bytes. Premultiplied RGBA, the layout the
+/// renderer draws into.
+func pixel(_ image: CGImage, x: Int, y: Int) -> (r: UInt8, g: UInt8, b: UInt8, a: UInt8) {
+    let data = image.dataProvider!.data! as Data
+    let offset = y * image.bytesPerRow + x * 4
+    return (data[offset], data[offset + 1], data[offset + 2], data[offset + 3])
+}
+
+func textLayer(_ string: String, rect: PageRect = PageRect(x: 10, y: 10, width: 200, height: 60), size: Double = 40) -> Layer {
+    let style = TextStyle(font: "system", size: size, bold: false, italic: false, underline: false, color: TextStyle.body.color)
+    return Layer(id: LayerID(), transform: .identity, payload: .text(TextLayer(rect: rect, runs: [TextRun(string: string, style: style)], alignment: .leading)))
+}
+
 enum Ink {
     static func drawing(strokes: Int, seed: Double = 0) -> PKDrawing {
         let ink = PKInk(.pen, color: .black)
@@ -419,5 +455,174 @@ struct NotebookTests {
         await notebook.flush()
         let after = try await PackageStore(root: scratch.packageURL).loadPage(page)
         #expect(after.file.layers.isEmpty && after.file.inkIndex == 0)
+    }
+
+    // MARK: Text editing
+
+    @Test("Begin leaves the layer out of the composite and queues the picture before the begin; commit puts it back")
+    func beginOmitsTheLayer() async throws {
+        let scratch = try Scratch("nb-text-begin")
+        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        let page = notebook.pageIDs[0]
+        notebook.windowChanged(to: [page])
+        try await waitUntil { notebook.state(of: page)?.content != nil }
+        let layer = textLayer("████")
+        try notebook.insertLayer(layer, on: page)
+        // Page point (15, 30) inside the first block glyph, at the 2x composite scale.
+        func isDark() -> Bool {
+            guard let image = notebook.state(of: page)?.content?.composite?.image else { return false }
+            return pixel(image, x: 30, y: 60).r < 128
+        }
+        try await waitUntil { isDark() }
+        _ = notebook.drainChanges()
+
+        notebook.beginTextEditing(on: page, layer: layer.id)
+        #expect(notebook.state(of: page)?.content?.textEditing == layer.id)
+        try await waitUntil { !isDark() }
+        var changes = notebook.drainChanges()
+        #expect(changes.count == 2)
+        guard case .compositeUpdated(let p1, _, let layers) = try #require(changes.first) else { Issue.record("no composite first: \(changes)"); return }
+        #expect(p1 == page && layers.map(\.id) == [layer.id], "the list carries the edited layer too")
+        guard case .textEditingBegan(let p2, let start) = try #require(changes.last) else { Issue.record("no begin last: \(changes)"); return }
+        #expect(p2 == page && start.layer == layer.id && start.text.runs.first?.string == "████")
+
+        let typed = TextLayer(rect: start.text.rect, runs: [TextRun(string: "██", style: .body), TextRun(string: "██", style: .body)], alignment: .center)
+        notebook.endTextEditing(on: page, layer: layer.id, typed)
+        #expect(notebook.state(of: page)?.content?.textEditing == nil)
+        #expect(notebook.state(of: page)?.content?.pendingLayerFiles.contains(layer.id) == true)
+        guard case .text(let stored) = try #require(notebook.state(of: page)?.content?.layers.first?.payload) else { Issue.record("not text"); return }
+        #expect(stored.runs == [TextRun(string: "████", style: .body)], "adjacent equal runs merged at commit")
+        #expect(stored.alignment == .center)
+        try await waitUntil { notebook.drainChanges().last.map { if case .textEditingEnded = $0 { true } else { false } } ?? false }
+        await notebook.flush()
+        let bytes = try await PackageStore(root: scratch.packageURL).loadPage(page)
+        guard case .text(let saved) = try #require(bytes.layers.first?.payload) else { Issue.record("not saved as text"); return }
+        #expect(saved == stored)
+        changes = []
+    }
+
+    @Test("An unchanged commit writes nothing, and an all-empty commit deletes the layer")
+    func unchangedAndEmptyCommits() async throws {
+        let scratch = try Scratch("nb-text-commit")
+        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        let page = notebook.pageIDs[0]
+        notebook.windowChanged(to: [page])
+        try await waitUntil { notebook.state(of: page)?.content != nil }
+        let layer = textLayer("hi")
+        try notebook.insertLayer(layer, on: page)
+        await notebook.flush()
+        #expect(notebook.state(of: page)?.content?.isDirty == false)
+        guard case .text(let text) = try #require(notebook.state(of: page)?.content?.layers.first?.payload) else { Issue.record("not text"); return }
+
+        notebook.beginTextEditing(on: page, layer: layer.id)
+        notebook.endTextEditing(on: page, layer: layer.id, text)
+        #expect(notebook.state(of: page)?.content?.isDirty == false, "a save writes only what changed")
+        #expect(notebook.state(of: page)?.content?.pendingLayerFiles.isEmpty == true)
+        try await waitUntil { notebook.drainChanges().contains { if case .textEditingEnded = $0 { true } else { false } } }
+
+        notebook.beginTextEditing(on: page, layer: layer.id)
+        notebook.endTextEditing(on: page, layer: layer.id, TextLayer(rect: text.rect, runs: [TextRun(string: "", style: .body)], alignment: .leading))
+        #expect(notebook.state(of: page)?.content?.layers.isEmpty == true)
+        #expect(notebook.state(of: page)?.content?.inkIndex == 0)
+        #expect(notebook.state(of: page)?.content?.isDirty == true)
+        try await waitUntil { notebook.drainChanges().contains { if case .textEditingEnded = $0 { true } else { false } } }
+        await notebook.flush()
+        let bytes = try await PackageStore(root: scratch.packageURL).loadPage(page)
+        #expect(bytes.file.layers.isEmpty && bytes.file.inkIndex == 0)
+        // Begin while a session is open, a commit for the wrong layer, and an
+        // invalid committed rect are traps, which Swift Testing cannot observe.
+    }
+
+    @Test("Two renders landing out of order install the newer one, and the text changes ride behind it")
+    func staleRenderIsDropped() async throws {
+        let scratch = try Scratch("nb-text-race")
+        let created = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        let page = created.pageIDs[0]
+        _ = await created.close()
+        let store = GatedAssetStore(PackageStore(root: scratch.packageURL))
+        let notebook = try await Notebook.open(store: store, schedule: fast)
+        notebook.windowChanged(to: [page])
+        try await waitUntil { notebook.state(of: page)?.content != nil }
+        let image = Fixture.imageLayer()
+        try await notebook.addLayer(image, assetData: try Fixture.imageData(width: 40, height: 30), on: page)
+        try await notebook.waitForArrivals(store.gate, 1)
+        await store.gate.release(0)
+        try await waitUntil { notebook.drainChanges().contains { if case .compositeUpdated = $0 { true } else { false } } }
+        let text = textLayer("hi")
+        try notebook.insertLayer(text, on: page)
+        try await waitUntil { notebook.drainChanges().contains { if case .compositeUpdated = $0 { true } else { false } } }
+        // The decoded asset is cached; purge so the next two renders both read.
+        await notebook.renderer.purge()
+
+        notebook.beginTextEditing(on: page, layer: text.id)
+        try await notebook.waitForArrivals(store.gate, 2)
+        guard case .text(let value) = try #require(notebook.state(of: page)?.content?.layers.last?.payload) else { Issue.record("not text"); return }
+        notebook.endTextEditing(on: page, layer: text.id, value)
+        try await notebook.waitForArrivals(store.gate, 3)
+        #expect(notebook.drainChanges().isEmpty, "nothing lands while both renders are parked")
+
+        // The commit's render lands first, then the begin's, which is stale.
+        await store.gate.release(2)
+        try await waitUntil { notebook.state(of: page)?.content?.afterRender.isEmpty == true }
+        await store.gate.release(1)
+        try await Task.sleep(for: .milliseconds(100))
+        let changes = notebook.drainChanges()
+        let composites = changes.filter { if case .compositeUpdated = $0 { true } else { false } }
+        #expect(composites.count == 1, "the stale render queued nothing: \(changes)")
+        let kinds = changes.map { change -> String in
+            switch change {
+            case .compositeUpdated: "composite"
+            case .textEditingBegan: "began"
+            case .textEditingEnded: "ended"
+            default: "other"
+            }
+        }
+        #expect(kinds == ["composite", "began", "ended"], "\(kinds)")
+        #expect(notebook.state(of: page)?.content?.afterRender.isEmpty == true)
+    }
+
+    // The content version has no choke point; this list is the invariant's
+    // enforcement for the sites this plan adds.
+    @Test("The content version rises on an inserted layer and a changed commit, and on nothing else here")
+    func contentVersionBumpSites() async throws {
+        let scratch = try Scratch("nb-text-version")
+        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        let page = notebook.pageIDs[0]
+        notebook.windowChanged(to: [page])
+        try await waitUntil { notebook.state(of: page)?.content != nil }
+        var version = notebook.contentVersion(of: page)
+        func expectBump(_ what: String) {
+            let now = notebook.contentVersion(of: page)
+            #expect(now == version + 1, "\(what) should bump once, went \(version) to \(now)")
+            version = now
+        }
+        func expectSame(_ what: String) {
+            #expect(notebook.contentVersion(of: page) == version, "\(what) is not a change to the page")
+        }
+        let layer = textLayer("hi")
+        try notebook.insertLayer(layer, on: page)
+        expectBump("a layer inserted")
+        guard case .text(let text) = try #require(notebook.state(of: page)?.content?.layers.first?.payload) else { Issue.record("not text"); return }
+        notebook.beginTextEditing(on: page, layer: layer.id)
+        expectSame("a session began")
+        notebook.endTextEditing(on: page, layer: layer.id, text)
+        expectSame("an unchanged commit")
+        notebook.beginTextEditing(on: page, layer: layer.id)
+        notebook.endTextEditing(on: page, layer: layer.id, TextLayer(rect: text.rect, runs: [TextRun(string: "ho", style: .body)], alignment: .leading))
+        expectBump("a changed commit")
+        notebook.beginTextEditing(on: page, layer: layer.id)
+        notebook.endTextEditing(on: page, layer: layer.id, TextLayer(rect: text.rect, runs: [], alignment: .leading))
+        expectBump("an emptied box, deleted")
+    }
+}
+
+extension Notebook {
+    /// Waits until `count` asset reads have parked at the gate.
+    func waitForArrivals(_ gate: CallGate, _ count: Int) async throws {
+        let deadline = ContinuousClock.now + .seconds(5)
+        while await gate.arrivals < count {
+            try #require(ContinuousClock.now < deadline, "timed out waiting for \(count) asset reads")
+            try await Task.sleep(for: .milliseconds(5))
+        }
     }
 }
