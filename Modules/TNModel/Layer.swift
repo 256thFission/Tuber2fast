@@ -200,8 +200,7 @@ package struct TextRun: Codable, Sendable, Equatable {
     }
 
     package var isValid: Bool {
-        size.isFinite && size > 0 && size <= 1024 && !font.isEmpty
-            && color.count == 9 && color.hasPrefix("#") && color.dropFirst().allSatisfy(\.isHexDigit)
+        size.isFinite && size > 0 && size <= 1024 && !font.isEmpty && RGBA8(hex: color) != nil
     }
 }
 
