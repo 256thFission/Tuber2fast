@@ -370,12 +370,18 @@ package final class Notebook {
     }
 
     package func deletePage(_ page: PageID) {
-        guard index.pages.count > 1, index.record(of: page) != nil else { return }
+        guard index.pages.count > 1, let position = index.pageIDs.firstIndex(of: page) else { return }
         index = index.withPages(index.pages.filter { $0.id != page })
         loads[page]?.cancel(); loads[page] = nil
         states[page] = nil
         wanted.remove(page)
-        if currentPageID == page { currentPageID = index.pageIDs[0]; scheduleViewWrite() }
+        // The successor at the same position, clamped when the last page goes:
+        // the page the runtime shows after the delete (`PagedCanvasController.setPages`),
+        // so the notebook's current page and the viewport agree.
+        if currentPageID == page {
+            currentPageID = index.pageIDs[min(position, index.pageIDs.count - 1)]
+            scheduleViewWrite()
+        }
         indexSeq += 1
         emitStructure(answering: nil)
         markDirty()

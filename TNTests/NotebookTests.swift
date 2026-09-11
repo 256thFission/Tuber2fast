@@ -299,6 +299,22 @@ struct NotebookTests {
         #expect(again.index.pageIDs == [first])
     }
 
+    @Test("Deleting the current page makes its successor at the same position current, clamped at the end")
+    func deleteSuccessorIsClamped() async throws {
+        let scratch = try Scratch("nb-delete-successor")
+        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        let first = notebook.pageIDs[0]
+        let second = notebook.appendPage()
+        let third = notebook.appendPage()
+        notebook.pageBecameCurrent(second)
+        notebook.deletePage(second)
+        #expect(notebook.currentPageID == third, "the page that slid into the deleted page's position")
+        notebook.deletePage(third)
+        #expect(notebook.currentPageID == first, "the last page went; the new last page is current")
+        notebook.deletePage(first)
+        #expect(notebook.pageIDs == [first], "the only page cannot be deleted")
+    }
+
     @Test("Importing a PDF makes one page per PDF page, each with that page as paper and no layer")
     func pdfPagesArePaper() async throws {
         let scratch = try Scratch("nb-pdf-paper")
