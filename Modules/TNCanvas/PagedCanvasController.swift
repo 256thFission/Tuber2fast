@@ -548,6 +548,11 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
     // MARK: - PageCanvasOwner
 
     func pageDidChangeInk(_ page: PageID, _ ink: PKDrawing, echoOf: InkSeq?) {
+        // A canvas in `retiring` belongs to a page the list no longer names, so
+        // the notebook has already let the page go and would trap on a report
+        // for it. The stroke's ink is not lost: the retire that follows the
+        // stroke's end carries the whole drawing in its final report.
+        guard retiring[page] == nil else { return }
         reporter.inkChanged(on: page, ink, echoOf: echoOf)
     }
 

@@ -115,6 +115,37 @@ struct TNCanvasTests {
         _ = runtime.retireAll()
     }
 
+    @Test("A page deleted mid-stroke reports nothing until the stroke ends, then retires once with the final ink")
+    func departedPageMidStrokeReportsOnlyOnRetire() throws {
+        let reporter = RecordingReporter()
+        let runtime = hosted(reporter)
+        let pages = descriptors(2)
+        runtime.setPages(pages, seq: StructureSeq(1), answering: nil)
+        runtime.installContent(
+            .editable(id: pages[0].id, ink: PKDrawing(), layers: [], composite: nil, inkSeq: InkSeq(1))
+        )
+        let canvas = try #require(runtime.canvases[pages[0].id])
+        canvas.canvasViewDidBeginUsingTool(canvas.canvasView)
+
+        runtime.setPages([pages[1]], seq: StructureSeq(2), answering: nil)
+        #expect(reporter.retired.isEmpty, "the retire waits for the stroke")
+        #expect(runtime.canvases[pages[0].id] == nil, "the canvas is out of the list while it waits")
+
+        // PencilKit's mid-stroke drawing change, for a page the notebook has
+        // already dropped: forwarding it would trap there.
+        canvas.canvasViewDrawingDidChange(canvas.canvasView)
+        #expect(reporter.inkChanges.isEmpty)
+
+        canvas.canvasView.drawing = strokeDrawing(strokes: 1)
+        canvas.canvasViewDidEndUsingTool(canvas.canvasView)
+        canvas.canvasViewDrawingDidChange(canvas.canvasView)
+
+        #expect(reporter.inkChanges.isEmpty, "no ink report ever leaves a retiring canvas")
+        #expect(reporter.retired.map(\.page) == [pages[0].id])
+        #expect(reporter.retired.first?.finalInk?.strokes.count == 1, "the stroke went with the page it belonged to")
+        _ = runtime.retireAll()
+    }
+
     @Test("Retiring a live page delivers the drawing it was holding")
     func installThenRetireDeliversTheDrawing() {
         let reporter = RecordingReporter()
