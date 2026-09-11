@@ -265,6 +265,115 @@ struct NotebookTests {
         #expect(notebook.state(of: a)?.content?.ink.strokes.count == 1)
     }
 
+    @Test("A restore whose layers equal the page's pushes one ink restore and no composite")
+    func inkOnlyRestoreLeavesTheComposite() async throws {
+        let scratch = try Scratch("nb-undo-ink-only")
+        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        let page = notebook.pageIDs[0]
+        notebook.windowChanged(to: [page])
+        try await waitUntil { notebook.state(of: page)?.content != nil }
+        try notebook.insertLayer(textLayer("hi"), on: page)
+        try await waitUntil { notebook.drainChanges().contains { if case .compositeUpdated = $0 { true } else { false } } }
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 1), echoOf: nil)
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 2), echoOf: nil)
+        _ = notebook.drainChanges()
+        #expect(notebook.undo() == page)
+        try await Task.sleep(for: .milliseconds(100))
+        let changes = notebook.drainChanges()
+        let restores = changes.filter { if case .inkRestored = $0 { true } else { false } }
+        let composites = changes.filter { if case .compositeUpdated = $0 { true } else { false } }
+        #expect(restores.count == 1 && composites.isEmpty, "\(changes)")
+        #expect(notebook.state(of: page)?.content?.layers.count == 1)
+    }
+
+    @Test("Two undos into an unloaded page before its load lands, then two redos, walk back through both states")
+    func twoUndosIntoOneUnloadedPage() async throws {
+        let scratch = try Scratch("nb-undo-twice-unloaded")
+        let store = HeldLoadStore(try await PackageStore.create(root: scratch.packageURL, index: Fixture.index(pages: 1)))
+        let notebook = try await Notebook.open(store: store, schedule: fast)
+        let page = notebook.pageIDs[0]
+        notebook.windowChanged(to: [page])
+        try await waitUntil { notebook.state(of: page)?.content != nil }
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 1), echoOf: nil)
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 2), echoOf: nil)
+        await notebook.flush()
+        notebook.windowChanged(to: [])
+        notebook.retired(page, finalInk: nil)
+        notebook.prune()
+        if case .unloaded = notebook.state(of: page)! {} else { Issue.record("page should be pruned") }
+
+        await store.hold()
+        #expect(notebook.undo() == page)
+        #expect(notebook.undo() == page)
+        if case .loading = notebook.state(of: page)! {} else { Issue.record("the undo starts the load") }
+        #expect(notebook.canRedo && !notebook.canUndo, "both entries moved to redo before the page arrived")
+        await store.release()
+        try await waitUntil { notebook.state(of: page)?.content != nil }
+        #expect(notebook.state(of: page)?.content?.ink.strokes.isEmpty == true, "both undone on arrival")
+        #expect(notebook.redo() == page)
+        #expect(notebook.state(of: page)?.content?.ink.strokes.count == 1, "the middle state, not the disk's")
+        #expect(notebook.redo() == page)
+        #expect(notebook.state(of: page)?.content?.ink.strokes.count == 2)
+        #expect(!notebook.canRedo)
+    }
+
+    @Test("An undo on an unloaded page then one on a loaded page redo in the reverse order")
+    func redoReversesAcrossLoadedAndUnloaded() async throws {
+        let scratch = try Scratch("nb-undo-order")
+        let store = HeldLoadStore(try await PackageStore.create(root: scratch.packageURL, index: Fixture.index(pages: 2)))
+        let notebook = try await Notebook.open(store: store, schedule: fast)
+        let (a, b) = (notebook.pageIDs[0], notebook.pageIDs[1])
+        notebook.windowChanged(to: [a, b])
+        try await waitUntil { notebook.state(of: a)?.content != nil && notebook.state(of: b)?.content != nil }
+        notebook.inkChanged(on: b, Ink.drawing(strokes: 1), echoOf: nil)
+        notebook.inkChanged(on: a, Ink.drawing(strokes: 1), echoOf: nil)
+        await notebook.flush()
+        notebook.windowChanged(to: [b])
+        notebook.retired(a, finalInk: nil)
+        notebook.prune()
+
+        await store.hold()
+        #expect(notebook.undo() == a, "the newest edit is on a, which is not loaded")
+        #expect(notebook.undo() == b)
+        #expect(notebook.state(of: b)?.content?.ink.strokes.isEmpty == true)
+        #expect(notebook.redo() == b, "the reverse order, whether or not a has arrived")
+        #expect(notebook.state(of: b)?.content?.ink.strokes.count == 1)
+        #expect(notebook.redo() == a)
+        #expect(!notebook.canRedo)
+        await store.release()
+        try await waitUntil { notebook.state(of: a)?.content != nil }
+        #expect(notebook.state(of: a)?.content?.ink.strokes.count == 1)
+        #expect(notebook.state(of: a)?.content?.isDirty == false, "the redo's revision is what the disk holds")
+    }
+
+    @Test("A layer restored during a held save stays pending after the save completes")
+    func restoreDuringHeldSaveKeepsTheLayerPending() async throws {
+        let scratch = try Scratch("nb-undo-held-layer")
+        let store = HeldStore(try await PackageStore.create(root: scratch.packageURL, index: Fixture.index(pages: 1)))
+        let notebook = try await Notebook.open(store: store, schedule: fast)
+        let page = notebook.pageIDs[0]
+        notebook.windowChanged(to: [page])
+        try await waitUntil { notebook.state(of: page)?.content != nil }
+        let layer = Fixture.imageLayer()
+        try await notebook.addLayer(layer, assetData: Fixture.archive(1, count: 128), on: page)
+        // The ink report is the entry; it holds the layer at its first placement.
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 1), echoOf: nil)
+        #expect(notebook.transformLayer(on: page, layer: layer.id, to: .translation(x: 5, y: 5)) == .accepted)
+
+        await store.hold()
+        let flushing = Task { await notebook.flush() }
+        try await Task.sleep(for: .milliseconds(60))   // the pass captured the moved layer and is inside the held save
+        #expect(notebook.undo() == page)
+        #expect(notebook.state(of: page)?.content?.layers == [layer], "the restore returns the layer to its first placement")
+        await store.release()
+        await flushing.value
+        #expect(notebook.state(of: page)?.content?.pendingLayerFiles.contains(layer.id) == true, "the pass wrote the moved layer, not the one in custody")
+        await notebook.flush()
+        #expect(notebook.state(of: page)?.content?.isDirty == false)
+        let bytes = try await store.base.loadPage(page)
+        #expect(bytes.layers == [layer], "the restored placement is on disk, not the moved one")
+    }
+
     @Test("A load whose page left the window is dropped on arrival")
     func staleLoadIsDropped() async throws {
         let scratch = try Scratch("nb-stale")

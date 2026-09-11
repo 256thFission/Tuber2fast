@@ -89,57 +89,86 @@ package struct PageContent: Sendable {
     package mutating func edited() {
         editSeq += 1
     }
+
+    package var revision: PageRevision {
+        PageRevision(ink: ink, layers: layers, inkIndex: inkIndex)
+    }
+
+    /// Moves the page to `revision`, touching only the half that differs,
+    /// and says which. The pending-layer arithmetic lives here alone, so a
+    /// restore on a ready page and one folded into a load cannot drift.
+    package mutating func adopt(_ revision: PageRevision) -> (ink: Bool, layers: Bool) {
+        let inkDiffers = ink != revision.ink
+        let layersDiffer = layers != revision.layers || inkIndex != revision.inkIndex
+        if inkDiffers { setInk(revision.ink) }
+        if layersDiffer {
+            // A layer the revision removes is not pending: its file stays on
+            // disk because only `compact()` deletes, and the page file stops
+            // naming it.
+            for layer in revision.layers where !layers.contains(layer) {
+                pendingLayerFiles.insert(layer.id)
+            }
+            layers = revision.layers
+            inkIndex = revision.inkIndex
+            edited()
+        }
+        return (inkDiffers, layersDiffer)
+    }
 }
 
-/// One undo step: the page and the ink it returns to. Entries are values,
-/// so the stack survives a page leaving the window; it lives as long as
-/// the notebook is open, as GoodNotes' does.
+/// What a page looked like at one moment. A value; ink is copy-on-write
+/// and the layer list is small, so an entry costs what changed.
+package struct PageRevision: Sendable, Equatable {
+    package let ink: PKDrawing
+    package let layers: [Layer]
+    package let inkIndex: Int
+}
+
+/// One undo step: the page, the revision it had before the edit and the
+/// revision the edit produced. Both sides, so undo pushes a complete redo
+/// entry whether or not the page is loaded. Entries are values, so the
+/// stack survives a page leaving the window; it lives as long as the
+/// notebook is open, as GoodNotes' does.
 package struct HistoryEntry: Sendable {
     package let page: PageID
-    package let ink: PKDrawing
+    package let before: PageRevision
+    package let after: PageRevision
 }
 
-/// Undo and redo as one notebook-wide stack of ink values, bounded by
-/// entries.
+/// Undo and redo as one notebook-wide stack of entries, bounded by count.
+/// An entry moves between the stacks whole; nothing here reads a page.
 ///
 /// KNOWN DEFECT: the byte bound the spec states is not enforced, because a
 /// PKDrawing's in-memory size is not observable without serializing it.
 /// The entry bound stands in until the device spike measures what an entry
 /// costs at 20k strokes.
-package struct InkHistory: Sendable {
+package struct EditHistory: Sendable {
     package static let maximumEntries = 100
 
-    package private(set) var undoStack: [HistoryEntry] = []
-    package private(set) var redoStack: [HistoryEntry] = []
+    private var undoStack: [HistoryEntry] = []
+    private var redoStack: [HistoryEntry] = []
 
     package init() {}
 
     package var canUndo: Bool { !undoStack.isEmpty }
     package var canRedo: Bool { !redoStack.isEmpty }
 
-    /// Records the state an undo returns to. A new edit clears redo.
-    package mutating func recordEdit(on page: PageID, previous: PKDrawing) {
-        undoStack.append(HistoryEntry(page: page, ink: previous))
+    /// A new edit clears redo.
+    package mutating func record(_ entry: HistoryEntry) {
+        undoStack.append(entry)
         if undoStack.count > Self.maximumEntries { undoStack.removeFirst() }
         redoStack.removeAll()
     }
 
-    /// The entry to restore; `current` is what redo will return to.
-    package mutating func undo(current: (PageID) -> PKDrawing?) -> HistoryEntry? {
+    package mutating func undo() -> HistoryEntry? {
         guard let entry = undoStack.popLast() else { return nil }
-        if let ink = current(entry.page) { redoStack.append(HistoryEntry(page: entry.page, ink: ink)) }
+        redoStack.append(entry)
         return entry
     }
 
-    /// The redo entry for an undo whose page was not loaded when it ran:
-    /// pushed when the page arrives and its current ink is known.
-    package mutating func pushRedo(_ entry: HistoryEntry) {
-        redoStack.append(entry)
-    }
-
-    package mutating func redo(current: (PageID) -> PKDrawing?) -> HistoryEntry? {
+    package mutating func redo() -> HistoryEntry? {
         guard let entry = redoStack.popLast() else { return nil }
-        if let ink = current(entry.page) { undoStack.append(HistoryEntry(page: entry.page, ink: ink)) }
+        undoStack.append(entry)
         return entry
     }
 }
