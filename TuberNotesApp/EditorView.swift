@@ -18,6 +18,7 @@ struct EditorView: View {
     @State private var photoItem: PhotosPickerItem?
     @State private var isPickingPDF = false
     @State private var isConfirmingPageDelete = false
+    @State private var isShowingNavigator = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -38,6 +39,11 @@ struct EditorView: View {
         }
         .fileImporter(isPresented: $isPickingPDF, allowedContentTypes: [.pdf]) { result in
             Task { await importPDF(result) }
+        }
+        // A sheet, not a full-screen cover: the canvas stays laid out under
+        // it, so a tap in the grid can scroll to the page.
+        .sheet(isPresented: $isShowingNavigator) {
+            PageNavigatorSheet(editor: editor)
         }
         .confirmationDialog(
             "Delete this page?",
@@ -133,6 +139,10 @@ struct EditorView: View {
 
             Button { editor.addPage() } label: {
                 Label("Add page", systemImage: "plus.rectangle.portrait").labelStyle(.iconOnly)
+            }
+
+            Button { isShowingNavigator = true } label: {
+                Label("Pages", systemImage: "rectangle.grid.2x2").labelStyle(.iconOnly)
             }
         }
     }
