@@ -233,6 +233,7 @@ package final class Notebook {
         case .faults(let faults):
             states[page] = .unreadable(faults)
             pendingRestores[page] = nil
+            history.forget(page)
             emitContent(page)
         }
         onAsyncChange?()
@@ -365,10 +366,17 @@ package final class Notebook {
             wanted.insert(page)
             bumpContentVersion(of: page)
             if case .unloaded = states[page] { startLoad(page) }
-        case .unreadable, nil:
-            // A page that cannot take ink, or one that was deleted: the entry
-            // is swallowed (the `KNOWN DEFECT` at `deletePage`).
-            return
+        case .unreadable:
+            // A page can become unreadable at a load the entry predates. The
+            // refusal forgot what was on the stacks; the entry in hand goes
+            // the same way, softly, because this is timing and not a broken
+            // invariant.
+            TNLog.event(.notebook, "a restore reached page \(page), which is unreadable; its history is dropped")
+            history.forget(page)
+        case nil:
+            // `deletePage` forgets the page's entries, and nothing else
+            // removes a page from `states`.
+            TNPrecondition.fail("a restore reached page \(page), which the notebook does not hold")
         }
     }
 
@@ -486,12 +494,10 @@ package final class Notebook {
         return record.id
     }
 
-    /// KNOWN DEFECT: history entries and a pending restore for the deleted
-    /// page are left behind, so an undo that reaches one of them restores a
-    /// page that no longer exists and is swallowed by `restore`'s guard on
-    /// `states`. It stays until undo of layer and page operations is
-    /// designed; deleting a page is navigation, not an edit, and is not
-    /// itself undoable.
+    /// Deleting a page is navigation, not an edit, and is not itself
+    /// undoable: the entries and any pending restore that name the page go
+    /// with it, so no entry on either stack names a page the notebook does
+    /// not hold.
     package func deletePage(_ page: PageID) {
         guard index.pages.count > 1, let position = index.pageIDs.firstIndex(of: page) else { return }
         index = index.withPages(index.pages.filter { $0.id != page })
@@ -499,6 +505,8 @@ package final class Notebook {
         states[page] = nil
         contentVersions[page] = nil
         wanted.remove(page)
+        pendingRestores[page] = nil
+        history.forget(page)
         // The successor at the same position, clamped when the last page goes:
         // the page the runtime shows after the delete (`PagedCanvasController.setPages`),
         // so the notebook's current page and the viewport agree.

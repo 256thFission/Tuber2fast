@@ -181,4 +181,11 @@ package struct EditHistory: Sendable {
         undoStack.append(entry)
         return entry
     }
+
+    /// Drops every entry naming `page` from both stacks: a page that is
+    /// gone, or that cannot be read, cannot take a restore.
+    package mutating func forget(_ page: PageID) {
+        undoStack.removeAll { $0.page == page }
+        redoStack.removeAll { $0.page == page }
+    }
 }

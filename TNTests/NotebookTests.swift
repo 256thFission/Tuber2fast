@@ -44,8 +44,19 @@ final class HeldLoadStore: ForwardingStore, @unchecked Sendable {
     }
 }
 
+/// A real store whose `loadPage` refuses every call once told to, so a page
+/// that loaded clean once can fail its next load.
+final class RefusingLoadStore: ForwardingStore, @unchecked Sendable {
+    private let refusing = Gate()
+    func refuse() async { await refusing.close() }
+    override func loadPage(_ page: PageID) async throws(FormatFault) -> PageBytes {
+        if !(await refusing.isOpen) { throw .corruptJSON("refused by the test") }
+        return try await base.loadPage(page)
+    }
+}
+
 actor Gate {
-    private var isOpen = true
+    private(set) var isOpen = true
     private var waiters: [CheckedContinuation<Void, Never>] = []
     func close() { isOpen = false }
     func open() {
@@ -589,6 +600,84 @@ struct NotebookTests {
         await notebook.flush()
         again = try await PackageStore(root: scratch.packageURL).load()
         #expect(again.index.pageIDs == [first])
+    }
+
+    @Test("Deleting a page drops its entries from both stacks; undo walks only the surviving page")
+    func deletingAPageForgetsItsHistory() async throws {
+        let scratch = try Scratch("nb-delete-forgets")
+        let store = try await PackageStore.create(root: scratch.packageURL, index: Fixture.index(pages: 2))
+        let notebook = try await Notebook.open(store: store, schedule: fast)
+        let (a, b) = (notebook.pageIDs[0], notebook.pageIDs[1])
+        notebook.windowChanged(to: [a, b])
+        try await waitUntil { notebook.state(of: a)?.content != nil && notebook.state(of: b)?.content != nil }
+        notebook.inkChanged(on: a, Ink.drawing(strokes: 1), echoOf: nil)
+        notebook.inkChanged(on: b, Ink.drawing(strokes: 1), echoOf: nil)
+        notebook.inkChanged(on: a, Ink.drawing(strokes: 2), echoOf: nil)
+        #expect(notebook.undo() == a, "a's newest entry is on the redo stack")
+        #expect(notebook.canRedo)
+
+        notebook.deletePage(a)
+        #expect(notebook.canUndo, "b's entry survives")
+        #expect(!notebook.canRedo, "a's redo entry went with the page")
+        #expect(notebook.undo() == b)
+        #expect(notebook.state(of: b)?.content?.ink.strokes.isEmpty == true)
+        #expect(!notebook.canUndo, "a's older entry went with the page")
+        #expect(notebook.undo() == nil)
+        #expect(notebook.redo() == b)
+        #expect(!notebook.canRedo)
+    }
+
+    @Test("An undo whose page was pending load when the page was deleted does not trap and restores nothing")
+    func undoIntoADeletedPageRestoresNothing() async throws {
+        let scratch = try Scratch("nb-delete-pending")
+        let store = HeldLoadStore(try await PackageStore.create(root: scratch.packageURL, index: Fixture.index(pages: 2)))
+        let notebook = try await Notebook.open(store: store, schedule: fast)
+        let (a, b) = (notebook.pageIDs[0], notebook.pageIDs[1])
+        notebook.windowChanged(to: [a])
+        try await waitUntil { notebook.state(of: a)?.content != nil }
+        notebook.inkChanged(on: a, Ink.drawing(strokes: 1), echoOf: nil)
+        await notebook.flush()
+        notebook.windowChanged(to: [])
+        notebook.retired(a, finalInk: nil)
+        notebook.prune()
+        if case .unloaded = notebook.state(of: a)! {} else { Issue.record("a should be pruned") }
+        _ = notebook.drainChanges()
+
+        await store.hold()
+        #expect(notebook.undo() == a)
+        if case .loading = notebook.state(of: a)! {} else { Issue.record("the undo starts the load") }
+        notebook.deletePage(a)
+        #expect(!notebook.canUndo && !notebook.canRedo)
+        #expect(notebook.undo() == nil)
+        #expect(notebook.redo() == nil)
+        await store.release()
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(notebook.state(of: a) == nil)
+        #expect(notebook.pageIDs == [b])
+        #expect(!notebook.drainChanges().contains { if case .content = $0 { true } else { false } }, "the cancelled load installs nothing")
+    }
+
+    @Test("A page whose load fails after an entry was recorded for it drops that entry")
+    func failedLoadForgetsTheEntry() async throws {
+        let scratch = try Scratch("nb-failed-load-forgets")
+        let store = RefusingLoadStore(try await PackageStore.create(root: scratch.packageURL, index: Fixture.index(pages: 1)))
+        let notebook = try await Notebook.open(store: store, schedule: fast)
+        let page = notebook.pageIDs[0]
+        notebook.windowChanged(to: [page])
+        try await waitUntil { notebook.state(of: page)?.content != nil }
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 1), echoOf: nil)
+        await notebook.flush()
+        notebook.windowChanged(to: [])
+        notebook.retired(page, finalInk: nil)
+        notebook.prune()
+        if case .unloaded = notebook.state(of: page)! {} else { Issue.record("page should be pruned") }
+        #expect(notebook.canUndo)
+
+        await store.refuse()
+        notebook.windowChanged(to: [page])
+        try await waitUntil { if case .unreadable = notebook.state(of: page)! { true } else { false } }
+        #expect(!notebook.canUndo, "the entry went with the page's readability")
+        #expect(notebook.undo() == nil)
     }
 
     @Test("Deleting the current page makes its successor at the same position current, clamped at the end")

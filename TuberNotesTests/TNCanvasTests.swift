@@ -315,6 +315,38 @@ struct TNCanvasTests {
         _ = runtime.retireAll()
     }
 
+    @Test("A composite and a restore for page B land under a stroke on page A; page A's composite still waits")
+    func neighbourStrokeHoldsNothing() throws {
+        let reporter = RecordingReporter()
+        let runtime = hosted(reporter)
+        let pages = descriptors(2)
+        runtime.setPages(pages, seq: StructureSeq(1), answering: nil)
+        for page in pages {
+            runtime.installContent(.editable(id: page.id, ink: PKDrawing(), layers: [], composite: nil, inkSeq: InkSeq(1)))
+        }
+        let a = try #require(runtime.canvases[pages[0].id])
+        let b = try #require(runtime.canvases[pages[1].id])
+        a.canvasViewDidBeginUsingTool(a.canvasView)
+
+        let box = textLayer("hi", x: 100, y: 100)
+        let compositeB = Composite(image: try solidImage(), scale: 2)
+        let compositeA = Composite(image: try solidImage(), scale: 2)
+        runtime.updateComposite(on: pages[1].id, compositeB, layers: [box])
+        runtime.restoreInk(on: pages[1].id, strokeDrawing(strokes: 3), seq: InkSeq(7))
+        runtime.updateComposite(on: pages[0].id, compositeA, layers: [])
+        #expect(backdrop(of: b)?.cgImage === compositeB.image, "b's picture is not held by a's stroke")
+        #expect(b.canvasView.drawing.strokes.count == 3, "b's restore is not held by a's stroke")
+        #expect(backdrop(of: a)?.cgImage !== compositeA.image, "a's picture waits for a's stroke")
+
+        a.canvasView.drawing = strokeDrawing(strokes: 1)
+        a.canvasViewDidEndUsingTool(a.canvasView)
+        a.canvasViewDrawingDidChange(a.canvasView)
+        #expect(backdrop(of: a)?.cgImage === compositeA.image, "a's picture landed when a's stroke ended")
+        #expect(a.canvasView.drawing.strokes.count == 1, "nothing was restored over a's stroke")
+
+        _ = runtime.retireAll()
+    }
+
     private func backdrop(of canvas: PageCanvasController) -> UIImage? {
         canvas.canvasView.subviews.compactMap { $0 as? UIImageView }.first?.image
     }

@@ -226,14 +226,16 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
                 inkSeq: seq
             )
         }
-        // A restore waits for a stroke the way an install does: the canvas
-        // is what must not be touched, and the notebook's value is already
-        // the truth. `pageStrokeDidEnd` applies it.
-        if isAnyStrokeInFlight {
+        // A restore waits for a stroke on its own page the way an install
+        // waits for any: the canvas is what must not be touched, and the
+        // notebook's value is already the truth. `pageStrokeDidEnd` applies
+        // it. A stroke on another page holds nothing here.
+        guard let canvas = canvases[page] else { return }
+        if canvas.isStrokeInFlight {
             windowRefreshDeferred = true
             return
         }
-        canvases[page]?.restoreInk(ink, seq: seq)
+        canvas.restoreInk(ink, seq: seq)
     }
 
     package func updateComposite(on page: PageID, _ composite: Composite, layers: [Layer]) {
@@ -252,15 +254,16 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
             )
         }
         // The same wait as a restore, so the picture and the hit rects that
-        // answer one land on the canvas with it.
-        if isAnyStrokeInFlight {
+        // answer one land on the canvas with it. Only this page's stroke
+        // holds it: the `.textEditingEnded` behind a commit's picture does
+        // not wait, so the picture must not wait on a neighbour.
+        guard let canvas = canvases[page] else { return }
+        if canvas.isStrokeInFlight {
             windowRefreshDeferred = true
             return
         }
-        if let canvas = canvases[page] {
-            canvas.setLayers(layers)
-            canvas.updateComposite(composite)
-        }
+        canvas.setLayers(layers)
+        canvas.updateComposite(composite)
     }
 
     package func beginTextEditing(on page: PageID, _ start: TextEditStart) {
