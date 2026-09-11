@@ -412,6 +412,32 @@ enum ContractChecker {
             return count > 0 ? CanvasConstructionSite(path: source.path, count: count) : nil
         }
     }
+
+    // MARK: Rule — the tool picker is the app's
+
+    /// The system tool picker observes a first-responder canvas and writes
+    /// `canvasView.tool` itself, which makes it a second writer of the tool.
+    ///
+    /// The window keeps up to three live canvases, and
+    /// `PagedCanvasController.apply` is the one place that fans a tool out
+    /// to all of them and to every canvas built later. A picker driving the
+    /// first responder would leave the other two stale, and a page turn
+    /// would change which canvas it drives.
+    ///
+    /// Naming it is the violation, not constructing it: a stored property, a
+    /// `setVisible(_:forFirstResponder:)` call, and an extension on it are
+    /// the same second writer by other spellings, and none of them is a
+    /// construction. The scan reads comment-stripped code, so this
+    /// explanation and the failure message below cannot trip it.
+    static let toolPickerTypeName = "PKToolPicker"
+
+    static func namesToolPicker(in code: String) -> Bool {
+        code.contains(toolPickerTypeName)
+    }
+
+    static func toolPickerSites(in sources: [CheckedSource]) -> [String] {
+        sources.filter { namesToolPicker(in: $0.code) }.map(\.path)
+    }
 }
 
 /// One file that constructs `PKCanvasView`, and how many times.
@@ -778,6 +804,12 @@ struct ContractStructureTests {
         "Modules/TNLibrary/LibraryStore.swift",
         // The import picker's security-scoped read.
         "TuberNotesApp/ImportReader.swift",
+        // The tool palette's preferences: which pen, which colours, which
+        // eraser. It writes no notebook and no library state, which is what
+        // the rule is for — a preference has no integrity to protect, no
+        // relationship to any other file, and an unreadable one is replaced
+        // by the built-in default at the cost of a tap.
+        "TuberNotesApp/ToolPaletteDefaults.swift",
     ]
 
     @Test("Each module imports only the frameworks its place in the graph allows")
@@ -838,6 +870,22 @@ struct ContractStructureTests {
         #expect(
             sites.reduce(0) { $0 + $1.count } == 1,
             "PKCanvasView is constructed more than once: \(described.joined(separator: ", "))"
+        )
+    }
+
+    /// The tool strip is the app's, and the system picker is not used.
+    /// `Docs/Contract.md`, *The canvas is told, never asks*.
+    @Test("No source names the system tool picker")
+    func nothingNamesTheSystemToolPicker() throws {
+        let sites = ContractChecker.toolPickerSites(in: try Self.appSources())
+        #expect(
+            sites.isEmpty,
+            """
+            \(sites.joined(separator: ", ")) names the system tool picker, which writes \
+            canvasView.tool itself. PagedCanvasController.apply is the one writer of the tool, \
+            across every live canvas and every canvas built after; a picker driving the first \
+            responder would leave the others stale.
+            """
         )
     }
 
@@ -1094,6 +1142,31 @@ struct ContractCheckerOwnTests {
             ContractChecker.testOnlyMembersOutsideDebug(
                 in: ContractChecker.codeOnly("// a comment about somethingForTesting\nlet x = 1\n")
             ).isEmpty
+        )
+    }
+
+    @Test("A source naming the system tool picker is caught, however it names it")
+    func toolPickerReferencesAreCaught() throws {
+        try withPlantedTree { root in
+            try write("import PencilKit\nlet picker = PKToolPicker()\n", to: "Deep/Rogue.swift", under: root)
+            // Not a construction, and the rule must still bite: a stored
+            // picker is the same second writer.
+            try write("import PencilKit\nvar picker: PKToolPicker?\n", to: "Deep/Stored.swift", under: root)
+            try write("import PencilKit\nlet canvas = PKCanvasView()\n", to: "Innocent.swift", under: root)
+
+            let sources = try ContractChecker.sources(under: root, label: "Planted")
+            #expect(Set(ContractChecker.toolPickerSites(in: sources)) == [
+                "Planted/Deep/Rogue.swift",
+                "Planted/Deep/Stored.swift",
+            ])
+        }
+
+        // Prose is not code, here as everywhere: the rule reads
+        // `CheckedSource.code`, which has the comments taken out.
+        #expect(
+            !ContractChecker.namesToolPicker(
+                in: ContractChecker.codeOnly("// PKToolPicker is deliberately not used.\nlet x = 1\n")
+            )
         )
     }
 

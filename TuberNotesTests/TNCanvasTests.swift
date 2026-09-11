@@ -230,6 +230,44 @@ struct TNCanvasTests {
 
     // MARK: - Fixtures
 
+    // MARK: - The tool
+
+    @Test("The tool reaches every live canvas, and every canvas built after it")
+    func applyReachesLiveAndLaterCanvases() throws {
+        let reporter = RecordingReporter()
+        let runtime = hosted(reporter)
+        let pages = descriptors(3)
+        runtime.setPages(pages, seq: StructureSeq(1), answering: nil)
+        runtime.installContent(
+            .editable(id: pages[0].id, ink: PKDrawing(), layers: [], composite: nil, inkSeq: InkSeq(1))
+        )
+
+        // A width no other tool in this suite uses, so the assertion cannot
+        // pass on a default somebody else set.
+        let tool = PKInkingTool(.pencil, color: .red, width: 7)
+        runtime.apply(CanvasEnvironment(tool: tool))
+
+        let live = try #require(runtime.canvases[pages[0].id])
+        let applied = try #require(live.canvasView.tool as? PKInkingTool)
+        #expect(applied.inkType == .pencil)
+        #expect(applied.width == 7)
+
+        // The runtime keeps the tool, so a canvas that did not exist when
+        // `apply` ran opens holding it. Without that, a page turn would draw
+        // in whatever PencilKit starts with.
+        runtime.installContent(
+            .editable(id: pages[1].id, ink: PKDrawing(), layers: [], composite: nil, inkSeq: InkSeq(1))
+        )
+        #expect(runtime.canvases.count == 2)
+        for canvas in runtime.canvases.values {
+            let held = try #require(canvas.canvasView.tool as? PKInkingTool)
+            #expect(held.inkType == .pencil)
+            #expect(held.width == 7)
+        }
+
+        _ = runtime.retireAll()
+    }
+
     /// A laid-out runtime. The first layout is the first viewport it has ever
     /// had, and the window is built there.
     private func hosted(_ reporter: RecordingReporter) -> PagedCanvasController {
