@@ -23,15 +23,32 @@ package enum ItemKind: String, Sendable, Codable {
     case folder, notebook
 }
 
+/// What an item is, whatever it is called and wherever it sits. A star, a
+/// link, or anything else that must survive a rename or a move names an
+/// item this way rather than by path.
+package enum ItemIdentity: Hashable, Codable, Sendable {
+    case notebook(NotebookID)
+    case folder(FolderID)
+}
+
 /// One entry in a listing. `id` is the relative path under the root.
 package struct LibraryItem: Sendable, Equatable, Identifiable {
     package let id: String
     package let name: String
     package let kind: ItemKind
     package let notebookID: NotebookID?
+    package let folderID: FolderID?
+    package let createdAt: Date
     package let modifiedAt: Date
 
     package var relativePath: String { id }
+
+    /// Nil when the sidecar that holds the identity is unreadable.
+    package var identity: ItemIdentity? {
+        if let notebookID { return .notebook(notebookID) }
+        if let folderID { return .folder(folderID) }
+        return nil
+    }
 }
 
 /// `Trash/<container>/origin.json`.
@@ -155,19 +172,32 @@ package actor LibraryStore {
         return [layout.indexURL, layout.pagesDirectory, layout.inkDirectory, layout.layersDirectory].map(mtime).max() ?? .distantPast
     }
 
-    private func notebookID(ofPackageAt url: URL) -> NotebookID? {
+    private func createdAt(_ url: URL) -> Date {
+        (try? fm.attributesOfItem(atPath: url.path)[.creationDate] as? Date) ?? .distantPast
+    }
+
+    /// Identity and birth date in one read of the index, so a listing opens
+    /// each package once rather than twice.
+    private func indexFacts(ofPackageAt url: URL) -> (id: NotebookID, createdAt: Date)? {
         guard let data = try? Data(contentsOf: PackageLayout(root: url).indexURL),
               let index = try? IndexFile.decode(data)
         else { return nil }
-        return index.notebookID
+        return (index.notebookID, index.createdAt)
+    }
+
+    private func notebookID(ofPackageAt url: URL) -> NotebookID? {
+        indexFacts(ofPackageAt: url)?.id
     }
 
     private func item(at relativePath: String, url: URL, kind: ItemKind) -> LibraryItem {
-        LibraryItem(
+        let facts = kind == .notebook ? indexFacts(ofPackageAt: url) : nil
+        return LibraryItem(
             id: relativePath,
             name: Self.displayName(of: url.lastPathComponent),
             kind: kind,
-            notebookID: kind == .notebook ? notebookID(ofPackageAt: url) : nil,
+            notebookID: facts?.id,
+            folderID: kind == .folder ? folderID(of: relativePath) : nil,
+            createdAt: facts?.createdAt ?? createdAt(url),
             modifiedAt: modifiedAt(url, kind: kind)
         )
     }

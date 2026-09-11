@@ -150,6 +150,26 @@ struct LibraryTests {
         #expect(record.paper == .known(.drawn(.lined)))
     }
 
+    @Test("A listed item carries its identity and when it was made")
+    func identityAndCreationDate() async throws {
+        let (scratch, library) = try makeLibrary("lib-identity")
+        defer { withExtendedLifetime(scratch) {} }
+        _ = try await library.store.createFolder(named: "Term", in: "")
+        _ = try await library.store.createNotebook(named: "Physics", in: "Term")
+
+        let notebook = try #require(try await library.store.list(folder: "Term").first)
+        let loaded = try await PackageStore(root: library.store.url(of: notebook.relativePath)).load()
+        #expect(notebook.createdAt == loaded.index.createdAt)
+        #expect(notebook.folderID == nil)
+        #expect(notebook.identity == .notebook(loaded.index.notebookID))
+
+        let folder = try #require(try await library.store.list(folder: "").first)
+        #expect(folder.notebookID == nil)
+        #expect(folder.folderID == (await library.store.folderID(of: "Term")))
+        #expect(folder.identity == .folder(try #require(folder.folderID)))
+        #expect(folder.createdAt > Date(timeIntervalSince1970: 1_800_000_000))
+    }
+
     @Test("Two packages with one identity: the scan re-mints the second")
     func collision() async throws {
         let (scratch, library) = try makeLibrary("lib-collide")
