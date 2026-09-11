@@ -54,10 +54,11 @@ package enum TextTypesetting {
     /// pad it on opposite sides of the baseline (3 px, every line). So every
     /// paragraph's lines are exactly `lineHeight` tall, the tallest run's
     /// whole-point height, and the text view's layout manager is told to
-    /// ignore font leading. Measured with that box, TextKit 1 advances by
-    /// exactly the height and puts the baseline `round(height - descent)`
-    /// below the line top, descent being the largest on the line; that is
-    /// the rule `placedLines` applies for the renderer.
+    /// ignore font leading. Measured with that box (iOS 26 simulator, in
+    /// `TextFidelityTests`), TextKit 1 advances by exactly the height and
+    /// puts the baseline `height - descent` below the line top, unrounded,
+    /// descent being the largest font descent on the line; that is the rule
+    /// `placedLines` applies for the renderer.
     private static func paragraphStyle(_ alignment: TextAlignment, lineHeight: CGFloat) -> NSParagraphStyle {
         let paragraph = NSMutableParagraphStyle()
         paragraph.alignment = switch alignment {
@@ -120,12 +121,18 @@ package enum TextTypesetting {
         CTFrameGetLineOrigins(frame, CFRange(location: 0, length: 0), &origins)
         var top: CGFloat = 0
         return zip(lines, origins).map { line, origin in
-            var ascent: CGFloat = 0, descent: CGFloat = 0, leading: CGFloat = 0
-            CTLineGetTypographicBounds(line, &ascent, &descent, &leading)
             let range = CTLineGetStringRange(line)
             let paragraph = attributed.attribute(.paragraphStyle, at: range.location, effectiveRange: nil) as? NSParagraphStyle
-            let height = paragraph.map(\.maximumLineHeight).flatMap { $0 > 0 ? $0 : nil } ?? ceil(ascent + descent + leading)
-            let placed = PlacedLine(line: line, x: origin.x, baseline: top + (height - descent).rounded())
+            // The fonts of the runs, as TextKit reads them; the line's own
+            // typographic bounds can include a fallback glyph's font.
+            var ascent: CGFloat = 0, descent: CGFloat = 0
+            attributed.enumerateAttribute(.font, in: NSRange(location: range.location, length: range.length)) { value, _, _ in
+                guard let font = value as? UIFont else { return }
+                ascent = max(ascent, font.ascender)
+                descent = max(descent, -font.descender)
+            }
+            let height = paragraph.map(\.maximumLineHeight).flatMap { $0 > 0 ? $0 : nil } ?? ceil(ascent + descent)
+            let placed = PlacedLine(line: line, x: origin.x, baseline: top + height - descent)
             top += height
             return placed
         }
