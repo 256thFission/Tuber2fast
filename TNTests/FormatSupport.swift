@@ -128,6 +128,13 @@ enum Fixture {
     }
 }
 
+/// The mean of one pixel's three channels: 255 is white paper, a stroke is dark.
+func luminance(of image: CGImage, x: Int, y: Int) -> Int {
+    let data = image.dataProvider!.data! as Data
+    let offset = y * image.bytesPerRow + x * 4
+    return (Int(data[offset]) + Int(data[offset + 1]) + Int(data[offset + 2])) / 3
+}
+
 func jsonObject(_ data: Data) throws -> [String: Any] {
     try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
 }
