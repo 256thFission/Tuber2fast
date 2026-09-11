@@ -237,6 +237,11 @@ package actor LibraryStore {
         }
     }
 
+    /// The folders directly inside `relativePath`, for a destination picker.
+    package func listFolders(in relativePath: String) throws(LibraryError) -> [LibraryItem] {
+        try list(folder: relativePath).filter { $0.kind == .folder }
+    }
+
     package func createFolder(named name: String, in folder: String) throws(LibraryError) -> LibraryItem {
         try Self.validate(name: name)
         let parent = url(of: folder)
@@ -450,6 +455,16 @@ package actor LibraryStore {
         }
         let path = folder.isEmpty ? fileName : "\(folder)/\(fileName)"
         return item(at: path, url: target, kind: kind)
+    }
+
+    /// Every container under `Trash/`, including one whose `origin.json` no
+    /// listing could read: emptying is about the bytes, not the entries.
+    package func emptyTrash() throws(LibraryError) {
+        let names: [String]
+        do { names = try fm.contentsOfDirectory(atPath: trashRoot.path) } catch { throw .io("list trash: \(error)") }
+        for name in names where !name.hasPrefix(".") {
+            do { try fm.removeItem(at: trashRoot.appendingPathComponent(name)) } catch { throw .io("delete \(name): \(error)") }
+        }
     }
 
     package func deletePermanently(_ entry: TrashEntry) throws(LibraryError) {

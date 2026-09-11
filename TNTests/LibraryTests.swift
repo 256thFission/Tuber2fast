@@ -170,6 +170,24 @@ struct LibraryTests {
         #expect(folder.createdAt > Date(timeIntervalSince1970: 1_800_000_000))
     }
 
+    @Test("listFolders sees folders only; emptyTrash leaves no container behind")
+    func foldersAndEmptyTrash() async throws {
+        let (scratch, library) = try makeLibrary("lib-folders-empty")
+        defer { withExtendedLifetime(scratch) {} }
+        _ = try await library.store.createFolder(named: "Archive", in: "")
+        _ = try await library.store.createFolder(named: "Current", in: "")
+        let notebook = try await library.store.createNotebook(named: "Loose", in: "")
+        #expect(try await library.store.listFolders(in: "").map(\.name) == ["Archive", "Current"])
+        #expect(try await library.store.listFolders(in: "Archive").isEmpty)
+
+        _ = try await library.trash(at: notebook.relativePath)
+        _ = try await library.trash(at: "Current")
+        #expect(try await library.store.listTrash().count == 2)
+        try await library.store.emptyTrash()
+        #expect(try await library.store.listTrash().isEmpty)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: library.store.trashRoot.path).isEmpty)
+    }
+
     @Test("A star round-trips, and the listing mixes kinds across parents")
     func favorites() async throws {
         let (scratch, library) = try makeLibrary("lib-favorites")
