@@ -156,10 +156,20 @@ package enum EditorTool: Equatable, Sendable {
     case erasePixel(ToolWidth)
     case lasso
 
-    /// Page points. Taste, not measurement, like `InkKind.points`.
+    /// Page points, inside the range PencilKit will keep.
+    ///
+    /// `.thin` is PencilKit's own minimum rather than a number of ours, and
+    /// that is not taste. A `PKEraserTool` built below the minimum reports
+    /// the minimum back: the first draft asked for 8 and the simulator
+    /// handed back 16.4, which is a width the person picked being quietly
+    /// replaced. Naming the bound is how the thinnest eraser stays the
+    /// thinnest eraser that exists. The other two are taste, like
+    /// `InkKind.points`, and both were observed to survive verbatim.
+    /// `EditorToolTests` holds every one of them against the type's bounds,
+    /// so a toolchain that moves them fails a test instead of clamping.
     package static func pixelEraserPoints(_ width: ToolWidth) -> CGFloat {
         switch width {
-        case .thin: 8
+        case .thin: PKEraserTool.EraserType.fixedWidthBitmap.validWidthRange.lowerBound
         case .medium: 20
         case .thick: 44
         }
@@ -175,7 +185,11 @@ package enum EditorTool: Equatable, Sendable {
         case .eraseObject:
             PKEraserTool(.vector)
         case .erasePixel(let width):
-            PKEraserTool(.bitmap, width: Self.pixelEraserPoints(width))
+            // `.fixedWidthBitmap`, spelled out. `PKEraserTool(.bitmap,
+            // width:)` builds this type anyway and reports it back under
+            // this name, so asking for `.bitmap` was asking for a tool
+            // PencilKit does not make.
+            PKEraserTool(.fixedWidthBitmap, width: Self.pixelEraserPoints(width))
         case .lasso:
             PKLassoTool()
         }

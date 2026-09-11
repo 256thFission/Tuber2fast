@@ -89,16 +89,26 @@ struct EditorToolTests {
         #expect(tool.width == PKEraserTool.EraserType.vector.defaultWidth)
     }
 
-    @Test("The pixel eraser is a bitmap eraser at the width it was given")
+    @Test("The pixel eraser keeps every width it is given, because every one is in range")
     func pixelEraserCarriesItsWidth() throws {
+        // A width outside PencilKit's range comes back as the bound, not as
+        // the number the person picked. Asking for 8 once returned 16.4.
+        // This holds the three against the bounds, so a toolchain that moves
+        // them fails here rather than erasing at a size nobody chose.
+        let valid = PKEraserTool.EraserType.fixedWidthBitmap.validWidthRange
         for width in ToolWidth.allCases {
+            let points = EditorTool.pixelEraserPoints(width)
+            #expect(valid.contains(points))
+
             let tool = try #require(EditorTool.erasePixel(width).pkTool as? PKEraserTool)
-            #expect(tool.eraserType == .bitmap)
-            #expect(tool.width == EditorTool.pixelEraserPoints(width))
+            #expect(tool.eraserType == .fixedWidthBitmap)
+            #expect(tool.width == points)
         }
-        #expect(EditorTool.pixelEraserPoints(.thin) == 8)
-        #expect(EditorTool.pixelEraserPoints(.medium) == 20)
-        #expect(EditorTool.pixelEraserPoints(.thick) == 44)
+
+        let points = ToolWidth.allCases.map(EditorTool.pixelEraserPoints)
+        #expect(points == points.sorted())
+        #expect(Set(points).count == 3)
+        #expect(EditorTool.pixelEraserPoints(.thin) == valid.lowerBound)
     }
 
     @Test("Lasso is a lasso")
