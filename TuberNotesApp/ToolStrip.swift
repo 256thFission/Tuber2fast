@@ -1,0 +1,304 @@
+import SwiftUI
+import TNEditor
+import UIKit
+
+/// One button on the strip.
+///
+/// A case per button rather than a case per tool: the two erasers share a
+/// button and differ inside its popover, which is what the person sees.
+enum EditorToolButton: Hashable, CaseIterable, Identifiable {
+    case pen, pencil, highlighter, eraser, lasso
+
+    var id: Self { self }
+
+    /// Which button the tool in hand lights up.
+    init(_ tool: EditorTool) {
+        switch tool {
+        case .ink(.pen, _): self = .pen
+        case .ink(.pencil, _): self = .pencil
+        case .ink(.highlighter, _): self = .highlighter
+        case .eraseObject, .erasePixel: self = .eraser
+        case .lasso: self = .lasso
+        }
+    }
+
+    var inkKind: InkKind? {
+        switch self {
+        case .pen: .pen
+        case .pencil: .pencil
+        case .highlighter: .highlighter
+        case .eraser, .lasso: nil
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .pen: "pencil.tip"
+        case .pencil: "pencil"
+        case .highlighter: "highlighter"
+        case .eraser: "eraser"
+        case .lasso: "lasso"
+        }
+    }
+
+    var label: String {
+        switch self {
+        case .pen: "Pen"
+        case .pencil: "Pencil"
+        case .highlighter: "Highlighter"
+        case .eraser: "Eraser"
+        case .lasso: "Lasso"
+        }
+    }
+
+    /// Lasso has no attributes, so a second tap on it does nothing.
+    var hasOptions: Bool { self != .lasso }
+}
+
+/// The tools across the left of the toolbar. Tapping an unselected tool
+/// picks it up; tapping the one in hand opens its options over it.
+///
+/// Everything drawn comes from `editor.tool` or the palette, and everything
+/// done is one call on the editor. The strip decides nothing.
+struct ToolStrip: View {
+    let editor: EditorViewModel
+
+    @State private var optionsFor: EditorToolButton?
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ForEach(EditorToolButton.allCases) { button in
+                toolButton(button)
+            }
+        }
+    }
+
+    private func toolButton(_ button: EditorToolButton) -> some View {
+        let isSelected = EditorToolButton(editor.tool) == button
+        let tint = tint(button)
+        return Button {
+            tap(button, isSelected: isSelected)
+        } label: {
+            Image(systemName: button.symbol)
+                .frame(width: 28, height: 24)
+        }
+        .buttonStyle(.bordered)
+        .buttonBorderShape(.roundedRectangle(radius: 6))
+        .background(isSelected ? tint.opacity(0.22) : .clear, in: .rect(cornerRadius: 6))
+        .foregroundStyle(tint)
+        .accessibilityLabel(button.label)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .popover(isPresented: presentation(of: button)) {
+            toolOptions
+        }
+    }
+
+    /// An ink button wears the colour it would draw in, so the strip answers
+    /// "what colour is my pencil" without being tapped.
+    private func tint(_ button: EditorToolButton) -> Color {
+        guard let kind = button.inkKind, let preset = editor.palette.inks[kind] else {
+            return .accentColor
+        }
+        return Color(preset.color.uiColor)
+    }
+
+    private func tap(_ button: EditorToolButton, isSelected: Bool) {
+        guard isSelected else {
+            switch button {
+            case .pen: editor.select(kind: .pen)
+            case .pencil: editor.select(kind: .pencil)
+            case .highlighter: editor.select(kind: .highlighter)
+            case .eraser: editor.selectEraser()
+            case .lasso: editor.selectLasso()
+            }
+            return
+        }
+        guard button.hasOptions else { return }
+        optionsFor = button
+    }
+
+    /// One `optionsFor` for the whole strip, read as a per-button flag, so
+    /// the popover anchors to the button that was tapped.
+    private func presentation(of button: EditorToolButton) -> Binding<Bool> {
+        Binding(
+            get: { optionsFor == button },
+            set: { shown in if !shown, optionsFor == button { optionsFor = nil } }
+        )
+    }
+
+    /// The tool in hand decides what the popover holds, not the button it
+    /// came out of: a popover only ever opens over the selected tool.
+    @ViewBuilder
+    private var toolOptions: some View {
+        switch editor.tool {
+        case .ink(_, let preset):
+            InkOptions(editor: editor, preset: preset)
+        case .eraseObject:
+            EraserOptions(editor: editor, pixelWidth: nil)
+        case .erasePixel(let width):
+            EraserOptions(editor: editor, pixelWidth: width)
+        case .lasso:
+            // Unreachable: the popover only opens over the tool in hand, and
+            // lasso's second tap does nothing.
+            EmptyView()
+        }
+    }
+}
+
+/// Width and colour for the ink in hand.
+private struct InkOptions: View {
+    let editor: EditorViewModel
+    let preset: InkPreset
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            WidthDots(selected: preset.width, choose: { editor.setWidth($0) })
+            colors
+        }
+        .padding(18)
+        .presentationCompactAdaptation(.popover)
+    }
+
+    private var colors: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // Recents first: the colours the person actually drew with are
+            // nearer the thumb than the ones the app shipped with.
+            LazyVGrid(columns: Self.columns, alignment: .leading, spacing: 10) {
+                ForEach(editor.palette.recentColors + ToolColor.defaults, id: \.rgba.hex) { color in
+                    Button { editor.setColor(color) } label: {
+                        Swatch(color: color, isSelected: color == preset.color)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(Self.name(of: color))
+                    .accessibilityAddTraits(color == preset.color ? .isSelected : [])
+                }
+            }
+            ColorPicker(
+                "Custom colour",
+                selection: Binding(
+                    get: { Color(preset.color.uiColor) },
+                    set: { editor.setColor(ToolColor(UIColor($0))) }
+                ),
+                // Ink is always opaque: the highlighter's translucency is
+                // PencilKit's, and a translucent colour over it dims twice.
+                supportsOpacity: false
+            )
+            .font(.callout)
+        }
+    }
+
+    private static let columns = Array(
+        repeating: GridItem(.fixed(30), spacing: 10, alignment: .leading),
+        count: 8
+    )
+
+    /// VoiceOver has no word for a swatch, so it reads the bytes.
+    private static func name(of color: ToolColor) -> String { color.rgba.hex }
+}
+
+/// Which eraser, and how wide when it is the pixel one.
+private struct EraserOptions: View {
+    let editor: EditorViewModel
+    /// `nil` in object mode, where there is no width to pick. One field
+    /// rather than a mode beside it, so a width on the object eraser is
+    /// as unrepresentable here as it is in `EditorTool`.
+    let pixelWidth: ToolWidth?
+
+    private var mode: EraserMode { pixelWidth == nil ? .object : .pixel }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Picker(
+                "Eraser",
+                // KNOWN DEFECT: the setter is a closure literal because
+                // `set: editor.setEraserMode` crashes the compiler. Apple
+                // Swift 6.3.3 dies in IRGen emitting the reabstraction thunk
+                // `@$s8TNEditor10EraserModeOScA_pSgIeAghyg_ACIeAghn_TR` for a
+                // main-actor method handed straight to `Binding.init`.
+                // Measured on this file, 2026-09-11. The literal costs
+                // nothing; delete this note when the toolchain moves.
+                selection: Binding(get: { mode }, set: { editor.setEraserMode($0) })
+            ) {
+                Text("Object").tag(EraserMode.object)
+                Text("Pixel").tag(EraserMode.pixel)
+            }
+            .pickerStyle(.segmented)
+
+            // The object eraser takes whole strokes and has no width, so the
+            // dots are absent rather than disabled: `setWidth` traps on it.
+            if let pixelWidth {
+                WidthDots(selected: pixelWidth, choose: { editor.setWidth($0) })
+            }
+        }
+        .frame(width: 260)
+        .padding(18)
+        .presentationCompactAdaptation(.popover)
+    }
+}
+
+/// The three widths, drawn at a size that reads as what each one picks.
+private struct WidthDots: View {
+    let selected: ToolWidth
+    /// What a dot does. The dots are the same three in either popover; which
+    /// call it makes is the tool's business, not theirs.
+    let choose: (ToolWidth) -> Void
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(ToolWidth.allCases, id: \.self) { width in
+                Button { choose(width) } label: {
+                    Circle()
+                        .fill(.primary)
+                        .frame(width: Self.diameter(width), height: Self.diameter(width))
+                        .frame(width: 44, height: 44)
+                        .background(
+                            selected == width ? Color.accentColor.opacity(0.22) : .clear,
+                            in: .rect(cornerRadius: 8)
+                        )
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(Self.label(width))
+                .accessibilityAddTraits(selected == width ? .isSelected : [])
+            }
+        }
+    }
+
+    /// Screen points, not page points: the dot is a picture of the choice,
+    /// and the smallest ink width drawn true would be a speck.
+    private static func diameter(_ width: ToolWidth) -> CGFloat {
+        switch width {
+        case .thin: 6
+        case .medium: 12
+        case .thick: 20
+        }
+    }
+
+    private static func label(_ width: ToolWidth) -> String {
+        switch width {
+        case .thin: "Thin"
+        case .medium: "Medium"
+        case .thick: "Thick"
+        }
+    }
+}
+
+/// One colour in the row, with the ring that says it is the one in hand.
+private struct Swatch: View {
+    let color: ToolColor
+    let isSelected: Bool
+
+    var body: some View {
+        Circle()
+            .fill(Color(color.uiColor))
+            .frame(width: 26, height: 26)
+            // A hairline, so a white or near-white swatch still has an edge
+            // against the popover.
+            .overlay(Circle().strokeBorder(.separator, lineWidth: 0.5))
+            .overlay(
+                Circle()
+                    .strokeBorder(Color.accentColor, lineWidth: isSelected ? 2 : 0)
+                    .padding(-3)
+            )
+            .frame(width: 30, height: 30)
+    }
+}

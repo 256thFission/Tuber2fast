@@ -21,15 +21,22 @@ package final class EditorViewModel {
     /// `TNCanvas`, which is a compile error and not a review note.
     @ObservationIgnored package let canvasHost: UIViewController
 
-    /// The active tool. Setting it applies to the runtime at once; the
-    /// tool is the runtime's own state, held here only so the toolbar has
-    /// something to render from.
-    package var tool: EditorTool {
+    /// The active tool. Setting it applies to the runtime at once and tells
+    /// the palette what to remember; the tool is the runtime's own state,
+    /// held here only so the strip has something to render from.
+    ///
+    /// `private(set)`, so the intentions below are the only way to change
+    /// it and the `didSet` is a boundary rather than a courtesy.
+    package private(set) var tool: EditorTool {
         didSet {
             guard tool != oldValue else { return }
             binding.apply(CanvasEnvironment(tool: tool.pkTool))
+            palette.remember(tool)
         }
     }
+
+    /// The presets, the recents, and the last kind, shared by every tab.
+    @ObservationIgnored package let palette: ToolPalette
 
     // Mirrors, refreshed at the end of every drain. Undo availability is
     // not observable on the notebook — the history is ignored storage, as
@@ -49,13 +56,21 @@ package final class EditorViewModel {
     package var isSaving: Bool { notebook.dirtyPageCount > 0 }
     package var lastSaveError: SaveFailure? { notebook.lastSaveError }
 
-    package init(notebook: Notebook, onLinkActivated: @escaping @MainActor (LinkTarget) -> Void) {
+    package init(
+        notebook: Notebook,
+        palette: ToolPalette,
+        onLinkActivated: @escaping @MainActor (LinkTarget) -> Void
+    ) {
         self.notebook = notebook
-        self.tool = .pen(color: .black, width: .medium)
+        self.palette = palette
+        self.tool = palette.currentTool
         let binding = EditorBinding(notebook: notebook, onLinkActivated: onLinkActivated)
         self.binding = binding
         self.canvasHost = binding.host
         binding.onDrained = { [weak self] in self?.refreshMirrors() }
+        // The ink report, not the drain: a drain also runs for a page turn
+        // and an undo, and neither is a colour anybody drew with.
+        binding.onInkReported = { [weak self] in self?.inkReported() }
         refreshMirrors()
         // `didSet` does not run for the initial value, and the runtime
         // starts with no tool at all.
@@ -67,6 +82,51 @@ package final class EditorViewModel {
         canRedo = notebook.canRedo
         pageCount = notebook.pageCount
         currentPageIndex = notebook.pageIDs.firstIndex(of: notebook.currentPageID) ?? 0
+    }
+
+    // MARK: The tool
+
+    // One call per tap, so the strip computes nothing. Each restores what
+    // the palette holds rather than asking the view to carry it.
+
+    package func select(kind: InkKind) { tool = palette.tool(for: kind) }
+
+    package func selectEraser() { tool = palette.eraserTool }
+
+    package func setEraserMode(_ mode: EraserMode) {
+        switch mode {
+        case .object: tool = .eraseObject
+        case .pixel: tool = .erasePixel(palette.pixelEraserWidth)
+        }
+    }
+
+    package func selectLasso() { tool = .lasso }
+
+    package func setWidth(_ width: ToolWidth) {
+        switch tool {
+        case .ink(let kind, let preset):
+            tool = .ink(kind, InkPreset(color: preset.color, width: width))
+        case .erasePixel:
+            tool = .erasePixel(width)
+        case .eraseObject, .lasso:
+            // The strip offers no width for either, so reaching here is a
+            // view that drew a control the tool does not have.
+            TNPrecondition.fail("a width was set on \(tool), which has none")
+        }
+    }
+
+    package func setColor(_ color: ToolColor) {
+        guard case .ink(let kind, let preset) = tool else {
+            TNPrecondition.fail("a colour was set on \(tool), which has none")
+        }
+        tool = .ink(kind, InkPreset(color: color, width: preset.width))
+    }
+
+    /// A stroke landed, so the colour it landed in is one the person drew
+    /// with. An eraser or a lasso report carries no colour.
+    private func inkReported() {
+        guard case .ink(_, let preset) = tool else { return }
+        palette.used(preset.color)
     }
 
     // MARK: History

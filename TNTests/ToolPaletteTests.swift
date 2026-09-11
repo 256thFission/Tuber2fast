@@ -1,0 +1,174 @@
+import Foundation
+import Testing
+@testable import TNEditor
+@testable import TNModel
+
+/// A store that keeps the record in memory.
+///
+/// The production conformer is the app's, over `UserDefaults`. Nothing here
+/// touches it: a test that wrote a real preference would leave the machine
+/// it ran on holding state the next run reads back.
+final class MemoryPaletteStore: ToolPaletteStore, @unchecked Sendable {
+    private let lock = NSLock()
+    private var record: ToolPaletteRecord?
+    /// Set to fail every load, which is what an unreadable preference looks
+    /// like from inside the palette.
+    private var isUnreadable = false
+
+    init(_ record: ToolPaletteRecord? = nil) { self.record = record }
+
+    func load() -> ToolPaletteRecord? {
+        lock.withLock { isUnreadable ? nil : record }
+    }
+
+    func save(_ record: ToolPaletteRecord) {
+        lock.withLock { self.record = record }
+    }
+
+    var stored: ToolPaletteRecord? { lock.withLock { record } }
+
+    func makeUnreadable() { lock.withLock { isUnreadable = true } }
+}
+
+@Suite("Tool palette")
+@MainActor
+struct ToolPaletteTests {
+    private func swatch(_ red: UInt8) -> ToolColor {
+        ToolColor(rgba: RGBA8(red: red, green: 0x44, blue: 0x55, alpha: 0xFF))
+    }
+
+    // MARK: Opening
+
+    @Test("An empty store opens on the built-in default")
+    func anEmptyStoreIsTheBuiltInDefault() {
+        let palette = ToolPalette(store: MemoryPaletteStore())
+        #expect(palette.lastKind == .ink(.pen))
+        #expect(palette.currentTool == .ink(.pen, InkPreset(color: .black, width: .medium)))
+        #expect(palette.inks[.highlighter] == InkPreset(color: .yellow, width: .medium))
+        #expect(palette.eraserMode == .object)
+        #expect(palette.pixelEraserWidth == .medium)
+        #expect(palette.recentColors.isEmpty)
+    }
+
+    @Test("A record the store cannot read is the built-in default")
+    func anUnreadableRecordIsTheBuiltInDefault() {
+        let store = MemoryPaletteStore()
+        let first = ToolPalette(store: store)
+        first.remember(.ink(.pencil, InkPreset(color: .red, width: .thick)))
+        store.makeUnreadable()
+
+        let second = ToolPalette(store: store)
+        #expect(second.lastKind == .ink(.pen))
+        #expect(second.currentTool == .ink(.pen, InkPreset(color: .black, width: .medium)))
+        #expect(second.inks[.pencil] == InkPreset(color: .black, width: .medium))
+    }
+
+    @Test("A record missing a kind is the built-in default, not a patched record")
+    func anIncompleteRecordIsTheBuiltInDefault() {
+        // A preference written before a kind existed. Filling the hole in
+        // place would leave the rest of a record nobody can vouch for; the
+        // whole of it goes instead.
+        let partial = ToolPaletteRecord(
+            lastKind: .ink(.pen),
+            inks: [.pen: InkPreset(color: .red, width: .thick)],
+            eraserMode: .pixel,
+            pixelEraserWidth: .thin,
+            recentColors: []
+        )
+        #expect(!partial.isComplete)
+        let palette = ToolPalette(store: MemoryPaletteStore(partial))
+        #expect(palette.currentTool == .ink(.pen, InkPreset(color: .black, width: .medium)))
+        #expect(palette.eraserMode == .object)
+    }
+
+    @Test("A second palette over one store opens on everything the first left")
+    func aSecondPaletteRestoresTheFirst() {
+        let store = MemoryPaletteStore()
+        let first = ToolPalette(store: store)
+        first.remember(.ink(.highlighter, InkPreset(color: .purple, width: .thin)))
+        first.remember(.erasePixel(.thick))
+        first.used(swatch(0x11))
+        first.remember(.ink(.pencil, InkPreset(color: .orange, width: .thick)))
+
+        let second = ToolPalette(store: store)
+        #expect(second.lastKind == .ink(.pencil))
+        #expect(second.currentTool == .ink(.pencil, InkPreset(color: .orange, width: .thick)))
+        #expect(second.inks[.highlighter] == InkPreset(color: .purple, width: .thin))
+        #expect(second.eraserMode == .pixel)
+        #expect(second.pixelEraserWidth == .thick)
+        #expect(second.recentColors == [swatch(0x11)])
+        #expect(second.eraserTool == .erasePixel(.thick))
+    }
+
+    // MARK: remember
+
+    @Test("Remembering a pen writes the pen slot and nothing else")
+    func rememberingAPenWritesOnlyThePenSlot() {
+        let palette = ToolPalette(store: MemoryPaletteStore())
+        let before = palette.inks
+
+        palette.remember(.ink(.pen, InkPreset(color: .blue, width: .thick)))
+
+        #expect(palette.inks[.pen] == InkPreset(color: .blue, width: .thick))
+        #expect(palette.inks[.pencil] == before[.pencil])
+        #expect(palette.inks[.highlighter] == before[.highlighter])
+        #expect(palette.lastKind == .ink(.pen))
+    }
+
+    @Test("Remembering an eraser records the mode, and the pixel width survives the object eraser")
+    func rememberingAnEraserKeepsThePixelWidth() {
+        let palette = ToolPalette(store: MemoryPaletteStore())
+        palette.remember(.erasePixel(.thin))
+        #expect(palette.eraserMode == .pixel)
+        #expect(palette.pixelEraserWidth == .thin)
+        #expect(palette.lastKind == .eraser)
+
+        palette.remember(.eraseObject)
+        #expect(palette.eraserMode == .object)
+        // The width the person chose is still there for the next switch back.
+        #expect(palette.pixelEraserWidth == .thin)
+        #expect(palette.eraserTool == .eraseObject)
+    }
+
+    @Test("Remembering a lasso leaves the palette alone and writes nothing")
+    func rememberingALassoWritesNothing() {
+        let store = MemoryPaletteStore()
+        let palette = ToolPalette(store: store)
+        palette.remember(.ink(.pencil, InkPreset(color: .green, width: .thin)))
+        let written = store.stored
+
+        palette.remember(.lasso)
+
+        #expect(palette.lastKind == .ink(.pencil))
+        #expect(store.stored == written)
+    }
+
+    // MARK: used
+
+    @Test("Recents are most recent first, deduplicated, and capped")
+    func recentsAreOrderedDeduplicatedAndCapped() {
+        let palette = ToolPalette(store: MemoryPaletteStore())
+        for index in 0..<12 { palette.used(swatch(UInt8(index))) }
+
+        #expect(palette.recentColors.count == ToolPalette.recentLimit)
+        #expect(palette.recentColors == (0..<8).reversed().map { swatch(UInt8($0 + 4)) })
+
+        // A colour drawn with again moves to the front rather than doubling.
+        palette.used(swatch(5))
+        #expect(palette.recentColors.first == swatch(5))
+        #expect(palette.recentColors.count == ToolPalette.recentLimit)
+        #expect(Set(palette.recentColors.map(\.rgba.hex)).count == ToolPalette.recentLimit)
+    }
+
+    @Test("A colour the strip already shows never becomes a recent")
+    func aDefaultColourIsNeverARecent() {
+        let palette = ToolPalette(store: MemoryPaletteStore())
+        for color in ToolColor.defaults { palette.used(color) }
+        #expect(palette.recentColors.isEmpty)
+
+        palette.used(swatch(0x01))
+        palette.used(.red)
+        #expect(palette.recentColors == [swatch(0x01)])
+    }
+}
+

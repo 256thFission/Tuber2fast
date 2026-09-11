@@ -73,6 +73,9 @@ import UIKit
     /// Called at the end of every drain, so a view model can refresh the
     /// mirrors it stores.
     package var onDrained: (@MainActor () -> Void)?
+    /// Called when a stroke somebody drew lands, which is what makes the
+    /// colour it landed in a colour they have used.
+    package var onInkReported: (@MainActor () -> Void)?
 
     private var runtime: (any CanvasRuntime)? { surface as? any CanvasRuntime }
     /// The last complete window the runtime reported.
@@ -191,6 +194,9 @@ import UIKit
 
     package func inkChanged(on page: PageID, _ ink: PKDrawing, echoOf: InkSeq?) {
         notebook.inkChanged(on: page, ink, echoOf: echoOf)
+        // An echo is the runtime restating ink it was handed, which is a
+        // restore and not a stroke anybody drew.
+        if echoOf == nil { onInkReported?() }
         drain()
     }
 

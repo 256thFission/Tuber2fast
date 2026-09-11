@@ -1,61 +1,191 @@
 import CoreGraphics
 import PencilKit
+import TNCore
+import TNModel
 import UIKit
 
-/// The four inks a stroke can be laid in. A closed set, because the tool
-/// picker is the app's, and a colour the runtime cannot draw is not a
-/// state worth representing.
-package enum ToolColor: String, Sendable, Equatable, CaseIterable {
-    case black, blue, red, green
-
-    package var uiColor: UIColor {
-        switch self {
-        case .black: UIColor(red: 0.11, green: 0.11, blue: 0.12, alpha: 1)
-        case .blue: UIColor(red: 0.10, green: 0.44, blue: 0.78, alpha: 1)
-        case .red: UIColor(red: 0.77, green: 0.16, blue: 0.16, alpha: 1)
-        case .green: UIColor(red: 0.17, green: 0.51, blue: 0.24, alpha: 1)
-        }
-    }
-}
-
-/// Three nib widths in page points.
+/// A colour the strip can show and the runtime can draw.
 ///
-/// The numbers are taste, not measurement: nothing has held a Pencil to
-/// them yet. `Docs/Unproven.md` is where that stays recorded.
-package enum ToolWidth: String, Sendable, Equatable, CaseIterable {
-    case thin, medium, thick
+/// Not an enum: the colour well vends colours no list can hold. Alpha is
+/// always FF for ink. The highlighter's translucency is PencilKit's, and a
+/// translucent colour laid on top of it would dim twice, so `init(_:)`
+/// forces FF and decoding refuses anything else.
+package struct ToolColor: Equatable, Sendable, Codable {
+    package let rgba: RGBA8
 
-    package var points: CGFloat {
+    /// Forces alpha FF, whatever the bytes said.
+    package init(rgba: RGBA8) {
+        self.rgba = RGBA8(red: rgba.red, green: rgba.green, blue: rgba.blue, alpha: 0xFF)
+    }
+
+    /// Resolves in sRGB. A colour the strip's own well vended is always
+    /// representable; a pattern or an unresolved dynamic colour is a
+    /// programmer error and traps.
+    package init(_ color: UIColor) {
+        var red: CGFloat = 0
+        var green: CGFloat = 0
+        var blue: CGFloat = 0
+        var alpha: CGFloat = 0
+        guard color.getRed(&red, green: &green, blue: &blue, alpha: &alpha) else {
+            TNPrecondition.fail("a tool colour with no sRGB components: \(color)")
+        }
+        self.init(rgba: RGBA8(
+            red: Self.byte(red),
+            green: Self.byte(green),
+            blue: Self.byte(blue),
+            alpha: 0xFF
+        ))
+    }
+
+    /// A wide-gamut colour from the system picker has components outside
+    /// `0...1` by definition, and the durable form is eight bits of sRGB.
+    /// The bound is the conversion, not a contract clamp of an invalid
+    /// value: without it the multiplication traps on the way to `UInt8`.
+    private static func byte(_ component: CGFloat) -> UInt8 {
+        UInt8(min(255, max(0, (component * 255).rounded())))
+    }
+
+    /// Built from the four bytes. Nothing here parses.
+    package var uiColor: UIColor {
+        UIColor(
+            red: CGFloat(rgba.red) / 255,
+            green: CGFloat(rgba.green) / 255,
+            blue: CGFloat(rgba.blue) / 255,
+            alpha: 1
+        )
+    }
+
+    // The stored colours are one value, not four fields with their own
+    // names: a preference written by an older build reads back as an
+    // `RGBA8` or as nothing at all.
+    package init(from decoder: any Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let decoded = try container.decode(RGBA8.self)
+        // Not corrected to FF. A record whose alpha is anything else was
+        // hand-edited, and the whole palette falls back to the built-in
+        // default rather than half of it being silently rewritten.
+        guard decoded.alpha == 0xFF else {
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "a tool colour whose alpha is \(decoded.alpha) and not FF"
+            )
+        }
+        self.rgba = decoded
+    }
+
+    package func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rgba)
+    }
+
+    package static let black = ToolColor(hex: "#1C1C1FFF")
+    package static let blue = ToolColor(hex: "#1A70C7FF")
+    package static let red = ToolColor(hex: "#C42929FF")
+    package static let green = ToolColor(hex: "#2B823DFF")
+    package static let orange = ToolColor(hex: "#E07B1AFF")
+    package static let purple = ToolColor(hex: "#7A3FC4FF")
+    package static let yellow = ToolColor(hex: "#F2C200FF")
+
+    /// The colours the strip offers before any of the person's own. The
+    /// order is the order they are drawn in.
+    package static let defaults: [ToolColor] = [black, blue, red, green, orange, purple, yellow]
+
+    /// A literal spelled the way the durable form is spelled, so the two
+    /// cannot drift. A literal that is not a colour is a programmer error.
+    private init(hex: String) {
+        guard let parsed = RGBA8(hex: hex) else {
+            TNPrecondition.fail("a default tool colour that is not a colour: \(hex)")
+        }
+        self.init(rgba: parsed)
+    }
+}
+
+package enum ToolWidth: String, Sendable, Codable, CaseIterable {
+    case thin, medium, thick
+}
+
+/// The three inks a stroke can be laid in, each carrying its own widths.
+///
+/// The table lives here rather than on `ToolWidth`, so a fourth kind is one
+/// case and one row, and `ToolWidth` never learns who uses it.
+package enum InkKind: String, Sendable, Codable, CaseIterable {
+    case pen, pencil, highlighter
+
+    /// Page points.
+    ///
+    /// The numbers are taste, not measurement: nothing has held a Pencil to
+    /// them yet. `Docs/Unproven.md` is where that stays recorded.
+    package func points(_ width: ToolWidth) -> CGFloat {
         switch self {
-        case .thin: 2
-        case .medium: 5
-        case .thick: 12
+        case .pen, .pencil:
+            switch width {
+            case .thin: 2
+            case .medium: 5
+            case .thick: 12
+            }
+        case .highlighter:
+            switch width {
+            case .thin: 12
+            case .medium: 22
+            case .thick: 36
+            }
         }
     }
 }
 
-/// What the editor is doing with the Pencil. The enum is the durable-free
-/// half of the environment: the app picks one, the binding turns it into
-/// the `PKTool` the runtime applies.
-package enum EditorTool: Sendable, Equatable {
-    case pen(color: ToolColor, width: ToolWidth)
-    case marker(color: ToolColor)
-    /// `bitmap` is the pixel eraser; false is the stroke eraser.
-    case eraser(bitmap: Bool)
+/// What the palette remembers for one ink kind: the attributes, never a
+/// tool, so a slot cannot hold the wrong kind.
+package struct InkPreset: Equatable, Sendable, Codable {
+    package var color: ToolColor
+    package var width: ToolWidth
+
+    package init(color: ToolColor, width: ToolWidth) {
+        self.color = color
+        self.width = width
+    }
+}
+
+/// What the editor is doing with the Pencil. The app picks one and the
+/// binding turns it into the `PKTool` the runtime applies.
+package enum EditorTool: Equatable, Sendable {
+    case ink(InkKind, InkPreset)
+    /// The object eraser deletes whole strokes and has no width, as
+    /// GoodNotes' has none. Two cases, so a width on it is unrepresentable
+    /// rather than ignored.
+    case eraseObject
+    case erasePixel(ToolWidth)
     case lasso
 
+    /// Page points. Taste, not measurement, like `InkKind.points`.
+    package static func pixelEraserPoints(_ width: ToolWidth) -> CGFloat {
+        switch width {
+        case .thin: 8
+        case .medium: 20
+        case .thick: 44
+        }
+    }
+
+    /// `.highlighter` becomes `.marker` here and nowhere else: highlighter
+    /// is the product word and the contract's, and one translation at the
+    /// boundary is the whole tax.
     package var pkTool: any PKTool {
         switch self {
-        case .pen(let color, let width):
-            PKInkingTool(.pen, color: color.uiColor, width: width.points)
-        case .marker(let color):
-            // A marker is wide by definition; a width control for it would
-            // be a second way to say the same thing.
-            PKInkingTool(.marker, color: color.uiColor, width: ToolWidth.thick.points)
-        case .eraser(let bitmap):
-            PKEraserTool(bitmap ? .bitmap : .vector)
+        case .ink(let kind, let preset):
+            PKInkingTool(Self.inkType(kind), color: preset.color.uiColor, width: kind.points(preset.width))
+        case .eraseObject:
+            PKEraserTool(.vector)
+        case .erasePixel(let width):
+            PKEraserTool(.bitmap, width: Self.pixelEraserPoints(width))
         case .lasso:
             PKLassoTool()
+        }
+    }
+
+    private static func inkType(_ kind: InkKind) -> PKInkingTool.InkType {
+        switch kind {
+        case .pen: .pen
+        case .pencil: .pencil
+        case .highlighter: .marker
         }
     }
 }

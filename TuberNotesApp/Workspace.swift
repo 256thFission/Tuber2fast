@@ -24,6 +24,10 @@ final class Workspace {
 
     let library: Library
 
+    /// The tool presets, the colour recents, and the last kind, shared by
+    /// every tab and kept between launches.
+    let palette = ToolPalette(store: ToolPaletteDefaults(.standard))
+
     private(set) var tabs: [Tab] = []
     /// `nil` means the library is showing.
     var activeTabID: NotebookID?
@@ -103,7 +107,7 @@ final class Workspace {
             // arrives mid-open lands here and focuses that tab.
             activeTabID = id
         case .opened(let notebook):
-            let editor = EditorViewModel(notebook: notebook) { [weak self] target in
+            let editor = EditorViewModel(notebook: notebook, palette: palette) { [weak self] target in
                 self?.activate(target)
             }
             tabs.append(Tab(id: notebook.notebookID, path: path, name: name, editor: editor))

@@ -56,7 +56,7 @@ struct EditorView: View {
     private var toolbar: some View {
         ScrollView(.horizontal) {
             HStack(spacing: 14) {
-                tools
+                ToolStrip(editor: editor)
                 Divider().frame(height: 22)
                 history
                 Divider().frame(height: 22)
@@ -76,25 +76,6 @@ struct EditorView: View {
         }
         .scrollIndicators(.hidden)
         .background(.bar)
-    }
-
-    private var tools: some View {
-        HStack(spacing: 8) {
-            penButton(.black, tint: .primary, label: "Black pen")
-            penButton(.blue, tint: .blue, label: "Blue pen")
-            penButton(.red, tint: .red, label: "Red pen")
-            toolButton("highlighter", label: "Marker", isSelected: isMarker) {
-                // Green until there is a colour picker: it is the one colour
-                // the pens above do not already spend.
-                editor.tool = .marker(color: .green)
-            }
-            toolButton("eraser", label: "Eraser", isSelected: isEraser) {
-                editor.tool = .eraser(bitmap: false)
-            }
-            toolButton("lasso", label: "Lasso", isSelected: isLasso) {
-                editor.tool = .lasso
-            }
-        }
     }
 
     private var history: some View {
@@ -177,59 +158,6 @@ struct EditorView: View {
         } label: {
             Label("Insert", systemImage: "plus.circle")
         }
-    }
-
-    // MARK: Tool selection
-
-    private func penButton(_ color: ToolColor, tint: Color, label: String) -> some View {
-        toolButton("pencil.tip", label: label, isSelected: isPen(color), tint: tint) {
-            editor.tool = .pen(color: color, width: currentWidth)
-        }
-    }
-
-    private func toolButton(
-        _ symbol: String,
-        label: String,
-        isSelected: Bool,
-        tint: Color = .accentColor,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .frame(width: 28, height: 24)
-        }
-        .buttonStyle(.bordered)
-        .buttonBorderShape(.roundedRectangle(radius: 6))
-        .background(isSelected ? tint.opacity(0.22) : .clear, in: .rect(cornerRadius: 6))
-        .foregroundStyle(tint)
-        .accessibilityLabel(label)
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
-    }
-
-    private func isPen(_ color: ToolColor) -> Bool {
-        if case .pen(let current, _) = editor.tool { return current == color }
-        return false
-    }
-
-    private var isMarker: Bool {
-        if case .marker = editor.tool { return true }
-        return false
-    }
-
-    private var isEraser: Bool {
-        if case .eraser = editor.tool { return true }
-        return false
-    }
-
-    private var isLasso: Bool {
-        if case .lasso = editor.tool { return true }
-        return false
-    }
-
-    /// Switching colour keeps the width the user chose.
-    private var currentWidth: ToolWidth {
-        if case .pen(_, let width) = editor.tool { return width }
-        return .medium
     }
 
     private static func paperName(_ paper: DrawnPaper) -> String {
