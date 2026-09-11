@@ -41,9 +41,9 @@ package struct PageContent: Sendable {
     package var pendingEcho: InkSeq?
     /// The runtime has retired this page's canvas; it may be pruned.
     package var retired: Bool
-    /// The layer a live text view is open over. Never saved; it is what
+    /// The live text session, if one is open. Never saved; it is what
     /// `rerenderComposite` reads to leave that layer out of the picture.
-    package var textEditing: LayerID?
+    package var textEditing: TextSession?
     /// Taken by every render; a result whose generation is no longer current
     /// is dropped at install. Comparison is the whole answer here: the
     /// renderer owns no droppable work of ours to cancel, and a stale
@@ -114,6 +114,16 @@ package struct PageContent: Sendable {
         }
         return (inkDiffers, layersDiffer)
     }
+}
+
+/// A text box being edited, and the revision the page had when the
+/// session opened. One value, so the open layer and the revision the
+/// commit records against cannot drift apart. For a box the session
+/// created, `before` predates the box: the creation and the typing undo
+/// as one step.
+package struct TextSession: Sendable, Equatable {
+    package let layer: LayerID
+    package let before: PageRevision
 }
 
 /// What a page looked like at one moment. A value; ink is copy-on-write

@@ -282,6 +282,14 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
         canvases[page]?.endTextEditing(layer: layer)
     }
 
+    package func undoTyping() {
+        for canvas in canvases.values { canvas.undoTyping() }
+    }
+
+    package func redoTyping() {
+        for canvas in canvases.values { canvas.redoTyping() }
+    }
+
     package func scroll(to page: PageID) {
         guard let index = order.firstIndex(of: page) else {
             TNPrecondition.fail("scroll(to:) named page \(page), which this runtime has not been told about")

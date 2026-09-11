@@ -142,6 +142,10 @@ package enum RetireOutcome: Sendable, Equatable {
     func endTextEditing(on page: PageID, layer: LayerID)
     /// The tool and any other chrome fact, pushed, never parked here.
     func apply(_ environment: CanvasEnvironment)
+    /// Typing owns undo while a box is open. One-way; the text view's own
+    /// manager answers and nothing is reported back.
+    func undoTyping()
+    func redoTyping()
 }
 
 /// Up: value reports and answered questions.

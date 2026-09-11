@@ -999,7 +999,7 @@ struct NotebookTests {
         _ = notebook.drainChanges()
 
         notebook.beginTextEditing(on: page, layer: layer.id)
-        #expect(notebook.state(of: page)?.content?.textEditing == layer.id)
+        #expect(notebook.state(of: page)?.content?.textEditing?.layer == layer.id)
         try await waitUntil { !isDark() }
         let changes = notebook.drainChanges()
         #expect(changes.count == 2)
@@ -1134,6 +1134,124 @@ struct NotebookTests {
         notebook.beginTextEditing(on: page, layer: layer.id)
         notebook.endTextEditing(on: page, layer: layer.id, TextLayer(rect: text.rect, runs: [], alignment: .leading))
         expectBump("an emptied box, deleted")
+    }
+
+    // MARK: Text sessions on the stack
+
+    private func readyPage(_ name: String) async throws -> (Scratch, Notebook, PageID) {
+        let scratch = try Scratch(name)
+        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        let page = notebook.pageIDs[0]
+        notebook.windowChanged(to: [page])
+        try await waitUntil { notebook.state(of: page)?.content != nil }
+        return (scratch, notebook, page)
+    }
+
+    @Test("A created box and what was typed in it undo as one step; redo brings the box back with its text")
+    func createdBoxUndoesAsOneStep() async throws {
+        let (scratch, notebook, page) = try await readyPage("nb-text-undo-create")
+        notebook.createTextBox(on: page, at: PagePoint(x: 30, y: 40), style: .body, alignment: .leading)
+        #expect(!notebook.canUndo, "the insert is the session's, not an entry of its own")
+        let layer = try #require(notebook.state(of: page)?.content?.layers.first)
+        guard case .text(let empty) = layer.payload else { Issue.record("not text"); return }
+        let typed = TextLayer(rect: empty.rect, runs: [TextRun(string: "typed", style: .body)], alignment: .leading)
+        notebook.endTextEditing(on: page, layer: layer.id, typed)
+        #expect(notebook.canUndo)
+
+        #expect(notebook.undo() == page)
+        #expect(notebook.state(of: page)?.content?.layers.isEmpty == true)
+        #expect(notebook.state(of: page)?.content?.inkIndex == 0)
+        #expect(!notebook.canUndo, "one step took the box and its text")
+
+        #expect(notebook.redo() == page)
+        #expect(notebook.state(of: page)?.content?.layers.first?.payload == .text(typed))
+        #expect(notebook.state(of: page)?.content?.inkIndex == 1)
+        #expect(notebook.state(of: page)?.content?.pendingLayerFiles.contains(layer.id) == true)
+        _ = await notebook.close()
+        _ = scratch
+    }
+
+    @Test("Editing an existing box, then undo, puts the old runs back")
+    func undoRestoresTheOldRuns() async throws {
+        let (scratch, notebook, page) = try await readyPage("nb-text-undo-edit")
+        let layer = textLayer("old")
+        try notebook.insertLayer(layer, on: page)
+        guard case .text(let old) = layer.payload else { Issue.record("not text"); return }
+        notebook.beginTextEditing(on: page, layer: layer.id)
+        notebook.endTextEditing(on: page, layer: layer.id, TextLayer(rect: old.rect, runs: [TextRun(string: "new", style: .body)], alignment: .leading))
+        #expect(notebook.state(of: page)?.content?.layers.first?.payload != .text(old))
+
+        #expect(notebook.undo() == page)
+        #expect(notebook.state(of: page)?.content?.layers == [layer])
+        #expect(notebook.canUndo, "the insert's own entry is beneath the session's")
+        #expect(notebook.canRedo)
+        _ = await notebook.close()
+        _ = scratch
+    }
+
+    @Test("A session committed unchanged records nothing: undo and redo are as they were")
+    func unchangedCommitRecordsNothing() async throws {
+        let (scratch, notebook, page) = try await readyPage("nb-text-undo-unchanged")
+        let kept = textLayer("kept"), undone = textLayer("undone", rect: PageRect(x: 10, y: 100, width: 200, height: 60))
+        try notebook.insertLayer(kept, on: page)
+        try notebook.insertLayer(undone, on: page)
+        #expect(notebook.undo() == page)
+        #expect(notebook.canUndo && notebook.canRedo)
+        guard case .text(let text) = kept.payload else { Issue.record("not text"); return }
+
+        notebook.beginTextEditing(on: page, layer: kept.id)
+        notebook.endTextEditing(on: page, layer: kept.id, text)
+        #expect(notebook.canUndo && notebook.canRedo, "a record would have cleared redo")
+        #expect(notebook.redo() == page)
+        #expect(notebook.state(of: page)?.content?.layers == [kept, undone])
+        _ = await notebook.close()
+        _ = scratch
+    }
+
+    @Test("A created box abandoned empty records nothing, and the page it moved twice is still dirty")
+    func abandonedBoxRecordsNothing() async throws {
+        let (scratch, notebook, page) = try await readyPage("nb-text-undo-abandoned")
+        let layer = textLayer("hi")
+        try notebook.insertLayer(layer, on: page)
+        #expect(notebook.undo() == page)
+        #expect(!notebook.canUndo && notebook.canRedo)
+
+        notebook.createTextBox(on: page, at: PagePoint(x: 30, y: 40), style: .body, alignment: .leading)
+        // The save that lands between the insert and the abandon writes the
+        // empty box; the removal has to reach the disk too.
+        await notebook.flush()
+        #expect(!notebook.isDirty)
+        let version = notebook.contentVersion(of: page)
+        let box = try #require(notebook.state(of: page)?.content?.textEditing?.layer)
+        notebook.endTextEditing(on: page, layer: box, TextLayer(rect: PageRect(x: 30, y: 40, width: 240, height: 96), runs: [], alignment: .leading))
+        #expect(notebook.state(of: page)?.content?.layers.isEmpty == true)
+        #expect(notebook.state(of: page)?.content?.inkIndex == 0)
+        #expect(notebook.isDirty, "the removal is a change to the page even though the stack saw none")
+        #expect(notebook.contentVersion(of: page) == version + 1)
+        #expect(!notebook.canUndo && notebook.canRedo, "a record would have cleared redo")
+        #expect(notebook.redo() == page)
+        #expect(notebook.state(of: page)?.content?.layers == [layer])
+        _ = await notebook.close()
+        _ = scratch
+    }
+
+    @Test("The notebook says a session is open, and on which page, while one is open and not after")
+    func hasTextSessionFollowsTheSession() async throws {
+        // `apply` under an open session is a trap, which Swift Testing cannot
+        // observe; what it reads is asserted here, and the binding's routing
+        // test is what keeps the trap out of reach.
+        let (scratch, notebook, page) = try await readyPage("nb-text-session-page")
+        let other = notebook.appendPage()
+        #expect(!notebook.hasTextSession)
+        notebook.createTextBox(on: page, at: PagePoint(x: 30, y: 40), style: .body, alignment: .leading)
+        #expect(notebook.hasTextSession)
+        #expect(notebook.hasTextSession(on: page) && !notebook.hasTextSession(on: other))
+        #expect(notebook.state(of: page)?.content?.textEditing?.before.layers.isEmpty == true, "captured ahead of the insert")
+        let box = try #require(notebook.state(of: page)?.content?.textEditing?.layer)
+        notebook.endTextEditing(on: page, layer: box, TextLayer(rect: PageRect(x: 30, y: 40, width: 240, height: 96), runs: [], alignment: .leading))
+        #expect(!notebook.hasTextSession && !notebook.hasTextSession(on: page))
+        _ = await notebook.close()
+        _ = scratch
     }
 }
 

@@ -300,6 +300,17 @@ package final class Notebook {
     package var canUndo: Bool { history.canUndo }
     package var canRedo: Bool { history.canRedo }
 
+    /// Whether any page has a text session open. The binding routes undo by
+    /// it, whichever page the session is on.
+    package var hasTextSession: Bool {
+        states.values.contains { $0.content?.textEditing != nil }
+    }
+
+    /// An insert on a page with a session open is refused until it ends.
+    package func hasTextSession(on page: PageID) -> Bool {
+        states[page]?.content?.textEditing != nil
+    }
+
     /// Every edit records through here, and only when the revision moved:
     /// an entry that restores nothing would still clear redo on the way in.
     private func recordEdit(on page: PageID, from captured: PageRevision, to revision: PageRevision) {
@@ -333,7 +344,7 @@ package final class Notebook {
             // A restore rewrites the layer list and can remove the layer a
             // session is open on, after which `endTextEditing` traps on a
             // layer the page no longer holds.
-            TNPrecondition.require(content.textEditing == nil, "a restore on page \(page) under an open text session on layer \(String(describing: content.textEditing))")
+            TNPrecondition.require(content.textEditing == nil, "a restore on page \(page) under an open text session on layer \(String(describing: content.textEditing?.layer))")
             let delta = content.adopt(revision)
             guard delta.ink || delta.layers else { return }
             if delta.ink {
@@ -587,7 +598,7 @@ package final class Notebook {
         content.renderGeneration += 1
         states[page] = .ready(content)
         let generation = content.renderGeneration
-        let layers = content.layers.filter { $0.id != content.textEditing }
+        let layers = content.layers.filter { $0.id != content.textEditing?.layer }
         let renderer = self.renderer
         Task { [weak self] in
             let composite = await renderer.composite(geometry: record.geometry, paper: record.paper.paper, layers: layers, scale: scale)
@@ -615,8 +626,10 @@ package final class Notebook {
     // MARK: Layers
 
     /// Validates and inserts a layer beneath the ink, synchronously: the tap
-    /// that makes a text box gets its layer in the same pass.
-    package func insertLayer(_ layer: Layer, on page: PageID) throws(FormatFault) {
+    /// that makes a text box gets its layer in the same pass. `recording`
+    /// is false for a text box, whose session records the insert as part
+    /// of one step at its end.
+    package func insertLayer(_ layer: Layer, on page: PageID, recording: Bool = true) throws(FormatFault) {
         guard case .ready(var content) = states[page] else { throw .invalidWrite("page \(page) is not ready") }
         do { _ = try layer.validated() } catch { throw .invalidWrite("layer invalid: \(error)") }
         let captured = content.revision
@@ -624,7 +637,7 @@ package final class Notebook {
         content.inkIndex += 1
         content.pendingLayerFiles.insert(layer.id)
         content.edited()
-        recordEdit(on: page, from: captured, to: content.revision)
+        if recording { recordEdit(on: page, from: captured, to: content.revision) }
         states[page] = .ready(content)
         bumpContentVersion(of: page)
         markDirty()
@@ -736,27 +749,42 @@ package final class Notebook {
 
     /// An empty text box at `point`, and a session opened on it. The style
     /// rides with the request for the runtime's sake; an empty layer stores
-    /// none, and the runtime types with its tool's.
+    /// none, and the runtime types with its tool's. The session's `before`
+    /// is captured ahead of the insert, so the box and what is typed in it
+    /// undo as one step.
     package func createTextBox(on page: PageID, at point: PagePoint, style: TextStyle, alignment: TextAlignment) {
+        guard case .ready(let content) = states[page] else {
+            TNPrecondition.fail("a text box was requested on page \(page) which is not ready: \(String(describing: states[page]))")
+        }
+        let before = content.revision
         let layer = Layer(
             id: LayerID(), transform: .identity,
             payload: .text(TextLayer(rect: PageRect(x: point.x, y: point.y, width: 240, height: 96), runs: [], alignment: alignment))
         )
         do {
-            try insertLayer(layer, on: page)
+            try insertLayer(layer, on: page, recording: false)
         } catch {
             TNPrecondition.fail("a text box was requested on page \(page), which refused it: \(error)")
         }
-        beginTextEditing(on: page, layer: layer.id)
+        openTextSession(on: page, layer: layer.id, before: before)
+    }
+
+    /// A session on a box the page already holds; the revision it records
+    /// against is the one it opens on.
+    package func beginTextEditing(on page: PageID, layer: LayerID) {
+        guard case .ready(let content) = states[page] else {
+            TNPrecondition.fail("text editing began on page \(page) which is not ready: \(String(describing: states[page]))")
+        }
+        openTextSession(on: page, layer: layer, before: content.revision)
     }
 
     /// The composite leaves the layer out from the next render on, and the
     /// runtime is told to raise its view once that picture has landed.
-    package func beginTextEditing(on page: PageID, layer: LayerID) {
+    private func openTextSession(on page: PageID, layer: LayerID, before: PageRevision) {
         guard case .ready(var content) = states[page] else {
             TNPrecondition.fail("text editing began on page \(page) which is not ready: \(String(describing: states[page]))")
         }
-        TNPrecondition.require(content.textEditing == nil, "text editing began on page \(page) while layer \(String(describing: content.textEditing)) was open")
+        TNPrecondition.require(content.textEditing == nil, "text editing began on page \(page) while layer \(String(describing: content.textEditing?.layer)) was open")
         guard let found = content.layers.first(where: { $0.id == layer }), case .text(let text) = found.payload else {
             // Hit rects are one render stale between a restore and the
             // composite it queued, so a tap there can ask for a box the
@@ -767,21 +795,23 @@ package final class Notebook {
             changes.append(.textEditingEnded(page, layer))
             return
         }
-        content.textEditing = layer
+        content.textEditing = TextSession(layer: layer, before: before)
         content.afterRender.append(.textEditingBegan(page, TextEditStart(layer: layer, text: text)))
         states[page] = .ready(content)
         rerenderComposite(of: page)
     }
 
-    /// KNOWN DEFECT: a committed text edit is not on the notebook's undo
-    /// stack. The box `createTextBox` made is, as the insert it was, and
-    /// step 3 of `Docs/Forks/plans/undo.md` replaces that entry with one for
-    /// the whole session.
+    /// The session is the edit: one entry from the revision the session
+    /// opened on to the one its commit leaves, and none when they are equal.
+    /// An abandoned empty box is equal by construction, since its insert
+    /// was not recorded and its removal returns the page to `before`.
     package func endTextEditing(on page: PageID, layer: LayerID, _ text: TextLayer) {
         guard case .ready(var content) = states[page] else {
             TNPrecondition.fail("text editing ended on page \(page) which is not ready: \(String(describing: states[page]))")
         }
-        TNPrecondition.require(content.textEditing == layer, "text editing ended on page \(page) for layer \(layer), which is not the open one (\(String(describing: content.textEditing)))")
+        guard let session = content.textEditing, session.layer == layer else {
+            TNPrecondition.fail("text editing ended on page \(page) for layer \(layer), which is not the open one (\(String(describing: content.textEditing?.layer)))")
+        }
         guard let position = content.layers.firstIndex(where: { $0.id == layer }) else {
             TNPrecondition.fail("text editing ended on page \(page) for layer \(layer), which it no longer holds")
         }
@@ -802,7 +832,12 @@ package final class Notebook {
             content.edited()
         }
         // An unchanged commit rewrites nothing: a save writes only what changed.
+        // Two questions, not one: whether this commit moved the page is what
+        // the save and the thumbnail need, and an abandoned empty box moved it
+        // twice, once to insert and once to remove. Whether the session moved
+        // the revision is what the stack needs, and that box did not.
         let changed = content.editSeq != (states[page]?.content?.editSeq ?? content.editSeq)
+        recordEdit(on: page, from: session.before, to: content.revision)
         content.afterRender.append(.textEditingEnded(page, layer))
         states[page] = .ready(content)
         if changed {

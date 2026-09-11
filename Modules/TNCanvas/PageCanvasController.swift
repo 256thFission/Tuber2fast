@@ -345,6 +345,19 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         closing.removeValue(forKey: layer)?.removeFromSuperview()
     }
 
+    /// Typing's undo is the text view's own manager, which it supplies only
+    /// while it is first responder. Resigned, `undoManager` walks the chain
+    /// to `filteringUndoManager`, whose undo reports back up and would
+    /// arrive here again; so a resigned view answers nothing, as `.opening`
+    /// does with no view at all.
+    func undoTyping() {
+        if case .editing(_, let view) = phase, view.isFirstResponder { view.undoManager?.undo() }
+    }
+
+    func redoTyping() {
+        if case .editing(_, let view) = phase, view.isFirstResponder { view.undoManager?.redo() }
+    }
+
     /// Reports the draft whole and leaves the view up, inert, until the
     /// composite that has the text lands. State settles before the report
     /// leaves.

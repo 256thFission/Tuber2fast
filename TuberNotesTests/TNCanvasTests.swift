@@ -524,6 +524,28 @@ struct TNCanvasTests {
         #expect(PageCanvasController.linkHit(at: CGPoint(x: 10, y: 10), rects: rects) == nil)
     }
 
+    @Test("undoTyping reaches the open text view's own manager, and does nothing while the view is still opening")
+    func undoTypingReachesTheTextView() throws {
+        let reporter = RecordingReporter()
+        let (runtime, _, canvas, overlay) = try openSession(reporter, layers: [textLayer("hi", x: 100, y: 100)])
+        overlay.insertText("!")
+        #expect(overlay.text == "hi!")
+        runtime.undoTyping()
+        #expect(overlay.text == "hi")
+        runtime.redoTyping()
+        #expect(overlay.text == "hi!")
+        #expect(reporter.undoRequests == 0 && reporter.redoRequests == 0, "nothing went up")
+
+        canvas.tapped(at: CGPoint(x: 400, y: 500))
+        if case .opening = canvas.phase {} else { Issue.record("phase is \(canvas.phase)") }
+        runtime.undoTyping()
+        canvas.undoTyping()
+        canvas.redoTyping()
+        if case .opening = canvas.phase {} else { Issue.record("phase is \(canvas.phase)") }
+        #expect(overlay.text == "hi!", "the inert overlay in closing is not the session")
+        _ = runtime.retireAll()
+    }
+
     @Test("Retiring reports the draft before the final ink")
     func retireReportsDraftBeforeInk() throws {
         let reporter = RecordingReporter()

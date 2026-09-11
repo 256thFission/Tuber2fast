@@ -256,6 +256,15 @@ import UIKit
     }
 
     package func undoRequested() {
+        // While a box is open the text view's own manager answers, and the
+        // stack is not touched: `Notebook.apply` requires no open session,
+        // and this routing is what keeps that true. The runtime is not
+        // asked whether its view exists yet; in that window typing has
+        // nothing to undo and the request is dropped there.
+        if notebook.hasTextSession {
+            surface.undoTyping()
+            return
+        }
         let page = notebook.undo()
         drain()
         // An undo restores the page it happened on, whichever page is
@@ -266,6 +275,10 @@ import UIKit
     }
 
     package func redoRequested() {
+        if notebook.hasTextSession {
+            surface.redoTyping()
+            return
+        }
         let page = notebook.redo()
         drain()
         if let page { surface.scroll(to: page) }

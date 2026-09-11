@@ -18,6 +18,8 @@ enum SurfaceCall: Sendable, Equatable {
     case updateComposite(PageID)
     case beginTextEditing(PageID, LayerID)
     case endTextEditing(PageID, LayerID)
+    case undoTyping
+    case redoTyping
 }
 
 /// A surface that records instead of drawing. It stands where
@@ -64,6 +66,9 @@ final class RecordingSurface: CanvasSurface {
     func endTextEditing(on page: PageID, layer: LayerID) { calls.append(.endTextEditing(page, layer)) }
 
     func apply(_ environment: CanvasEnvironment) { environments.append(environment) }
+
+    func undoTyping() { calls.append(.undoTyping) }
+    func redoTyping() { calls.append(.redoTyping) }
 
     // MARK: What a test asks
 
@@ -286,6 +291,61 @@ struct EditorBindingTests {
         try await waitUntil { surface.calls.contains(.endTextEditing(page, layer.id)) }
         #expect(Array(surface.calls.suffix(2)) == [.updateComposite(page), .endTextEditing(page, layer.id)])
         #expect(notebook.state(of: page)?.content?.layers.first?.payload == .text(typed))
+        _ = await notebook.close()
+    }
+
+    @Test("Undo and redo during a text session go to the typing, and the notebook's stack is not touched")
+    func undoDuringASessionGoesToTyping() async throws {
+        let scratch = try Scratch("editor-undo-typing")
+        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        let surface = RecordingSurface()
+        let binding = EditorBinding(notebook: notebook, surface: surface)
+        let page = notebook.pageIDs[0]
+        binding.windowChanged(to: [page])
+        try await waitUntil { surface.installed.contains(page) }
+        binding.inkChanged(on: page, Ink.drawing(strokes: 3), echoOf: nil)
+        #expect(notebook.canUndo && !notebook.canRedo)
+
+        binding.textBoxRequested(on: page, at: PagePoint(x: 30, y: 40), style: .body, alignment: .leading)
+        #expect(notebook.hasTextSession)
+        binding.undoRequested()
+        binding.redoRequested()
+        #expect(Array(surface.calls.suffix(2)) == [.undoTyping, .redoTyping])
+        #expect(notebook.canUndo && !notebook.canRedo, "the stack did not move")
+        #expect(notebook.state(of: page)?.content?.ink.strokes.count == 3)
+        #expect(!surface.calls.contains { if case .restoreInk = $0 { true } else { false } })
+        #expect(!surface.calls.contains { if case .scroll = $0 { true } else { false } })
+        _ = await notebook.close()
+    }
+
+    @Test("An import or a link while a box is open on the current page is refused through the content error")
+    func insertDuringASessionIsRefused() async throws {
+        let scratch = try Scratch("editor-insert-during-session")
+        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        let surface = RecordingSurface()
+        let binding = EditorBinding(notebook: notebook, surface: surface)
+        let editor = EditorViewModel(binding: binding, palette: ToolPalette(store: MemoryPaletteStore()))
+        let page = notebook.pageIDs[0]
+        binding.windowChanged(to: [page])
+        try await waitUntil { surface.installed.contains(page) }
+        binding.textBoxRequested(on: page, at: PagePoint(x: 30, y: 40), style: .body, alignment: .leading)
+        let layers = try #require(notebook.state(of: page)?.content?.layers.count)
+
+        await editor.importImage(try Fixture.imageData(width: 40, height: 30))
+        #expect(editor.lastContentError != nil)
+        await editor.addLink(to: .internalPage(page))
+        #expect(editor.lastContentError != nil)
+        await editor.importPDF(try Fixture.pdfData(pages: 1))
+        #expect(editor.lastContentError != nil)
+        #expect(notebook.state(of: page)?.content?.layers.count == layers, "nothing was inserted")
+        #expect(notebook.pageCount == 1, "no page was added")
+        #expect(!notebook.canUndo, "nothing was recorded")
+        #expect(editor.canUndo && editor.canRedo, "the buttons drive the typing while the box is open")
+
+        let box = try #require(notebook.state(of: page)?.content?.textEditing?.layer)
+        binding.textEditingEnded(on: page, layer: box, TextLayer(rect: PageRect(x: 30, y: 40, width: 240, height: 96), runs: [], alignment: .leading))
+        await editor.addLink(to: .internalPage(page))
+        #expect(editor.lastContentError == nil, "the refusal ends with the session")
         _ = await notebook.close()
     }
 }
