@@ -1,5 +1,6 @@
 import SwiftUI
 import TNEditor
+import TNModel
 import UIKit
 
 /// One button on the strip.
@@ -7,7 +8,7 @@ import UIKit
 /// A case per button rather than a case per tool: the two erasers share a
 /// button and differ inside its popover, which is what the person sees.
 enum EditorToolButton: Hashable, CaseIterable, Identifiable {
-    case pen, pencil, highlighter, eraser, lasso
+    case pen, pencil, highlighter, eraser, lasso, text
 
     var id: Self { self }
 
@@ -19,6 +20,7 @@ enum EditorToolButton: Hashable, CaseIterable, Identifiable {
         case .ink(.highlighter, _): self = .highlighter
         case .eraseObject, .erasePixel: self = .eraser
         case .lasso: self = .lasso
+        case .text: self = .text
         }
     }
 
@@ -27,7 +29,7 @@ enum EditorToolButton: Hashable, CaseIterable, Identifiable {
         case .pen: .pen
         case .pencil: .pencil
         case .highlighter: .highlighter
-        case .eraser, .lasso: nil
+        case .eraser, .lasso, .text: nil
         }
     }
 
@@ -38,6 +40,7 @@ enum EditorToolButton: Hashable, CaseIterable, Identifiable {
         case .highlighter: "highlighter"
         case .eraser: "eraser"
         case .lasso: "lasso"
+        case .text: "textformat"
         }
     }
 
@@ -48,6 +51,7 @@ enum EditorToolButton: Hashable, CaseIterable, Identifiable {
         case .highlighter: "Highlighter"
         case .eraser: "Eraser"
         case .lasso: "Lasso"
+        case .text: "Text"
         }
     }
 
@@ -110,6 +114,7 @@ struct ToolStrip: View {
             case .highlighter: editor.select(kind: .highlighter)
             case .eraser: editor.selectEraser()
             case .lasso: editor.selectLasso()
+            case .text: editor.selectText()
             }
             return
         }
@@ -137,6 +142,8 @@ struct ToolStrip: View {
             EraserOptions(editor: editor, pixelWidth: nil)
         case .erasePixel(let width):
             EraserOptions(editor: editor, pixelWidth: width)
+        case .text(let style, let alignment):
+            TextOptions(editor: editor, style: style, alignment: alignment)
         case .lasso:
             // Unreachable: the popover only opens over the tool in hand, and
             // lasso's second tap does nothing.
@@ -194,6 +201,84 @@ private struct InkOptions: View {
 
     /// VoiceOver has no word for a swatch, so it reads the bytes.
     private static func name(of color: ToolColor) -> String { color.rgba.hex }
+}
+
+/// Size, weight, alignment and colour for the text in hand. Defaults and
+/// the well only: a colour typed with is never a recent (`README.md`,
+/// decision 3).
+private struct TextOptions: View {
+    let editor: EditorViewModel
+    let style: TextStyle
+    let alignment: TNModel.TextAlignment
+
+    /// Points. Taste, like the ink widths; `Docs/Unproven.md` holds it.
+    private static let sizes: [Double] = [12, 14, 16, 18, 24, 32, 48]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(spacing: 12) {
+                Picker("Size", selection: Binding(get: { style.size }, set: { editor.setTextStyle(style.with(size: $0)) })) {
+                    ForEach(Self.sizes, id: \.self) { size in
+                        Text("\(Int(size)) pt").tag(size)
+                    }
+                }
+                .pickerStyle(.menu)
+                Toggle("Bold", systemImage: "bold", isOn: Binding(get: { style.bold }, set: { editor.setTextStyle(style.with(bold: $0)) }))
+                Toggle("Italic", systemImage: "italic", isOn: Binding(get: { style.italic }, set: { editor.setTextStyle(style.with(italic: $0)) }))
+                Toggle("Underline", systemImage: "underline", isOn: Binding(get: { style.underline }, set: { editor.setTextStyle(style.with(underline: $0)) }))
+            }
+            .toggleStyle(.button)
+            .labelStyle(.iconOnly)
+            Picker("Alignment", selection: Binding(get: { alignment }, set: { editor.setTextAlignment($0) })) {
+                Image(systemName: "text.alignleft").tag(TNModel.TextAlignment.leading)
+                Image(systemName: "text.aligncenter").tag(TNModel.TextAlignment.center)
+                Image(systemName: "text.alignright").tag(TNModel.TextAlignment.trailing)
+            }
+            .pickerStyle(.segmented)
+            colors
+        }
+        .frame(width: 340)
+        .padding(18)
+        .presentationCompactAdaptation(.popover)
+    }
+
+    private var colors: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            LazyVGrid(columns: Self.columns, alignment: .leading, spacing: 10) {
+                ForEach(ToolColor.defaults, id: \.rgba.hex) { color in
+                    Button { editor.setTextStyle(style.with(color: color.rgba)) } label: {
+                        Swatch(color: color, isSelected: color.rgba == style.color)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(color.rgba.hex)
+                    .accessibilityAddTraits(color.rgba == style.color ? .isSelected : [])
+                }
+            }
+            ColorPicker(
+                "Custom colour",
+                selection: Binding(
+                    get: { Color(ToolColor(rgba: style.color).uiColor) },
+                    set: { editor.setTextStyle(style.with(color: ToolColor(UIColor($0)).rgba)) }
+                ),
+                supportsOpacity: false
+            )
+            .font(.callout)
+        }
+    }
+
+    private static let columns = Array(
+        repeating: GridItem(.fixed(30), spacing: 10, alignment: .leading),
+        count: 8
+    )
+}
+
+private extension TextStyle {
+    func with(size: Double? = nil, bold: Bool? = nil, italic: Bool? = nil, underline: Bool? = nil, color: RGBA8? = nil) -> TextStyle {
+        TextStyle(
+            font: font, size: size ?? self.size, bold: bold ?? self.bold, italic: italic ?? self.italic,
+            underline: underline ?? self.underline, color: color ?? self.color
+        )
+    }
 }
 
 /// Which eraser, and how wide when it is the pixel one.

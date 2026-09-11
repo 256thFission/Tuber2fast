@@ -150,11 +150,6 @@ struct EditorView: View {
             } label: {
                 Label("PDF", systemImage: "doc")
             }
-            Button {
-                Task { await editor.addTextBox() }
-            } label: {
-                Label("Text box", systemImage: "textformat")
-            }
         } label: {
             Label("Insert", systemImage: "plus.circle")
         }
