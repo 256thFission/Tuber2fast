@@ -37,7 +37,9 @@ struct TextFidelityTests {
         ("centered", TextLayer(rect: PageRect(x: 40, y: 400, width: 300, height: 60), runs: [TextRun(string: "centered line", style: style(16))], alignment: .center)),
         ("trailing", TextLayer(rect: PageRect(x: 40, y: 480, width: 300, height: 60), runs: [TextRun(string: "trailing line", style: style(16))], alignment: .trailing)),
         ("trailing newline", TextLayer(rect: PageRect(x: 40, y: 560, width: 300, height: 80), runs: [TextRun(string: "line one\nline two\n", style: style(16))], alignment: .leading)),
-        ("underlined run", TextLayer(rect: PageRect(x: 40, y: 660, width: 300, height: 60), runs: [TextRun(string: "plain ", style: style(16)), TextRun(string: "underlined", style: style(16, underline: true, color: red))], alignment: .leading)),
+        // No descenders on this line, so the underline is the only ink below
+        // the baseline and its presence shows as extra rows.
+        ("underlined run", TextLayer(rect: PageRect(x: 40, y: 660, width: 300, height: 60), runs: [TextRun(string: "small ", style: style(16)), TextRun(string: "underlined", style: style(16, underline: true, color: red))], alignment: .leading)),
     ]
 
     @Test("Per-line ink bounds agree within a pixel and per-run colours exactly, for every fixture")

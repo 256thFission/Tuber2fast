@@ -26,10 +26,10 @@ package enum TextTypesetting {
         return CTFontCreateCopyWithSymbolicTraits(base, style.size, nil, traits, traits) ?? base
     }
 
-    /// What the caret types with. The paragraph's floor is this style's
-    /// own line; `attributed` restates it per paragraph from every run.
+    /// What the caret types with. The paragraph's box is this style's own
+    /// line; `restateParagraphs` widens it once a larger run is typed.
     package static func attributes(for style: TextStyle, alignment: TextAlignment) -> [NSAttributedString.Key: Any] {
-        attributes(for: style, paragraph: paragraphStyle(alignment, minimumLineHeight: wholeLineHeight(of: style)))
+        attributes(for: style, paragraph: paragraphStyle(alignment, lineHeight: wholeLineHeight(of: style)))
     }
 
     private static func attributes(for style: TextStyle, paragraph: NSParagraphStyle) -> [NSAttributedString.Key: Any] {
@@ -46,57 +46,97 @@ package enum TextTypesetting {
         return attributes
     }
 
-    /// Every line of a paragraph advances by a whole number of points, the
-    /// largest line of any run in it. TextKit 1 rounds each line fragment up
-    /// to whole points and `CTFramesetter` does not, so without a floor the
-    /// two drift apart by a fraction of a point per line, measured at 2 px
-    /// on the fourth line at 2x. A floor both engines honour removes the
-    /// rounding instead of tolerating it; a maximum would clamp a larger run
-    /// typed into the paragraph, so none is set.
-    private static func paragraphStyle(_ alignment: TextAlignment, minimumLineHeight: CGFloat) -> NSParagraphStyle {
+    /// The line box is explicit, and so is where the baseline sits in it.
+    ///
+    /// Left to themselves the two engines disagree by a fraction of a point
+    /// per line (each counts the font's leading and rounds differently;
+    /// measured at 2 px by the fourth line at 2x) and, given only a floor,
+    /// pad it on opposite sides of the baseline (3 px, every line). So every
+    /// paragraph's lines are exactly `lineHeight` tall, the tallest run's
+    /// whole-point height, and the text view's layout manager is told to
+    /// ignore font leading. Measured with that box, TextKit 1 advances by
+    /// exactly the height and puts the baseline `round(height - descent)`
+    /// below the line top, descent being the largest on the line; that is
+    /// the rule `placedLines` applies for the renderer.
+    private static func paragraphStyle(_ alignment: TextAlignment, lineHeight: CGFloat) -> NSParagraphStyle {
         let paragraph = NSMutableParagraphStyle()
         paragraph.alignment = switch alignment {
         case .leading: .left
         case .center: .center
         case .trailing: .right
         }
-        paragraph.minimumLineHeight = minimumLineHeight
+        paragraph.minimumLineHeight = lineHeight
+        paragraph.maximumLineHeight = lineHeight
         return paragraph
     }
 
     private static func wholeLineHeight(of style: TextStyle) -> CGFloat {
-        ceil(CGFloat(lineHeight(of: style)))
+        CGFloat(lineHeight(of: style))
     }
 
     package static func attributed(_ runs: [TextRun], alignment: TextAlignment) -> NSAttributedString {
         let attributed = NSMutableAttributedString()
-        var ranges: [(range: NSRange, style: TextStyle)] = []
         for run in runs {
-            let style = run.style
-            let piece = NSAttributedString(string: run.string, attributes: attributes(for: style, paragraph: paragraphStyle(alignment, minimumLineHeight: wholeLineHeight(of: style))))
-            ranges.append((NSRange(location: attributed.length, length: piece.length), style))
-            attributed.append(piece)
+            attributed.append(NSAttributedString(string: run.string, attributes: attributes(for: run.style, alignment: alignment)))
         }
-        // A paragraph's floor is its tallest run's, whichever run starts it.
+        restateParagraphs(in: attributed, alignment: alignment)
+        return attributed
+    }
+
+    /// Gives every paragraph the box of its tallest run, whichever run
+    /// starts it. The text view calls this after a change, so a larger run
+    /// typed into a paragraph widens the box before commit, not at it.
+    package static func restateParagraphs(in attributed: NSMutableAttributedString, alignment: TextAlignment) {
         let string = attributed.string as NSString
         var location = 0
         while location < string.length {
             let paragraph = string.paragraphRange(for: NSRange(location: location, length: 0))
-            let floor = ranges
-                .filter { NSIntersectionRange($0.range, paragraph).length > 0 }
-                .map { wholeLineHeight(of: $0.style) }
-                .max() ?? 0
-            attributed.addAttribute(.paragraphStyle, value: paragraphStyle(alignment, minimumLineHeight: floor), range: paragraph)
+            var tallest: CGFloat = 0
+            attributed.enumerateAttribute(styleKey, in: paragraph) { value, _, _ in
+                if let style = value as? TextStyle { tallest = max(tallest, wholeLineHeight(of: style)) }
+            }
+            attributed.addAttribute(.paragraphStyle, value: paragraphStyle(alignment, lineHeight: tallest), range: paragraph)
             location = NSMaxRange(paragraph)
         }
-        return attributed
+    }
+
+    /// A line the renderer draws: where `CTFramesetter` broke and flushed
+    /// it, at the baseline TextKit would give it. `baseline` is measured
+    /// down from the top of the box.
+    package struct PlacedLine {
+        package let line: CTLine
+        package let x: CGFloat
+        package let baseline: CGFloat
+    }
+
+    package static func placedLines(_ attributed: NSAttributedString, width: CGFloat) -> [PlacedLine] {
+        let framesetter = CTFramesetterCreateWithAttributedString(attributed)
+        // Tall enough that the framesetter never drops a line for want of
+        // room; the renderer clips to the rect, the way the box's edge does.
+        let path = CGPath(rect: CGRect(x: 0, y: 0, width: width, height: 1_000_000), transform: nil)
+        let frame = CTFramesetterCreateFrame(framesetter, CFRange(location: 0, length: 0), path, nil)
+        let lines = CTFrameGetLines(frame) as! [CTLine]
+        var origins = [CGPoint](repeating: .zero, count: lines.count)
+        CTFrameGetLineOrigins(frame, CFRange(location: 0, length: 0), &origins)
+        var top: CGFloat = 0
+        return zip(lines, origins).map { line, origin in
+            var ascent: CGFloat = 0, descent: CGFloat = 0, leading: CGFloat = 0
+            CTLineGetTypographicBounds(line, &ascent, &descent, &leading)
+            let range = CTLineGetStringRange(line)
+            let paragraph = attributed.attribute(.paragraphStyle, at: range.location, effectiveRange: nil) as? NSParagraphStyle
+            let height = paragraph.map(\.maximumLineHeight).flatMap { $0 > 0 ? $0 : nil } ?? ceil(ascent + descent + leading)
+            let placed = PlacedLine(line: line, x: origin.x, baseline: top + (height - descent).rounded())
+            top += height
+            return placed
+        }
     }
 
     // KNOWN DEFECT: the underline's extent is each engine's own drawing, not
     // an attribute this builder can set. Measured at 2x on "plain underlined"
-    // at 16 pt: the framesetter's underline reaches column 231, the text
+    // at 16 pt: the framesetter's underline reached column 231, the text
     // view's 228, glyph ink identical. The fidelity test compares glyph
-    // bounds for that fixture and only checks that both engines underline.
+    // bounds on a plain twin of that fixture and only checks that both
+    // engines underline.
 
     /// The commit walk. A range without `styleKey` (paste, dictation, an
     /// IME's marked text) is a run in `typing`. Not merged; the notebook
@@ -110,9 +150,10 @@ package enum TextTypesetting {
         return runs
     }
 
-    /// Ascent, descent and leading of the resolved font, in points.
+    /// Ascent, descent and leading of the resolved font, in whole points:
+    /// the box every line of this style sits in.
     package static func lineHeight(of style: TextStyle) -> Double {
         let font = resolve(style)
-        return CTFontGetAscent(font) + CTFontGetDescent(font) + CTFontGetLeading(font)
+        return ceil(CTFontGetAscent(font) + CTFontGetDescent(font) + CTFontGetLeading(font))
     }
 }

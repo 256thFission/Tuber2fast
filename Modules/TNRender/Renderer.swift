@@ -187,19 +187,21 @@ package actor Renderer {
     }
 
     /// One builder with the live text view, so the two engines lay the same
-    /// runs on the same lines. The frame is the rect with no inset; the
-    /// overlay copies that geometry.
+    /// runs on the same lines, and one placement rule, so the baselines
+    /// agree. The box is the rect with no inset; the overlay copies that
+    /// geometry.
     private static func drawText(_ text: TextLayer, in context: CGContext) {
         let attributed = TextTypesetting.attributed(text.runs, alignment: text.alignment)
         let rect = CGRect(x: text.rect.x, y: text.rect.y, width: text.rect.width, height: text.rect.height)
         context.saveGState()
+        context.clip(to: rect)
         // CoreText draws y-up; flip within the rect.
         context.translateBy(x: rect.minX, y: rect.maxY)
         context.scaleBy(x: 1, y: -1)
-        let framesetter = CTFramesetterCreateWithAttributedString(attributed)
-        let path = CGPath(rect: CGRect(x: 0, y: 0, width: rect.width, height: rect.height), transform: nil)
-        let frame = CTFramesetterCreateFrame(framesetter, CFRange(location: 0, length: 0), path, nil)
-        CTFrameDraw(frame, context)
+        for placed in TextTypesetting.placedLines(attributed, width: rect.width) {
+            context.textPosition = CGPoint(x: placed.x, y: rect.height - placed.baseline)
+            CTLineDraw(placed.line, context)
+        }
         context.restoreGState()
     }
 

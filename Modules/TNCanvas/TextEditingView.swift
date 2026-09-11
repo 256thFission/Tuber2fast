@@ -35,6 +35,9 @@ final class TextEditingView: UITextView, UITextViewDelegate {
         // is what selects TextKit 1.
         let storage = NSTextStorage()
         let layoutManager = NSLayoutManager()
+        // The line box is the builder's, whole points, no font leading; the
+        // renderer places its lines by the same rule (`TextTypesetting`).
+        layoutManager.usesFontLeading = false
         storage.addLayoutManager(layoutManager)
         let container = NSTextContainer(size: CGSize(width: text.rect.width, height: .greatestFiniteMagnitude))
         container.widthTracksTextView = true
@@ -103,9 +106,7 @@ final class TextEditingView: UITextView, UITextViewDelegate {
         if selectedRange.length > 0 {
             textStorage.setAttributes(attributes, range: selectedRange)
         }
-        if let paragraph = attributes[.paragraphStyle] {
-            textStorage.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: textStorage.length))
-        }
+        TextTypesetting.restateParagraphs(in: textStorage, alignment: alignment)
         typingAttributes = attributes
     }
 
@@ -159,6 +160,7 @@ final class TextEditingView: UITextView, UITextViewDelegate {
     /// The box grows with its text: a synchronous layout query inside
     /// UIKit's own callback, which the Structure rule allows.
     func textViewDidChange(_ textView: UITextView) {
+        TextTypesetting.restateParagraphs(in: textStorage, alignment: alignment)
         let fits = sizeThatFits(CGSize(width: bounds.width, height: .greatestFiniteMagnitude))
         let grown = ceil(fits.height)
         if grown > frame.height {
