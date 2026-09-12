@@ -92,3 +92,53 @@ struct TextStyleTests {
         #expect(TextTypesetting.lineHeight(of: .body) > 16)
     }
 }
+
+@Suite("TNModel placement")
+struct PageSpaceTransformTests {
+    /// A quarter turn about the origin, applied after a placement.
+    private func rotated(_ transform: PageSpaceTransform) -> PageSpaceTransform {
+        transform.concatenating(PageSpaceTransform(a: 0, b: 1, c: -1, d: 0, tx: 0, ty: 0))
+    }
+
+    @Test("A rotated square contains its interior and misses just outside its edge")
+    func containsARotatedSquare() {
+        let square = rotated(.placing(sourceWidth: 100, sourceHeight: 100, at: (200, 200), scale: 1))
+        let centre = square.apply(x: 0.5, y: 0.5)
+        #expect(square.contains(PagePoint(x: centre.x, y: centre.y)))
+        // A point a whisker inside the middle of one edge, and one a whisker
+        // outside it, along the edge's own normal.
+        let inside = square.apply(x: 0.5, y: 0.99)
+        let outside = square.apply(x: 0.5, y: 1.01)
+        #expect(square.contains(PagePoint(x: inside.x, y: inside.y)))
+        #expect(!square.contains(PagePoint(x: outside.x, y: outside.y)))
+        // The axis-aligned rect of a rotated square admits corners the square
+        // does not; this is the case a `CGRect.contains` would get wrong.
+        let corner = square.apply(x: 0, y: 0)
+        #expect(!square.contains(PagePoint(x: corner.x - 1, y: corner.y - 1)))
+    }
+
+    @Test("A rect spelled as a transform contains its interior and not its outside")
+    func containsARect() {
+        let rect = PageSpaceTransform.unitSquare(to: PageRect(x: 10, y: 20, width: 100, height: 40))
+        #expect(rect.contains(PagePoint(x: 60, y: 40)))
+        #expect(rect.contains(PagePoint(x: 10, y: 20)))
+        #expect(!rect.contains(PagePoint(x: 9.5, y: 40)))
+        #expect(!rect.contains(PagePoint(x: 60, y: 61)))
+    }
+
+    @Test("Extents are the object's own width and height, and a rotation does not change them")
+    func extentsSurviveRotation() {
+        let placed = PageSpaceTransform.placing(sourceWidth: 300, sourceHeight: 200, at: (10, 20), scale: 1)
+        #expect(placed.unitExtents.width == 300)
+        #expect(placed.unitExtents.height == 200)
+        let turned = rotated(placed)
+        #expect(abs(turned.unitExtents.width - 300) < 1e-9)
+        #expect(abs(turned.unitExtents.height - 200) < 1e-9)
+    }
+
+    @Test("A degenerate transform contains nothing rather than trapping")
+    func degenerateContainsNothing() {
+        let flat = PageSpaceTransform(a: 0, b: 0, c: 0, d: 0, tx: 0, ty: 0)
+        #expect(!flat.contains(PagePoint(x: 0, y: 0)))
+    }
+}
