@@ -32,6 +32,8 @@ struct EditorView: View {
     }
     @State private var isShowingNavigator = false
     @State private var isExporting = false
+    @State private var bookmarkTarget: NavigatorPage?
+    @State private var bookmarkTitle = ""
 
     var body: some View {
         VStack(spacing: 0) {
@@ -87,6 +89,16 @@ struct EditorView: View {
         } message: {
             Text("The page and everything on it are removed.")
         }
+        .bookmarkAlert(editor: editor, page: $bookmarkTarget, title: $bookmarkTitle)
+    }
+
+    /// The page the reader is on, as the navigator sees it. Nil only if the
+    /// mirrors have not caught up with an empty notebook, which cannot
+    /// happen: a notebook always has a page.
+    private var currentPage: NavigatorPage? {
+        let pages = editor.navigatorPages
+        guard editor.currentPageIndex >= 0, editor.currentPageIndex < pages.count else { return nil }
+        return pages[editor.currentPageIndex]
     }
 
     // MARK: The toolbar
@@ -156,6 +168,22 @@ struct EditorView: View {
 
             Button { isAddingPage = true } label: {
                 Label("Add page", systemImage: "plus.rectangle.portrait").labelStyle(.iconOnly)
+            }
+
+            // Filled when this page is already marked, so the toolbar says
+            // what the state is rather than only offering the action; it
+            // opens the navigator's own alert, pre-filled, so a page marked
+            // from here can be named without being unmarked first.
+            Button {
+                guard let page = currentPage else { return }
+                bookmarkTitle = page.bookmark ?? ""
+                bookmarkTarget = page
+            } label: {
+                Label(
+                    currentPage?.bookmark == nil ? "Bookmark page" : "Edit bookmark",
+                    systemImage: currentPage?.bookmark == nil ? "bookmark" : "bookmark.fill"
+                )
+                .labelStyle(.iconOnly)
             }
 
             Button { isShowingNavigator = true } label: {

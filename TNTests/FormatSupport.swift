@@ -36,11 +36,14 @@ enum Fixture {
         Data((0..<count).map { UInt8(truncatingIfNeeded: Int($0) &* 7 &+ Int(seed)) })
     }
 
-    static func index(pages: Int, notebookID: NotebookID = NotebookID()) -> NotebookIndex {
+    static func index(
+        pages: Int, notebookID: NotebookID = NotebookID(), bookmarks: [PageBookmark] = []
+    ) -> NotebookIndex {
         NotebookIndex(
             notebookID: notebookID,
             createdAt: Date(timeIntervalSince1970: 1_800_000_000),
-            pages: (0..<pages).map { _ in PageRecord(id: PageID(), geometry: .letter, paper: .drawn(.lined)) }
+            pages: (0..<pages).map { _ in PageRecord(id: PageID(), geometry: .letter, paper: .drawn(.lined)) },
+            bookmarks: bookmarks
         )
     }
 

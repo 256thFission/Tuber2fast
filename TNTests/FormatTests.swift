@@ -5,9 +5,11 @@ import Testing
 
 @Suite("Format: key sets are pinned")
 struct KeySetPins {
-    @Test("notebook.json carries exactly its keys, and each page record and paper exactly theirs")
+    @Test("notebook.json carries exactly its keys, and each page record, paper and bookmark exactly theirs")
     func indexKeys() throws {
-        let data = try Codecs.encode(Fixture.index(pages: 2))
+        let plain = Fixture.index(pages: 2)
+        let index = plain.withBookmarks([PageBookmark(page: plain.pageIDs[0], title: "Chapter one")])
+        let data = try Codecs.encode(index)
         let top = try jsonObject(data)
         #expect(Set(top.keys) == DurableKeys.index)
         let pages = try #require(top["pages"] as? [[String: Any]])
@@ -15,7 +17,12 @@ struct KeySetPins {
             #expect(Set(page.keys) == DurableKeys.pageRecord)
             #expect(Set(try #require(page["paper"] as? [String: Any]).keys) == DurableKeys.paper(kind: "lined"))
         }
-        #expect(top["formatVersion"] as? Int == 2)
+        let bookmarks = try #require(top["bookmarks"] as? [[String: Any]])
+        #expect(bookmarks.count == 1)
+        for bookmark in bookmarks {
+            #expect(Set(bookmark.keys) == DurableKeys.bookmark)
+        }
+        #expect(top["formatVersion"] as? Int == 3)
     }
 
     @Test("pages/<id>.json carries exactly its keys")
@@ -72,21 +79,82 @@ struct StrictDecode {
         var object = base
         object["pages"] = pages
         #expect(throws: FormatFault.missingKey("kind")) { try IndexFile.decode(try jsonData(object)) }
+
+        // A bookmark object is pinned in the reader the way a page record is.
+        let marked = try jsonObject(
+            try Codecs.encode(Fixture.index(pages: 1).withBookmarks([PageBookmark(page: PageID(), title: "x")]))
+        )
+        let bookmark = try #require((marked["bookmarks"] as? [[String: Any]])?[0])
+        for key in DurableKeys.bookmark {
+            var short = bookmark
+            short.removeValue(forKey: key)
+            var withShort = marked
+            withShort["bookmarks"] = [short]
+            #expect(throws: FormatFault.missingKey(key)) { try IndexFile.decode(try jsonData(withShort)) }
+        }
+        var wide = bookmark
+        wide["colour"] = "blue"
+        var withWide = marked
+        withWide["bookmarks"] = [wide]
+        #expect(throws: FormatFault.unknownKey("colour")) { try IndexFile.decode(try jsonData(withWide)) }
     }
 
     @Test("A newer format version refuses by number, an unknown paper refuses the page only")
     func versionAndPaper() throws {
         var object = try jsonObject(try Codecs.encode(Fixture.index(pages: 1)))
-        object["formatVersion"] = 3
+        object["formatVersion"] = 4
         let newer = try IndexFile.decode(try jsonData(object))
-        #expect(throws: NotebookIndexFault.unsupportedFormatVersion(3)) { try newer.validated() }
+        #expect(throws: NotebookIndexFault.unsupportedFormatVersion(4)) { try newer.validated() }
 
-        object["formatVersion"] = 2
+        object["formatVersion"] = 3
         var pages = try #require(object["pages"] as? [[String: Any]])
         pages[0]["paper"] = ["kind": "parchment"]
         object["pages"] = pages
         let index = try IndexFile.decode(try jsonData(object)).validated()
         #expect(index.pageFaults[index.pageIDs[0]] == .unknownPaper("parchment"))
+    }
+
+    @Test("A bookmark naming a page the index does not hold refuses the notebook")
+    func bookmarkWithoutItsPage() throws {
+        let index = Fixture.index(pages: 2)
+        let stray = PageID()
+        let broken = index.withBookmarks([PageBookmark(page: stray, title: "gone")])
+        #expect(throws: NotebookIndexFault.bookmarkedPageMissing(stray)) { try broken.validated() }
+        // And through the reader, since that is where a file on disk arrives.
+        let decoded = try IndexFile.decode(try Codecs.encode(broken))
+        #expect(throws: NotebookIndexFault.bookmarkedPageMissing(stray)) { try decoded.validated() }
+    }
+
+    @Test("Two bookmarks for one page refuse the notebook")
+    func twoBookmarksForOnePage() throws {
+        let index = Fixture.index(pages: 2)
+        let page = index.pageIDs[0]
+        let broken = index.withBookmarks([
+            PageBookmark(page: page, title: "one"),
+            PageBookmark(page: page, title: "two"),
+        ])
+        #expect(throws: NotebookIndexFault.duplicateBookmark(page)) { try broken.validated() }
+    }
+
+    @Test("`withPages` that drops a page drops its bookmark, and the result validates")
+    func withPagesDropsOrphanedBookmarks() throws {
+        // This is publish 3 of a save: a page that failed to stage is dropped
+        // from the index that gets written. Without the filter, the written
+        // index names a bookmark with no page and this build's own
+        // `validated()` refuses to open the notebook ever again.
+        let index = Fixture.index(pages: 3)
+        let kept = index.pages[0].id
+        let dropped = index.pages[1].id
+        let marked = index.withBookmarks([
+            PageBookmark(page: kept, title: "stays"),
+            PageBookmark(page: dropped, title: "goes"),
+        ])
+
+        let present = marked.withPages(marked.pages.filter { $0.id != dropped })
+        #expect(present.bookmarks.map(\.page) == [kept])
+        #expect(throws: Never.self) { try present.validated() }
+        // And the bytes it would write read back.
+        #expect(try IndexFile.decode(try Codecs.encode(present)).validated() == present)
     }
 
     @Test("Every paper kind round-trips through the index with exactly its own keys")
@@ -96,7 +164,8 @@ struct StrictDecode {
         let papers: [Paper] = DrawnPaper.allCases.map(Paper.drawn) + [.image(heic), .pdf(pdf, sourcePageIndex: 3)]
         let index = NotebookIndex(
             notebookID: NotebookID(), createdAt: Date(timeIntervalSince1970: 1_800_000_000),
-            pages: papers.map { PageRecord(id: PageID(), geometry: .letter, paper: $0) })
+            pages: papers.map { PageRecord(id: PageID(), geometry: .letter, paper: $0) },
+            bookmarks: [])
         let data = try Codecs.encode(index)
         let decoded = try IndexFile.decode(data).validated()
         #expect(decoded == index)
@@ -119,7 +188,8 @@ struct StrictDecode {
         for (paper, wrongFormat) in assets {
             let index = NotebookIndex(
                 notebookID: NotebookID(), createdAt: Date(timeIntervalSince1970: 1_800_000_000),
-                pages: [PageRecord(id: PageID(), geometry: .letter, paper: paper)])
+                pages: [PageRecord(id: PageID(), geometry: .letter, paper: paper)],
+                bookmarks: [])
             let base = try jsonObject(try Codecs.encode(index))
             let kind = PaperKind.known(paper).rawKind
             let paperObject = try #require((base["pages"] as? [[String: Any]])?[0]["paper"] as? [String: Any])
@@ -261,7 +331,8 @@ struct StoreTests {
         let index = NotebookIndex(
             notebookID: NotebookID(), createdAt: Date(),
             pages: [PageRecord(id: PageID(), geometry: .letter, paper: .image(asset)),
-                    PageRecord(id: PageID(), geometry: .letter, paper: .drawn(.lined))])
+                    PageRecord(id: PageID(), geometry: .letter, paper: .drawn(.lined))],
+            bookmarks: [])
         let store = try await PackageStore.create(root: scratch.packageURL, index: index)
         try await store.writeAsset(Fixture.archive(4, count: 256), asset)
         #expect(try await store.load().pageFaults.isEmpty)
@@ -546,7 +617,8 @@ struct CompactTests {
         let paperAsset = AssetRef(id: AssetID(), format: .heic)
         let index = NotebookIndex(
             notebookID: NotebookID(), createdAt: Date(),
-            pages: [PageRecord(id: PageID(), geometry: .letter, paper: .image(paperAsset))])
+            pages: [PageRecord(id: PageID(), geometry: .letter, paper: .image(paperAsset))],
+            bookmarks: [])
         let store = try await PackageStore.create(root: scratch.packageURL, index: index)
         try await store.writeAsset(Fixture.archive(5, count: 256), paperAsset)
         let stale = store.layout.assetURL(AssetRef(id: AssetID(), format: .heic))

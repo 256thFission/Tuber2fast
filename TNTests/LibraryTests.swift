@@ -391,6 +391,34 @@ struct LibraryTests {
         #expect(await library.store.folderFile(of: "Term") != nil, "the file as written must read back")
     }
 
+    @Test("A format-2 package lists with a nil identity, and opening it says which key is missing")
+    func aFormat2PackageListsWithNoIdentity() async throws {
+        let (scratch, library) = try makeLibrary("lib-old-format")
+        defer { withExtendedLifetime(scratch) {} }
+        let item = try await library.store.createNotebook(named: "Old", in: "")
+        let indexURL = PackageLayout(root: library.store.url(of: item.relativePath)).indexURL
+        var object = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: indexURL)) as? [String: Any])
+        object["formatVersion"] = 2
+        object.removeValue(forKey: "bookmarks")
+        try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]).write(to: indexURL)
+
+        // Silent in the library, which is the cost the bump carries:
+        // `indexFacts` decodes with `try?`, so a package this build cannot
+        // read still lists, looks healthy, and has no identity at all — no
+        // star, no link target, a re-minted trash container name.
+        let listed = try #require(try await library.store.list(folder: "").first)
+        #expect(listed.name == "Old")
+        #expect(listed.notebookID == nil)
+        #expect(listed.identity == nil)
+
+        // Loud on open, by the key this build needs.
+        guard case .failed(let error) = await library.checkout(item.relativePath) else {
+            Issue.record("a format-2 package opened")
+            return
+        }
+        #expect(error == .format(.missingKey("bookmarks")))
+    }
+
     @Test("Two packages with one identity: the scan re-mints the second")
     func collision() async throws {
         let (scratch, library) = try makeLibrary("lib-collide")

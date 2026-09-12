@@ -342,6 +342,32 @@ struct EditorViewModelContentTests {
         _ = await notebook.close()
     }
 
+    @Test("A bookmark reaches `navigatorPages` through the drain with no structure change")
+    func aBookmarkReachesTheMirrors() async throws {
+        let (scratch, notebook, surface, editor) = try await loaded("vm-bookmark")
+        let page = notebook.pageIDs[0]
+        let callsBefore = surface.calls.count
+        #expect(editor.navigatorPages.first?.bookmark == nil)
+
+        editor.bookmark(page, titled: "Chapter one")
+
+        // This is the whole mechanism: `intention` drains whether or not the
+        // mutation queued anything, and the drain refreshes the mirrors, so a
+        // mark needs no `NotebookChange` case and no `emitStructure`.
+        #expect(editor.navigatorPages.first?.bookmark == "Chapter one")
+        #expect(surface.calls.count == callsBefore, "a mark sends the runtime nothing")
+
+        editor.bookmark(page, titled: "")
+        #expect(editor.navigatorPages.first?.bookmark == "", "a mark nobody named is still a mark")
+
+        editor.removeBookmark(page)
+        #expect(editor.navigatorPages.first?.bookmark == nil)
+        #expect(surface.calls.count == callsBefore)
+
+        withExtendedLifetime(scratch) {}
+        _ = await notebook.close()
+    }
+
     @Test("A page with ink refuses a photo as its paper, and nothing is written")
     func photoIsRefusedOnAPageWithInk() async throws {
         let (scratch, notebook, _, editor) = try await loaded("vm-paper-photo-refused")

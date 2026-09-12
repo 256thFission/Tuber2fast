@@ -567,6 +567,12 @@ package enum IndexFile {
                 try Codecs.checkKeys(Set(paper.keys), against: DurableKeys.paper(kind: kind))
             }
         }
+        guard let bookmarks = top["bookmarks"] as? [[String: Any]] else {
+            throw .corruptJSON("bookmarks is not an array of objects")
+        }
+        for bookmark in bookmarks {
+            try Codecs.checkKeys(Set(bookmark.keys), against: DurableKeys.bookmark)
+        }
         return try Codecs.decode(NotebookIndex.self, from: data)
     }
 }

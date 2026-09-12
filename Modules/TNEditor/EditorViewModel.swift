@@ -20,6 +20,11 @@ package struct NavigatorPage: Identifiable, Sendable, Equatable {
     /// id, so the cell asks again when the load settles instead of the
     /// notebook polling its own state.
     package let isLoading: Bool
+    /// The mark's title, or nil when the page is not marked. A read model,
+    /// not a tri-state: nil is absence from the index's list, which is the
+    /// presence-is-the-flag shape the durable side has, and `""` is a mark
+    /// nobody named.
+    package let bookmark: String?
 }
 
 /// What one open notebook looks like to the app: a canvas to put on
@@ -113,6 +118,10 @@ package final class EditorViewModel {
         pageCount = notebook.pageCount
         currentPageIndex = notebook.pageIDs.firstIndex(of: notebook.currentPageID) ?? 0
         let records = notebook.index.pages
+        // `uniqueKeysWithValues` rather than a merge: two marks for one page
+        // is an index `validated()` refuses, so it cannot be reached here,
+        // and a silent merge would hide it if it ever were.
+        let marks = Dictionary(uniqueKeysWithValues: notebook.index.bookmarks.map { ($0.page, $0.title) })
         navigatorPages = records.map { record in
             let isLoading: Bool
             if case .loading = notebook.state(of: record.id) { isLoading = true } else { isLoading = false }
@@ -122,7 +131,8 @@ package final class EditorViewModel {
                 version: notebook.contentVersion(of: record.id),
                 isCurrent: record.id == notebook.currentPageID,
                 isDeletable: records.count > 1,
-                isLoading: isLoading
+                isLoading: isLoading,
+                bookmark: marks[record.id]
             )
         }
     }
@@ -321,6 +331,22 @@ package final class EditorViewModel {
     }
 
     package func deleteCurrentPage() { deletePage(notebook.currentPageID) }
+
+    // MARK: Bookmarks
+
+    /// Marks the page, or renames a mark it already has. An empty title is a
+    /// mark nobody named; the outline shows that page's number instead.
+    ///
+    /// Two calls rather than one taking `String?`: an optional there would be
+    /// a command argument shaped like a durable value, and removing a mark is
+    /// not naming it nothing.
+    package func bookmark(_ page: PageID, titled title: String) {
+        binding.intention { notebook.bookmark(page, titled: title) }
+    }
+
+    package func removeBookmark(_ page: PageID) {
+        binding.intention { notebook.removeBookmark(page) }
+    }
 
     /// Pixels for a navigator cell, keyed by the page's content version.
     /// Cancelled with the cell's task; nil while the page is loading or when

@@ -22,9 +22,42 @@ private struct DraggedPage: Transferable, Codable {
     }
 }
 
-/// A grid of every page: tap to go, drag to reorder, delete, add after.
-/// Reads `editor.navigatorPages` and sends intentions; the pixels in each
-/// cell are the cell's own state, fetched by the page's content version.
+/// Which pages the grid shows: every one, or the marked ones. The outline is
+/// the second tab of this grid rather than a surface of its own, because the
+/// thumbnail fetch, the dismiss-then-scroll tap, the context menu and the
+/// delete confirmation are all here already.
+private enum NavigatorTab: Hashable {
+    case all, marked
+}
+
+/// Reorder by drag, on the All tab only. `movePage(_:before:)` names the page
+/// a drop lands on, and in a filtered list the cell before a marked page may
+/// be twenty pages away, so "before this one" would not mean what it looks
+/// like. The gesture is withheld rather than refused after the lift.
+private struct NavigatorReorder: ViewModifier {
+    let page: NavigatorPage
+    let enabled: Bool
+    let move: (PageID) -> Void
+
+    func body(content: Content) -> some View {
+        if enabled {
+            content
+                .draggable(DraggedPage(id: page.id))
+                .dropDestination(for: DraggedPage.self) { dropped, _ in
+                    guard let dragged = dropped.first else { return false }
+                    move(dragged.id)
+                    return true
+                }
+        } else {
+            content
+        }
+    }
+}
+
+/// A grid of every page: tap to go, drag to reorder, delete, add after, and
+/// a second tab holding the marked ones. Reads `editor.navigatorPages` and
+/// sends intentions; the pixels in each cell are the cell's own state,
+/// fetched by the page's content version.
 struct PageNavigatorSheet: View {
     let editor: EditorViewModel
 
@@ -32,20 +65,44 @@ struct PageNavigatorSheet: View {
     /// The page a delete is being confirmed for. The toolbar's own dialog
     /// is bound to the current page and cannot take an argument.
     @State private var pageToDelete: PageID?
+    @State private var tab = NavigatorTab.all
+    @State private var bookmarkTarget: NavigatorPage?
+    @State private var bookmarkTitle = ""
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 140), spacing: 16)], spacing: 16) {
-                    ForEach(Array(editor.navigatorPages.enumerated()), id: \.element.id) { position, page in
+                    ForEach(shown, id: \.element.id) { position, page in
                         cell(page, number: position + 1)
                     }
-                    addTile
+                    // Past the end of *every* page, which the Marked tab is
+                    // not the end of.
+                    if tab == .all { addTile }
                 }
                 .padding(20)
             }
+            .overlay {
+                // Only the Marked tab can be empty: a notebook always has a
+                // page, and the All tab always has the "+" tile besides.
+                if tab == .marked, shown.isEmpty {
+                    ContentUnavailableView(
+                        "No marked pages",
+                        systemImage: "bookmark",
+                        description: Text("Mark a page from its menu here, or from the toolbar.")
+                    )
+                }
+            }
             .navigationTitle("Pages")
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Picker("Show", selection: $tab) {
+                        Text("All").tag(NavigatorTab.all)
+                        Text("Marked").tag(NavigatorTab.marked)
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 220)
+                }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
                 }
@@ -59,7 +116,21 @@ struct PageNavigatorSheet: View {
             } message: {
                 Text("The page and everything on it are removed.")
             }
+            .bookmarkAlert(editor: editor, page: $bookmarkTarget, title: $bookmarkTitle)
         }
+    }
+
+    /// The pages this tab shows, as *enumerated pairs*.
+    ///
+    /// The filter is over the pairs and not the array, so a page keeps the
+    /// ordinal it has in the whole notebook: the label under a marked cell is
+    /// its own page number, and the tap — which uses that number as an
+    /// absolute index — lands on that page. Filtering the array first would
+    /// renumber from 1 and send the third mark of a forty-page notebook to
+    /// page 3.
+    private var shown: [(offset: Int, element: NavigatorPage)] {
+        let pairs = Array(editor.navigatorPages.enumerated())
+        return tab == .all ? pairs : pairs.filter { $0.element.bookmark != nil }
     }
 
     private var isConfirmingDelete: Binding<Bool> {
@@ -75,6 +146,15 @@ struct PageNavigatorSheet: View {
                     RoundedRectangle(cornerRadius: 3)
                         .stroke(page.isCurrent ? Color.accentColor : Color.secondary.opacity(0.35), lineWidth: page.isCurrent ? 3 : 1)
                 )
+                .overlay(alignment: .topTrailing) {
+                    if page.bookmark != nil {
+                        Image(systemName: "bookmark.fill")
+                            .font(.footnote)
+                            .foregroundStyle(Color.accentColor)
+                            .padding(5)
+                            .accessibilityLabel("Marked")
+                    }
+                }
                 .contentShape(Rectangle())
                 .onTapGesture {
                     dismiss()
@@ -93,14 +173,31 @@ struct PageNavigatorSheet: View {
                 .buttonStyle(.borderless)
                 .disabled(!page.isDeletable)
             }
+            // A mark nobody named shows nothing here: the ordinal above is
+            // already what it is called.
+            if let title = page.bookmark, !title.isEmpty {
+                Text(title)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
-        .draggable(DraggedPage(id: page.id))
-        .dropDestination(for: DraggedPage.self) { dropped, _ in
-            guard let dragged = dropped.first else { return false }
-            editor.movePage(dragged.id, before: page.id)
-            return true
-        }
+        .modifier(
+            NavigatorReorder(page: page, enabled: tab == .all) { dragged in
+                editor.movePage(dragged, before: page.id)
+            }
+        )
         .contextMenu {
+            Button {
+                bookmarkTitle = page.bookmark ?? ""
+                bookmarkTarget = page
+            } label: {
+                Label(
+                    page.bookmark == nil ? "Bookmark page" : "Edit bookmark",
+                    systemImage: page.bookmark == nil ? "bookmark" : "bookmark.fill"
+                )
+            }
             Button {
                 editor.addPage(after: page.id)
             } label: {
@@ -149,6 +246,43 @@ struct PageNavigatorSheet: View {
     /// Until a page-setup sheet exists, a new page copies the current page's
     /// paper and size, whichever page it is added after; the label says so.
     private static let addAfterLabel = "Add page (same paper as the current page)"
+}
+
+/// Naming a mark, from the navigator's menu or from the toolbar's button.
+/// One definition, so the two surfaces cannot drift: Cancel, Save, and
+/// Remove when the page is already marked. Saving an empty title is a mark
+/// nobody named, which the Marked tab still lists.
+struct BookmarkAlert: ViewModifier {
+    let editor: EditorViewModel
+    @Binding var page: NavigatorPage?
+    @Binding var title: String
+
+    func body(content: Content) -> some View {
+        content.alert("Bookmark", isPresented: isPresented, presenting: page) { page in
+            TextField("Title", text: $title)
+            Button("Cancel", role: .cancel) {}
+            Button("Save") { editor.bookmark(page.id, titled: title) }
+            if page.bookmark != nil {
+                Button("Remove", role: .destructive) { editor.removeBookmark(page.id) }
+            }
+        } message: { _ in
+            Text("Marked pages are listed under Marked in the page grid.")
+        }
+    }
+
+    private var isPresented: Binding<Bool> {
+        Binding(get: { page != nil }, set: { if !$0 { page = nil } })
+    }
+}
+
+extension View {
+    func bookmarkAlert(
+        editor: EditorViewModel,
+        page: Binding<NavigatorPage?>,
+        title: Binding<String>
+    ) -> some View {
+        modifier(BookmarkAlert(editor: editor, page: page, title: title))
+    }
 }
 
 /// One page's pixels over a page-shaped placeholder. The fetch is keyed by
