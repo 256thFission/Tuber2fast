@@ -203,6 +203,8 @@ struct LibraryBrowserTests {
         #expect(browser.refusal == "close Term first")
         #expect(try await browser.library.store.list(folder: "Archive").isEmpty)
         #expect(try await browser.library.store.list(folder: "Term").map(\.name) == ["Open"])
+
+        _ = await browser.library.release(open.relativePath)
     }
 
     @Test("A three-item move with one open notebook lands the other two and refuses once")
@@ -226,6 +228,8 @@ struct LibraryBrowserTests {
         #expect(browser.selection == nil)
         #expect(try await browser.library.store.list(folder: "Done").map(\.name) == ["One", "Two"])
         #expect(try await browser.library.store.list(folder: "").map(\.name) == ["Done", "Open"])
+
+        _ = await browser.library.release(open.relativePath)
     }
 
     @Test("A refused mutation says so and leaves the listing standing")
