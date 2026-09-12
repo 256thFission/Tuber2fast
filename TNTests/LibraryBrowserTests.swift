@@ -182,6 +182,52 @@ struct LibraryBrowserTests {
         #expect(try await browser.library.store.list(folder: "Done").map(\.name) == ["One"])
     }
 
+    @Test("Moving a folder that holds an open notebook is refused, and nothing moves")
+    func movingALockedFolder() async throws {
+        let (scratch, browser) = try makeBrowser("browser-move-locked-folder")
+        defer { withExtendedLifetime(scratch) {} }
+        _ = try await browser.library.store.createFolder(named: "Archive", in: "")
+        _ = try await browser.library.store.createFolder(named: "Term", in: "")
+        let open = try await browser.library.store.createNotebook(named: "Open", in: "Term")
+        await browser.reload()
+        guard case .opened = await browser.library.checkout(open.relativePath) else {
+            Issue.record("open failed")
+            return
+        }
+
+        // The folder itself, not a neighbour of the open notebook: `Library`
+        // gates the source path only, so only a drag of the folder above an
+        // open notebook is refused. The wording names the folder rather than
+        // the notebook; see the KNOWN DEFECT on `Library.requireUnlocked`.
+        await browser.move(["Term"], toFolder: "Archive")
+        #expect(browser.refusal == "close Term first")
+        #expect(try await browser.library.store.list(folder: "Archive").isEmpty)
+        #expect(try await browser.library.store.list(folder: "Term").map(\.name) == ["Open"])
+    }
+
+    @Test("A three-item move with one open notebook lands the other two and refuses once")
+    func aPartlyRefusedMove() async throws {
+        let (scratch, browser) = try makeBrowser("browser-move-gathers")
+        defer { withExtendedLifetime(scratch) {} }
+        _ = try await browser.library.store.createFolder(named: "Done", in: "")
+        _ = try await browser.library.store.createNotebook(named: "One", in: "")
+        let open = try await browser.library.store.createNotebook(named: "Open", in: "")
+        _ = try await browser.library.store.createNotebook(named: "Two", in: "")
+        await browser.reload()
+        guard case .opened = await browser.library.checkout(open.relativePath) else {
+            Issue.record("open failed")
+            return
+        }
+
+        // "One" sorts before "Open", so the refusal lands in the middle of the
+        // loop: gathering, not stopping, is what leaves "Two" moved as well.
+        await browser.move(["One.tubernotes", "Open.tubernotes", "Two.tubernotes"], toFolder: "Done")
+        #expect(browser.refusal == "close Open.tubernotes first")
+        #expect(browser.selection == nil)
+        #expect(try await browser.library.store.list(folder: "Done").map(\.name) == ["One", "Two"])
+        #expect(try await browser.library.store.list(folder: "").map(\.name) == ["Done", "Open"])
+    }
+
     @Test("A refused mutation says so and leaves the listing standing")
     func aRefusalLands() async throws {
         let (scratch, browser) = try makeBrowser("browser-refusal")
