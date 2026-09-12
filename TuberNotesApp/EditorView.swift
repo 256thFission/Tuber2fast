@@ -211,6 +211,8 @@ struct EditorView: View {
         case .photo:
             photoDestination = .paperForNewPage(pending.size, pending.orientation)
             isPickingPhoto = true
+        case .flattened:
+            Task { await editor.addPageFlatteningCurrentPage(size: pending.size, orientation: pending.orientation) }
         }
     }
 

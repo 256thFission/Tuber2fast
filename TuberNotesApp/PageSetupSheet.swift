@@ -215,6 +215,9 @@ enum NewPagePaperChoice: Hashable {
     case drawn(DrawnPaper)
     case photo
     case from(PageID)
+    /// The current page, rendered to one picture. No payload: the source is
+    /// always the page the reader is on, which the editor already knows.
+    case flattened
 }
 
 /// Size, orientation, and paper for a page after the current one. The sheet
@@ -255,6 +258,7 @@ struct AddPageSheet: View {
                             Text(PageNames.paper(paper)).tag(NewPagePaperChoice.drawn(paper))
                         }
                         Text("Photo").tag(NewPagePaperChoice.photo)
+                        Text("This page, flattened").tag(NewPagePaperChoice.flattened)
                         ForEach(editor.pagesWithAssetPaper, id: \.page) { source in
                             Text("Paper from page \(source.number)")
                                 .tag(NewPagePaperChoice.from(source.page))
@@ -281,7 +285,7 @@ struct AddPageSheet: View {
 
     private var takesAssetAspect: Bool {
         switch choice {
-        case .photo, .from: true
+        case .photo, .from, .flattened: true
         case .sameAsThisPage, .drawn: false
         }
     }

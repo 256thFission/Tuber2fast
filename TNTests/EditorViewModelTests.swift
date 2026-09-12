@@ -156,6 +156,41 @@ struct EditorViewModelContentTests {
         _ = await notebook.close()
     }
 
+    @Test("This page flattened becomes the new page's paper, and the source is untouched")
+    func flattenedPageBecomesTheNextPagesPaper() async throws {
+        let (scratch, notebook, surface, editor) = try await loaded("vm-flatten")
+        let source = notebook.pageIDs[0]
+        let layer = Fixture.imageLayer()
+        try await notebook.addLayer(layer, assetData: try Fixture.imageData(width: 40, height: 30), on: source)
+        notebook.inkChanged(on: source, Ink.drawing(strokes: 2), echoOf: nil)
+        let ink = try #require(notebook.state(of: source)?.content?.ink)
+        let couldUndo = notebook.canUndo
+
+        await editor.addPageFlatteningCurrentPage(size: .letter, orientation: .portrait)
+
+        #expect(editor.lastContentError == nil)
+        #expect(notebook.pageCount == 2)
+        let created = try #require(notebook.pageIDs.last)
+        guard case .image(let asset) = try #require(notebook.paper(of: created)) else {
+            Issue.record("the new page's paper is not an image"); return
+        }
+        #expect(try await notebook.store.readAsset(asset).count > 0)
+
+        // The source keeps its ink and its layer, and flattening records
+        // nothing, so the stack is where it was.
+        #expect(notebook.state(of: source)?.content?.ink == ink)
+        #expect(notebook.state(of: source)?.content?.layers.map(\.id) == [layer.id])
+        #expect(notebook.paper(of: source) == .drawn(.blank))
+        #expect(notebook.canUndo == couldUndo)
+
+        let order = try #require(surface.calls.lastIndex { if case .setPages(let ids, _, _) = $0 { ids.contains(created) } else { false } })
+        let scroll = try #require(surface.calls.lastIndex(of: .scroll(created)))
+        #expect(scroll > order)
+
+        withExtendedLifetime(scratch) {}
+        _ = await notebook.close()
+    }
+
     @Test("A page with ink refuses a photo as its paper, and nothing is written")
     func photoIsRefusedOnAPageWithInk() async throws {
         let (scratch, notebook, _, editor) = try await loaded("vm-paper-photo-refused")
