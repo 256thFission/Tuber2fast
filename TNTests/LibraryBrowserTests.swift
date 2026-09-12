@@ -283,6 +283,21 @@ struct LibraryBrowserTests {
         #expect(browser.favorites.isEmpty)
     }
 
+    @Test("Setting a decoration reloads the listing and the item carries it")
+    func decorating() async throws {
+        let (scratch, browser) = try makeBrowser("browser-decorate")
+        defer { withExtendedLifetime(scratch) {} }
+        _ = try await browser.library.store.createFolder(named: "Term", in: "")
+        await browser.reload()
+        let folder = try #require(browser.displayed.first)
+        #expect(folder.decoration == .plain)
+
+        let chosen = FolderDecoration(color: .green, symbol: .book)
+        await browser.setDecoration(chosen, on: folder)
+        #expect(browser.refusal == nil)
+        #expect(browser.displayed.first?.decoration == chosen)
+    }
+
     @Test("The trash section lists, recovers, deletes, and empties")
     func trashSection() async throws {
         let (scratch, browser) = try makeBrowser("browser-trash")

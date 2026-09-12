@@ -18,6 +18,7 @@ struct LibraryView: View {
     @State private var renameTarget: LibraryItem?
     @State private var renameText = ""
     @State private var moveRequest: MoveRequest?
+    @State private var styleTarget: LibraryItem?
     @State private var isDroppingOnBack = false
 
     /// The paths a move picker is open for. A sheet needs an identity, and a
@@ -66,6 +67,11 @@ struct LibraryView: View {
         .sheet(item: $moveRequest) { request in
             LibraryMovePicker(browser: browser, paths: request.paths) { destination in
                 run { await browser.move(request.paths, toFolder: destination) }
+            }
+        }
+        .sheet(item: $styleTarget) { item in
+            FolderStyleSheet(name: item.name, decoration: item.decoration) { decoration in
+                run { await browser.setDecoration(decoration, on: item) }
             }
         }
     }
@@ -339,6 +345,13 @@ struct LibraryView: View {
                 run { await browser.duplicate([item.relativePath]) }
             } label: {
                 Label("Duplicate", systemImage: "plus.square.on.square")
+            }
+        }
+        if item.kind == .folder {
+            Button {
+                styleTarget = item
+            } label: {
+                Label("Customize", systemImage: "paintpalette")
             }
         }
         Button {

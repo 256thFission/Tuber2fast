@@ -142,7 +142,7 @@ struct LibraryGridCell<MenuContent: View>: View {
                 .aspectRatio(3.0 / 4.0, contentMode: .fit)
                 .shadow(color: .black.opacity(0.25), radius: 6, y: 3)
         case .folder:
-            LibraryFolderGlyph()
+            LibraryFolderGlyph(decoration: item.decoration)
                 .aspectRatio(3.0 / 4.0, contentMode: .fit)
                 .padding(.vertical, 10)
         }
@@ -166,7 +166,7 @@ struct LibraryListRow<MenuContent: View>: View {
             Group {
                 switch item.kind {
                 case .notebook: LibraryCover(item: item, browser: browser)
-                case .folder: LibraryFolderGlyph()
+                case .folder: LibraryFolderGlyph(decoration: item.decoration)
                 }
             }
             .frame(width: 44, height: 58)
@@ -254,11 +254,18 @@ struct LibraryCover: View {
 }
 
 struct LibraryFolderGlyph: View {
+    /// Nil when the sidecar holding it could not be read. Such a folder has
+    /// already lost its identity and its star; it draws as it drew before
+    /// decoration existed rather than as nothing at all.
+    let decoration: FolderDecoration?
+
+    private var shown: FolderDecoration { decoration ?? .plain }
+
     var body: some View {
-        Image(systemName: "folder.fill")
+        Image(systemName: shown.symbol.rawValue)
             .resizable()
             .scaledToFit()
-            .foregroundStyle(Color.accentColor)
+            .foregroundStyle(LibraryStyle.color(of: shown.color))
     }
 }
 
@@ -329,6 +336,24 @@ private struct LibrarySelectionCheck: View {
 enum LibraryStyle {
     static let paper = Color(red: 0.98, green: 0.97, blue: 0.94)
     static let paperEdge = Color(red: 0.85, green: 0.84, blue: 0.81)
+
+    /// The one place a durable colour name becomes something drawable.
+    /// `TNLibrary` may not import SwiftUI, so the name travels and the colour
+    /// is chosen here; the system colours are used because they already read
+    /// in light and dark. `.neutral` is the accent colour every folder drew
+    /// before decoration existed, so an undecorated folder does not change.
+    static func color(of color: FolderColor) -> Color {
+        switch color {
+        case .neutral: .accentColor
+        case .red: .red
+        case .orange: .orange
+        case .yellow: .yellow
+        case .green: .green
+        case .blue: .blue
+        case .purple: .purple
+        case .pink: .pink
+        }
+    }
 
     /// The spec's absolute date, `MMM d, yyyy 'at' h:mm a`. `Date.FormatStyle`
     /// puts a comma where this wants "at", so the format string is written out.

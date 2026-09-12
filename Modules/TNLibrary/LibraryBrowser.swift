@@ -223,6 +223,10 @@ package final class LibraryBrowser {
         await perform { try await library.store.setFavorite(identity, starred) }
     }
 
+    package func setDecoration(_ decoration: FolderDecoration, on item: LibraryItem) async {
+        await perform { try await library.store.setDecoration(decoration, at: item.relativePath) }
+    }
+
     package func createFolder(named name: String) async {
         await perform { _ = try await library.store.createFolder(named: name, in: folder) }
     }
