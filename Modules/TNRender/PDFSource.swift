@@ -45,10 +45,8 @@ package struct PDFSource: @unchecked Sendable {
         context.scaleBy(x: 1 / extent.width, y: 1 / extent.height)
         context.translateBy(x: 0, y: extent.height)
         context.scaleBy(x: 1, y: -1)
-        let box = page.getBoxRect(.cropBox).isEmpty ? page.getBoxRect(.mediaBox) : page.getBoxRect(.cropBox)
         let target = CGRect(x: 0, y: 0, width: extent.width, height: extent.height)
         context.concatenate(page.getDrawingTransform(.cropBox, rect: target, rotate: 0, preserveAspectRatio: true))
-        _ = box
         context.drawPDFPage(page)
         context.restoreGState()
     }

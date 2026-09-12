@@ -851,6 +851,94 @@ struct NotebookTests {
         #expect(await notebook.thumbnail(of: page) != nil)
     }
 
+    // MARK: Revisions for a render
+
+    @Test("A revision of an unloaded page comes from its files and installs nothing")
+    func revisionOfUnloadedPage() async throws {
+        let scratch = try Scratch("nb-revision-unloaded")
+        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        let page = notebook.pageIDs[0]
+        notebook.windowChanged(to: [page])
+        try await waitUntil { notebook.state(of: page)?.content != nil }
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 1), echoOf: nil)
+        await notebook.flush()
+        _ = await notebook.close()
+
+        let reopened = try await Notebook.open(store: PackageStore(root: scratch.packageURL), schedule: fast)
+        let canUndo = reopened.canUndo
+        let revision = try #require(await reopened.revision(of: page))
+        #expect(revision.ink.strokes.count == 1, "the stroke on disk")
+        if case .unloaded = reopened.state(of: page)! {} else { Issue.record("a revision must not load the page") }
+        #expect(reopened.dirtyPageCount == 0)
+        #expect(!reopened.isDirty)
+        #expect(reopened.canUndo == canUndo, "reading a page is not an edit")
+    }
+
+    @Test("A revision of a loading page reads the disk rather than waiting on custody")
+    func revisionOfLoadingPage() async throws {
+        let scratch = try Scratch("nb-revision-loading")
+        let store = HeldLoadStore(try await PackageStore.create(root: scratch.packageURL, index: Fixture.index(pages: 1)))
+        let notebook = try await Notebook.open(store: store, schedule: fast)
+        let page = notebook.pageIDs[0]
+        await store.hold()
+        notebook.windowChanged(to: [page])
+        if case .loading = notebook.state(of: page)! {} else { Issue.record("should be loading") }
+        // The revision waits on the same held load, so release it from another
+        // task rather than before the ask.
+        let reading = Task { await notebook.revision(of: page) }
+        await store.release()
+        #expect(try #require(await reading.value).ink.strokes.isEmpty, "the page on disk has no ink")
+        #expect(notebook.dirtyPageCount == 0)
+    }
+
+    @Test("A revision of an unloaded page with a stashed undo is the restored ink")
+    func revisionPrefersPendingRestore() async throws {
+        let scratch = try Scratch("nb-revision-restore")
+        let store = try await PackageStore.create(root: scratch.packageURL, index: Fixture.index(pages: 2))
+        let notebook = try await Notebook.open(store: store, schedule: fast)
+        let (a, b) = (notebook.pageIDs[0], notebook.pageIDs[1])
+        notebook.windowChanged(to: [a, b])
+        try await waitUntil { notebook.state(of: a)?.content != nil && notebook.state(of: b)?.content != nil }
+        notebook.inkChanged(on: a, Ink.drawing(strokes: 1), echoOf: nil)
+        notebook.inkChanged(on: b, Ink.drawing(strokes: 1), echoOf: nil)
+        await notebook.flush()
+        notebook.windowChanged(to: [b])
+        notebook.retired(a, finalInk: nil)
+        notebook.prune()
+
+        #expect(notebook.undo() == b)
+        #expect(notebook.undo() == a, "the older edit is on a, which is not loaded")
+        notebook.windowChanged(to: [b])
+        if case .unloaded = notebook.state(of: a)! {} else { Issue.record("a should have dropped back to unloaded") }
+
+        let revision = try #require(await notebook.revision(of: a))
+        #expect(revision.ink.strokes.isEmpty, "the pending restore, not the stroke on disk")
+        if case .unloaded = notebook.state(of: a)! {} else { Issue.record("still unloaded") }
+    }
+
+    @Test("A revision of a page with a bad ink container is nil and moves nothing")
+    func revisionOfCorruptPageRefuses() async throws {
+        let scratch = try Scratch("nb-revision-corrupt")
+        let (store, index, _) = try await Fixture.populated(at: scratch.packageURL)
+        let notebook = try await Notebook.open(store: store, schedule: fast)
+        let page = index.pageIDs[0]
+        #expect(await notebook.revision(of: page) == nil)
+        if case .unloaded = notebook.state(of: page)! {} else { Issue.record("a refused revision must not change the state") }
+    }
+
+    @Test("A revision of a ready page is what custody holds, unsaved ink included")
+    func revisionOfReadyPage() async throws {
+        let scratch = try Scratch("nb-revision-ready")
+        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        let page = notebook.pageIDs[0]
+        notebook.windowChanged(to: [page])
+        try await waitUntil { notebook.state(of: page)?.content != nil }
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 2), echoOf: nil)
+        let revision = try #require(await notebook.revision(of: page))
+        #expect(revision.ink.strokes.count == 2, "custody, before the save engine has written anything")
+        withExtendedLifetime(scratch) {}
+    }
+
     @Test("Importing a PDF makes one page per PDF page, each with that page as paper and no layer")
     func pdfPagesArePaper() async throws {
         let scratch = try Scratch("nb-pdf-paper")

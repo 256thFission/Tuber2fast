@@ -405,6 +405,137 @@ package final class EditorViewModel {
         )
     }
 
+    // MARK: Export
+
+    /// How far a walk has got. `done` counts pages finished, so a walk that
+    /// has finished reads `done == total` and stays visible under the
+    /// result until the sheet is closed.
+    package struct ExportProgress: Equatable, Sendable {
+        package let done: Int
+        package let total: Int
+
+        package init(done: Int, total: Int) {
+            self.done = done
+            self.total = total
+        }
+    }
+
+    /// What an export produced: bytes and what kind of bytes they are. No
+    /// file is written; the share sheet and the print panel take the data.
+    package struct ExportedFile: Equatable, Sendable {
+        package enum Kind: Sendable { case pdf, png }
+        package let kind: Kind
+        package let data: Data
+
+        package init(kind: Kind, data: Data) {
+            self.kind = kind
+            self.data = data
+        }
+    }
+
+    /// Owner: this view model, like the other mirrors. Non-nil from the
+    /// start of a walk until the sheet clears it. Not on the notebook,
+    /// whose observed surface is five properties.
+    package private(set) var exportProgress: ExportProgress?
+    /// Owner: this view model, until the sheet closes. Pixels and PDF, not
+    /// ink: nothing here is a second copy of a drawing.
+    package private(set) var exportedFile: ExportedFile?
+    @ObservationIgnored private var exportTask: Task<Void, Never>?
+
+    /// 1-based positions in the page list, the way the sheet counts them.
+    /// A range outside `1...pageCount` is a refusal and nothing is asked of
+    /// the renderer. A second export cancels the one in flight.
+    package func exportPDF(pages: ClosedRange<Int>) {
+        let current = notebook.currentPageID
+        lastContentError = nil
+        guard !notebook.hasTextSession(on: current) else { lastContentError = Self.textBoxOpen(current); return }
+        let ids = notebook.pageIDs
+        guard pages.lowerBound >= 1, pages.upperBound <= ids.count else {
+            lastContentError = .invalidWrite("pages \(pages.lowerBound)-\(pages.upperBound) are outside 1-\(ids.count)")
+            return
+        }
+        let selected = Array(ids[(pages.lowerBound - 1)...(pages.upperBound - 1)])
+        beginExport(total: selected.count)
+        let renderer = notebook.renderer
+        let first = pages.lowerBound
+        exportTask = Task { [weak self] in
+            let data = await renderer.pdf(pageCount: selected.count) { index in
+                guard let self else { return nil }
+                self.exportProgress = ExportProgress(done: index, total: selected.count)
+                let page = selected[index]
+                guard let record = self.notebook.index.record(of: page),
+                      let revision = await self.notebook.revision(of: page)
+                else {
+                    // Nothing is dropped: a page that cannot be read refuses
+                    // the export rather than leaving a hole in it.
+                    self.lastContentError = .invalidWrite("page \(first + index) couldn't be read")
+                    return nil
+                }
+                return (record.geometry, record.paper.paper, revision.layers, revision.ink)
+            }
+            self?.finishExport(data.map { ExportedFile(kind: .pdf, data: $0) }, total: selected.count)
+        }
+    }
+
+    /// The page on screen as one PNG at asset resolution.
+    package func exportCurrentPageImage() {
+        let page = notebook.currentPageID
+        lastContentError = nil
+        guard !notebook.hasTextSession(on: page) else { lastContentError = Self.textBoxOpen(page); return }
+        guard let record = notebook.index.record(of: page) else {
+            lastContentError = .invalidWrite("page \(page) has no record")
+            return
+        }
+        let position = currentPageIndex + 1
+        beginExport(total: 1)
+        let renderer = notebook.renderer
+        exportTask = Task { [weak self] in
+            guard let revision = await self?.notebook.revision(of: page) else {
+                self?.lastContentError = .invalidWrite("page \(position) couldn't be read")
+                self?.finishExport(nil, total: 1)
+                return
+            }
+            let data = await renderer.flattened(
+                geometry: record.geometry, paper: record.paper.paper,
+                layers: revision.layers, ink: revision.ink, as: "public.png" as CFString)
+            self?.finishExport(data.map { ExportedFile(kind: .png, data: $0) }, total: 1)
+        }
+    }
+
+    /// Stops the walk. A cancelled export leaves no file and no refusal:
+    /// the person asked for it to stop.
+    package func cancelExport() {
+        exportTask?.cancel()
+        exportTask = nil
+        exportProgress = nil
+    }
+
+    /// The sheet is done with the result.
+    package func clearExport() {
+        exportedFile = nil
+        exportProgress = nil
+    }
+
+    private func beginExport(total: Int) {
+        exportTask?.cancel()
+        exportedFile = nil
+        exportProgress = ExportProgress(done: 0, total: total)
+    }
+
+    private func finishExport(_ file: ExportedFile?, total: Int) {
+        guard !Task.isCancelled else { return }
+        exportTask = nil
+        guard let file else {
+            // A refusal already named its page; anything else is the
+            // renderer refusing the whole document.
+            if lastContentError == nil { lastContentError = .invalidWrite("the export couldn't be built") }
+            exportProgress = nil
+            return
+        }
+        exportProgress = ExportProgress(done: total, total: total)
+        exportedFile = file
+    }
+
     // MARK: Durability
 
     package func flush() async { await notebook.flush() }

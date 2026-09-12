@@ -213,6 +213,10 @@ targets:
         # safely conservative, but widening support without raising it is the
         # trap the test names.
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
+        # The share sheet's Save Image row: iOS kills an app that offers a
+        # picture and has no reason for the photo library. A consequence of
+        # exporting a page as a PNG, not a feature of its own.
+        INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription: Saves the exported page to your photo library.
         GENERATE_INFOPLIST_FILE: YES
         ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS: NO
 
