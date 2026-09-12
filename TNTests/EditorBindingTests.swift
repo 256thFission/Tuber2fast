@@ -328,13 +328,18 @@ struct EditorBindingTests {
 
         binding.textBoxRequested(on: page, at: PagePoint(x: 30, y: 40), style: .body, alignment: .leading)
         #expect(notebook.hasTextSession)
+        // Every call from here on is the session's. The opening push is not:
+        // a binding sends the runtime to the page the notebook was left on as
+        // soon as it has the order, and that happened before any of this.
+        let beforeTheUndo = surface.calls.count
         binding.undoRequested()
         binding.redoRequested()
         #expect(Array(surface.calls.suffix(2)) == [.undoTyping, .redoTyping])
         #expect(notebook.canUndo && !notebook.canRedo, "the stack did not move")
         #expect(notebook.state(of: page)?.content?.ink.strokes.count == 3)
         #expect(!surface.calls.contains { if case .restoreInk = $0 { true } else { false } })
-        #expect(!surface.calls.contains { if case .scroll = $0 { true } else { false } })
+        #expect(!surface.calls.dropFirst(beforeTheUndo).contains { if case .scroll = $0 { true } else { false } },
+                "an undo that restores a loaded page in place takes the reader nowhere")
         _ = await notebook.close()
     }
 
