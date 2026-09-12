@@ -934,6 +934,37 @@ package final class Notebook {
         return .accepted
     }
 
+    /// Moves a link. A link's placement is its rect and its transform is the
+    /// identity — `validated()` refuses any other — so a move is a rect edit
+    /// and `transformLayer` refuses every one of them. This is that method's
+    /// body with a new rect in place of a new transform, recorded through
+    /// the revision like any other layer edit, and rerendered so the hit
+    /// rects follow the picture.
+    ///
+    /// It answers a `TransformOutcome` so an overlay's report can be answered
+    /// the way `layerTransformed` is.
+    package func moveLinkLayer(on page: PageID, layer layerID: LayerID, to rect: PageRect) -> TransformOutcome {
+        guard case .ready(var content) = states[page] else { return .refused(reason: "page is not ready") }
+        guard let position = content.layers.firstIndex(where: { $0.id == layerID }) else { return .refused(reason: "no such layer") }
+        guard case .link(let link) = content.layers[position].payload else { return .refused(reason: "layer \(layerID) is not a link") }
+        let moved = Layer(
+            id: layerID,
+            transform: content.layers[position].transform,
+            payload: .link(LinkLayer(rect: rect, style: link.style, target: link.target))
+        )
+        do { _ = try moved.validated() } catch { return .refused(reason: "\(error)") }
+        let captured = content.revision
+        content.layers[position] = moved
+        content.pendingLayerFiles.insert(layerID)
+        content.edited()
+        recordEdit(on: page, from: captured, to: content.revision)
+        states[page] = .ready(content)
+        bumpContentVersion(of: page)
+        markDirty()
+        rerenderComposite(of: page)
+        return .accepted
+    }
+
     package func deleteLayer(_ layerID: LayerID, on page: PageID) {
         guard case .ready(var content) = states[page], let position = content.layers.firstIndex(where: { $0.id == layerID }) else { return }
         let captured = content.revision

@@ -1039,6 +1039,52 @@ struct NotebookTests {
         #expect(notebook.pageCount == 1, "a refused duplicate inserts nothing")
     }
 
+    @Test("A link moves by its rect, undoes, redoes; a bad rect and a text layer are refused")
+    func movingALink() async throws {
+        let scratch = try Scratch("nb-move-link")
+        defer { withExtendedLifetime(scratch) {} }
+        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        let page = notebook.pageIDs[0]
+        notebook.windowChanged(to: [page])
+        try await waitUntil { notebook.state(of: page)?.content != nil }
+        let link = Fixture.linkLayer(to: page)
+        try notebook.insertLayer(link, on: page)
+        let text = Fixture.textLayer()
+        try notebook.insertLayer(text, on: page)
+        await notebook.flush()
+
+        let moved = PageRect(x: 300, y: 500, width: 120, height: 40)
+        #expect(notebook.moveLinkLayer(on: page, layer: link.id, to: moved) == .accepted)
+        guard case .link(let after) = try #require(notebook.state(of: page)?.content?.layers.first { $0.id == link.id }).payload else {
+            Issue.record("the layer stopped being a link"); return
+        }
+        #expect(after.rect == moved)
+        #expect(after.target == .internalPage(page), "only the rect moves")
+        #expect(notebook.state(of: page)?.content?.pendingLayerFiles.contains(link.id) == true)
+
+        // A move is an edit, on the stack like every other layer edit.
+        #expect(notebook.undo() == page)
+        guard case .link(let undone) = try #require(notebook.state(of: page)?.content?.layers.first { $0.id == link.id }).payload else {
+            Issue.record("the layer stopped being a link"); return
+        }
+        #expect(undone.rect == PageRect(x: 40, y: 40, width: 160, height: 44))
+        #expect(notebook.redo() == page)
+        guard case .link(let redone) = try #require(notebook.state(of: page)?.content?.layers.first { $0.id == link.id }).payload else {
+            Issue.record("the layer stopped being a link"); return
+        }
+        #expect(redone.rect == moved)
+
+        // A rect that is not a rect, and a layer that is not a link.
+        let couldUndo = notebook.canUndo
+        #expect(notebook.moveLinkLayer(on: page, layer: link.id, to: PageRect(x: 10, y: 10, width: 0, height: 40)) != .accepted)
+        #expect(notebook.moveLinkLayer(on: page, layer: text.id, to: moved) != .accepted)
+        #expect(notebook.canUndo == couldUndo, "a refusal records nothing")
+        guard case .link(let unchanged) = try #require(notebook.state(of: page)?.content?.layers.first { $0.id == link.id }).payload else {
+            Issue.record("the layer stopped being a link"); return
+        }
+        #expect(unchanged.rect == moved)
+    }
+
     @Test("A layer import publishes the asset first, sits beneath the ink, and round-trips")
     func layerImport() async throws {
         let scratch = try Scratch("nb-layer")
