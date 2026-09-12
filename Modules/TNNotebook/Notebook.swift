@@ -659,12 +659,16 @@ package final class Notebook {
 
     // MARK: Composites
 
-    /// Re-renders a page's backdrop after its layers or paper changed, or
-    /// at a sharper scale on request. A layer being edited is left out. A
-    /// result for a page no longer ready, or one a later render has
-    /// superseded, is dropped; the current one installs the picture and then
-    /// queues whatever `afterRender` holds, picture or not.
-    package func rerenderComposite(of page: PageID, scale: CGFloat = Notebook.baseCompositeScale) {
+    /// Re-renders a page's backdrop after its layers or paper changed. A
+    /// layer being edited is left out. A result for a page no longer ready,
+    /// or one a later render has superseded, is dropped; the current one
+    /// installs the picture and then queues whatever `afterRender` holds,
+    /// picture or not.
+    ///
+    /// One scale, always: the contract's Rendering rule is a composite
+    /// rendered once and scaled by the scroll view, and says nothing about a
+    /// sharper render at zoom.
+    package func rerenderComposite(of page: PageID) {
         guard case .ready(var content) = states[page], let record = index.record(of: page) else { return }
         content.renderGeneration += 1
         states[page] = .ready(content)
@@ -672,7 +676,7 @@ package final class Notebook {
         let layers = content.layers.filter { $0.id != content.textEditing?.layer }
         let renderer = self.renderer
         Task { [weak self] in
-            let composite = await renderer.composite(geometry: record.geometry, paper: record.paper.paper, layers: layers, scale: scale)
+            let composite = await renderer.composite(geometry: record.geometry, paper: record.paper.paper, layers: layers, scale: Notebook.baseCompositeScale)
             guard let self, case .ready(var current) = self.states[page], current.renderGeneration == generation else { return }
             if let composite {
                 current.composite = composite
@@ -688,11 +692,6 @@ package final class Notebook {
     /// Called when a change lands outside an intention (a composite arrived,
     /// a load installed). The binding drains on it.
     @ObservationIgnored package var onAsyncChange: (@MainActor () -> Void)?
-
-    package func detailNeeded(for page: PageID, scale: CGFloat) {
-        guard case .ready(let content) = states[page], (content.composite?.scale ?? 0) < scale else { return }
-        rerenderComposite(of: page, scale: scale)
-    }
 
     // MARK: Layers
 

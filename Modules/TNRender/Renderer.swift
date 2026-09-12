@@ -117,7 +117,7 @@ package actor Renderer {
         let scale = Self.cappedScale(for: geometry, requested: requested)
         let width = Int((geometry.width * scale).rounded(.up)), height = Int((geometry.height * scale).rounded(.up))
         guard let image = await compose(geometry: geometry, paper: paper, layers: layers, scale: scale, width: width, height: height) else { return nil }
-        return Composite(image: image, scale: scale)
+        return Composite(image: image)
     }
 
     /// Paper and layers into one bitmap of exactly `width` by `height`
@@ -179,16 +179,15 @@ package actor Renderer {
         let pageRect = CGRect(x: 0, y: 0, width: geometry.width, height: geometry.height)
         let inkImage = await Self.rasterize(ink, in: pageRect, scale: scale)
         if Task.isCancelled { return nil }
-        guard let image = Self.overlay(inkImage?.image, on: composite) else { return nil }
+        guard let image = Self.overlay(inkImage, on: composite) else { return nil }
         thumbnails.insert(image, for: key)
         return image
     }
 
     /// PencilKit rasterizes the ink on the generic executor, in the caller's
     /// task: a thumbnail is droppable work, so it must inherit cancellation.
-    private nonisolated static func rasterize(_ ink: PKDrawing, in rect: CGRect, scale: CGFloat) async -> Composite? {
-        guard let image = ink.image(from: rect, scale: scale).cgImage else { return nil }
-        return Composite(image: image, scale: scale)
+    private nonisolated static func rasterize(_ ink: PKDrawing, in rect: CGRect, scale: CGFloat) async -> CGImage? {
+        ink.image(from: rect, scale: scale).cgImage
     }
 
     /// The page's paper. An asset fills the page rectangle exactly: the
@@ -245,11 +244,10 @@ package actor Renderer {
         let pageRect = CGRect(x: 0, y: 0, width: geometry.width, height: geometry.height)
         // PencilKit rasterizes the ink itself, off this actor and off the
         // main one: a flatten is an intention, never a frame.
-        let inkImage = await Task.detached(priority: .userInitiated) { () -> Composite? in
-            guard let image = ink.image(from: pageRect, scale: scale).cgImage else { return nil }
-            return Composite(image: image, scale: scale)
+        let inkImage = await Task.detached(priority: .userInitiated) { () -> CGImage? in
+            ink.image(from: pageRect, scale: scale).cgImage
         }.value
-        guard let image = Self.overlay(inkImage?.image, on: composite.image) else { return nil }
+        guard let image = Self.overlay(inkImage, on: composite.image) else { return nil }
         return Self.heic(image)
     }
 

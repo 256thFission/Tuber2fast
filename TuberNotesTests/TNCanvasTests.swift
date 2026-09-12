@@ -292,7 +292,7 @@ struct TNCanvasTests {
         canvas.canvasViewDidBeginUsingTool(canvas.canvasView)
 
         let box = textLayer("hi", x: 100, y: 100)
-        let composite = Composite(image: try solidImage(), scale: 2)
+        let composite = Composite(image: try solidImage())
         runtime.restoreInk(on: pages[0].id, strokeDrawing(strokes: 2), seq: InkSeq(7))
         runtime.updateComposite(on: pages[0].id, composite, layers: [box])
         #expect(canvas.canvasView.drawing.strokes.isEmpty, "the canvas is not touched under the stroke")
@@ -329,8 +329,8 @@ struct TNCanvasTests {
         a.canvasViewDidBeginUsingTool(a.canvasView)
 
         let box = textLayer("hi", x: 100, y: 100)
-        let compositeB = Composite(image: try solidImage(), scale: 2)
-        let compositeA = Composite(image: try solidImage(), scale: 2)
+        let compositeB = Composite(image: try solidImage())
+        let compositeA = Composite(image: try solidImage())
         runtime.updateComposite(on: pages[1].id, compositeB, layers: [box])
         runtime.restoreInk(on: pages[1].id, strokeDrawing(strokes: 3), seq: InkSeq(7))
         runtime.updateComposite(on: pages[0].id, compositeA, layers: [])
