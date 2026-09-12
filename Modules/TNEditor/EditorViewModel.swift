@@ -303,6 +303,17 @@ package final class EditorViewModel {
         if let created { binding.surface.scroll(to: created) }
     }
 
+    /// A copy of `page`, straight after it, and the reader is taken to it.
+    /// The notebook reads an unloaded source from its files, so a cell in the
+    /// navigator can be duplicated without being visited first.
+    package func duplicatePage(_ page: PageID) async {
+        lastContentError = nil
+        var created: PageID?
+        do { created = try await notebook.duplicatePage(page) } catch { lastContentError = error }
+        binding.drain()
+        if let created { binding.surface.scroll(to: created) }
+    }
+
     /// The only page cannot be deleted; the notebook refuses it, silently,
     /// because a notebook with no pages has no state to return to.
     package func deletePage(_ page: PageID) {

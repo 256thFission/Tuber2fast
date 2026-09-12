@@ -106,6 +106,11 @@ struct PageNavigatorSheet: View {
             } label: {
                 Label(Self.addAfterLabel, systemImage: "plus.rectangle.portrait")
             }
+            Button {
+                Task { await editor.duplicatePage(page.id) }
+            } label: {
+                Label("Duplicate page", systemImage: "plus.square.on.square")
+            }
             Button(role: .destructive) {
                 pageToDelete = page.id
             } label: {

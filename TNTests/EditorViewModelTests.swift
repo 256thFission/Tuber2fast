@@ -213,6 +213,28 @@ struct EditorViewModelContentTests {
         _ = await notebook.close()
     }
 
+    @Test("Duplicating a page pushes the new order, its content, and takes the reader to it")
+    func duplicatingAPagePushesAndScrolls() async throws {
+        let (scratch, notebook, surface, editor) = try await loaded("vm-duplicate")
+        let source = notebook.pageIDs[0]
+        notebook.inkChanged(on: source, Ink.drawing(strokes: 1), echoOf: nil)
+
+        await editor.duplicatePage(source)
+
+        #expect(editor.lastContentError == nil)
+        let copy = try #require(notebook.pageIDs.last)
+        #expect(notebook.pageIDs == [source, copy])
+
+        let order = try #require(surface.calls.lastIndex { if case .setPages(let ids, _, _) = $0 { ids == [source, copy] } else { false } })
+        let installed = try #require(surface.calls.lastIndex(of: .installContent(copy, editable: true)))
+        let scroll = try #require(surface.calls.lastIndex(of: .scroll(copy)))
+        #expect(order < installed)
+        #expect(installed < scroll)
+
+        withExtendedLifetime(scratch) {}
+        _ = await notebook.close()
+    }
+
     @Test("A page with ink refuses a photo as its paper, and nothing is written")
     func photoIsRefusedOnAPageWithInk() async throws {
         let (scratch, notebook, _, editor) = try await loaded("vm-paper-photo-refused")

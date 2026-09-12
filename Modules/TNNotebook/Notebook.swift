@@ -431,7 +431,7 @@ package final class Notebook {
         // to, whose geometry it set.
         let inherited = template.paper.paper?.drawn ?? .blank
         let paper = Paper.drawn(inherited == .none ? .blank : inherited)
-        return insertPage(after: after, geometry: template.geometry, paper: paper, answering: answering)
+        return insertPage(after: after, geometry: template.geometry, paper: paper, content: .empty, answering: answering)
     }
 
     /// A new page after `after` (or at the end), at a stated size and with a
@@ -469,12 +469,13 @@ package final class Notebook {
             sized = measured
             resolved = asset
         }
-        return insertPage(after: after, geometry: sized, paper: resolved, answering: nil)
+        return insertPage(after: after, geometry: sized, paper: resolved, content: .empty, answering: nil)
     }
 
     /// The one place a page is inserted, so anything every new page must do
-    /// is written once.
-    private func insertPage(after: PageID?, geometry: PageGeometry, paper: Paper, answering: ReportSeq?) -> PageID {
+    /// is written once. `content` is what the page starts with: empty for
+    /// every caller but a duplicate, which starts with the source's.
+    private func insertPage(after: PageID?, geometry: PageGeometry, paper: Paper, content: PageContent, answering: ReportSeq?) -> PageID {
         let record = PageRecord(id: PageID(), geometry: geometry, paper: paper)
         var pages = index.pages
         if let after, let position = pages.firstIndex(where: { $0.id == after }) {
@@ -483,7 +484,9 @@ package final class Notebook {
             pages.append(record)
         }
         index = index.withPages(pages)
-        var content = PageContent(ink: PKDrawing(), layers: [], hasInk: false, inkIndex: 0)
+        var content = content
+        // A page that has just been inserted owes the disk its page file
+        // whatever is on it.
         content.edited()
         states[record.id] = .ready(content)
         wanted.insert(record.id)
@@ -519,6 +522,55 @@ package final class Notebook {
         indexSeq += 1
         emitStructure(answering: nil)
         markDirty()
+    }
+
+    /// A new page straight after `source`: the same geometry and paper, the
+    /// same ink, and the same layers under new identities, naming the same
+    /// assets.
+    ///
+    /// Navigation, like every other insert: it records nothing, so the undo
+    /// stack is where it was. The layers are given new `LayerID`s because a
+    /// layer file is one file per id — sharing them would make a transform on
+    /// either page rewrite the file for both — while the assets are shared by
+    /// name, which is safe because an asset is immutable and `compact()`
+    /// keeps any a reachable layer names.
+    ///
+    /// A source that is not loaded is read from its files, so every cell in
+    /// the navigator can be duplicated and not only the two or three the
+    /// window happens to hold. A source with a text box open is refused: the
+    /// typing is not in the revision yet.
+    @discardableResult
+    package func duplicatePage(_ source: PageID) async throws(FormatFault) -> PageID {
+        guard let record = index.record(of: source) else { throw .invalidWrite("no such page \(source)") }
+        // Paper this build does not know is refused rather than copied as
+        // blank: a duplicate that quietly loses the paper is worse than one
+        // that did not happen.
+        guard let paper = record.paper.paper else {
+            throw .invalidWrite("page \(source) has paper this build does not know")
+        }
+        let copied: PageContent
+        switch states[source] {
+        case .ready(let content):
+            guard content.textEditing == nil else { throw .invalidWrite("page \(source) has a text box open") }
+            copied = content
+        case .unloaded, .loading:
+            guard let read = await unloadedContent(of: source) else {
+                throw .invalidWrite("page \(source) could not be read")
+            }
+            copied = read
+        case .unreadable(let faults):
+            throw .invalidWrite("page \(source) is unreadable: \(faults)")
+        case nil:
+            throw .invalidWrite("no such page \(source)")
+        }
+
+        let layers = copied.layers.map { Layer(id: LayerID(), transform: $0.transform, payload: $0.payload) }
+        var content = PageContent(ink: copied.ink, layers: layers, hasInk: false, inkIndex: copied.inkIndex)
+        content.pendingLayerFiles = Set(layers.map(\.id))
+        // `setInk` rather than the initializer's flag, so the durable flag and
+        // the ink sequence agree and the first save writes the container.
+        if copied.hasInk { content.setInk(copied.ink) }
+        return insertPage(after: source, geometry: record.geometry, paper: paper, content: content, answering: nil)
     }
 
     package func movePage(_ page: PageID, before target: PageID?) {
@@ -585,15 +637,24 @@ package final class Notebook {
         case .ready(let content):
             return await renderer.thumbnail(key, geometry: record.geometry, paper: record.paper.paper, layers: content.layers, ink: content.ink)
         case .unloaded:
-            if Task.isCancelled { return nil }
-            guard let bytes = try? await store.loadPage(page) else { return nil }
-            if Task.isCancelled { return nil }
-            guard case .ready(let content) = await Self.decode(bytes) else { return nil }
-            let revision = pendingRestores[page] ?? content.revision
-            return await renderer.thumbnail(key, geometry: record.geometry, paper: record.paper.paper, layers: revision.layers, ink: revision.ink)
+            guard let content = await unloadedContent(of: page) else { return nil }
+            return await renderer.thumbnail(key, geometry: record.geometry, paper: record.paper.paper, layers: content.layers, ink: content.ink)
         case .loading, .unreadable, nil:
             return nil
         }
+    }
+
+    /// A page decoded from its own files and installed nowhere, with any
+    /// pending restore adopted: the revision the page *will* have, which is
+    /// what a picture of it and a copy of it both want. Nothing is installed
+    /// and nothing is marked dirty, so the state stays what it was.
+    private func unloadedContent(of page: PageID) async -> PageContent? {
+        if Task.isCancelled { return nil }
+        guard let bytes = try? await store.loadPage(page) else { return nil }
+        if Task.isCancelled { return nil }
+        guard case .ready(var content) = await Self.decode(bytes) else { return nil }
+        if let pending = pendingRestores[page] { _ = content.adopt(pending) }
+        return content
     }
 
     // MARK: Composites

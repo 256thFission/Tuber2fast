@@ -90,6 +90,12 @@ package struct PageContent: Sendable {
         editSeq += 1
     }
 
+    /// A page with nothing on it. The state every new page but a duplicate
+    /// starts in.
+    package static var empty: PageContent {
+        PageContent(ink: PKDrawing(), layers: [], hasInk: false, inkIndex: 0)
+    }
+
     package var revision: PageRevision {
         PageRevision(ink: ink, layers: layers, inkIndex: inkIndex)
     }
