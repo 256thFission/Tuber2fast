@@ -353,6 +353,11 @@ package actor LibraryStore {
         guard folder.isEmpty || self.kind(at: parent) == .folder else { throw .notAFolder(folder) }
         if kind == .folder, folder == relativePath || folder.hasPrefix(relativePath + "/") { throw .destinationInsideSource }
         let target = parent.appendingPathComponent(source.lastPathComponent, isDirectory: true)
+        // Into the folder it is already in is nothing happening, not a
+        // collision with itself. `rename` carries the same line, and every
+        // caller — the picker, whose "Move here" confirms the level showing,
+        // and a drop on the cell's own parent — reaches this the same way.
+        guard target != source else { return item(at: relativePath, url: source, kind: kind) }
         guard self.kind(at: target) == nil else { throw .alreadyExists(source.lastPathComponent) }
         do { try fm.moveItem(at: source, to: target) } catch { throw .io("move \(relativePath): \(error)") }
         let path = folder.isEmpty ? source.lastPathComponent : "\(folder)/\(source.lastPathComponent)"

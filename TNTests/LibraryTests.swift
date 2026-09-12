@@ -34,6 +34,25 @@ struct LibraryTests {
         #expect(await library.store.folderID(of: "Math") != nil)
     }
 
+    @Test("A move into the current parent returns the item and moves no files")
+    func movingIntoTheCurrentParent() async throws {
+        let (scratch, library) = try makeLibrary("lib-move-nowhere")
+        defer { withExtendedLifetime(scratch) {} }
+        _ = try await library.store.createFolder(named: "Drafts", in: "")
+        let item = try await library.store.createNotebook(named: "Essay", in: "Drafts")
+        let before = try await library.store.list(folder: "Drafts")
+
+        let stayed = try await library.move(at: item.relativePath, toFolder: "Drafts")
+        #expect(stayed.relativePath == item.relativePath)
+        #expect(try await library.store.list(folder: "Drafts") == before)
+
+        // And at the root, where the parent path is the empty string.
+        let loose = try await library.store.createNotebook(named: "Loose", in: "")
+        let alsoStayed = try await library.move(at: loose.relativePath, toFolder: "")
+        #expect(alsoStayed.relativePath == loose.relativePath)
+        #expect(try await library.store.list(folder: "").map(\.name) == ["Drafts", "Loose"])
+    }
+
     @Test("The tree lists everything under a folder, depth first, by full path")
     func listingTheTree() async throws {
         let (scratch, library) = try makeLibrary("lib-tree-walk")

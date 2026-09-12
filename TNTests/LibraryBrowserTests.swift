@@ -169,6 +169,19 @@ struct LibraryBrowserTests {
         #expect(try await browser.library.store.list(folder: "Done").map(\.name) == ["One", "Two"])
     }
 
+    @Test("Moving an item into the folder it is already in is a no-op, not a refusal")
+    func movingIntoTheCurrentParent() async throws {
+        let (scratch, browser) = try makeBrowser("browser-move-noop")
+        defer { withExtendedLifetime(scratch) {} }
+        _ = try await browser.library.store.createFolder(named: "Done", in: "")
+        _ = try await browser.library.store.createNotebook(named: "One", in: "Done")
+        await browser.reload()
+
+        await browser.move(["Done/One.tubernotes"], toFolder: "Done")
+        #expect(browser.refusal == nil)
+        #expect(try await browser.library.store.list(folder: "Done").map(\.name) == ["One"])
+    }
+
     @Test("A refused mutation says so and leaves the listing standing")
     func aRefusalLands() async throws {
         let (scratch, browser) = try makeBrowser("browser-refusal")
