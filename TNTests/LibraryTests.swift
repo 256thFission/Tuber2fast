@@ -34,6 +34,32 @@ struct LibraryTests {
         #expect(await library.store.folderID(of: "Math") != nil)
     }
 
+    @Test("The tree lists everything under a folder, depth first, by full path")
+    func listingTheTree() async throws {
+        let (scratch, library) = try makeLibrary("lib-tree-walk")
+        defer { withExtendedLifetime(scratch) {} }
+        _ = try await library.store.createFolder(named: "Term", in: "")
+        _ = try await library.store.createFolder(named: "Week 1", in: "Term")
+        _ = try await library.store.createNotebook(named: "Deep", in: "Term/Week 1")
+        _ = try await library.store.createNotebook(named: "Loose", in: "")
+
+        let whole = try await library.store.listTree(under: "")
+        #expect(whole.map(\.relativePath) == [
+            "Loose.tubernotes",
+            "Term",
+            "Term/Week 1",
+            "Term/Week 1/Deep.tubernotes",
+        ])
+        #expect(whole.last?.parentPath == "Term/Week 1")
+        #expect(whole.first?.parentPath == "")
+
+        // Under a folder, the root's other items are not in it.
+        #expect(try await library.store.listTree(under: "Term").map(\.relativePath) == [
+            "Term/Week 1",
+            "Term/Week 1/Deep.tubernotes",
+        ])
+    }
+
     @Test("Checkout is exclusive: a second checkout says alreadyOpen, mutations refuse, release lifts both")
     func ledger() async throws {
         let (scratch, library) = try makeLibrary("lib-ledger")

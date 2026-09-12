@@ -43,6 +43,14 @@ package struct LibraryItem: Sendable, Equatable, Identifiable {
 
     package var relativePath: String { id }
 
+    /// The folder this item sits in, empty at the root. Derived from the
+    /// path rather than stored, because the path *is* the identity: a
+    /// second copy could only disagree with it.
+    package var parentPath: String {
+        let parts = id.split(separator: "/")
+        return parts.dropLast().joined(separator: "/")
+    }
+
     /// Nil when the sidecar that holds the identity is unreadable.
     package var identity: ItemIdentity? {
         if let notebookID { return .notebook(notebookID) }
@@ -250,6 +258,24 @@ package actor LibraryStore {
             let childPath = relativePath.isEmpty ? name : "\(relativePath)/\(name)"
             return item(at: childPath, url: child, kind: kind)
         }
+    }
+
+    /// Every item under `folder`, depth first, with full paths: a folder,
+    /// then everything inside it, then the next. What a search over the whole
+    /// library reads.
+    ///
+    /// Its own walk, done once per search. The store keeps no tree: a cached
+    /// one would be a second copy of the file system, and the file system is
+    /// the authority.
+    package func listTree(under folder: String) throws(LibraryError) -> [LibraryItem] {
+        var found: [LibraryItem] = []
+        for item in try list(folder: folder) {
+            found.append(item)
+            if item.kind == .folder {
+                found.append(contentsOf: try listTree(under: item.relativePath))
+            }
+        }
+        return found
     }
 
     /// The folders directly inside `relativePath`, for a destination picker.

@@ -2,6 +2,14 @@ import CoreGraphics
 import SwiftUI
 import TNLibrary
 
+/// Where an item lives, shown only while a search is running: a search
+/// lists the whole library, and a bare name does not say which folder it
+/// came from. Nil at the root, where there is nothing to say.
+@MainActor private func parentWhileSearching(_ item: LibraryItem, _ browser: LibraryBrowser) -> String? {
+    guard !browser.searchText.isEmpty, !item.parentPath.isEmpty else { return nil }
+    return item.parentPath
+}
+
 /// One grid cell: the cover or the folder glyph, the star on it, the name
 /// with the chevron menu beside it, the date beneath. The menu is passed in
 /// because the actions it offers need the browser's sheets and alerts, which
@@ -45,6 +53,14 @@ struct LibraryGridCell<MenuContent: View>: View {
             Text(LibraryStyle.itemDate.string(from: item.modifiedAt))
                 .font(.caption)
                 .foregroundStyle(.secondary)
+
+            if let parent = parentWhileSearching(item, browser) {
+                Text(parent)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                    .truncationMode(.head)
+            }
         }
         .contentShape(.rect)
         .contextMenu { menu() }
@@ -101,6 +117,14 @@ struct LibraryListRow<MenuContent: View>: View {
                 Text(LibraryStyle.itemDate.string(from: item.modifiedAt))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+
+                if let parent = parentWhileSearching(item, browser) {
+                    Text(parent)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                        .truncationMode(.head)
+                }
             }
 
             Spacer(minLength: 0)

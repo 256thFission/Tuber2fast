@@ -38,7 +38,10 @@ struct LibraryView: View {
         }
         // The lock badge depends on what is checked out, so a tab opening or
         // closing reloads the listing as much as a folder change does.
-        .task(id: "\(browser.section)|\(browser.folder)|\(workspace.tabs.count)") {
+        // Whether a search is running, not the text: the tree is read once
+        // when the search starts and once when it ends, and `displayed`
+        // narrows it per keystroke without touching the disk.
+        .task(id: "\(browser.section)|\(browser.folder)|\(workspace.tabs.count)|\(browser.searchText.isEmpty)") {
             await browser.reload()
         }
         .onChange(of: browser.refusal) { _, refusal in

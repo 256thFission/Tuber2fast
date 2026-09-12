@@ -54,6 +54,35 @@ struct LibraryBrowserTests {
         #expect(browser.searchText.isEmpty)
     }
 
+    @Test("A search reads the whole library, wherever the reader is standing")
+    func searchingTheWholeTree() async throws {
+        let (scratch, browser) = try makeBrowser("browser-search-tree")
+        defer { withExtendedLifetime(scratch) {} }
+        _ = try await browser.library.store.createFolder(named: "Term", in: "")
+        _ = try await browser.library.store.createFolder(named: "Week 1", in: "Term")
+        _ = try await browser.library.store.createNotebook(named: "Deep", in: "Term/Week 1")
+        _ = try await browser.library.store.createNotebook(named: "Essay", in: "")
+
+        // From the root.
+        browser.searchText = "deep"
+        await browser.reload()
+        #expect(browser.displayed.map(\.name) == ["Deep"])
+        #expect(browser.displayed.first?.parentPath == "Term/Week 1")
+
+        // And from a folder that does not contain it.
+        browser.searchText = ""
+        await browser.reload()
+        browser.enter(try #require(browser.displayed.first { $0.name == "Term" }))
+        browser.searchText = "deep"
+        await browser.reload()
+        #expect(browser.displayed.map(\.name) == ["Deep"])
+
+        // Clearing it puts the folder's own listing back.
+        browser.searchText = ""
+        await browser.reload()
+        #expect(browser.displayed.map(\.name) == ["Week 1"])
+    }
+
     @Test("Entering and leaving a folder walks the path")
     func walkingTheTree() async throws {
         let (scratch, browser) = try makeBrowser("browser-walk")
