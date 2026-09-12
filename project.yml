@@ -217,6 +217,13 @@ targets:
         # picture and has no reason for the photo library. A consequence of
         # exporting a page as a PNG, not a feature of its own.
         INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription: Saves the exported page to your photo library.
+        # Take Photo and Scan Document: iOS terminates an app that presents a
+        # camera controller with no reason for the camera, and nothing in this
+        # suite presents a view controller, so CI cannot catch its absence.
+        # One string covers both legs — the camera is opened by
+        # UIImagePickerController for a photo and by
+        # VNDocumentCameraViewController for a scan.
+        INFOPLIST_KEY_NSCameraUsageDescription: Takes a photo or scans a document straight into your notes.
         GENERATE_INFOPLIST_FILE: YES
         ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS: NO
 
