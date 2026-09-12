@@ -269,7 +269,7 @@ package actor Renderer {
         let inkImage = await Task.detached(priority: .userInitiated) { () -> CGImage? in
             ink.image(from: pageRect, scale: scale).cgImage
         }.value
-        guard let image = Self.overlay(inkImage?.image, on: composite.image) else { return nil }
+        guard let image = Self.overlay(inkImage, on: composite.image) else { return nil }
         return Self.encode(image, as: type)
     }
 
@@ -334,7 +334,7 @@ package actor Renderer {
             // Page space: origin top-left, y down, in points.
             context.translateBy(x: 0, y: geometry.height)
             context.scaleBy(x: 1, y: -1)
-            await drawPage(geometry: geometry, paper: source.paper, layers: source.layers, ink: inkImage?.image, in: context)
+            await drawPage(geometry: geometry, paper: source.paper, layers: source.layers, ink: inkImage, in: context)
             context.endPage()
         }
         if Task.isCancelled { return nil }
