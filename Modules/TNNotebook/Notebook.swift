@@ -756,6 +756,17 @@ package final class Notebook {
     /// sized to its source extent with that PDF page as its paper. The asset
     /// is written once. No layer: the `pdf` layer kind is for a clipping
     /// placed on a page, not for a page that *is* the PDF.
+    ///
+    /// KNOWN DEFECT: a throw here abandons the pages it already made. The
+    /// `throw` for a page outside the bounds goes straight past the
+    /// `emitStructure`, the `emitContent`s and the `markDirty` below, so those
+    /// pages sit in the index with no one having told the canvas about them
+    /// and no save scheduled — the canvas shows the old page list until
+    /// something else restates it, and the notebook believes it is clean.
+    /// `importScan` below does the same job and does not have this defect: it
+    /// publishes what it made on the way out of every exit including a throw.
+    /// Not fixed here because this change touches no existing method, and the
+    /// fix wants a test of its own.
     package func importPDF(_ data: Data) async throws(FormatFault) {
         guard let source = PDFSource(data: data), source.pageCount > 0 else { throw .invalidWrite("PDF could not be opened") }
         let asset = AssetRef(id: AssetID(), format: .pdf)
@@ -786,6 +797,94 @@ package final class Notebook {
             rerenderComposite(of: page)
         }
         markDirty()
+    }
+
+    /// One new page per scanned page, after the current page and in scan
+    /// order, each keeping the current page's width and taking the scan's
+    /// aspect the way `appendPage` measures asset paper. Returns what it made.
+    ///
+    /// Here rather than in `TNEditor` because page order is the notebook's
+    /// (`Docs/Contract.md`, Custody), and in `importPDF`'s shape: one
+    /// `emitStructure` and one `markDirty` for the run, not the per-page storm
+    /// N calls to `appendPage` would kick, each of which ends in `insertPage`
+    /// and restates the whole page list to the canvas.
+    ///
+    /// `after` is threaded locally and re-checked against `index.pageIDs`
+    /// after every await, which `importPDF` need not do: its loop body has no
+    /// await and this one suspends twice per page, at `storeImageAsset` and at
+    /// `renderer.aspect`. If the page `after` names is deleted across a
+    /// suspension, `insertPage`'s `pages.append` would answer with the end of
+    /// the notebook, a default the contract forbids, so the run stops instead.
+    ///
+    /// A page that cannot be stored or measured, or an `after` that is gone,
+    /// stops the run, and what was made is emitted and marked dirty before the
+    /// error is thrown. `importPDF` above does not do that; the block on it
+    /// says so.
+    package func importScan(_ images: [Data]) async throws(FormatFault) -> [PageID] {
+        guard !images.isEmpty else { return [] }
+        // The width is the current page's, read once: every page of one scan
+        // is the same width, whatever the reader does while it runs.
+        guard let template = index.record(of: currentPageID) else {
+            throw .invalidWrite("no current page to scan after")
+        }
+        let width = template.geometry.width
+        var after = currentPageID
+        var created: [PageID] = []
+
+        /// What the run owes the canvas and the store for the pages it made,
+        /// on the way out of every exit including a throw.
+        func publish() {
+            guard !created.isEmpty else { return }
+            indexSeq += 1
+            emitStructure(answering: nil)
+            for page in created {
+                emitContent(page)
+                rerenderComposite(of: page)
+            }
+            markDirty()
+        }
+
+        for (offset, data) in images.enumerated() {
+            let number = offset + 1
+            let asset: AssetRef
+            do {
+                asset = try await storeImageAsset(data)
+            } catch {
+                publish()
+                throw .invalidWrite("scanned page \(number) could not be stored: \(error.description)")
+            }
+            guard index.pageIDs.contains(after) else {
+                publish()
+                throw .invalidWrite("the page scanned page \(number) would follow is gone")
+            }
+            guard let aspect = await renderer.aspect(of: .image(asset)) else {
+                publish()
+                throw .invalidWrite("scanned page \(number) could not be measured")
+            }
+            guard index.pageIDs.contains(after) else {
+                publish()
+                throw .invalidWrite("the page scanned page \(number) would follow is gone")
+            }
+            let geometry = PageGeometry(width: width, height: width * aspect)
+            guard geometry.isWithinBounds else {
+                publish()
+                throw .invalidWrite("scanned page \(number) is outside the page bounds")
+            }
+            let record = PageRecord(id: PageID(), geometry: geometry, paper: .image(asset))
+            var pages = index.pages
+            let position = pages.firstIndex { $0.id == after }.map { $0 + 1 } ?? pages.count
+            pages.insert(record, at: position)
+            index = index.withPages(pages)
+            var content = PageContent(ink: PKDrawing(), layers: [], hasInk: false, inkIndex: 0)
+            content.edited()
+            states[record.id] = .ready(content)
+            wanted.insert(record.id)
+            bumpContentVersion(of: record.id)
+            created.append(record.id)
+            after = record.id
+        }
+        publish()
+        return created
     }
 
     /// A photo normalized to HEIC and published as an asset, ready to be a
