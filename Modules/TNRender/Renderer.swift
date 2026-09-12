@@ -128,13 +128,30 @@ package actor Renderer {
         // Page space: origin top-left, y down.
         context.translateBy(x: 0, y: CGFloat(height))
         context.scaleBy(x: scale, y: -scale)
+        await drawPage(geometry: geometry, paper: paper, layers: layers, ink: nil, in: context)
+        return context.makeImage()
+    }
+
+    /// One page into a context already in page space: the white ground, the
+    /// paper, every layer, and an ink raster if there is one. The one draw
+    /// path, so a composite and an exported page cannot disagree — a
+    /// composite passes no ink because the live canvas draws it, and an
+    /// export passes the raster because a PDF page has no canvas over it.
+    private func drawPage(geometry: PageGeometry, paper: Paper?, layers: [Layer], ink: CGImage?, in context: CGContext) async {
+        let pageRect = CGRect(x: 0, y: 0, width: geometry.width, height: geometry.height)
         context.setFillColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1))
-        context.fill(CGRect(x: 0, y: 0, width: geometry.width, height: geometry.height))
+        context.fill(pageRect)
         await draw(paper ?? .drawn(.blank), geometry: geometry, in: context)
         for layer in layers {
             await draw(layer, in: context)
         }
-        return context.makeImage()
+        guard let ink else { return }
+        context.saveGState()
+        // CGImage draws y-up; flip within the page rectangle, as asset paper does.
+        context.translateBy(x: 0, y: geometry.height)
+        context.scaleBy(x: 1, y: -1)
+        context.draw(ink, in: pageRect)
+        context.restoreGState()
     }
 
     private static func bitmap(width: Int, height: Int) -> CGContext? {
@@ -236,10 +253,15 @@ package actor Renderer {
         }
     }
 
-    /// A page's composite and its ink as one HEIC at asset resolution: the
+    /// A page's composite and its ink as one image at asset resolution: the
     /// long edge at `maximumLongEdgePixels`, which is what a flattened page
     /// becomes as paper. The page it renders is not changed.
-    package func flattened(geometry: PageGeometry, paper: Paper?, layers: [Layer], ink: PKDrawing) async -> Data? {
+    ///
+    /// `type` is a UTI: `"public.heic"` for a flatten, which becomes an
+    /// asset in the package, and `"public.png"` for a page exported as an
+    /// image, which leaves the device lossless. One function, because the
+    /// pixels are the same and only the encoder differs.
+    package func flattened(geometry: PageGeometry, paper: Paper?, layers: [Layer], ink: PKDrawing, as type: CFString) async -> Data? {
         let scale = Self.cappedScale(for: geometry, requested: .greatestFiniteMagnitude)
         guard let composite = await composite(geometry: geometry, paper: paper, layers: layers, scale: scale) else { return nil }
         let pageRect = CGRect(x: 0, y: 0, width: geometry.width, height: geometry.height)
@@ -250,14 +272,68 @@ package actor Renderer {
             return Composite(image: image, scale: scale)
         }.value
         guard let image = Self.overlay(inkImage?.image, on: composite.image) else { return nil }
-        return Self.heic(image)
+        return Self.encode(image, as: type)
     }
 
-    private static func heic(_ image: CGImage) -> Data? {
+    /// The quality key is set for every type and read only by the lossy
+    /// ones: PNG ignores it, HEIC uses it.
+    private static func encode(_ image: CGImage, as type: CFString) -> Data? {
         let output = NSMutableData()
-        guard let destination = CGImageDestinationCreateWithData(output, "public.heic" as CFString, 1, nil) else { return nil }
+        guard let destination = CGImageDestinationCreateWithData(output, type, 1, nil) else { return nil }
         CGImageDestinationAddImage(destination, image, [kCGImageDestinationLossyCompressionQuality: 0.9] as CFDictionary)
         guard CGImageDestinationFinalize(destination) else { return nil }
+        return output as Data
+    }
+
+    // MARK: Export
+
+    /// One PDF of `pageCount` pages, each asked for in turn and drawn by the
+    /// code a composite is drawn by: paper, text, and an imported PDF page
+    /// are vector, the ink is a raster at the flatten scale. Pages are
+    /// indexed from zero, as every index here is.
+    ///
+    /// The document and its data are locals, so there is no export state on
+    /// this actor: it is reentrant at every `await page(n)`, and composites
+    /// for the live canvas are served between pages. A page the source
+    /// cannot give, or a cancellation between pages, returns nil — an export
+    /// with a hole in it is worse than no export.
+    ///
+    /// Measured: one US Letter page carrying 300 strokes is 161 KB, so two
+    /// hundred such pages are about 32 MB in one `Data` — inside an iPad's
+    /// foreground budget, which is why the document is built in memory and
+    /// no file is written. The ink raster is 2164 by 2800 pixels while the
+    /// page is drawn, 24 MB, and is dropped with the page; the PDF's image
+    /// stream is Flate-compressed and a handwriting page is almost entirely
+    /// transparent. `RendererExportTests.aPageCostsWhatTheDocCommentSays`
+    /// holds the number.
+    package func pdf(
+        pageCount: Int,
+        page: @MainActor (Int) async -> (geometry: PageGeometry, paper: Paper?, layers: [Layer], ink: PKDrawing)?
+    ) async -> Data? {
+        guard pageCount > 0 else { return nil }
+        let output = NSMutableData()
+        guard let consumer = CGDataConsumer(data: output) else { return nil }
+        // The document's own box; each page names its own below, so this one
+        // only has to be valid.
+        var documentBox = CGRect(x: 0, y: 0, width: PageGeometry.letter.width, height: PageGeometry.letter.height)
+        guard let context = CGContext(consumer: consumer, mediaBox: &documentBox, nil) else { return nil }
+        for index in 0..<pageCount {
+            if Task.isCancelled { return nil }
+            guard let source = await page(index) else { return nil }
+            let geometry = source.geometry
+            var box = CGRect(x: 0, y: 0, width: geometry.width, height: geometry.height)
+            let scale = Self.cappedScale(for: geometry, requested: .greatestFiniteMagnitude)
+            let inkImage = await Self.rasterize(source.ink, in: box, scale: scale)
+            if Task.isCancelled { return nil }
+            context.beginPage(mediaBox: &box)
+            // Page space: origin top-left, y down, in points.
+            context.translateBy(x: 0, y: geometry.height)
+            context.scaleBy(x: 1, y: -1)
+            await drawPage(geometry: geometry, paper: source.paper, layers: source.layers, ink: inkImage?.image, in: context)
+            context.endPage()
+        }
+        if Task.isCancelled { return nil }
+        context.closePDF()
         return output as Data
     }
 

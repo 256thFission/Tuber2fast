@@ -581,19 +581,30 @@ package final class Notebook {
         guard let record = index.record(of: page) else { return nil }
         let key = ThumbnailKey(page: page, version: contentVersion(of: page))
         if let cached = await renderer.cachedThumbnail(key) { return cached }
-        switch states[page] {
-        case .ready(let content):
-            return await renderer.thumbnail(key, geometry: record.geometry, paper: record.paper.paper, layers: content.layers, ink: content.ink)
-        case .unloaded:
-            if Task.isCancelled { return nil }
-            guard let bytes = try? await store.loadPage(page) else { return nil }
-            if Task.isCancelled { return nil }
-            guard case .ready(let content) = await Self.decode(bytes) else { return nil }
-            let revision = pendingRestores[page] ?? content.revision
-            return await renderer.thumbnail(key, geometry: record.geometry, paper: record.paper.paper, layers: revision.layers, ink: revision.ink)
-        case .loading, .unreadable, nil:
-            return nil
-        }
+        if case .loading = states[page] { return nil }
+        guard let revision = await revision(of: page) else { return nil }
+        return await renderer.thumbnail(key, geometry: record.geometry, paper: record.paper.paper, layers: revision.layers, ink: revision.ink)
+    }
+
+    /// What a page holds right now, whether or not it is loaded, for a render
+    /// that must not disturb it. A ready page answers from custody, unsaved
+    /// ink included. Any other page is read from its files and decoded in the
+    /// caller's task, so a cancelled render stops mid-decode; nothing is
+    /// installed, nothing is marked dirty, and the state does not move. A
+    /// pending restore is preferred over the ink on disk, because it is the
+    /// ink the page will have. A page with no record, or one whose files do
+    /// not decode, is nil.
+    ///
+    /// A drawing decoded here and dropped when the render ends is not a
+    /// second copy of the ink: nothing keeps it.
+    package func revision(of page: PageID) async -> PageRevision? {
+        guard index.record(of: page) != nil else { return nil }
+        if case .ready(let content) = states[page] { return content.revision }
+        if Task.isCancelled { return nil }
+        guard let bytes = try? await store.loadPage(page) else { return nil }
+        if Task.isCancelled { return nil }
+        guard case .ready(let content) = await Self.decode(bytes) else { return nil }
+        return pendingRestores[page] ?? content.revision
     }
 
     // MARK: Composites
@@ -743,7 +754,7 @@ package final class Notebook {
         guard let record = index.record(of: page) else { throw .invalidWrite("no such page") }
         guard case .ready(let content) = states[page] else { throw .invalidWrite("page \(page) is not ready") }
         guard let heic = await renderer.flattened(
-            geometry: record.geometry, paper: record.paper.paper, layers: content.layers, ink: content.ink
+            geometry: record.geometry, paper: record.paper.paper, layers: content.layers, ink: content.ink, as: "public.heic" as CFString
         ) else { throw .invalidWrite("page \(page) could not be flattened") }
         let asset = AssetRef(id: AssetID(), format: .heic)
         try await store.writeAsset(heic, asset)
