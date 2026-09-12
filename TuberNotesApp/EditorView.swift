@@ -15,6 +15,7 @@ struct EditorView: View {
     let editor: EditorViewModel
 
     @State private var isPickingPhoto = false
+    @State private var isTakingPhoto = false
     @State private var photoDestination = PhotoDestination.layerOnCurrentPage
     @State private var photoItem: PhotosPickerItem?
     @State private var isPickingPDF = false
@@ -54,6 +55,15 @@ struct EditorView: View {
             }
         }
         .photosPicker(isPresented: $isPickingPhoto, selection: $photoItem, matching: .images)
+        // A cover, not a sheet: on iPad a sheet is a centred card, and a camera
+        // preview letterboxed inside one is wrong. Opening it from a `Menu` is
+        // not the chained-presentation hazard the comment above warns about —
+        // a menu is not a presentation, so nothing is dismissed in the frame
+        // the cover appears in.
+        .fullScreenCover(isPresented: $isTakingPhoto) {
+            CameraCapture(onFinish: capture)
+                .ignoresSafeArea()
+        }
         .onChange(of: photoItem) { _, item in
             guard let item else { return }
             Task { await importPhoto(item) }
@@ -197,6 +207,16 @@ struct EditorView: View {
 
     private var insertMenu: some View {
         Menu {
+            // Absent where there is no camera rather than disabled: the
+            // simulator has none, `.camera` traps there, and a greyed row
+            // invites the question why.
+            if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                Button {
+                    isTakingPhoto = true
+                } label: {
+                    Label("Take Photo", systemImage: "camera")
+                }
+            }
             Button {
                 photoDestination = .layerOnCurrentPage
                 isPickingPhoto = true
@@ -258,6 +278,24 @@ struct EditorView: View {
         } catch {
             workspace.banner = "That photo couldn't be read: \(error.localizedDescription)"
         }
+    }
+
+    /// A camera photo, onto the current page as a layer: the same bytes the
+    /// picker hands `importImage`, from a different controller.
+    ///
+    /// The JPEG is at quality 1 and is immediately decoded and re-encoded as
+    /// HEIC by `ImageImport.normalize`. Quality 1 is chosen against `pngData()`
+    /// — several hundred milliseconds of Deflate over twelve million pixels,
+    /// for eight to fourteen megabytes — and its near-flat quantization sits
+    /// far below the HEIC-at-0.9 generation every photo import already takes.
+    private func capture(_ image: UIImage?) {
+        isTakingPhoto = false
+        guard let image else { return }
+        guard let data = image.jpegData(compressionQuality: 1) else {
+            workspace.banner = "That photo couldn't be read."
+            return
+        }
+        Task { await editor.importImage(data) }
     }
 
     private func importPDF(_ result: Result<URL, any Error>) async {
