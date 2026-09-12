@@ -128,6 +128,21 @@ struct RendererExportTests {
         return found.names
     }
 
+    /// An exported page drawn back into a bitmap, white ground, `scale`
+    /// pixels per point. A CGImage's first row is the top of the page.
+    private func rasterized(_ page: CGPDFPage, scale: Double) throws -> CGImage {
+        let box = page.getBoxRect(.mediaBox)
+        let context = try #require(CGContext(
+            data: nil, width: Int(box.width * scale), height: Int(box.height * scale),
+            bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.setFillColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: box.width * scale, height: box.height * scale))
+        context.scaleBy(x: scale, y: scale)
+        context.drawPDFPage(page)
+        return try #require(context.makeImage())
+    }
+
     @Test("Two pages are two PDF pages, each with its own geometry as its media box")
     func pagesCarryTheirGeometry() async throws {
         let renderer = Renderer(assets: NoAssets())
@@ -163,19 +178,12 @@ struct RendererExportTests {
         })
         let page = try #require(try document(data).page(at: 1))
         let scale = 2.0
-        let context = try #require(CGContext(
-            data: nil, width: Int(letter.width * scale), height: Int(letter.height * scale),
-            bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
-        context.setFillColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1))
-        context.fill(CGRect(x: 0, y: 0, width: letter.width * scale, height: letter.height * scale))
-        context.scaleBy(x: scale, y: scale)
-        context.drawPDFPage(page)
-        let image = try #require(context.makeImage())
+        let image = try rasterized(page, scale: scale)
         // The fixture stroke runs from x 10 to 70 at y 10, in page points from
         // the top; a CGImage's first row is the top of the page.
         #expect(luminance(of: image, x: Int(40 * scale), y: Int(10 * scale)) < 128)
         #expect(luminance(of: image, x: image.width / 2, y: image.height / 2) == 255)
+        #expect(xobjectSubtypes(of: page) == ["Image"], "the ink, and only the ink, is pixels")
     }
 
     @Test("A lined page with no ink and no layers carries no pixels at all")
@@ -188,6 +196,10 @@ struct RendererExportTests {
         #expect(xobjectSubtypes(of: page).isEmpty)
     }
 
+    /// `drawPDFPage` into a PDF context inlines the source page's marks
+    /// rather than wrapping them in a form, so the proof that the paper
+    /// survived is two halves: its marks are on the page, and there is no
+    /// `Image` among the page's XObjects.
     @Test("An imported PDF page stays vector when it is exported again")
     func pdfPaperStaysVector() async throws {
         let scratch = try Scratch("render-export-pdf-paper")
@@ -199,9 +211,11 @@ struct RendererExportTests {
             (self.letter, .pdf(asset, sourcePageIndex: 0), [], PKDrawing())
         })
         let page = try #require(try document(data).page(at: 1))
-        let subtypes = xobjectSubtypes(of: page)
-        #expect(!subtypes.isEmpty, "the imported page is drawn as a form")
-        #expect(subtypes.allSatisfy { $0 == "Form" }, "no page was rasterized: \(subtypes)")
+        #expect(!xobjectSubtypes(of: page).contains("Image"), "the imported page was rasterized: \(xobjectSubtypes(of: page))")
+        // The fixture fills all but a 20-point margin of its own page with
+        // one colour, and the paper fills the page rectangle exactly.
+        let image = try rasterized(page, scale: 1)
+        #expect(luminance(of: image, x: image.width / 2, y: image.height / 2) < 200, "the imported page's marks are on the exported page")
         withExtendedLifetime(scratch) {}
     }
 

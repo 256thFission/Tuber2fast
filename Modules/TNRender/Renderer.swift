@@ -323,7 +323,14 @@ package actor Renderer {
             let geometry = source.geometry
             var box = CGRect(x: 0, y: 0, width: geometry.width, height: geometry.height)
             let scale = Self.cappedScale(for: geometry, requested: .greatestFiniteMagnitude)
-            let inkImage = await Self.rasterize(source.ink, in: box, scale: scale)
+            // A drawing with no strokes still rasterizes to a full-page
+            // transparent image, and a PDF context records that draw as an
+            // Image XObject: pixels on a page that has none, which is what
+            // "paper, text, and an imported PDF page are vector" promises
+            // against. A bitmap does not care — a transparent overlay
+            // changes no pixel — so `compose` and `thumbnail` are left as
+            // they are.
+            let inkImage = source.ink.strokes.isEmpty ? nil : await Self.rasterize(source.ink, in: box, scale: scale)
             if Task.isCancelled { return nil }
             context.beginPage(mediaBox: &box)
             // Page space: origin top-left, y down, in points.
