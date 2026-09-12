@@ -80,7 +80,7 @@ Nothing here is a reason not to ship. It is a reason not to be surprised.
   and whether the edit menu appears over the selection at all, are live-touch
   facts the simulator cannot express. Until someone looks, "the lasso works"
   is a claim about a tool assignment.
-- **Nobody has seen an object selected, moved, scaled, or rotated.** The
+- **Nobody has seen an object selected, moved, scaled, rotated, or deleted.** The
   selection frame is an overlay in the canvas runtime and the object under it
   is the composite the notebook rendered, so the picture keeps the old
   placement until the re-render lands: the frame moves under the finger and
@@ -88,7 +88,9 @@ Nothing here is a reason not to ship. It is a reason not to be surprised.
   reads as a bug, whether the corner handles and the rotate knob are the
   right size under a finger at fit zoom and at 4x, and whether a drag on the
   frame really does beat both the canvas pan and the page-turn pan are device
-  evidence and Phillip's verdict.
+  evidence and Phillip's verdict. Whether the frame's `UIEditMenuInteraction`
+  presents its one Delete action at all is in the same bucket: the tests can
+  drive the action, not the presentation.
 - **The loading/unreadable placeholder has never been seen on a device**, and
   the refusal of Pencil input on it — the placeholder accepts no input at all —
   is a device check by nature; the simulator has no Pencil.
