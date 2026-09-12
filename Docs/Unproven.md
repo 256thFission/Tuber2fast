@@ -101,6 +101,23 @@ Nothing here is a reason not to ship. It is a reason not to be surprised.
   what iOS does with it. Whether the first tap prompts rather than
   terminating, whether a denial leaves the row harmless, and whether the
   captured photo lands centred on the page are device evidence.
+- **VisionKit's scanner has never been presented.**
+  `VNDocumentCameraViewController.isSupported` is false in a simulator, so the
+  Scan Document row is hidden there and no test reaches `DocumentScanner`: not
+  the delegate, not the `didFailWithError:` spelling, not the per-page
+  `autoreleasepool`, and not the full-screen cover. The pages a scan makes are
+  covered by `TNTests/EditorViewModelTests.swift`, which hands `importScan`
+  bytes directly — everything from `Data` inwards is proven and everything
+  from the camera to `Data` is not. Two of its failure paths have no other
+  evidence at all: a scan forced to fail must close the cover and banner
+  rather than leave a cover with no exit, and a page that yields no encodable
+  data must banner rather than be silently dropped.
+- **A scanned page's legibility is a verdict nobody has given.** A scan is
+  re-encoded twice on its way in — JPEG at quality 1 from the scanner, then
+  HEIC at 0.9 by `ImageImport.normalize` — and whether dense text survives
+  that at fit width and at full zoom has only been reasoned about. The
+  fallback if it does not, a `CGImage` entry point into `TNRender` that skips
+  the first encode, is not built.
 - **The loading/unreadable placeholder has never been seen on a device**, and
   the refusal of Pencil input on it — the placeholder accepts no input at all —
   is a device check by nature; the simulator has no Pencil.
