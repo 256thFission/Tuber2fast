@@ -18,6 +18,7 @@ struct EditorView: View {
     @State private var photoDestination = PhotoDestination.layerOnCurrentPage
     @State private var photoItem: PhotosPickerItem?
     @State private var isPickingPDF = false
+    @State private var isPickingLinkTarget = false
     @State private var isConfirmingPageDelete = false
     @State private var isAddingPage = false
     @State private var pendingPage: (choice: NewPagePaperChoice, size: PageSize, orientation: PageOrientation)?
@@ -26,6 +27,7 @@ struct EditorView: View {
     /// a second Bool beside `isPickingPhoto` could claim both at once.
     private enum PhotoDestination {
         case layerOnCurrentPage
+        case paperForCurrentPage
         case paperForNewPage(PageSize, PageOrientation)
     }
     @State private var isShowingNavigator = false
@@ -58,6 +60,9 @@ struct EditorView: View {
         }
         .fileImporter(isPresented: $isPickingPDF, allowedContentTypes: [.pdf]) { result in
             Task { await importPDF(result) }
+        }
+        .sheet(isPresented: $isPickingLinkTarget) {
+            LinkTargetPicker(workspace: workspace, editor: editor)
         }
         // A sheet, not a full-screen cover: the canvas stays laid out under
         // it, so a tap in the grid can scroll to the page.
@@ -172,6 +177,17 @@ struct EditorView: View {
                     }
                 }
             }
+            Divider()
+            // Not greyed on a page that has something on it: whether a page is
+            // empty is the notebook's answer, and mirroring it here would be a
+            // second copy refreshed per drain. The notebook refuses, and the
+            // bar says so.
+            Button {
+                photoDestination = .paperForCurrentPage
+                isPickingPhoto = true
+            } label: {
+                Label("Photo", systemImage: "photo")
+            }
         } label: {
             Label("Paper", systemImage: "square.grid.2x2")
         }
@@ -191,6 +207,11 @@ struct EditorView: View {
                 isPickingPDF = true
             } label: {
                 Label("PDF", systemImage: "doc")
+            }
+            Button {
+                isPickingLinkTarget = true
+            } label: {
+                Label("Link", systemImage: "link")
             }
         } label: {
             Label("Insert", systemImage: "plus.circle")
@@ -212,6 +233,8 @@ struct EditorView: View {
         case .photo:
             photoDestination = .paperForNewPage(pending.size, pending.orientation)
             isPickingPhoto = true
+        case .flattened:
+            Task { await editor.addPageFlatteningCurrentPage(size: pending.size, orientation: pending.orientation) }
         }
     }
 
@@ -227,6 +250,8 @@ struct EditorView: View {
             switch photoDestination {
             case .layerOnCurrentPage:
                 await editor.importImage(data)
+            case .paperForCurrentPage:
+                await editor.setPaper(photo: data)
             case .paperForNewPage(let size, let orientation):
                 await editor.addPage(size: size, orientation: orientation, photo: data)
             }

@@ -127,6 +127,11 @@ import UIKit
         // notebook queued when it opened supersedes this one in the same
         // turn and the runtime never sees the order go backwards.
         surface.setPages(notebook.descriptors, seq: StructureSeq(0), answering: nil)
+        // And the page it was left on. The runtime learns the order from
+        // `setPages`, whose descriptors carry no current flag, so without this
+        // every notebook opens on its first page while the toolbar, which reads
+        // the notebook, says otherwise.
+        surface.scroll(to: notebook.currentPageID)
         notebook.onAsyncChange = { [weak self] in self?.drain() }
         drain()
     }

@@ -292,7 +292,7 @@ struct TNCanvasTests {
         canvas.canvasViewDidBeginUsingTool(canvas.canvasView)
 
         let box = textLayer("hi", x: 100, y: 100)
-        let composite = Composite(image: try solidImage(), scale: 2)
+        let composite = Composite(image: try solidImage())
         runtime.restoreInk(on: pages[0].id, strokeDrawing(strokes: 2), seq: InkSeq(7))
         runtime.updateComposite(on: pages[0].id, composite, layers: [box])
         #expect(canvas.canvasView.drawing.strokes.isEmpty, "the canvas is not touched under the stroke")
@@ -329,8 +329,8 @@ struct TNCanvasTests {
         a.canvasViewDidBeginUsingTool(a.canvasView)
 
         let box = textLayer("hi", x: 100, y: 100)
-        let compositeB = Composite(image: try solidImage(), scale: 2)
-        let compositeA = Composite(image: try solidImage(), scale: 2)
+        let compositeB = Composite(image: try solidImage())
+        let compositeA = Composite(image: try solidImage())
         runtime.updateComposite(on: pages[1].id, compositeB, layers: [box])
         runtime.restoreInk(on: pages[1].id, strokeDrawing(strokes: 3), seq: InkSeq(7))
         runtime.updateComposite(on: pages[0].id, compositeA, layers: [])
@@ -406,6 +406,14 @@ struct TNCanvasTests {
     /// what lets a text view become first responder.
     private func hosted(_ reporter: RecordingReporter) -> PagedCanvasController {
         let runtime = PagedCanvasController(reporter: reporter)
+        host(runtime)
+        return runtime
+    }
+
+    /// Gives a runtime its first viewport. Split out so a test can drive a
+    /// runtime that has been told things before any layout existed, which is
+    /// the state every tab opens in.
+    private func host(_ runtime: PagedCanvasController) {
         // The host app's scene: these tests run inside it, and a window
         // without a scene is not a key window.
         let scene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first!
@@ -415,7 +423,42 @@ struct TNCanvasTests {
         window.makeKeyAndVisible()
         WindowKeeper.shared.windows.append(window)
         runtime.view.layoutIfNeeded()
-        return runtime
+    }
+
+    @Test("A scroll asked for before the first layout lands when the layout arrives, and reports the turn once")
+    func scrollBeforeTheFirstLayoutIsKept() {
+        let reporter = RecordingReporter()
+        let runtime = PagedCanvasController(reporter: reporter)
+        let pages = descriptors(3)
+        runtime.setPages(pages, seq: StructureSeq(1), answering: nil)
+        runtime.scroll(to: pages[2].id)
+        #expect(reporter.becameCurrent.isEmpty, "there is no viewport yet, so nothing has settled anywhere")
+
+        host(runtime)
+
+        #expect(runtime.currentPageID == pages[2].id)
+        #expect(runtime.scrollView.contentOffset.x == runtime.currentLayout.offsetX(at: 2))
+        #expect(reporter.becameCurrent == [pages[2].id])
+
+        _ = runtime.retireAll()
+    }
+
+    @Test("A scroll waiting for a layout is dropped when its page leaves the list")
+    func scrollBeforeTheFirstLayoutFollowsItsPage() {
+        let reporter = RecordingReporter()
+        let runtime = PagedCanvasController(reporter: reporter)
+        let pages = descriptors(3)
+        runtime.setPages(pages, seq: StructureSeq(1), answering: nil)
+        runtime.scroll(to: pages[2].id)
+        runtime.setPages(Array(pages.prefix(2)), seq: StructureSeq(2), answering: nil)
+
+        host(runtime)
+
+        #expect(runtime.currentPageID == pages[0].id)
+        #expect(runtime.scrollView.contentOffset.x == 0)
+        #expect(reporter.becameCurrent.isEmpty)
+
+        _ = runtime.retireAll()
     }
 
     // MARK: - Text editing

@@ -231,6 +231,27 @@ package final class EditorViewModel {
         await append(size, orientation, .asset(.image(stored)))
     }
 
+    /// This page, flattened, becomes the new page's paper: the composite and
+    /// the ink rendered to one asset at asset resolution. The source is
+    /// untouched — flattening in place would lose it, and the contract says
+    /// flatten does not change the source — and it records nothing, so the
+    /// undo stack is as it was and the append is navigation like any other.
+    ///
+    /// Its own name rather than a fifth `addPage` overload: the others take
+    /// the thing the paper comes from, and this one takes nothing, since the
+    /// source is always the page the reader is on.
+    package func addPageFlatteningCurrentPage(size: PageSize, orientation: PageOrientation) async {
+        let page = notebook.currentPageID
+        lastContentError = nil
+        guard !notebook.hasTextSession(on: page) else { lastContentError = Self.textBoxOpen(page); return }
+        let flattened: AssetRef
+        do { flattened = try await notebook.flatten(page) } catch {
+            lastContentError = error
+            return
+        }
+        await append(size, orientation, .asset(.image(flattened)))
+    }
+
     /// The `do`/`catch` sits at method scope, for the reason the comment
     /// above `importImage` gives, and a refusal is reported through
     /// `lastContentError` like any other content change. A refused append
@@ -279,6 +300,17 @@ package final class EditorViewModel {
     package func addPage(after page: PageID) {
         var created: PageID?
         binding.intention { created = notebook.appendPage(after: page) }
+        if let created { binding.surface.scroll(to: created) }
+    }
+
+    /// A copy of `page`, straight after it, and the reader is taken to it.
+    /// The notebook reads an unloaded source from its files, so a cell in the
+    /// navigator can be duplicated without being visited first.
+    package func duplicatePage(_ page: PageID) async {
+        lastContentError = nil
+        var created: PageID?
+        do { created = try await notebook.duplicatePage(page) } catch { lastContentError = error }
+        binding.drain()
         if let created { binding.surface.scroll(to: created) }
     }
 
@@ -363,6 +395,18 @@ package final class EditorViewModel {
         lastContentError = nil
         guard !notebook.hasTextSession(on: page) else { lastContentError = Self.textBoxOpen(page); return }
         do { try await notebook.importImage(data, on: page) } catch { lastContentError = error }
+        binding.drain()
+    }
+
+    /// A photo as the current page's paper. The notebook refuses a page that
+    /// has ink or layers on it before it stores anything, because asset paper
+    /// covers the whole page; the refusal reaches the bar through
+    /// `lastContentError` like any other.
+    package func setPaper(photo data: Data) async {
+        let page = notebook.currentPageID
+        lastContentError = nil
+        guard !notebook.hasTextSession(on: page) else { lastContentError = Self.textBoxOpen(page); return }
+        do { try await notebook.importImageAsPaper(data, on: page) } catch { lastContentError = error }
         binding.drain()
     }
 

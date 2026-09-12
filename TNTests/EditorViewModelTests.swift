@@ -218,3 +218,147 @@ struct EditorViewModelExportTests {
         withExtendedLifetime(scratch) {}
     }
 }
+
+/// The view model's content intentions, over a surface that records instead
+/// of drawing. What a test asserts here is the notebook's state and the
+/// vocabulary the runtime was pushed: pixels are the renderer's suite.
+@Suite("Editor view model: content")
+@MainActor
+struct EditorViewModelContentTests {
+    /// A one-page notebook with that page loaded, and an editor over a
+    /// recording surface.
+    private func loaded(_ name: String) async throws -> (Scratch, Notebook, RecordingSurface, EditorViewModel) {
+        let scratch = try Scratch(name)
+        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        let page = notebook.pageIDs[0]
+        notebook.windowChanged(to: [page])
+        try await waitUntil { notebook.state(of: page)?.content != nil }
+        let surface = RecordingSurface()
+        let editor = EditorViewModel(
+            binding: EditorBinding(notebook: notebook, surface: surface),
+            palette: ToolPalette(store: MemoryPaletteStore())
+        )
+        return (scratch, notebook, surface, editor)
+    }
+
+    @Test("A photo becomes the current page's paper, and the page takes the photo's aspect")
+    func photoBecomesThePaper() async throws {
+        let (scratch, notebook, surface, editor) = try await loaded("vm-paper-photo")
+        let page = notebook.pageIDs[0]
+        let ordersBefore = surface.pagesSet.count
+
+        await editor.setPaper(photo: try Fixture.imageData(width: 200, height: 100))
+
+        #expect(editor.lastContentError == nil)
+        guard case .image = try #require(notebook.paper(of: page)) else {
+            Issue.record("the paper is not an image"); return
+        }
+        // The asset fills the page rectangle, so the rectangle is the asset's
+        // shape at the page's width.
+        #expect(notebook.index.record(of: page)?.geometry == PageGeometry(width: 612, height: 306))
+        #expect(surface.pagesSet.count > ordersBefore, "the geometry changed, so the order is restated")
+        try await waitUntil { surface.calls.contains(.updateComposite(page)) }
+
+        withExtendedLifetime(scratch) {}
+        _ = await notebook.close()
+    }
+
+    @Test("This page flattened becomes the new page's paper, and the source is untouched")
+    func flattenedPageBecomesTheNextPagesPaper() async throws {
+        let (scratch, notebook, surface, editor) = try await loaded("vm-flatten")
+        let source = notebook.pageIDs[0]
+        let layer = Fixture.imageLayer()
+        try await notebook.addLayer(layer, assetData: try Fixture.imageData(width: 40, height: 30), on: source)
+        notebook.inkChanged(on: source, Ink.drawing(strokes: 2), echoOf: nil)
+        let ink = try #require(notebook.state(of: source)?.content?.ink)
+        let couldUndo = notebook.canUndo
+
+        await editor.addPageFlatteningCurrentPage(size: .letter, orientation: .portrait)
+
+        #expect(editor.lastContentError == nil)
+        #expect(notebook.pageCount == 2)
+        let created = try #require(notebook.pageIDs.last)
+        guard case .image(let asset) = try #require(notebook.paper(of: created)) else {
+            Issue.record("the new page's paper is not an image"); return
+        }
+        #expect(try await notebook.store.readAsset(asset).count > 0)
+
+        // The source keeps its ink and its layer, and flattening records
+        // nothing, so the stack is where it was.
+        #expect(notebook.state(of: source)?.content?.ink == ink)
+        #expect(notebook.state(of: source)?.content?.layers.map(\.id) == [layer.id])
+        #expect(notebook.paper(of: source) == .drawn(.blank))
+        #expect(notebook.canUndo == couldUndo)
+
+        let order = try #require(surface.calls.lastIndex { if case .setPages(let ids, _, _) = $0 { ids.contains(created) } else { false } })
+        let scroll = try #require(surface.calls.lastIndex(of: .scroll(created)))
+        #expect(scroll > order)
+
+        withExtendedLifetime(scratch) {}
+        _ = await notebook.close()
+    }
+
+    @Test("A link is one layer, one history entry, and it reaches the runtime")
+    func addingALink() async throws {
+        let (scratch, notebook, surface, editor) = try await loaded("vm-link")
+        let page = notebook.pageIDs[0]
+        let target = LinkTarget.externalPage(notebook: NotebookID(), page: PageID())
+
+        await editor.addLink(to: target)
+
+        #expect(editor.lastContentError == nil)
+        let layers = try #require(notebook.state(of: page)?.content?.layers)
+        #expect(layers.count == 1)
+        guard case .link(let link) = try #require(layers.first).payload else {
+            Issue.record("the layer is not a link"); return
+        }
+        #expect(link.target == target)
+        #expect(notebook.canUndo, "minting a link is an edit, and it is on the stack")
+        try await waitUntil { surface.layersSeen[page]?.map(\.id) == [layers[0].id] }
+
+        withExtendedLifetime(scratch) {}
+        _ = await notebook.close()
+    }
+
+    @Test("Duplicating a page pushes the new order, its content, and takes the reader to it")
+    func duplicatingAPagePushesAndScrolls() async throws {
+        let (scratch, notebook, surface, editor) = try await loaded("vm-duplicate")
+        let source = notebook.pageIDs[0]
+        notebook.inkChanged(on: source, Ink.drawing(strokes: 1), echoOf: nil)
+
+        await editor.duplicatePage(source)
+
+        #expect(editor.lastContentError == nil)
+        let copy = try #require(notebook.pageIDs.last)
+        #expect(notebook.pageIDs == [source, copy])
+
+        let order = try #require(surface.calls.lastIndex { if case .setPages(let ids, _, _) = $0 { ids == [source, copy] } else { false } })
+        let installed = try #require(surface.calls.lastIndex(of: .installContent(copy, editable: true)))
+        let scroll = try #require(surface.calls.lastIndex(of: .scroll(copy)))
+        #expect(order < installed)
+        #expect(installed < scroll)
+
+        withExtendedLifetime(scratch) {}
+        _ = await notebook.close()
+    }
+
+    @Test("A page with ink refuses a photo as its paper, and nothing is written")
+    func photoIsRefusedOnAPageWithInk() async throws {
+        let (scratch, notebook, _, editor) = try await loaded("vm-paper-photo-refused")
+        let page = notebook.pageIDs[0]
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 1), echoOf: nil)
+
+        await editor.setPaper(photo: try Fixture.imageData(width: 200, height: 100))
+
+        #expect(editor.lastContentError != nil)
+        #expect(notebook.paper(of: page) == .drawn(.blank))
+        // The refusal is decided before the photo is stored, so the asset
+        // directory is as empty as it was.
+        let assets = try FileManager.default.contentsOfDirectory(
+            atPath: scratch.packageURL.appendingPathComponent("assets").path
+        )
+        #expect(assets.isEmpty)
+
+        _ = await notebook.close()
+    }
+}

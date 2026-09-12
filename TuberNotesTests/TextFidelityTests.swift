@@ -49,7 +49,9 @@ struct TextFidelityTests {
         let renderer = Renderer(assets: NoAssets())
         let layers = Self.fixtures.map { Layer(id: LayerID(), transform: .identity, payload: .text($0.layer)) }
         let composite = try #require(await renderer.composite(geometry: geometry, paper: .drawn(.blank), layers: layers, scale: scale))
-        #expect(composite.scale == scale)
+        // The requested scale is under the pixel cap, so the picture is the
+        // page at exactly that many pixels per point.
+        #expect(composite.image.width == Int((geometry.width * scale).rounded(.up)))
 
         // The underline's extent is each engine's own (KNOWN DEFECT at
         // TextTypesetting), so glyph bounds are compared on the plain run,

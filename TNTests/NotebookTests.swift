@@ -1038,6 +1038,141 @@ struct NotebookTests {
         #expect(reopened.index.record(of: after)?.paper == .known(.drawn(.blank)))
     }
 
+    @Test("A duplicate follows its source, equals it, shares its assets, and records nothing")
+    func duplicatingAReadyPage() async throws {
+        let scratch = try Scratch("nb-duplicate")
+        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        let first = notebook.pageIDs[0]
+        let source = try await notebook.appendPage(
+            after: first, geometry: PageGeometry(width: 842, height: 595), paper: .drawn(.grid))
+        try await notebook.addLayer(Fixture.imageLayer(), assetData: try Fixture.imageData(width: 40, height: 30), on: source)
+        try notebook.insertLayer(Fixture.textLayer(), on: source)
+        notebook.inkChanged(on: source, Ink.drawing(strokes: 2), echoOf: nil)
+        let before = try #require(notebook.state(of: source)?.content)
+        let couldUndo = notebook.canUndo
+
+        let copy = try await notebook.duplicatePage(source)
+
+        #expect(notebook.pageIDs == [first, source, copy], "the copy follows the source")
+        let copied = try #require(notebook.state(of: copy)?.content)
+        #expect(copied.ink == before.ink)
+        #expect(copied.inkIndex == before.inkIndex)
+        #expect(copied.hasInk == before.hasInk)
+        #expect(notebook.index.record(of: copy)?.geometry == PageGeometry(width: 842, height: 595))
+        #expect(notebook.paper(of: copy) == .drawn(.grid))
+
+        // The same layers under new identities: a layer file is one file per
+        // id, so sharing them would make a transform on either page rewrite
+        // the file for both.
+        #expect(copied.layers.map(\.payload) == before.layers.map(\.payload))
+        #expect(copied.layers.map(\.transform) == before.layers.map(\.transform))
+        #expect(Set(copied.layers.map(\.id)).isDisjoint(with: Set(before.layers.map(\.id))))
+
+        // Duplicating is navigation: nothing joins the stack.
+        #expect(notebook.canUndo == couldUndo)
+
+        await notebook.flush()
+        let reopened = try await PackageStore(root: scratch.packageURL).load()
+        #expect(reopened.pageFaults.isEmpty)
+        #expect(reopened.index.pageIDs == [first, source, copy])
+        // One asset, named by both pages: assets are immutable and shared.
+        let assets = try FileManager.default.contentsOfDirectory(
+            atPath: scratch.packageURL.appendingPathComponent("assets").path)
+        #expect(assets.count == 1)
+    }
+
+    @Test("A page that is not loaded is duplicated from its files, and stays unloaded")
+    func duplicatingAnUnloadedPage() async throws {
+        let scratch = try Scratch("nb-duplicate-unloaded")
+        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        let source = notebook.pageIDs[0]
+        notebook.windowChanged(to: [source])
+        try await waitUntil { notebook.state(of: source)?.content != nil }
+        let ink = Ink.drawing(strokes: 3)
+        notebook.inkChanged(on: source, ink, echoOf: nil)
+        await notebook.flush()
+        _ = await notebook.close()
+
+        let reopened = try await Notebook.open(store: PackageStore(root: scratch.packageURL), schedule: fast)
+        guard case .unloaded = try #require(reopened.state(of: source)) else {
+            Issue.record("the source should be unloaded"); return
+        }
+
+        let copy = try await reopened.duplicatePage(source)
+
+        #expect(reopened.state(of: copy)?.content?.ink == ink)
+        #expect(reopened.state(of: copy)?.content?.hasInk == true)
+        guard case .unloaded = try #require(reopened.state(of: source)) else {
+            Issue.record("reading a page for a copy must not install it"); return
+        }
+
+        await reopened.flush()
+        let onDisk = try await PackageStore(root: scratch.packageURL).load()
+        #expect(onDisk.pageFaults.isEmpty)
+        #expect(onDisk.index.pageIDs == [source, copy])
+    }
+
+    @Test("A page with a text box open cannot be duplicated")
+    func duplicatingRefusesAnOpenTextBox() async throws {
+        let scratch = try Scratch("nb-duplicate-text")
+        defer { withExtendedLifetime(scratch) {} }
+        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        let page = notebook.pageIDs[0]
+        notebook.windowChanged(to: [page])
+        try await waitUntil { notebook.state(of: page)?.content != nil }
+        notebook.createTextBox(on: page, at: PagePoint(x: 40, y: 40), style: .body, alignment: .leading)
+        #expect(notebook.hasTextSession(on: page))
+
+        await #expect(throws: FormatFault.self) { try await notebook.duplicatePage(page) }
+        #expect(notebook.pageCount == 1, "a refused duplicate inserts nothing")
+    }
+
+    @Test("A link moves by its rect, undoes, redoes; a bad rect and a text layer are refused")
+    func movingALink() async throws {
+        let scratch = try Scratch("nb-move-link")
+        defer { withExtendedLifetime(scratch) {} }
+        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        let page = notebook.pageIDs[0]
+        notebook.windowChanged(to: [page])
+        try await waitUntil { notebook.state(of: page)?.content != nil }
+        let link = Fixture.linkLayer(to: page)
+        try notebook.insertLayer(link, on: page)
+        let text = Fixture.textLayer()
+        try notebook.insertLayer(text, on: page)
+        await notebook.flush()
+
+        let moved = PageRect(x: 300, y: 500, width: 120, height: 40)
+        #expect(notebook.moveLinkLayer(on: page, layer: link.id, to: moved) == .accepted)
+        guard case .link(let after) = try #require(notebook.state(of: page)?.content?.layers.first { $0.id == link.id }).payload else {
+            Issue.record("the layer stopped being a link"); return
+        }
+        #expect(after.rect == moved)
+        #expect(after.target == .internalPage(page), "only the rect moves")
+        #expect(notebook.state(of: page)?.content?.pendingLayerFiles.contains(link.id) == true)
+
+        // A move is an edit, on the stack like every other layer edit.
+        #expect(notebook.undo() == page)
+        guard case .link(let undone) = try #require(notebook.state(of: page)?.content?.layers.first { $0.id == link.id }).payload else {
+            Issue.record("the layer stopped being a link"); return
+        }
+        #expect(undone.rect == PageRect(x: 40, y: 40, width: 160, height: 44))
+        #expect(notebook.redo() == page)
+        guard case .link(let redone) = try #require(notebook.state(of: page)?.content?.layers.first { $0.id == link.id }).payload else {
+            Issue.record("the layer stopped being a link"); return
+        }
+        #expect(redone.rect == moved)
+
+        // A rect that is not a rect, and a layer that is not a link.
+        let couldUndo = notebook.canUndo
+        #expect(notebook.moveLinkLayer(on: page, layer: link.id, to: PageRect(x: 10, y: 10, width: 0, height: 40)) != .accepted)
+        #expect(notebook.moveLinkLayer(on: page, layer: text.id, to: moved) != .accepted)
+        #expect(notebook.canUndo == couldUndo, "a refusal records nothing")
+        guard case .link(let unchanged) = try #require(notebook.state(of: page)?.content?.layers.first { $0.id == link.id }).payload else {
+            Issue.record("the layer stopped being a link"); return
+        }
+        #expect(unchanged.rect == moved)
+    }
+
     @Test("A layer import publishes the asset first, sits beneath the ink, and round-trips")
     func layerImport() async throws {
         let scratch = try Scratch("nb-layer")

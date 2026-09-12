@@ -41,16 +41,13 @@ package struct PageDescriptor: Sendable, Equatable, Identifiable {
 /// is immutable, which is what makes the wrapper a value for the seam.
 package struct Composite: @unchecked Sendable, Equatable {
     package let image: CGImage
-    /// Pixels per page point the image was rendered at.
-    package let scale: CGFloat
 
-    package init(image: CGImage, scale: CGFloat) {
+    package init(image: CGImage) {
         self.image = image
-        self.scale = scale
     }
 
     package static func == (lhs: Composite, rhs: Composite) -> Bool {
-        lhs.image === rhs.image && lhs.scale == rhs.scale
+        lhs.image === rhs.image
     }
 }
 

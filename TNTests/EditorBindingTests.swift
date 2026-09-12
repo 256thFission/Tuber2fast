@@ -92,11 +92,13 @@ final class RecordingSurface: CanvasSurface {
 @MainActor
 struct EditorBindingTests {
     /// A notebook with `pages` pages, saved and reopened, so every page is
-    /// unloaded and a window has real work to do.
-    private func reopened(_ name: String, pages: Int) async throws -> (Scratch, Notebook) {
+    /// unloaded and a window has real work to do. `leftOn` is the index of the
+    /// page it was last looking at, which `close()` writes to `view.json`.
+    private func reopened(_ name: String, pages: Int, leftOn: Int? = nil) async throws -> (Scratch, Notebook) {
         let scratch = try Scratch(name)
         let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
         for _ in 1..<pages { notebook.appendPage() }
+        if let leftOn { notebook.pageBecameCurrent(notebook.pageIDs[leftOn]) }
         await notebook.flush()
         _ = await notebook.close()
         let store = PackageStore(root: scratch.packageURL)
@@ -113,6 +115,24 @@ struct EditorBindingTests {
         #expect(surface.pagesSet.contains(notebook.pageIDs))
         #expect(surface.installed.isEmpty, "no page is loaded until a window asks for one")
         _ = binding
+        _ = await notebook.close()
+    }
+
+    @Test("A notebook left on page three opens there: the saved page is pushed after the order")
+    func openingScrollsToTheSavedPage() async throws {
+        let (scratch, notebook) = try await reopened("editor-reopen-current", pages: 3, leftOn: 2)
+        let third = notebook.pageIDs[2]
+        #expect(notebook.currentPageID == third, "view.json is read into the notebook")
+
+        let surface = RecordingSurface()
+        let binding = EditorBinding(notebook: notebook, surface: surface)
+
+        let order = try #require(surface.calls.firstIndex { if case .setPages = $0 { true } else { false } })
+        let scroll = try #require(surface.calls.firstIndex(of: .scroll(third)))
+        #expect(scroll > order, "the runtime must know the page list before it can be sent to one of them")
+
+        _ = binding
+        _ = scratch
         _ = await notebook.close()
     }
 
@@ -334,13 +354,18 @@ struct EditorBindingTests {
 
         binding.textBoxRequested(on: page, at: PagePoint(x: 30, y: 40), style: .body, alignment: .leading)
         #expect(notebook.hasTextSession)
+        // Every call from here on is the session's. The opening push is not:
+        // a binding sends the runtime to the page the notebook was left on as
+        // soon as it has the order, and that happened before any of this.
+        let beforeTheUndo = surface.calls.count
         binding.undoRequested()
         binding.redoRequested()
         #expect(Array(surface.calls.suffix(2)) == [.undoTyping, .redoTyping])
         #expect(notebook.canUndo && !notebook.canRedo, "the stack did not move")
         #expect(notebook.state(of: page)?.content?.ink.strokes.count == 3)
         #expect(!surface.calls.contains { if case .restoreInk = $0 { true } else { false } })
-        #expect(!surface.calls.contains { if case .scroll = $0 { true } else { false } })
+        #expect(!surface.calls.dropFirst(beforeTheUndo).contains { if case .scroll = $0 { true } else { false } },
+                "an undo that restores a loaded page in place takes the reader nowhere")
         _ = await notebook.close()
     }
 

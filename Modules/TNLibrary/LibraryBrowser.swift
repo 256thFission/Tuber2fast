@@ -92,6 +92,11 @@ package final class LibraryBrowser {
         do {
             favorites = try await library.store.favorites()
             switch section {
+            // A search reads the whole tree from the root, wherever the
+            // reader is standing: searching is looking for something you
+            // cannot see, and the folder you are in is the part you can.
+            case .documents where !searchText.isEmpty:
+                listing = .loaded(try await library.store.listTree(under: ""))
             case .documents: listing = .loaded(try await library.store.list(folder: folder))
             case .favorites: listing = .loaded(try await library.store.listFavorites())
             // The trash is its own list, so the listing holds nothing rather
@@ -212,6 +217,11 @@ package final class LibraryBrowser {
 
     package func createNotebook(named name: String, geometry: PageGeometry, paper: DrawnPaper) async {
         await perform { _ = try await library.store.createNotebook(named: name, in: folder, geometry: geometry, paper: paper) }
+        // Only a notebook that was actually made is a choice worth opening on
+        // next time; `perform` leaves `refusal` nil when it landed. The
+        // `didSet` on `options` is what writes it.
+        guard refusal == nil else { return }
+        options.newNotebook = NotebookSetup(geometry: geometry, paper: paper)
     }
 
     package func recover(_ entry: TrashEntry) async {

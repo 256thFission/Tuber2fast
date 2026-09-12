@@ -71,6 +71,15 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
     /// The bounds the slots were laid out for.
     private var layoutBounds: CGSize = .zero
 
+    /// A scroll asked for before the first layout existed. Consumed by the
+    /// first `viewDidLayoutSubviews`, dropped by a `setPages` that no longer
+    /// lists the page. Owner: this runtime, like its other scroll state.
+    ///
+    /// Without it the opening `scroll(to:)` — the one that puts a reopened
+    /// notebook on the page it was left on — arrives while every slot is still
+    /// zero-sized and is silently discarded.
+    private var pendingScroll: PageID?
+
     package init(reporter: any CanvasReporting) {
         self.reporter = reporter
         super.init(nibName: nil, bundle: nil)
@@ -124,6 +133,7 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
         // a `setPages` that arrived first built nothing. This is where it gets
         // built, and where a resize re-establishes it.
         refreshWindow()
+        consumePendingScroll()
     }
 
     // MARK: - CanvasSurface
@@ -147,6 +157,13 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
 
         order = pages.map(\.id)
         descriptors = Dictionary(uniqueKeysWithValues: pages.map { ($0.id, $0) })
+
+        // A scroll still waiting for a viewport names a page this list may no
+        // longer have. It is dropped rather than clamped: the request was for
+        // that page, and nothing else answers it.
+        if let pending = pendingScroll, !seen.contains(pending) {
+            pendingScroll = nil
+        }
 
         // Departures. A page that leaves the list hands its ink over before its
         // canvas is released: releasing first would discard edits made on a
@@ -298,7 +315,12 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
             TNPrecondition.fail("scroll(to:) named page \(page), which this runtime has not been told about")
         }
         let layout = currentLayout
-        guard !layout.isEmpty else { return }
+        guard !layout.isEmpty else {
+            // No viewport yet, so no offset exists to write. The request is
+            // kept for the first layout instead of being dropped.
+            pendingScroll = page
+            return
+        }
         let target = layout.offsetX(at: index)
         if abs(scrollView.contentOffset.x - target) < 0.5 {
             // Already there: no animation would run and no settle callback
@@ -394,6 +416,20 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
         let target = CGPoint(x: layout.offsetX(at: index), y: 0)
         guard scrollView.contentOffset != target else { return }
         scrollView.setContentOffset(target, animated: false)
+    }
+
+    /// Answers the scroll that arrived before there was a viewport to answer
+    /// it in. Not animated: this is the opening position, not a turn the user
+    /// made, and an animation from page one would be a page turn nobody asked
+    /// for. `settle()` is what reports it, so the turn is reported exactly once
+    /// and by the one place that reports turns.
+    private func consumePendingScroll() {
+        guard let page = pendingScroll else { return }
+        pendingScroll = nil
+        let layout = currentLayout
+        guard !layout.isEmpty, let index = order.firstIndex(of: page) else { return }
+        scrollView.setContentOffset(CGPoint(x: layout.offsetX(at: index), y: 0), animated: false)
+        settle()
     }
 
     // MARK: - The window
