@@ -6,6 +6,7 @@ import TNModel
 import TNNotebook
 import UIKit
 import UniformTypeIdentifiers
+import VisionKit
 
 /// One open notebook: the intentions across the top, the canvas below, and
 /// the save refusal in between. Nothing here reads the notebook; the view
@@ -16,6 +17,7 @@ struct EditorView: View {
 
     @State private var isPickingPhoto = false
     @State private var isTakingPhoto = false
+    @State private var isScanning = false
     @State private var photoDestination = PhotoDestination.layerOnCurrentPage
     @State private var photoItem: PhotosPickerItem?
     @State private var isPickingPDF = false
@@ -62,6 +64,13 @@ struct EditorView: View {
         // the cover appears in.
         .fullScreenCover(isPresented: $isTakingPhoto) {
             CameraCapture(onFinish: capture)
+                .ignoresSafeArea()
+        }
+        // A cover for the same reason, and one more: the scanner expects to
+        // own the screen, and its corner-drag affordances are cramped inside a
+        // card.
+        .fullScreenCover(isPresented: $isScanning) {
+            DocumentScanner(onFinish: scanned, onFailure: scanFailed)
                 .ignoresSafeArea()
         }
         .onChange(of: photoItem) { _, item in
@@ -223,6 +232,15 @@ struct EditorView: View {
             } label: {
                 Label("Photo", systemImage: "photo")
             }
+            // Absent rather than disabled where the hardware cannot scan,
+            // for the reason the camera row gives.
+            if VNDocumentCameraViewController.isSupported {
+                Button {
+                    isScanning = true
+                } label: {
+                    Label("Scan Document", systemImage: "doc.viewfinder")
+                }
+            }
             Button {
                 isPickingPDF = true
             } label: {
@@ -296,6 +314,21 @@ struct EditorView: View {
             return
         }
         Task { await editor.importImage(data) }
+    }
+
+    /// A scan, as pages. An empty array is a cancel, which `importScan`
+    /// answers by doing nothing, so there is no second test of it here.
+    private func scanned(_ pages: [Data]) {
+        isScanning = false
+        Task { await editor.importScan(pages) }
+    }
+
+    /// Both ways a scan can fail arrive here: the scanner's own error, and a
+    /// page that would not encode. The cover closes either way, because the
+    /// scanner will not close itself.
+    private func scanFailed(_ error: any Error) {
+        isScanning = false
+        workspace.banner = "That scan couldn't be read: \(error.localizedDescription)"
     }
 
     private func importPDF(_ result: Result<URL, any Error>) async {
