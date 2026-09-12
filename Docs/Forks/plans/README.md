@@ -1,6 +1,6 @@
 # The plans: what runs in parallel, what waits
 
-Eight plans sit in this directory. This file says how they relate, so a
+Ten plans sit in this directory. This file says how they relate, so a
 reader can pick one up without reading the other three first. Each plan
 still owns its own detail; where this file and a plan disagree, the plan
 is wrong and the fix is here first, then there.
@@ -15,6 +15,8 @@ is wrong and the fix is here first, then there.
 | `selection.md` | Objects get a caller: tap under the lasso selects an image or PDF clipping, a frame with handles moves, scales, rotates, one report at the drop; ink lasso is already PencilKit's | medium | one report | none |
 | `export.md` | One renderer function draws pages into a PDF context; PNG through `flattened`; `ShareLink` and print; nothing written to disk | small | none | none |
 | `loose-ends.md` | Nine one-commit items over existing intentions, plus a defect: every notebook opens on page 1 | small | none | none |
+| `organisation.md` | A page mark that carries its title, the outline as the marked pages, folder colour and symbol in `.folder.json`, drag and drop between folder cells | medium | none | index to 3, folder sidecar to 2 |
+| `capture.md` | A camera photo as a layer and a VisionKit scan as N pages, both reusing the photo picker's back half from `Data` inwards | small | none | none |
 
 ## Order
 
@@ -54,6 +56,25 @@ and `loose-ends.md` hand two items across: deleting an object belongs to
 `selection.md`'s overlay is its caller. `selection.md` and `export.md`
 each carry Contract hunks; `loose-ends.md` carries none. Each plan's
 section 8 records the simplicity review it answered.
+
+**Wave 4, 2026-09-12, after wave 3 merged into `v2-mvp` at `2a8fbf8`.**
+`organisation.md` and `capture.md` are independent and run in parallel.
+They share two files textually and nothing semantically: the
+`EditorView` toolbar, where organisation adds a mark button and capture
+adds two rows to the Insert menu that is already there, and
+`EditorViewModel`, where each adds its own methods. Neither changes the
+seam. Capture changes no rule at all; organisation carries four
+one-phrase Contract hunks. Each plan's section 8 records the three
+reviews it answered, two for simplicity on different models and one
+adversarial.
+
+Two facts from wave 4 worth carrying forward, because they cost time to
+find and will cost it again. Every decoder in this codebase is strict and
+refuses unknown keys (`Modules/TNFormat/Codecs.swift:56-72`), so any new
+durable field is a format version bump and never an addition; and
+`Docs/Contract.md:14-16`, "no data to keep", is what makes such a bump
+legal without a migrator. Apply that sentence consistently or a reviewer
+will catch you applying it twice in one plan and refusing it once.
 
 ## Shared files
 
