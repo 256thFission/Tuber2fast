@@ -14,6 +14,12 @@ protocol PageCanvasOwner: AnyObject {
     func pageDidRetire(_ page: PageID, finalInk: PKDrawing)
     func pageStrokeDidEnd(_ page: PageID)
     func pageDidActivateLink(_ page: PageID, layer: LayerID)
+    /// The selection frame's drag ended. Answered synchronously, and the one
+    /// report a drag makes.
+    func pageDidTransformLayer(_ page: PageID, layer: LayerID, to transform: PageSpaceTransform) -> TransformOutcome
+    /// Delete, from the selected object's menu. Answered by the composite
+    /// that omits the layer.
+    func pageDidRequestLayerDelete(_ page: PageID, layer: LayerID)
     func pageDidRequestTextBox(_ page: PageID, at point: PagePoint, style: TextStyle, alignment: TextAlignment)
     func pageDidRequestTextEdit(_ page: PageID, layer: LayerID)
     func pageDidEndTextEditing(_ page: PageID, layer: LayerID, _ text: TextLayer)
@@ -21,23 +27,33 @@ protocol PageCanvasOwner: AnyObject {
     func pagingPanGestureRecognizer() -> UIGestureRecognizer?
 }
 
-/// The runtime's text session. The draft is the canvas's until it ends,
-/// the way a stroke in flight is PencilKit's.
-enum TextEditPhase {
+/// The one overlay a page canvas may have up, structurally: a text session
+/// needs the text tool and a selection needs the lasso, and `apply(tool:)`
+/// ends whichever is open before the other can be asked for. The draft or
+/// the placement is the canvas's until it ends, the way a stroke in flight
+/// is PencilKit's.
+enum OverlayPhase {
     case idle
-    /// Reported a request; no view yet. The overlay goes up when the
+    /// Reported a text request; no view yet. The overlay goes up when the
     /// omitting composite lands. A create request has no layer id until the
     /// notebook answers, so the case names none.
     case opening
-    /// The overlay is up and first responder.
+    /// The text overlay is up and first responder.
     case editing(layer: LayerID, view: TextEditingView)
+    /// An object is selected and its frame is up.
+    case selected(layer: LayerID, view: LayerSelectionView)
 }
 
-struct HitRect: Equatable {
-    enum Kind { case link, text }
+/// Every layer of the installed snapshot, in stack order, each as the
+/// transform that places its unit square.
+///
+/// Not a rect: a rotated image has no axis-aligned one, and a link's or a
+/// text box's rect is `unitSquare(to:)`, so one shape answers for all four
+/// kinds.
+struct HitTarget: Equatable {
     let id: LayerID
-    let rect: CGRect
-    let kind: Kind
+    let kind: LayerKind
+    let transform: PageSpaceTransform
 }
 
 /// What a tap with the text tool means.
@@ -70,13 +86,12 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
     private var geometry: PageGeometry
     private unowned let owner: any PageCanvasOwner
 
-    /// The `.link` and `.text` layers of the installed snapshot, in stack
-    /// order. A tap that lands inside one is an intention, reported and never
-    /// acted on here.
-    private var hitRects: [HitRect] = []
+    /// Every layer of the installed snapshot, in stack order. A tap that
+    /// lands inside one is an intention, reported and never acted on here.
+    private(set) var hitTargets: [HitTarget] = []
 
     private var tool: CanvasTool?
-    private(set) var phase: TextEditPhase = .idle
+    private(set) var phase: OverlayPhase = .idle
     /// Overlays whose end was reported and whose composite has not landed.
     /// Inert. A side map, not a phase: closing A and editing B happen in one
     /// tap.
@@ -278,16 +293,30 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         backdropView.image = UIImage(cgImage: composite.image)
     }
 
+    /// The layer list the picture was rendered from, which is also what the
+    /// selection is rebuilt against: a selected layer the list still names is
+    /// restated at whatever placement the notebook now holds, and one the
+    /// list no longer names takes the frame down with it. That is how a
+    /// delete, an undo, and a restore all reach the frame — through the
+    /// composite, with nothing else to keep in step.
     func setLayers(_ layers: [Layer]) {
-        hitRects = layers.compactMap { layer in
+        hitTargets = layers.map { layer in
             switch layer.payload {
             case .link(let link):
-                HitRect(id: layer.id, rect: CGRect(x: link.rect.x, y: link.rect.y, width: link.rect.width, height: link.rect.height), kind: .link)
+                HitTarget(id: layer.id, kind: .link, transform: .unitSquare(to: link.rect))
             case .text(let text):
-                HitRect(id: layer.id, rect: CGRect(x: text.rect.x, y: text.rect.y, width: text.rect.width, height: text.rect.height), kind: .text)
-            case .image, .pdf:
-                nil
+                HitTarget(id: layer.id, kind: .text, transform: .unitSquare(to: text.rect))
+            case .image:
+                HitTarget(id: layer.id, kind: .image, transform: layer.transform)
+            case .pdf:
+                HitTarget(id: layer.id, kind: .pdf, transform: layer.transform)
             }
+        }
+        guard case .selected(let selected, let frame) = phase else { return }
+        if let target = hitTargets.first(where: { $0.id == selected }) {
+            frame.adopt(target.transform)
+        } else {
+            clearSelection()
         }
     }
 
@@ -300,9 +329,13 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         switch tool {
         case .ink(let pkTool):
             commitSession()
+            // A selection belongs to the lasso and to nothing else, so every
+            // other arm drops it. Lasso to lasso keeps it.
+            if !(pkTool is PKLassoTool) { clearSelection() }
             canvasView.tool = pkTool
             canvasView.drawingGestureRecognizer.isEnabled = true
         case .text(let style, let alignment):
+            clearSelection()
             canvasView.drawingGestureRecognizer.isEnabled = false
             if case .editing(_, let view) = phase {
                 view.applyStyle(style, alignment: alignment)
@@ -378,7 +411,11 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
     }
 
     package func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) {
-        if case .editing(_, let overlay) = phase { setOverlayScale(overlay) }
+        switch phase {
+        case .editing(_, let overlay): setOverlayScale(overlay)
+        case .selected(_, let frame): setOverlayScale(frame)
+        case .idle, .opening: break
+        }
         for overlay in closing.values { setOverlayScale(overlay) }
     }
 
@@ -454,6 +491,8 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         // has no draft; the begin that arrives later finds no canvas, and the
         // owner answers it.
         commitSession()
+        // A selection is not a value, so nothing is reported for it.
+        clearSelection()
         phase = .idle
         for view in closing.values { view.removeFromSuperview() }
         closing.removeAll()
@@ -550,12 +589,17 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
     }
 
     /// A tap in page space. With the text tool a text rect is edited and
-    /// paper gets a box, either one after the open session commits; with an
-    /// ink tool a link is activated. Links are the ink tools' affair.
+    /// paper gets a box, either one after the open session commits; with the
+    /// lasso an object is selected; with any other ink tool a link is
+    /// activated.
+    ///
+    /// Objects answer the lasso alone. A Pencil writing over a photo or a
+    /// worksheet must never pick it up instead, and this recognizer does not
+    /// know the touch's type.
     func tapped(at pagePoint: CGPoint) {
         switch tool {
         case .text(let style, let alignment):
-            guard let hit = Self.textHit(at: pagePoint, rects: hitRects) else { return }
+            guard let hit = Self.textHit(at: pagePoint, targets: hitTargets) else { return }
             commitSession()
             phase = .opening
             switch hit {
@@ -564,8 +608,10 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
             case .create(let point):
                 owner.pageDidRequestTextBox(pageID, at: point, style: style, alignment: alignment)
             }
+        case .ink(let pkTool) where pkTool is PKLassoTool:
+            selectObject(at: pagePoint)
         case .ink, nil:
-            guard let hit = Self.linkHit(at: pagePoint, rects: hitRects) else { return }
+            guard let hit = Self.linkHit(at: pagePoint, targets: hitTargets) else { return }
             TNLog.event(.canvas, "link activated on page \(pageID)")
             owner.pageDidActivateLink(pageID, layer: hit)
         }
@@ -573,18 +619,80 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
 
     /// Topmost first: the stack is bottom-to-top and the layer a finger lands
     /// on is the one drawn last. A link under the text tool is nothing.
-    static func textHit(at point: CGPoint, rects: [HitRect]) -> TextTap? {
-        guard let hit = rects.last(where: { $0.rect.contains(point) }) else {
+    static func textHit(at point: CGPoint, targets: [HitTarget]) -> TextTap? {
+        guard let hit = Self.topmost(at: point, targets: targets) else {
             return .create(PagePoint(x: point.x, y: point.y))
         }
         switch hit.kind {
         case .text: return .edit(hit.id)
         case .link: return nil
+        case .image, .pdf: return .create(PagePoint(x: point.x, y: point.y))
         }
     }
 
-    static func linkHit(at point: CGPoint, rects: [HitRect]) -> LayerID? {
-        rects.last(where: { $0.kind == .link && $0.rect.contains(point) })?.id
+    static func linkHit(at point: CGPoint, targets: [HitTarget]) -> LayerID? {
+        targets.last { $0.kind == .link && $0.transform.contains(PagePoint(x: point.x, y: point.y)) }?.id
+    }
+
+    static func topmost(at point: CGPoint, targets: [HitTarget]) -> HitTarget? {
+        targets.last { $0.transform.contains(PagePoint(x: point.x, y: point.y)) }
+    }
+
+    // MARK: - Selection
+
+    /// A tap with the lasso. An image or a PDF clipping under it is selected,
+    /// paper clears the selection, and a link or a text box is neither: they
+    /// have no transform to move, so a tap on one leaves whatever is selected
+    /// alone.
+    private func selectObject(at pagePoint: CGPoint) {
+        guard let target = Self.topmost(at: pagePoint, targets: hitTargets) else {
+            clearSelection()
+            return
+        }
+        switch target.kind {
+        case .link, .text:
+            return
+        case .image, .pdf:
+            if case .selected(let current, _) = phase, current == target.id { return }
+            select(target)
+        }
+    }
+
+    private func select(_ target: HitTarget) {
+        clearSelection()
+        let frame = LayerSelectionView(layer: target.id, transform: target.transform)
+        canvasView.addSubview(frame)
+        setOverlayScale(frame)
+        // A drag on the frame neither draws, nor pans the page, nor turns it.
+        // Turning would retire this canvas and destroy the view mid-gesture.
+        let contenders = [
+            canvasView.panGestureRecognizer,
+            canvasView.drawingGestureRecognizer,
+            owner.pagingPanGestureRecognizer(),
+        ].compactMap { $0 }
+        for recognizer in contenders { recognizer.require(toFail: frame.panRecognizer) }
+        frame.onDragEnded = { [weak self] transform in self?.reportTransform(of: frame, to: transform) }
+        frame.onDeleteRequested = { [weak self] in
+            guard let self else { return }
+            self.owner.pageDidRequestLayerDelete(self.pageID, layer: frame.layerID)
+        }
+        phase = .selected(layer: target.id, view: frame)
+        TNLog.event(.canvas, "object selected on page \(pageID)")
+    }
+
+    /// The drag's one report. A refusal is answered by restating the
+    /// placement the notebook holds; an acceptance is answered by the
+    /// composite that follows, which restates the same value through
+    /// `setLayers`.
+    private func reportTransform(of frame: LayerSelectionView, to transform: PageSpaceTransform) {
+        let outcome = owner.pageDidTransformLayer(pageID, layer: frame.layerID, to: transform)
+        if case .refused = outcome { frame.adopt(frame.accepted) }
+    }
+
+    private func clearSelection() {
+        guard case .selected(_, let frame) = phase else { return }
+        frame.removeFromSuperview()
+        phase = .idle
     }
 
     package func gestureRecognizer(
@@ -598,8 +706,16 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
     /// view's. This also kills the re-begin loop where a tap in the open
     /// box's own rect would request the layer already open.
     package func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-        guard case .editing(_, let view) = phase else { return true }
-        return !view.bounds.contains(gestureRecognizer.location(in: view))
+        switch phase {
+        case .idle, .opening:
+            return true
+        case .editing(_, let view):
+            return !view.bounds.contains(gestureRecognizer.location(in: view))
+        case .selected(_, let frame):
+            // The frame has its own tap, which opens the menu. This one would
+            // otherwise re-select the object under it, or clear it.
+            return !frame.point(inside: gestureRecognizer.location(in: frame), with: nil)
+        }
     }
 
     // MARK: - PKCanvasViewDelegate

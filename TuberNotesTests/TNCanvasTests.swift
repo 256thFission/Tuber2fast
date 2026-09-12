@@ -544,16 +544,16 @@ struct TNCanvasTests {
     func textHitTesting() {
         let a = LayerID(), b = LayerID(), link = LayerID()
         let rects = [
-            HitRect(id: a, rect: CGRect(x: 0, y: 0, width: 100, height: 100), kind: .text),
-            HitRect(id: b, rect: CGRect(x: 50, y: 50, width: 100, height: 100), kind: .text),
-            HitRect(id: link, rect: CGRect(x: 300, y: 300, width: 50, height: 50), kind: .link),
+            HitTarget(id: a, kind: .text, transform: .unitSquare(to: PageRect(x: 0, y: 0, width: 100, height: 100))),
+            HitTarget(id: b, kind: .text, transform: .unitSquare(to: PageRect(x: 50, y: 50, width: 100, height: 100))),
+            HitTarget(id: link, kind: .link, transform: .unitSquare(to: PageRect(x: 300, y: 300, width: 50, height: 50))),
         ]
-        #expect(PageCanvasController.textHit(at: CGPoint(x: 10, y: 10), rects: rects) == .edit(a))
-        #expect(PageCanvasController.textHit(at: CGPoint(x: 75, y: 75), rects: rects) == .edit(b))
-        #expect(PageCanvasController.textHit(at: CGPoint(x: 310, y: 310), rects: rects) == nil)
-        #expect(PageCanvasController.textHit(at: CGPoint(x: 500, y: 500), rects: rects) == .create(PagePoint(x: 500, y: 500)))
-        #expect(PageCanvasController.linkHit(at: CGPoint(x: 310, y: 310), rects: rects) == link)
-        #expect(PageCanvasController.linkHit(at: CGPoint(x: 10, y: 10), rects: rects) == nil)
+        #expect(PageCanvasController.textHit(at: CGPoint(x: 10, y: 10), targets: rects) == .edit(a))
+        #expect(PageCanvasController.textHit(at: CGPoint(x: 75, y: 75), targets: rects) == .edit(b))
+        #expect(PageCanvasController.textHit(at: CGPoint(x: 310, y: 310), targets: rects) == nil)
+        #expect(PageCanvasController.textHit(at: CGPoint(x: 500, y: 500), targets: rects) == .create(PagePoint(x: 500, y: 500)))
+        #expect(PageCanvasController.linkHit(at: CGPoint(x: 310, y: 310), targets: rects) == link)
+        #expect(PageCanvasController.linkHit(at: CGPoint(x: 10, y: 10), targets: rects) == nil)
     }
 
     @Test("undoTyping reaches the open text view's own manager, and does nothing while the view is still opening")
@@ -737,8 +737,21 @@ final class RecordingReporter: CanvasReporting {
         inkChanges.append((page, ink, echoOf))
     }
 
+    var transforms: [(page: PageID, layer: LayerID, transform: PageSpaceTransform)] = []
+    var deletes: [(page: PageID, layer: LayerID)] = []
+    /// What the notebook answers a transform with. `.refused` is what a
+    /// drag past the page's tenth edge would get.
+    var transformOutcome: TransformOutcome = .accepted
+
     func layerTransformed(on page: PageID, layer: LayerID, to transform: PageSpaceTransform) -> TransformOutcome {
-        .accepted
+        transforms.append((page, layer, transform))
+        sequence.append("layerTransformed")
+        return transformOutcome
+    }
+
+    func layerDeleteRequested(on page: PageID, layer: LayerID) {
+        deletes.append((page, layer))
+        sequence.append("layerDeleteRequested")
     }
 
     func pageBecameCurrent(_ page: PageID) { becameCurrent.append(page) }

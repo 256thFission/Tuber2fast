@@ -41,6 +41,10 @@ import UIKit
         return binding.layerTransformed(on: page, layer: layer, to: transform)
     }
 
+    package func layerDeleteRequested(on page: PageID, layer: LayerID) {
+        binding?.layerDeleteRequested(on: page, layer: layer)
+    }
+
     package func pageBecameCurrent(_ page: PageID) { binding?.pageBecameCurrent(page) }
     package func windowChanged(to pages: [PageID]) { binding?.windowChanged(to: pages) }
     package func endBoundaryReached(seq: ReportSeq) { binding?.endBoundaryReached(seq: seq) }
@@ -212,6 +216,13 @@ import UIKit
         let outcome = notebook.transformLayer(on: page, layer: layer, to: transform)
         drain()
         return outcome
+    }
+
+    /// One-way, unlike a transform: the answer is the composite that omits
+    /// the layer, and `deleteLayer` refuses nothing a caller could act on.
+    package func layerDeleteRequested(on page: PageID, layer: LayerID) {
+        notebook.deleteLayer(layer, on: page)
+        drain()
     }
 
     package func pageBecameCurrent(_ page: PageID) {

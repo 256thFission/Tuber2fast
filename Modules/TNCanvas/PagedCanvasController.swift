@@ -634,6 +634,20 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
         reporter.textEditingEnded(on: page, layer: layer, text)
     }
 
+    /// The same rule again, and the reason a transform can be refused
+    /// without the notebook ever hearing of it: a canvas in `retiring`
+    /// belongs to a page the notebook has let go, and reporting for one is
+    /// the trap the contract asks for.
+    func pageDidTransformLayer(_ page: PageID, layer: LayerID, to transform: PageSpaceTransform) -> TransformOutcome {
+        guard retiring[page] == nil else { return .refused(reason: "page \(page) is retiring") }
+        return reporter.layerTransformed(on: page, layer: layer, to: transform)
+    }
+
+    func pageDidRequestLayerDelete(_ page: PageID, layer: LayerID) {
+        guard retiring[page] == nil else { return }
+        reporter.layerDeleteRequested(on: page, layer: layer)
+    }
+
     func pagingPanGestureRecognizer() -> UIGestureRecognizer? {
         scrollView.panGestureRecognizer
     }

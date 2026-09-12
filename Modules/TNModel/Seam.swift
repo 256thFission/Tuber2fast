@@ -152,6 +152,10 @@ package enum RetireOutcome: Sendable, Equatable {
 @MainActor package protocol CanvasReporting: AnyObject {
     func inkChanged(on page: PageID, _ ink: PKDrawing, echoOf: InkSeq?)
     func layerTransformed(on page: PageID, layer: LayerID, to transform: PageSpaceTransform) -> TransformOutcome
+    /// Delete from the selected object's menu. Answered by an
+    /// `updateComposite` that omits the layer, which is also what takes the
+    /// selection frame down.
+    func layerDeleteRequested(on page: PageID, layer: LayerID)
     func pageBecameCurrent(_ page: PageID)
     func windowChanged(to pages: [PageID])
     func endBoundaryReached(seq: ReportSeq)

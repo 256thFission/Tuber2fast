@@ -43,6 +43,25 @@ package struct PageSpaceTransform: Codable, Sendable, Equatable {
         (a * x + c * y + tx, b * x + d * y + ty)
     }
 
+    /// Whether `point` lies inside the unit square's image: the inverse
+    /// applied to the point lands in `0...1` on both axes.
+    ///
+    /// The hit test for a rotated object, and for a link or text rect
+    /// spelled as `unitSquare(to:)`. A rect's `contains` cannot answer for a
+    /// rotation, and there is no axis-aligned rect to ask.
+    package func contains(_ point: PagePoint) -> Bool {
+        guard let inverse = inverted else { return false }
+        let local = inverse.apply(x: point.x, y: point.y)
+        return local.x >= 0 && local.x <= 1 && local.y >= 0 && local.y <= 1
+    }
+
+    /// The lengths of the transformed unit edges: the object's own width and
+    /// height in page points, whatever its rotation. The selection frame's
+    /// bounds.
+    package var unitExtents: (width: Double, height: Double) {
+        (hypot(a, b), hypot(c, d))
+    }
+
     package var inverted: PageSpaceTransform? {
         let det = determinant
         guard det.isFinite, abs(det) > Self.minimumDeterminant else { return nil }
