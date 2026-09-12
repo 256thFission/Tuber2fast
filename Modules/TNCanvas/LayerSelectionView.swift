@@ -172,7 +172,7 @@ final class LayerSelectionView: UIView {
     /// answers it restates again.
     func adopt(_ transform: PageSpaceTransform) {
         accepted = transform
-        guard drag == nil else { return }
+        guard !isDragging else { return }
         working = transform
         place()
     }
@@ -269,27 +269,52 @@ final class LayerSelectionView: UIView {
         )
     }
 
+    /// A drag's three moments, in this view's own coordinate space.
+    ///
+    /// Split from the recognizer deliberately: what a drag *means* is
+    /// arithmetic and is checkable here, while what a recognizer says is a
+    /// touch stream the simulator does not have. The gesture below is the
+    /// only production caller and adds nothing but the touch.
+    func beginDrag(at local: CGPoint) {
+        drag = mode(forTouchAt: local)
+    }
+
+    /// `local` is where the touch is now; `delta` is how far it moved since
+    /// the last call. Both in this view's own space.
+    func continueDrag(to local: CGPoint, by delta: CGPoint) {
+        switch drag {
+        case .move:
+            move(by: pageDelta(delta))
+        case .scale(let corner):
+            scale(fromCorner: corner, to: pagePoint(local))
+        case .rotate(let startTouchAngle, let startRotation):
+            let touch = angle(from: pageCentre, to: pagePoint(local))
+            rotate(to: CGFloat(startRotation + touch - startTouchAngle))
+        case nil:
+            return
+        }
+    }
+
+    /// The pan ended or was cancelled. One report, whole, once.
+    func endDrag() {
+        guard drag != nil else { return }
+        drag = nil
+        onDragEnded?(working)
+    }
+
+    /// Whether a drag is in flight, which is what makes a restatement from
+    /// the notebook record `accepted` and leave `working` alone.
+    var isDragging: Bool { drag != nil }
+
     @objc private func handlePan(_ recognizer: UIPanGestureRecognizer) {
         switch recognizer.state {
         case .began:
-            drag = mode(forTouchAt: recognizer.location(in: self))
+            beginDrag(at: recognizer.location(in: self))
         case .changed:
-            switch drag {
-            case .move:
-                move(by: pageDelta(recognizer.translation(in: self)))
-                recognizer.setTranslation(.zero, in: self)
-            case .scale(let corner):
-                scale(fromCorner: corner, to: pagePoint(recognizer.location(in: self)))
-            case .rotate(let startTouchAngle, let startRotation):
-                let touch = angle(from: pageCentre, to: pagePoint(recognizer.location(in: self)))
-                rotate(to: CGFloat(startRotation + touch - startTouchAngle))
-            case nil:
-                return
-            }
+            continueDrag(to: recognizer.location(in: self), by: recognizer.translation(in: self))
+            recognizer.setTranslation(.zero, in: self)
         case .ended, .cancelled, .failed:
-            guard drag != nil else { return }
-            drag = nil
-            onDragEnded?(working)
+            endDrag()
         default:
             break
         }
