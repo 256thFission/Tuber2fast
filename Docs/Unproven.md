@@ -91,6 +91,16 @@ Nothing here is a reason not to ship. It is a reason not to be surprised.
   evidence and Phillip's verdict. Whether the frame's `UIEditMenuInteraction`
   presents its one Delete action at all is in the same bucket: the tests can
   drive the action, not the presentation.
+- **No camera has ever been opened by this app.** The Take Photo row is
+  hidden wherever `UIImagePickerController.isSourceTypeAvailable(.camera)` is
+  false, which is every simulator, so nothing in CI reaches
+  `CameraCapture` — not the presentation, not the delegate, not the
+  `UIImage` to JPEG encode, and not the permission prompt.
+  `INFOPLIST_KEY_NSCameraUsageDescription` is in the built bundle and
+  `plutil` says so, which proves the key is there and proves nothing about
+  what iOS does with it. Whether the first tap prompts rather than
+  terminating, whether a denial leaves the row harmless, and whether the
+  captured photo lands centred on the page are device evidence.
 - **The loading/unreadable placeholder has never been seen on a device**, and
   the refusal of Pencil input on it — the placeholder accepts no input at all —
   is a device check by nature; the simulator has no Pencil.
