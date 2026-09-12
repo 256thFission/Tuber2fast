@@ -813,8 +813,8 @@ package final class Notebook {
     /// after every await, which `importPDF` need not do: its loop body has no
     /// await and this one suspends twice per page, at `storeImageAsset` and at
     /// `renderer.aspect`. If the page `after` names is deleted across a
-    /// suspension, `insertPage`'s `pages.append` would answer with the end of
-    /// the notebook, a default the contract forbids, so the run stops instead.
+    /// suspension, the end of the notebook is the only answer left, and a
+    /// default is what the contract forbids, so the run stops instead.
     ///
     /// A page that cannot be stored or measured, or an `after` that is gone,
     /// stops the run, and what was made is emitted and marked dirty before the
@@ -853,6 +853,7 @@ package final class Notebook {
                 publish()
                 throw .invalidWrite("scanned page \(number) could not be stored: \(error.description)")
             }
+            // The first re-check, after the store's suspension.
             guard index.pageIDs.contains(after) else {
                 publish()
                 throw .invalidWrite("the page scanned page \(number) would follow is gone")
@@ -861,7 +862,11 @@ package final class Notebook {
                 publish()
                 throw .invalidWrite("scanned page \(number) could not be measured")
             }
-            guard index.pageIDs.contains(after) else {
+            // The second re-check, and the one that answers where the page
+            // goes. `importPDF` falls back to the end of the notebook here;
+            // this asks for the position and stops if there is not one, so no
+            // scanned page can silently land somewhere it was not asked to.
+            guard let position = index.pages.firstIndex(where: { $0.id == after }) else {
                 publish()
                 throw .invalidWrite("the page scanned page \(number) would follow is gone")
             }
@@ -872,8 +877,7 @@ package final class Notebook {
             }
             let record = PageRecord(id: PageID(), geometry: geometry, paper: .image(asset))
             var pages = index.pages
-            let position = pages.firstIndex { $0.id == after }.map { $0 + 1 } ?? pages.count
-            pages.insert(record, at: position)
+            pages.insert(record, at: position + 1)
             index = index.withPages(pages)
             var content = PageContent(ink: PKDrawing(), layers: [], hasInk: false, inkIndex: 0)
             content.edited()
