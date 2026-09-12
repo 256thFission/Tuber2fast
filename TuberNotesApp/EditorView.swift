@@ -29,6 +29,7 @@ struct EditorView: View {
         case paperForNewPage(PageSize, PageOrientation)
     }
     @State private var isShowingNavigator = false
+    @State private var isExporting = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -63,6 +64,14 @@ struct EditorView: View {
         .sheet(isPresented: $isShowingNavigator) {
             PageNavigatorSheet(editor: editor)
         }
+        .sheet(isPresented: $isExporting) {
+            ExportSheet(editor: editor, name: workspace.activeTab?.name ?? "Notebook") {
+                // iPad print has no unanchored presentation; the canvas is
+                // what is underneath the sheet.
+                guard let view = editor.canvasHost.viewIfLoaded else { return nil }
+                return (view.bounds, view)
+            }
+        }
         .confirmationDialog(
             "Delete this page?",
             isPresented: $isConfirmingPageDelete,
@@ -88,6 +97,10 @@ struct EditorView: View {
                 Divider().frame(height: 22)
                 paperMenu
                 insertMenu
+                Button { isExporting = true } label: {
+                    Label("Export", systemImage: "square.and.arrow.up")
+                        .labelStyle(.iconOnly)
+                }
                 Button(role: .destructive) {
                     isConfirmingPageDelete = true
                 } label: {
