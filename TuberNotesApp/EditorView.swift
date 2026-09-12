@@ -18,6 +18,7 @@ struct EditorView: View {
     @State private var photoDestination = PhotoDestination.layerOnCurrentPage
     @State private var photoItem: PhotosPickerItem?
     @State private var isPickingPDF = false
+    @State private var isPickingLinkTarget = false
     @State private var isConfirmingPageDelete = false
     @State private var isAddingPage = false
     @State private var pendingPage: (choice: NewPagePaperChoice, size: PageSize, orientation: PageOrientation)?
@@ -58,6 +59,9 @@ struct EditorView: View {
         }
         .fileImporter(isPresented: $isPickingPDF, allowedContentTypes: [.pdf]) { result in
             Task { await importPDF(result) }
+        }
+        .sheet(isPresented: $isPickingLinkTarget) {
+            LinkTargetPicker(workspace: workspace, editor: editor)
         }
         // A sheet, not a full-screen cover: the canvas stays laid out under
         // it, so a tap in the grid can scroll to the page.
@@ -190,6 +194,11 @@ struct EditorView: View {
                 isPickingPDF = true
             } label: {
                 Label("PDF", systemImage: "doc")
+            }
+            Button {
+                isPickingLinkTarget = true
+            } label: {
+                Label("Link", systemImage: "link")
             }
         } label: {
             Label("Insert", systemImage: "plus.circle")

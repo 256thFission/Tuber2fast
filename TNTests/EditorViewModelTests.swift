@@ -191,6 +191,28 @@ struct EditorViewModelContentTests {
         _ = await notebook.close()
     }
 
+    @Test("A link is one layer, one history entry, and it reaches the runtime")
+    func addingALink() async throws {
+        let (scratch, notebook, surface, editor) = try await loaded("vm-link")
+        let page = notebook.pageIDs[0]
+        let target = LinkTarget.externalPage(notebook: NotebookID(), page: PageID())
+
+        await editor.addLink(to: target)
+
+        #expect(editor.lastContentError == nil)
+        let layers = try #require(notebook.state(of: page)?.content?.layers)
+        #expect(layers.count == 1)
+        guard case .link(let link) = try #require(layers.first).payload else {
+            Issue.record("the layer is not a link"); return
+        }
+        #expect(link.target == target)
+        #expect(notebook.canUndo, "minting a link is an edit, and it is on the stack")
+        try await waitUntil { surface.layersSeen[page]?.map(\.id) == [layers[0].id] }
+
+        withExtendedLifetime(scratch) {}
+        _ = await notebook.close()
+    }
+
     @Test("A page with ink refuses a photo as its paper, and nothing is written")
     func photoIsRefusedOnAPageWithInk() async throws {
         let (scratch, notebook, _, editor) = try await loaded("vm-paper-photo-refused")
