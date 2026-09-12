@@ -119,12 +119,21 @@ struct EditorViewModelTests {
 @Suite("Editor view model: export")
 @MainActor
 struct EditorViewModelExportTests {
+    /// Over a `RecordingSurface`, not the runtime: these tests put pages in
+    /// the window so custody has something to export, and a real
+    /// `PagedCanvasController` builds a live canvas per page for a window
+    /// it is told about. Such a canvas traps when it is released without
+    /// its final ink report, which is the contract doing its job — a test
+    /// bundle with no host app and no Pencil cannot deliver one. The
+    /// export path itself names neither the binding nor the canvas host.
     private func editor(_ name: String) async throws -> (Scratch, Notebook, EditorViewModel) {
         let scratch = try Scratch(name)
         let book = try await Notebook.create(at: scratch.packageURL, schedule: fast)
-        return (scratch, book, EditorViewModel(notebook: book, palette: ToolPalette(store: MemoryPaletteStore())) { _ in })
+        let binding = EditorBinding(notebook: book, surface: RecordingSurface())
+        return (scratch, book, EditorViewModel(binding: binding, palette: ToolPalette(store: MemoryPaletteStore())))
     }
 
+    /// Every page in the window and loaded, so an export reads custody.
     private func ready(_ book: Notebook) async throws {
         book.windowChanged(to: book.pageIDs)
         try await waitUntil { book.pageIDs.allSatisfy { book.state(of: $0)?.content != nil } }
@@ -142,6 +151,7 @@ struct EditorViewModelExportTests {
         #expect(editor.exportedFile?.data.starts(with: Array("%PDF".utf8)) == true)
         editor.clearExport()
         #expect(editor.exportedFile == nil && editor.exportProgress == nil)
+        _ = await editor.close()
         withExtendedLifetime(scratch) {}
     }
 
@@ -153,6 +163,7 @@ struct EditorViewModelExportTests {
         try await waitUntil { editor.exportedFile != nil }
         #expect(editor.exportedFile?.kind == .png)
         #expect(editor.exportedFile?.data.starts(with: [0x89, 0x50, 0x4E, 0x47]) == true, "the PNG signature")
+        _ = await editor.close()
         withExtendedLifetime(scratch) {}
     }
 
@@ -167,6 +178,7 @@ struct EditorViewModelExportTests {
             #expect(editor.exportProgress == nil, "nothing was asked of the renderer")
             #expect(editor.exportedFile == nil)
         }
+        _ = await editor.close()
         withExtendedLifetime(scratch) {}
     }
 
@@ -175,7 +187,7 @@ struct EditorViewModelExportTests {
         let scratch = try Scratch("vm-export-cancel")
         let store = HeldLoadStore(try await PackageStore.create(root: scratch.packageURL, index: Fixture.index(pages: 1)))
         let book = try await Notebook.open(store: store, schedule: fast)
-        let editor = EditorViewModel(notebook: book, palette: ToolPalette(store: MemoryPaletteStore())) { _ in }
+        let editor = EditorViewModel(binding: EditorBinding(notebook: book, surface: RecordingSurface()), palette: ToolPalette(store: MemoryPaletteStore()))
         await store.hold()
         editor.exportPDF(pages: 1...1)
         #expect(editor.exportProgress != nil, "the walk started")
@@ -186,6 +198,7 @@ struct EditorViewModelExportTests {
         // The walk it cancelled cannot come back and install a file.
         try await Task.sleep(for: .milliseconds(50))
         #expect(editor.exportedFile == nil)
+        _ = await editor.close()
         withExtendedLifetime(scratch) {}
     }
 
@@ -201,6 +214,7 @@ struct EditorViewModelExportTests {
         #expect(editor.lastContentError != nil)
         #expect(editor.exportProgress == nil && editor.exportedFile == nil)
         #expect(editor.canUndo == canUndo)
+        _ = await editor.close()
         withExtendedLifetime(scratch) {}
     }
 }
