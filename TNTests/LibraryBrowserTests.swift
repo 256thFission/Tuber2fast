@@ -197,10 +197,10 @@ struct LibraryBrowserTests {
 
         // The folder itself, not a neighbour of the open notebook: `Library`
         // gates the source path only, so only a drag of the folder above an
-        // open notebook is refused. The wording names the folder rather than
-        // the notebook; see the KNOWN DEFECT on `Library.requireUnlocked`.
+        // open notebook is refused, and the refusal names the notebook the
+        // reader has to close, not the folder that was dragged.
         await browser.move(["Term"], toFolder: "Archive")
-        #expect(browser.refusal == "close Term first")
+        #expect(browser.refusal == "close Open.tubernotes first")
         #expect(try await browser.library.store.list(folder: "Archive").isEmpty)
         #expect(try await browser.library.store.list(folder: "Term").map(\.name) == ["Open"])
 

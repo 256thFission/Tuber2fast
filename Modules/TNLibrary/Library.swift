@@ -52,11 +52,16 @@ package final class Library {
     }
 
     /// True when the path is checked out or is a folder holding one.
-    package func isLocked(_ relativePath: String) -> Bool {
-        let prefix = relativePath.isEmpty ? "" : relativePath + "/"
-        return isCheckedOut(relativePath)
-            || openNotebooks.keys.contains { $0.hasPrefix(prefix) && !prefix.isEmpty }
-            || reservations.contains { $0.hasPrefix(prefix) && !prefix.isEmpty }
+    package func isLocked(_ relativePath: String) -> Bool { openPath(under: relativePath) != nil }
+
+    /// The path checked out at `relativePath` or below it, or nil. A
+    /// reservation counts: the checkout is promised before the notebook is.
+    private func openPath(under relativePath: String) -> String? {
+        if isCheckedOut(relativePath) { return relativePath }
+        guard !relativePath.isEmpty else { return nil }
+        let prefix = relativePath + "/"
+        return openNotebooks.keys.first { $0.hasPrefix(prefix) }
+            ?? reservations.first { $0.hasPrefix(prefix) }
     }
 
     package func openNotebook(at relativePath: String) -> Notebook? { openNotebooks[relativePath] }
@@ -102,17 +107,12 @@ package final class Library {
 
     // MARK: Mutations, gated
 
-    /// KNOWN DEFECT: for a folder above an open notebook this names the
-    /// folder, and `Docs/Contract.md` — Library says such a refusal carries
-    /// "the notebook's name". So a folder refuses with "close Term first",
-    /// which does not say which notebook to close, and with several open the
-    /// reader cannot tell. The fix is to name the open path found under the
-    /// prefix rather than the argument; it is left because
-    /// `TNTests/LibraryTests.swift`'s `ancestorLock` pins the present wording
-    /// and correcting both belongs with whoever owns that sentence.
+    /// Names the open notebook, not the argument: a folder above an open
+    /// notebook refuses with that notebook's name, which is the thing the
+    /// reader has to close (`Docs/Contract.md`, Library).
     private func requireUnlocked(_ relativePath: String) throws(LibraryError) {
-        if isLocked(relativePath) {
-            throw .notebookIsOpen(name: (relativePath as NSString).lastPathComponent)
+        if let open = openPath(under: relativePath) {
+            throw .notebookIsOpen(name: (open as NSString).lastPathComponent)
         }
     }
 

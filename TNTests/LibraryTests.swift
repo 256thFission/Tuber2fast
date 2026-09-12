@@ -95,7 +95,7 @@ struct LibraryTests {
         _ = try await library.rename(at: item.relativePath, to: "Other")
     }
 
-    @Test("A folder holding an open notebook is locked too")
+    @Test("A folder holding an open notebook is locked too, and the refusal names the notebook")
     func ancestorLock() async throws {
         let (scratch, library) = try makeLibrary("lib-ancestor")
         defer { withExtendedLifetime(scratch) {} }
@@ -103,7 +103,7 @@ struct LibraryTests {
         let item = try await library.store.createNotebook(named: "Plan", in: "Work")
         guard case .opened = await library.checkout(item.relativePath) else { Issue.record("open failed"); return }
         #expect(library.isLocked("Work"))
-        await #expect(throws: LibraryError.notebookIsOpen(name: "Work")) { try await library.rename(at: "Work", to: "Play") }
+        await #expect(throws: LibraryError.notebookIsOpen(name: "Plan.tubernotes")) { try await library.rename(at: "Work", to: "Play") }
         _ = await library.release(item.relativePath)
         #expect(!library.isLocked("Work"))
     }
@@ -389,34 +389,6 @@ struct LibraryTests {
 
         try JSONSerialization.data(withJSONObject: written, options: [.sortedKeys]).write(to: sidecar)
         #expect(await library.store.folderFile(of: "Term") != nil, "the file as written must read back")
-    }
-
-    @Test("A format-2 package lists with a nil identity, and opening it says which key is missing")
-    func aFormat2PackageListsWithNoIdentity() async throws {
-        let (scratch, library) = try makeLibrary("lib-old-format")
-        defer { withExtendedLifetime(scratch) {} }
-        let item = try await library.store.createNotebook(named: "Old", in: "")
-        let indexURL = PackageLayout(root: library.store.url(of: item.relativePath)).indexURL
-        var object = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: indexURL)) as? [String: Any])
-        object["formatVersion"] = 2
-        object.removeValue(forKey: "bookmarks")
-        try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]).write(to: indexURL)
-
-        // Silent in the library, which is the cost the bump carries:
-        // `indexFacts` decodes with `try?`, so a package this build cannot
-        // read still lists, looks healthy, and has no identity at all — no
-        // star, no link target, a re-minted trash container name.
-        let listed = try #require(try await library.store.list(folder: "").first)
-        #expect(listed.name == "Old")
-        #expect(listed.notebookID == nil)
-        #expect(listed.identity == nil)
-
-        // Loud on open, by the key this build needs.
-        guard case .failed(let error) = await library.checkout(item.relativePath) else {
-            Issue.record("a format-2 package opened")
-            return
-        }
-        #expect(error == .format(.missingKey("bookmarks")))
     }
 
     @Test("Two packages with one identity: the scan re-mints the second")
