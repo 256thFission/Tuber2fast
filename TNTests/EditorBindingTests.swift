@@ -176,6 +176,32 @@ struct EditorBindingTests {
         _ = await notebook.close()
     }
 
+    @Test("A delete request answers with the composite that omits the layer, and the delete is undoable")
+    func deleteRequestOmitsTheLayer() async throws {
+        let scratch = try Scratch("editor-delete-layer")
+        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        let surface = RecordingSurface()
+        let binding = EditorBinding(notebook: notebook, surface: surface)
+        let page = notebook.pageIDs[0]
+
+        binding.windowChanged(to: [page])
+        try await waitUntil { surface.installed.contains(page) }
+        let layer = Fixture.imageLayer()
+        try await notebook.addLayer(layer, assetData: Fixture.archive(3, count: 128), on: page)
+        binding.drain()
+        try await waitUntil { surface.layersSeen[page]?.map(\.id) == [layer.id] }
+
+        binding.layerDeleteRequested(on: page, layer: layer.id)
+        try await waitUntil { surface.layersSeen[page]?.isEmpty == true }
+        #expect(notebook.state(of: page)?.content?.layers.isEmpty == true)
+        #expect(notebook.canUndo, "a delete is one entry on the stack")
+
+        #expect(notebook.undo() == page)
+        #expect(notebook.state(of: page)?.content?.layers.map(\.id) == [layer.id])
+        _ = await notebook.close()
+        _ = scratch
+    }
+
     @Test("A move pushes one page order; a self-drop, a next-neighbour drop, and the last page onto the end push nothing")
     func movePageGuards() async throws {
         let (scratch, notebook) = try await reopened("editor-move", pages: 3)
