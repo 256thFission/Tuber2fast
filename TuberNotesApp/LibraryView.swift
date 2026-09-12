@@ -53,7 +53,7 @@ struct LibraryView: View {
             Button("Create") { run { await browser.createFolder(named: newFolderName) } }
         }
         .sheet(isPresented: $isCreatingNotebook) {
-            NewNotebookSheet { name, geometry, paper in
+            NewNotebookSheet(opensOn: browser.options.newNotebook) { name, geometry, paper in
                 run { await browser.createNotebook(named: name, geometry: geometry, paper: paper) }
             }
         }

@@ -217,6 +217,11 @@ package final class LibraryBrowser {
 
     package func createNotebook(named name: String, geometry: PageGeometry, paper: DrawnPaper) async {
         await perform { _ = try await library.store.createNotebook(named: name, in: folder, geometry: geometry, paper: paper) }
+        // Only a notebook that was actually made is a choice worth opening on
+        // next time; `perform` leaves `refusal` nil when it landed. The
+        // `didSet` on `options` is what writes it.
+        guard refusal == nil else { return }
+        options.newNotebook = NotebookSetup(geometry: geometry, paper: paper)
     }
 
     package func recover(_ entry: TrashEntry) async {

@@ -83,6 +83,24 @@ struct LibraryBrowserTests {
         #expect(browser.displayed.map(\.name) == ["Week 1"])
     }
 
+    @Test("Creating a notebook remembers its size and paper; a refused one does not")
+    func theNewNotebookSheetOpensOnTheLastChoice() async throws {
+        let (scratch, browser) = try makeBrowser("browser-new-notebook")
+        defer { withExtendedLifetime(scratch) {} }
+        #expect(browser.options.newNotebook == nil, "nothing has been created here yet")
+
+        let a5 = PageGeometry(width: 420, height: 595)
+        await browser.createNotebook(named: "Essay", geometry: a5, paper: .lined)
+        #expect(browser.refusal == nil)
+        #expect(browser.options.newNotebook == NotebookSetup(geometry: a5, paper: .lined))
+
+        // A name that already exists is refused, and a notebook that was not
+        // made is not a choice.
+        await browser.createNotebook(named: "Essay", geometry: .letter, paper: .grid)
+        #expect(browser.refusal != nil)
+        #expect(browser.options.newNotebook == NotebookSetup(geometry: a5, paper: .lined))
+    }
+
     @Test("Entering and leaving a folder walks the path")
     func walkingTheTree() async throws {
         let (scratch, browser) = try makeBrowser("browser-walk")

@@ -90,7 +90,12 @@ struct LibraryViewOptionsTests {
         browser.options.layout = .list
         #expect(store.stored?.layout == .list)
 
+        // The last new-notebook choice rides the same record.
+        let setup = NotebookSetup(geometry: PageGeometry(width: 595, height: 842), paper: .lined)
+        browser.options.newNotebook = setup
+        #expect(store.stored?.newNotebook == setup)
+
         let reopened = LibraryBrowser(library: library, optionsStore: store)
-        #expect(reopened.options == LibraryViewOptions(layout: .list, sortKey: .name, ascending: true))
+        #expect(reopened.options == LibraryViewOptions(layout: .list, sortKey: .name, ascending: true, newNotebook: setup))
     }
 }

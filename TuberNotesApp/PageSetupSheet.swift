@@ -1,5 +1,6 @@
 import SwiftUI
 import TNEditor
+import TNLibrary
 import TNModel
 
 /// What the catalogue is called. `PageSize` and `DrawnPaper` carry no names
@@ -166,9 +167,20 @@ struct NewNotebookSheet: View {
     let create: (String, PageGeometry, DrawnPaper) -> Void
 
     @State private var name = "New notebook"
-    @State private var size = PageSize.letter
-    @State private var orientation = PageOrientation.portrait
-    @State private var paper = DrawnPaper.blank
+    @State private var size: PageSize
+    @State private var orientation: PageOrientation
+    @State private var paper: DrawnPaper
+
+    /// Opens on the last notebook made here, or on Letter, portrait, blank
+    /// the first time. The size is stored as a geometry, so the catalogue
+    /// name is recovered from the two numbers rather than kept twice.
+    init(opensOn setup: NotebookSetup?, create: @escaping (String, PageGeometry, DrawnPaper) -> Void) {
+        self.create = create
+        let opened = setup.map { PageSize.matching($0.geometry) } ?? (size: .letter, orientation: .portrait)
+        _size = State(initialValue: opened.size)
+        _orientation = State(initialValue: opened.orientation)
+        _paper = State(initialValue: setup?.paper ?? .blank)
+    }
 
     var body: some View {
         NavigationStack {
