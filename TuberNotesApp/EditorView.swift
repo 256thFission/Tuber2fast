@@ -26,6 +26,7 @@ struct EditorView: View {
     /// a second Bool beside `isPickingPhoto` could claim both at once.
     private enum PhotoDestination {
         case layerOnCurrentPage
+        case paperForCurrentPage
         case paperForNewPage(PageSize, PageOrientation)
     }
     @State private var isShowingNavigator = false
@@ -159,6 +160,17 @@ struct EditorView: View {
                     }
                 }
             }
+            Divider()
+            // Not greyed on a page that has something on it: whether a page is
+            // empty is the notebook's answer, and mirroring it here would be a
+            // second copy refreshed per drain. The notebook refuses, and the
+            // bar says so.
+            Button {
+                photoDestination = .paperForCurrentPage
+                isPickingPhoto = true
+            } label: {
+                Label("Photo", systemImage: "photo")
+            }
         } label: {
             Label("Paper", systemImage: "square.grid.2x2")
         }
@@ -214,6 +226,8 @@ struct EditorView: View {
             switch photoDestination {
             case .layerOnCurrentPage:
                 await editor.importImage(data)
+            case .paperForCurrentPage:
+                await editor.setPaper(photo: data)
             case .paperForNewPage(let size, let orientation):
                 await editor.addPage(size: size, orientation: orientation, photo: data)
             }

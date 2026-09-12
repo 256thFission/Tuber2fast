@@ -111,3 +111,68 @@ struct EditorViewModelTests {
         withExtendedLifetime(scratch) {}
     }
 }
+
+/// The view model's content intentions, over a surface that records instead
+/// of drawing. What a test asserts here is the notebook's state and the
+/// vocabulary the runtime was pushed: pixels are the renderer's suite.
+@Suite("Editor view model: content")
+@MainActor
+struct EditorViewModelContentTests {
+    /// A one-page notebook with that page loaded, and an editor over a
+    /// recording surface.
+    private func loaded(_ name: String) async throws -> (Scratch, Notebook, RecordingSurface, EditorViewModel) {
+        let scratch = try Scratch(name)
+        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        let page = notebook.pageIDs[0]
+        notebook.windowChanged(to: [page])
+        try await waitUntil { notebook.state(of: page)?.content != nil }
+        let surface = RecordingSurface()
+        let editor = EditorViewModel(
+            binding: EditorBinding(notebook: notebook, surface: surface),
+            palette: ToolPalette(store: MemoryPaletteStore())
+        )
+        return (scratch, notebook, surface, editor)
+    }
+
+    @Test("A photo becomes the current page's paper, and the page takes the photo's aspect")
+    func photoBecomesThePaper() async throws {
+        let (scratch, notebook, surface, editor) = try await loaded("vm-paper-photo")
+        let page = notebook.pageIDs[0]
+        let ordersBefore = surface.pagesSet.count
+
+        await editor.setPaper(photo: try Fixture.imageData(width: 200, height: 100))
+
+        #expect(editor.lastContentError == nil)
+        guard case .image = try #require(notebook.paper(of: page)) else {
+            Issue.record("the paper is not an image"); return
+        }
+        // The asset fills the page rectangle, so the rectangle is the asset's
+        // shape at the page's width.
+        #expect(notebook.index.record(of: page)?.geometry == PageGeometry(width: 612, height: 306))
+        #expect(surface.pagesSet.count > ordersBefore, "the geometry changed, so the order is restated")
+        try await waitUntil { surface.calls.contains(.updateComposite(page)) }
+
+        withExtendedLifetime(scratch) {}
+        _ = await notebook.close()
+    }
+
+    @Test("A page with ink refuses a photo as its paper, and nothing is written")
+    func photoIsRefusedOnAPageWithInk() async throws {
+        let (scratch, notebook, _, editor) = try await loaded("vm-paper-photo-refused")
+        let page = notebook.pageIDs[0]
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 1), echoOf: nil)
+
+        await editor.setPaper(photo: try Fixture.imageData(width: 200, height: 100))
+
+        #expect(editor.lastContentError != nil)
+        #expect(notebook.paper(of: page) == .drawn(.blank))
+        // The refusal is decided before the photo is stored, so the asset
+        // directory is as empty as it was.
+        let assets = try FileManager.default.contentsOfDirectory(
+            atPath: scratch.packageURL.appendingPathComponent("assets").path
+        )
+        #expect(assets.isEmpty)
+
+        _ = await notebook.close()
+    }
+}

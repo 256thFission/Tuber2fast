@@ -366,6 +366,18 @@ package final class EditorViewModel {
         binding.drain()
     }
 
+    /// A photo as the current page's paper. The notebook refuses a page that
+    /// has ink or layers on it before it stores anything, because asset paper
+    /// covers the whole page; the refusal reaches the bar through
+    /// `lastContentError` like any other.
+    package func setPaper(photo data: Data) async {
+        let page = notebook.currentPageID
+        lastContentError = nil
+        guard !notebook.hasTextSession(on: page) else { lastContentError = Self.textBoxOpen(page); return }
+        do { try await notebook.importImageAsPaper(data, on: page) } catch { lastContentError = error }
+        binding.drain()
+    }
+
     /// One new page per PDF page, after the current one.
     package func importPDF(_ data: Data) async {
         let page = notebook.currentPageID
