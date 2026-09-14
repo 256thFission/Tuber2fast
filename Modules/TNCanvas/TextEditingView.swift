@@ -9,8 +9,15 @@ import UIKit
 /// baselines the way `CTFramesetter` does for these fonts, and TextKit 2's
 /// fragment rounding is the one known divergence between the two engines.
 /// `TuberNotesTests/TextFidelityTests` is the evidence either way.
+///
+/// The Pencil writes into the box: Scribble is UIKit's text system, so what
+/// it inserts goes through the storage the way a keystroke does and reaches
+/// `committedLayer` unchanged. Scribble's own scratch-out inside the box is
+/// Scribble's; it never becomes ink, because the drawing gesture is off
+/// whenever the text tool is in hand (`PageCanvasController.apply(tool:)`),
+/// so the notebook's stroke gestures never see it either.
 @MainActor
-final class TextEditingView: UITextView, UITextViewDelegate {
+final class TextEditingView: UITextView, UITextViewDelegate, UIScribbleInteractionDelegate {
     /// What the caret types with where no run is under it. Opening a box
     /// with runs continues the last run's style; an empty box takes the
     /// tool's.
@@ -19,6 +26,11 @@ final class TextEditingView: UITextView, UITextViewDelegate {
 
     let moveRecognizer = UIPanGestureRecognizer()
     let resizeRecognizer = UIPanGestureRecognizer()
+
+    /// The one place that says where Scribble may begin: inside the box.
+    /// UIKit would otherwise let a stroke that starts a little outside the
+    /// rect write into it, and outside the rect the Pencil is the canvas's.
+    private(set) var scribbleInteraction: UIScribbleInteraction!
 
     /// Drawn in page space, so they scale with zoom and are large at 10x.
     /// Accepted.
@@ -56,6 +68,12 @@ final class TextEditingView: UITextView, UITextViewDelegate {
         attributedText = TextTypesetting.attributed(text.runs, alignment: text.alignment)
         typingAttributes = TextTypesetting.attributes(for: typingStyle, alignment: text.alignment)
         delegate = self
+        // Explicit, not `.default`: a box is prose, and the setting is what
+        // the hosted test reads.
+        spellCheckingType = .yes
+        autocorrectionType = .yes
+        scribbleInteraction = UIScribbleInteraction(delegate: self)
+        addInteraction(scribbleInteraction)
 
         for handle in [moveHandle, resizeHandle] {
             handle.backgroundColor = .systemBlue
@@ -153,6 +171,14 @@ final class TextEditingView: UITextView, UITextViewDelegate {
         frame.size.width = max(floor, frame.width + delta.x)
         frame.size.height = max(floor, frame.height + delta.y)
         setNeedsLayout()
+    }
+
+    // MARK: - UIScribbleInteractionDelegate
+
+    /// `location` is in this view's coordinates. The handles lie outside
+    /// the bounds and are not writing surfaces.
+    func scribbleInteraction(_ interaction: UIScribbleInteraction, shouldBeginAt location: CGPoint) -> Bool {
+        bounds.contains(location)
     }
 
     // MARK: - UITextViewDelegate

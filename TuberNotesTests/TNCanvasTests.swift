@@ -559,6 +559,29 @@ struct TNCanvasTests {
         _ = runtime.retireAll()
     }
 
+    @Test("An open box takes the Pencil as Scribble inside its bounds only, with spelling and autocorrection on")
+    func scribbleAndSpellingInAnOpenBox() throws {
+        let reporter = RecordingReporter()
+        let (runtime, _, canvas, overlay) = try openSession(reporter, layers: [textLayer("hi", x: 100, y: 100)])
+        #expect(overlay.spellCheckingType == .yes)
+        #expect(overlay.autocorrectionType == .yes)
+        let interaction = try #require(overlay.interactions.first { $0 is UIScribbleInteraction } as? UIScribbleInteraction)
+        #expect(interaction === overlay.scribbleInteraction)
+        #expect(interaction.delegate === overlay)
+        // Inside the box, in the view's own coordinates, is Scribble's.
+        #expect(overlay.scribbleInteraction(interaction, shouldBeginAt: CGPoint(x: 10, y: 10)))
+        #expect(overlay.scribbleInteraction(interaction, shouldBeginAt: CGPoint(x: 199, y: 59)))
+        // Outside, including on the handles and the slop UIKit would allow,
+        // is refused: the Pencil there is the canvas's.
+        #expect(!overlay.scribbleInteraction(interaction, shouldBeginAt: CGPoint(x: -1, y: 10)))
+        #expect(!overlay.scribbleInteraction(interaction, shouldBeginAt: CGPoint(x: 10, y: -8)))
+        #expect(!overlay.scribbleInteraction(interaction, shouldBeginAt: CGPoint(x: 201, y: 61)))
+        // The ink gesture is off while the session is open, so a Scribble
+        // scratch-out can never arrive at the notebook as a stroke.
+        #expect(!canvas.canvasView.drawingGestureRecognizer.isEnabled)
+        _ = runtime.retireAll()
+    }
+
     @Test("The drawing gesture follows the tool: off for text, on for ink, session or no session")
     func drawingGestureFollowsTheTool() throws {
         let reporter = RecordingReporter()
