@@ -368,6 +368,119 @@ struct EditorViewModelContentTests {
         _ = await notebook.close()
     }
 
+    @Test("A scan becomes one page per scanned page, in order, each taking the scan's aspect")
+    func scanBecomesPages() async throws {
+        let (scratch, notebook, surface, editor) = try await loaded("vm-scan")
+        let first = notebook.pageIDs[0]
+        let couldUndo = notebook.canUndo
+
+        await editor.importScan([
+            try Fixture.imageData(width: 200, height: 100),
+            try Fixture.imageData(width: 100, height: 200),
+            try Fixture.imageData(width: 300, height: 300),
+        ])
+
+        #expect(editor.lastContentError == nil)
+        #expect(notebook.pageCount == 4)
+        #expect(notebook.pageIDs.first == first, "the scan lands after the page it was started from")
+        let made = Array(notebook.pageIDs.dropFirst())
+
+        // The page keeps the width it was scanned into and takes the scan's
+        // shape, the way asset paper is measured everywhere else.
+        let geometries = made.map { notebook.index.record(of: $0)?.geometry }
+        #expect(geometries == [
+            PageGeometry(width: 612, height: 306),
+            PageGeometry(width: 612, height: 1224),
+            PageGeometry(width: 612, height: 612),
+        ])
+
+        for page in made {
+            guard case .image(let asset) = try #require(notebook.paper(of: page)) else {
+                Issue.record("a scanned page's paper is not an image"); return
+            }
+            #expect(try await notebook.store.readAsset(asset).count > 0)
+        }
+
+        // The reader lands on the first page made, so a scan reads from its
+        // beginning, and the order reaches the runtime before the scroll does.
+        let order = try #require(surface.calls.lastIndex { if case .setPages(let ids, _, _) = $0 { ids.contains(made[0]) } else { false } })
+        let scroll = try #require(surface.calls.lastIndex(of: .scroll(made[0])))
+        #expect(scroll > order)
+        #expect(!surface.calls.contains(.scroll(made[2])), "the first page made, not the last")
+
+        // Appending pages is navigation: `insertPage` records nothing.
+        #expect(notebook.canUndo == couldUndo)
+
+        withExtendedLifetime(scratch) {}
+        _ = await notebook.close()
+    }
+
+    @Test("A scan lands after the current page, not before it and not at the end")
+    func scanLandsAfterTheCurrentPage() async throws {
+        let (scratch, notebook, _, editor) = try await loaded("vm-scan-after")
+        let first = notebook.pageIDs[0]
+        let last = notebook.appendPage()
+        #expect(notebook.currentPageID == first, "the reader is still on page 1")
+
+        await editor.importScan([
+            try Fixture.imageData(width: 200, height: 100),
+            try Fixture.imageData(width: 100, height: 200),
+            try Fixture.imageData(width: 300, height: 300),
+        ])
+
+        #expect(editor.lastContentError == nil)
+        #expect(notebook.pageCount == 5)
+        #expect(notebook.pageIDs.first == first)
+        #expect(notebook.pageIDs.last == last)
+
+        withExtendedLifetime(scratch) {}
+        _ = await notebook.close()
+    }
+
+    @Test("A scanned page that will not decode stops the run, and what was made is kept and owed to the disk")
+    func scanStopsOnAPageThatWillNotDecode() async throws {
+        let (scratch, notebook, surface, editor) = try await loaded("vm-scan-refused")
+        let first = notebook.pageIDs[0]
+        await notebook.flush()
+        #expect(!notebook.isDirty, "the notebook starts clean, so the dirt below is the scan's")
+
+        await editor.importScan([
+            try Fixture.imageData(width: 200, height: 100),
+            Data("not an image".utf8),
+            try Fixture.imageData(width: 300, height: 300),
+        ])
+
+        #expect(editor.lastContentError != nil)
+        // The page before the bad one is kept; nothing after it is made.
+        #expect(notebook.pageCount == 2)
+        let made = try #require(notebook.pageIDs.last)
+        #expect(notebook.pageIDs == [first, made])
+        // The half `importPDF` drops: the canvas is told about the pages the
+        // stopped run made, and they are owed to the disk.
+        #expect(surface.pagesSet.last == [first, made])
+        #expect(notebook.isDirty)
+
+        withExtendedLifetime(scratch) {}
+        _ = await notebook.close()
+    }
+
+    @Test("A cancelled scan makes no page, reports nothing, and takes the reader nowhere")
+    func aCancelledScanDoesNothing() async throws {
+        let (scratch, notebook, surface, editor) = try await loaded("vm-scan-cancel")
+        let ordersBefore = surface.pagesSet.count
+        let scrollsBefore = surface.calls.count { if case .scroll = $0 { true } else { false } }
+
+        await editor.importScan([])
+
+        #expect(editor.lastContentError == nil)
+        #expect(notebook.pageCount == 1)
+        #expect(surface.pagesSet.count == ordersBefore)
+        #expect(surface.calls.count { if case .scroll = $0 { true } else { false } } == scrollsBefore)
+
+        withExtendedLifetime(scratch) {}
+        _ = await notebook.close()
+    }
+
     @Test("A page with ink refuses a photo as its paper, and nothing is written")
     func photoIsRefusedOnAPageWithInk() async throws {
         let (scratch, notebook, _, editor) = try await loaded("vm-paper-photo-refused")

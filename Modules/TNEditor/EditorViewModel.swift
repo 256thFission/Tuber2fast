@@ -475,6 +475,27 @@ package final class EditorViewModel {
         )
     }
 
+    // MARK: Capture
+
+    /// A scan: one new page per scanned page, after the current one, and the
+    /// reader is taken to the first of them, so a scan reads from its
+    /// beginning rather than from its end the way Add Page leaves it.
+    ///
+    /// `importPDF`'s seven lines plus that scroll. A run that stops partway
+    /// hands back nothing, so the reader stays where they were while the bar
+    /// says what happened — the pages it did make are already in the notebook
+    /// and already pushed, because the notebook publishes them on its way out.
+    /// An empty array is a cancel and does nothing at all.
+    package func importScan(_ images: [Data]) async {
+        let page = notebook.currentPageID
+        lastContentError = nil
+        guard !notebook.hasTextSession(on: page) else { lastContentError = Self.textBoxOpen(page); return }
+        var created: [PageID] = []
+        do { created = try await notebook.importScan(images) } catch { lastContentError = error }
+        binding.drain()
+        if let first = created.first { binding.surface.scroll(to: first) }
+    }
+
     // MARK: Export
 
     /// How far a walk has got. `done` counts pages finished, so a walk that

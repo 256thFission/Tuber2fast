@@ -6,6 +6,7 @@ import TNModel
 import TNNotebook
 import UIKit
 import UniformTypeIdentifiers
+import VisionKit
 
 /// One open notebook: the intentions across the top, the canvas below, and
 /// the save refusal in between. Nothing here reads the notebook; the view
@@ -15,6 +16,8 @@ struct EditorView: View {
     let editor: EditorViewModel
 
     @State private var isPickingPhoto = false
+    @State private var isTakingPhoto = false
+    @State private var isScanning = false
     @State private var photoDestination = PhotoDestination.layerOnCurrentPage
     @State private var photoItem: PhotosPickerItem?
     @State private var isPickingPDF = false
@@ -56,6 +59,22 @@ struct EditorView: View {
             }
         }
         .photosPicker(isPresented: $isPickingPhoto, selection: $photoItem, matching: .images)
+        // A cover, not a sheet: on iPad a sheet is a centred card, and a camera
+        // preview letterboxed inside one is wrong. Opening it from a `Menu` is
+        // not the chained-presentation hazard the comment above warns about —
+        // a menu is not a presentation, so nothing is dismissed in the frame
+        // the cover appears in.
+        .fullScreenCover(isPresented: $isTakingPhoto) {
+            CameraCapture(onFinish: capture)
+                .ignoresSafeArea()
+        }
+        // A cover for the same reason, and one more: the scanner expects to
+        // own the screen, and its corner-drag affordances are cramped inside a
+        // card.
+        .fullScreenCover(isPresented: $isScanning) {
+            DocumentScanner(onFinish: scanned, onFailure: scanFailed)
+                .ignoresSafeArea()
+        }
         .onChange(of: photoItem) { _, item in
             guard let item else { return }
             Task { await importPhoto(item) }
@@ -225,11 +244,30 @@ struct EditorView: View {
 
     private var insertMenu: some View {
         Menu {
+            // Absent where there is no camera rather than disabled: the
+            // simulator has none, `.camera` traps there, and a greyed row
+            // invites the question why.
+            if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                Button {
+                    isTakingPhoto = true
+                } label: {
+                    Label("Take Photo", systemImage: "camera")
+                }
+            }
             Button {
                 photoDestination = .layerOnCurrentPage
                 isPickingPhoto = true
             } label: {
                 Label("Photo", systemImage: "photo")
+            }
+            // Absent rather than disabled where the hardware cannot scan,
+            // for the reason the camera row gives.
+            if VNDocumentCameraViewController.isSupported {
+                Button {
+                    isScanning = true
+                } label: {
+                    Label("Scan Document", systemImage: "doc.viewfinder")
+                }
             }
             Button {
                 isPickingPDF = true
@@ -286,6 +324,39 @@ struct EditorView: View {
         } catch {
             workspace.banner = "That photo couldn't be read: \(error.localizedDescription)"
         }
+    }
+
+    /// A camera photo, onto the current page as a layer: the same bytes the
+    /// picker hands `importImage`, from a different controller.
+    ///
+    /// The JPEG is at quality 1 and is immediately decoded and re-encoded as
+    /// HEIC by `ImageImport.normalize`. Quality 1 is chosen against `pngData()`
+    /// — several hundred milliseconds of Deflate over twelve million pixels,
+    /// for eight to fourteen megabytes — and its near-flat quantization sits
+    /// far below the HEIC-at-0.9 generation every photo import already takes.
+    private func capture(_ image: UIImage?) {
+        isTakingPhoto = false
+        guard let image else { return }
+        guard let data = image.jpegData(compressionQuality: 1) else {
+            workspace.banner = "That photo couldn't be read."
+            return
+        }
+        Task { await editor.importImage(data) }
+    }
+
+    /// A scan, as pages. An empty array is a cancel, which `importScan`
+    /// answers by doing nothing, so there is no second test of it here.
+    private func scanned(_ pages: [Data]) {
+        isScanning = false
+        Task { await editor.importScan(pages) }
+    }
+
+    /// Both ways a scan can fail arrive here: the scanner's own error, and a
+    /// page that would not encode. The cover closes either way, because the
+    /// scanner will not close itself.
+    private func scanFailed(_ error: any Error) {
+        isScanning = false
+        workspace.banner = "That scan couldn't be read: \(error.localizedDescription)"
     }
 
     private func importPDF(_ result: Result<URL, any Error>) async {
