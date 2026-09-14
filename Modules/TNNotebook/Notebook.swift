@@ -564,7 +564,7 @@ package final class Notebook {
             throw .invalidWrite("no such page \(source)")
         }
 
-        let layers = copied.layers.map { Layer(id: LayerID(), transform: $0.transform, payload: $0.payload) }
+        let layers = copied.layers.map { Layer(id: LayerID(), transform: $0.transform, payload: $0.payload, locked: $0.locked) }
         var content = PageContent(ink: copied.ink, layers: layers, hasInk: false, inkIndex: copied.inkIndex)
         content.pendingLayerFiles = Set(layers.map(\.id))
         // `setInk` rather than the initializer's flag, so the durable flag and
@@ -1040,7 +1040,7 @@ package final class Notebook {
         }
         content.textEditing = nil
         let merged = TextLayer(rect: text.rect, runs: TextRun.merging(text.runs), alignment: text.alignment)
-        let committed = Layer(id: layer, transform: .identity, payload: .text(merged))
+        let committed = Layer(id: layer, transform: .identity, payload: .text(merged), locked: content.layers[position].locked)
         // The overlay's gesture math cannot produce an invalid rect, and a
         // clamp is forbidden.
         do { _ = try committed.validated() } catch { TNPrecondition.fail("a committed text layer is invalid: \(error)") }
@@ -1070,9 +1070,15 @@ package final class Notebook {
         rerenderComposite(of: page)
     }
 
+    /// A locked layer refuses a transform and a delete, and says so. Not a
+    /// trap: the runtime is told the lock through the composite's layer
+    /// list, but an undo can relock a layer while a drag on it is in
+    /// flight, and the drag's end reports anyway. The refusal is answered
+    /// like any other, by restating the placement the notebook holds.
     package func transformLayer(on page: PageID, layer layerID: LayerID, to transform: PageSpaceTransform) -> TransformOutcome {
         guard case .ready(var content) = states[page] else { return .refused(reason: "page is not ready") }
         guard let position = content.layers.firstIndex(where: { $0.id == layerID }) else { return .refused(reason: "no such layer") }
+        guard !content.layers[position].locked else { return .refused(reason: "layer \(layerID) is locked") }
         let moved = content.layers[position].withTransform(transform)
         do { _ = try moved.validated() } catch { return .refused(reason: "\(error)") }
         let captured = content.revision
@@ -1100,10 +1106,12 @@ package final class Notebook {
         guard case .ready(var content) = states[page] else { return .refused(reason: "page is not ready") }
         guard let position = content.layers.firstIndex(where: { $0.id == layerID }) else { return .refused(reason: "no such layer") }
         guard case .link(let link) = content.layers[position].payload else { return .refused(reason: "layer \(layerID) is not a link") }
+        guard !content.layers[position].locked else { return .refused(reason: "layer \(layerID) is locked") }
         let moved = Layer(
             id: layerID,
             transform: content.layers[position].transform,
-            payload: .link(LinkLayer(rect: rect, style: link.style, target: link.target))
+            payload: .link(LinkLayer(rect: rect, style: link.style, target: link.target)),
+            locked: content.layers[position].locked
         )
         do { _ = try moved.validated() } catch { return .refused(reason: "\(error)") }
         let captured = content.revision
@@ -1118,8 +1126,33 @@ package final class Notebook {
         return .accepted
     }
 
-    package func deleteLayer(_ layerID: LayerID, on page: PageID) {
-        guard case .ready(var content) = states[page], let position = content.layers.firstIndex(where: { $0.id == layerID }) else { return }
+    /// Locks or unlocks a layer. One entry on the stack, like a transform,
+    /// and answered the same way: the composite that follows carries the
+    /// layer list with the flag, which is how the runtime learns it.
+    package func setLayerLock(_ layerID: LayerID, on page: PageID, locked: Bool) -> TransformOutcome {
+        guard case .ready(var content) = states[page] else { return .refused(reason: "page is not ready") }
+        guard let position = content.layers.firstIndex(where: { $0.id == layerID }) else { return .refused(reason: "no such layer") }
+        let captured = content.revision
+        content.layers[position] = content.layers[position].withLock(locked)
+        content.pendingLayerFiles.insert(layerID)
+        content.edited()
+        recordEdit(on: page, from: captured, to: content.revision)
+        states[page] = .ready(content)
+        bumpContentVersion(of: page)
+        markDirty()
+        rerenderComposite(of: page)
+        return .accepted
+    }
+
+    /// A delete is answered by the composite that omits the layer, so it
+    /// had nothing to say back until a lock could refuse it. It says so the
+    /// way a transform does; the binding has nothing to do with the answer
+    /// but a test does.
+    @discardableResult
+    package func deleteLayer(_ layerID: LayerID, on page: PageID) -> TransformOutcome {
+        guard case .ready(var content) = states[page] else { return .refused(reason: "page is not ready") }
+        guard let position = content.layers.firstIndex(where: { $0.id == layerID }) else { return .refused(reason: "no such layer") }
+        guard !content.layers[position].locked else { return .refused(reason: "layer \(layerID) is locked") }
         let captured = content.revision
         content.layers.remove(at: position)
         if position < content.inkIndex { content.inkIndex -= 1 }
@@ -1130,6 +1163,7 @@ package final class Notebook {
         bumpContentVersion(of: page)
         markDirty()
         rerenderComposite(of: page)
+        return .accepted
     }
 
     // MARK: The save engine

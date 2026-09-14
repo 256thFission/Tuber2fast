@@ -246,16 +246,24 @@ package enum LayerPayload: Sendable, Equatable {
     }
 }
 
-/// One static layer: identity, placement, and a kind-specific payload.
+/// One static layer: identity, placement, a kind-specific payload, and
+/// whether it is locked.
+///
+/// A locked layer still renders and exports; what it refuses is a transform
+/// and a delete, at the notebook, and the runtime shows it without handles.
+/// The flag is durable and undoable like the placement, because a lock the
+/// user set is part of the page and a reopen must not quietly drop it.
 package struct Layer: Sendable, Equatable, Identifiable {
     package let id: LayerID
     package let transform: PageSpaceTransform
     package let payload: LayerPayload
+    package let locked: Bool
 
-    package init(id: LayerID, transform: PageSpaceTransform, payload: LayerPayload) {
+    package init(id: LayerID, transform: PageSpaceTransform, payload: LayerPayload, locked: Bool = false) {
         self.id = id
         self.transform = transform
         self.payload = payload
+        self.locked = locked
     }
 
     /// Every rule a layer's own bytes can violate, checked in one place.
@@ -278,7 +286,11 @@ package struct Layer: Sendable, Equatable, Identifiable {
     }
 
     package func withTransform(_ transform: PageSpaceTransform) -> Layer {
-        Layer(id: id, transform: transform, payload: payload)
+        Layer(id: id, transform: transform, payload: payload, locked: locked)
+    }
+
+    package func withLock(_ locked: Bool) -> Layer {
+        Layer(id: id, transform: transform, payload: payload, locked: locked)
     }
 }
 

@@ -89,8 +89,15 @@ Nothing here is a reason not to ship. It is a reason not to be surprised.
   right size under a finger at fit zoom and at 4x, and whether a drag on the
   frame really does beat both the canvas pan and the page-turn pan are device
   evidence and Phillip's verdict. Whether the frame's `UIEditMenuInteraction`
-  presents its one Delete action at all is in the same bucket: the tests can
-  drive the action, not the presentation.
+  presents its Lock and Delete actions at all is in the same bucket: the
+  tests can drive the actions, not the presentation.
+- **Nobody has seen an object locked.** The tests drive `lockRequested` and
+  the composite that answers it, and they check the recognizer is disabled
+  and the handles hidden. Whether a finger on a locked frame really does
+  fall through to the canvas pan, whether the menu's Unlock is reachable
+  under a finger at fit zoom and at 4x, and whether the grey border and the
+  lock badge read as "locked" rather than "broken" are device evidence and
+  Phillip's verdict.
 - **No camera has ever been opened by this app.** The Take Photo row is
   hidden wherever `UIImagePickerController.isSourceTypeAvailable(.camera)` is
   false, which is every simulator, so nothing in CI reaches

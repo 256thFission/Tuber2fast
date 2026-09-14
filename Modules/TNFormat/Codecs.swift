@@ -88,7 +88,7 @@ package enum DurableKeys {
     }
     package static let pageFile: Set<String> = ["pageID", "hasInk", "inkIndex", "layers"]
     package static let view: Set<String> = ["currentPageID"]
-    package static func layerFile(kind: String) -> Set<String> { ["layerID", "kind", "transform", kind] }
+    package static func layerFile(kind: String) -> Set<String> { ["layerID", "kind", "transform", "locked", kind] }
     package static let image: Set<String> = ["asset", "naturalSize"]
     package static let pdf: Set<String> = ["asset", "sourcePageIndex", "sourceExtent"]
     package static let link: Set<String> = ["rect", "style", "target"]

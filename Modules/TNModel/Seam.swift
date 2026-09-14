@@ -153,6 +153,10 @@ package enum RetireOutcome: Sendable, Equatable {
     /// `updateComposite` that omits the layer, which is also what takes the
     /// selection frame down.
     func layerDeleteRequested(on page: PageID, layer: LayerID)
+    /// Lock or Unlock from the selected object's menu. Answered by an
+    /// `updateComposite` whose layer list carries the flag, which is what
+    /// takes the handles down or puts them back.
+    func layerLockRequested(on page: PageID, layer: LayerID, locked: Bool)
     func pageBecameCurrent(_ page: PageID)
     func windowChanged(to pages: [PageID])
     func endBoundaryReached(seq: ReportSeq)

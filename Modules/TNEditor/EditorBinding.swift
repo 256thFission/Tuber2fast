@@ -45,6 +45,10 @@ import UIKit
         binding?.layerDeleteRequested(on: page, layer: layer)
     }
 
+    package func layerLockRequested(on page: PageID, layer: LayerID, locked: Bool) {
+        binding?.layerLockRequested(on: page, layer: layer, locked: locked)
+    }
+
     package func pageBecameCurrent(_ page: PageID) { binding?.pageBecameCurrent(page) }
     package func windowChanged(to pages: [PageID]) { binding?.windowChanged(to: pages) }
     package func endBoundaryReached(seq: ReportSeq) { binding?.endBoundaryReached(seq: seq) }
@@ -224,9 +228,16 @@ import UIKit
     }
 
     /// One-way, unlike a transform: the answer is the composite that omits
-    /// the layer, and `deleteLayer` refuses nothing a caller could act on.
+    /// the layer. A locked layer is refused, and the runtime never offers
+    /// Delete on one, so nothing here acts on the answer.
     package func layerDeleteRequested(on page: PageID, layer: LayerID) {
         notebook.deleteLayer(layer, on: page)
+        drain()
+    }
+
+    /// One-way the same way: the composite that follows carries the flag.
+    package func layerLockRequested(on page: PageID, layer: LayerID, locked: Bool) {
+        _ = notebook.setLayerLock(layer, on: page, locked: locked)
         drain()
     }
 

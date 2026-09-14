@@ -60,7 +60,7 @@ package struct NotebookIndex: Codable, Sendable, Equatable {
     /// without this list being kept in it.
     package let bookmarks: [PageBookmark]
 
-    package static let currentFormatVersion: UInt32 = 3
+    package static let currentFormatVersion: UInt32 = 4
 
     package init(notebookID: NotebookID, createdAt: Date, pages: [PageRecord], bookmarks: [PageBookmark]) {
         self.formatVersion = Self.currentFormatVersion

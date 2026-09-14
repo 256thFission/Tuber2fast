@@ -222,6 +222,39 @@ struct EditorBindingTests {
         _ = scratch
     }
 
+    @Test("A lock request answers with a composite whose layer carries the flag; a delete under it is refused; undo unlocks")
+    func lockRequestLocksTheLayer() async throws {
+        let scratch = try Scratch("editor-lock-layer")
+        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        let surface = RecordingSurface()
+        let binding = EditorBinding(notebook: notebook, surface: surface)
+        let page = notebook.pageIDs[0]
+
+        binding.windowChanged(to: [page])
+        try await waitUntil { surface.installed.contains(page) }
+        let layer = Fixture.imageLayer()
+        try await notebook.addLayer(layer, assetData: Fixture.archive(4, count: 128), on: page)
+        binding.drain()
+        try await waitUntil { surface.layersSeen[page]?.map(\.id) == [layer.id] }
+        let composites = surface.calls.count { if case .updateComposite = $0 { true } else { false } }
+
+        binding.layerLockRequested(on: page, layer: layer.id, locked: true)
+        try await waitUntil { surface.layersSeen[page]?.first?.locked == true }
+        #expect(surface.calls.count { if case .updateComposite = $0 { true } else { false } } == composites + 1)
+        #expect(notebook.canUndo, "a lock is one entry on the stack")
+
+        binding.layerDeleteRequested(on: page, layer: layer.id)
+        binding.drain()
+        #expect(notebook.state(of: page)?.content?.layers.map(\.id) == [layer.id], "a locked layer is not deleted")
+        #expect(binding.layerTransformed(on: page, layer: layer.id, to: .translation(x: 3, y: 3)) == .refused(reason: "layer \(layer.id) is locked"))
+
+        #expect(notebook.undo() == page)
+        try await waitUntil { surface.layersSeen[page]?.first?.locked == false }
+        #expect(notebook.state(of: page)?.content?.layers == [layer])
+        _ = await notebook.close()
+        _ = scratch
+    }
+
     @Test("A move pushes one page order; a self-drop, a next-neighbour drop, and the last page onto the end push nothing")
     func movePageGuards() async throws {
         let (scratch, notebook) = try await reopened("editor-move", pages: 3)

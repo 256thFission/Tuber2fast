@@ -684,6 +684,11 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
         reporter.layerDeleteRequested(on: page, layer: layer)
     }
 
+    func pageDidRequestLayerLock(_ page: PageID, layer: LayerID, locked: Bool) {
+        guard retiring[page] == nil else { return }
+        reporter.layerLockRequested(on: page, layer: layer, locked: locked)
+    }
+
     func pagingPanGestureRecognizer() -> UIGestureRecognizer? {
         scrollView.panGestureRecognizer
     }

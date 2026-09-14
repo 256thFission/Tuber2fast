@@ -20,6 +20,9 @@ protocol PageCanvasOwner: AnyObject {
     /// Delete, from the selected object's menu. Answered by the composite
     /// that omits the layer.
     func pageDidRequestLayerDelete(_ page: PageID, layer: LayerID)
+    /// Lock or Unlock, from the same menu. Answered by the composite whose
+    /// layer list carries the flag.
+    func pageDidRequestLayerLock(_ page: PageID, layer: LayerID, locked: Bool)
     func pageDidRequestTextBox(_ page: PageID, at point: PagePoint, style: TextStyle, alignment: TextAlignment)
     func pageDidRequestTextEdit(_ page: PageID, layer: LayerID)
     func pageDidEndTextEditing(_ page: PageID, layer: LayerID, _ text: TextLayer)
@@ -54,6 +57,9 @@ struct HitTarget: Equatable {
     let id: LayerID
     let kind: LayerKind
     let transform: PageSpaceTransform
+    /// A locked target is still hit: the lasso raises a frame with no
+    /// handles and an Unlock action, which is the only way back.
+    let locked: Bool
 }
 
 /// What a tap with the text tool means.
@@ -303,18 +309,19 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         hitTargets = layers.map { layer in
             switch layer.payload {
             case .link(let link):
-                HitTarget(id: layer.id, kind: .link, transform: .unitSquare(to: link.rect))
+                HitTarget(id: layer.id, kind: .link, transform: .unitSquare(to: link.rect), locked: layer.locked)
             case .text(let text):
-                HitTarget(id: layer.id, kind: .text, transform: .unitSquare(to: text.rect))
+                HitTarget(id: layer.id, kind: .text, transform: .unitSquare(to: text.rect), locked: layer.locked)
             case .image:
-                HitTarget(id: layer.id, kind: .image, transform: layer.transform)
+                HitTarget(id: layer.id, kind: .image, transform: layer.transform, locked: layer.locked)
             case .pdf:
-                HitTarget(id: layer.id, kind: .pdf, transform: layer.transform)
+                HitTarget(id: layer.id, kind: .pdf, transform: layer.transform, locked: layer.locked)
             }
         }
         guard case .selected(let selected, let frame) = phase else { return }
         if let target = hitTargets.first(where: { $0.id == selected }) {
             frame.adopt(target.transform)
+            frame.setLocked(target.locked)
         } else {
             clearSelection()
         }
@@ -663,7 +670,7 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
 
     private func select(_ target: HitTarget) {
         clearSelection()
-        let frame = LayerSelectionView(layer: target.id, transform: target.transform)
+        let frame = LayerSelectionView(layer: target.id, transform: target.transform, locked: target.locked)
         canvasView.addSubview(frame)
         setOverlayScale(frame)
         // A drag on the frame neither draws, nor pans the page, nor turns it.
@@ -678,6 +685,10 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         frame.onDeleteRequested = { [weak self] in
             guard let self else { return }
             self.owner.pageDidRequestLayerDelete(self.pageID, layer: frame.layerID)
+        }
+        frame.onLockRequested = { [weak self] locked in
+            guard let self else { return }
+            self.owner.pageDidRequestLayerLock(self.pageID, layer: frame.layerID, locked: locked)
         }
         phase = .selected(layer: target.id, view: frame)
         TNLog.event(.canvas, "object selected on page \(pageID)")

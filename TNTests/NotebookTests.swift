@@ -474,6 +474,53 @@ struct NotebookTests {
         #expect(notebook.state(of: page)?.content?.layers.first?.transform == .translation(x: 5, y: 5))
     }
 
+    @Test("A locked layer refuses a transform and a delete by name; lock and unlock are each one entry, and undo walks them back")
+    func aLockRefusesEditsAndIsUndoable() async throws {
+        let scratch = try Scratch("nb-lock-layer")
+        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        let page = notebook.pageIDs[0]
+        notebook.windowChanged(to: [page])
+        try await waitUntil { notebook.state(of: page)?.content != nil }
+        let layer = Fixture.imageLayer()
+        try await notebook.addLayer(layer, assetData: Fixture.archive(1, count: 128), on: page)
+        await notebook.flush()
+        let entriesBefore = notebook.canUndo
+
+        #expect(notebook.setLayerLock(layer.id, on: page, locked: true) == .accepted)
+        #expect(notebook.state(of: page)?.content?.layers.first?.locked == true)
+        #expect(notebook.state(of: page)?.content?.pendingLayerFiles == [layer.id], "the lock is durable, so the file is rewritten")
+        #expect(notebook.canUndo)
+
+        let moved = PageSpaceTransform.translation(x: 5, y: 5)
+        #expect(notebook.transformLayer(on: page, layer: layer.id, to: moved) == .refused(reason: "layer \(layer.id) is locked"))
+        #expect(notebook.deleteLayer(layer.id, on: page) == .refused(reason: "layer \(layer.id) is locked"))
+        #expect(notebook.state(of: page)?.content?.layers == [layer.withLock(true)], "a refusal changes nothing")
+        #expect(notebook.setLayerLock(layer.id, on: page, locked: true) == .accepted)
+        #expect(notebook.canRedo == false, "locking a locked layer moves no revision and records nothing")
+
+        #expect(notebook.undo() == page, "undo of the lock")
+        #expect(notebook.state(of: page)?.content?.layers == [layer])
+        #expect(notebook.canUndo == entriesBefore)
+        #expect(notebook.transformLayer(on: page, layer: layer.id, to: moved) == .accepted, "unlocked by the undo, it moves")
+        #expect(notebook.undo() == page, "undo of the move")
+        #expect(notebook.canRedo)
+
+        #expect(notebook.redo() == page, "redo of the move")
+        #expect(notebook.setLayerLock(layer.id, on: page, locked: true) == .accepted)
+        #expect(notebook.setLayerLock(layer.id, on: page, locked: false) == .accepted)
+        #expect(notebook.state(of: page)?.content?.layers.first?.locked == false)
+        #expect(notebook.undo() == page, "undo of the unlock relocks")
+        #expect(notebook.state(of: page)?.content?.layers.first?.locked == true)
+        #expect(notebook.deleteLayer(layer.id, on: page) == .refused(reason: "layer \(layer.id) is locked"))
+        #expect(notebook.setLayerLock(LayerID(), on: page, locked: true) == .refused(reason: "no such layer"))
+
+        // The lock survives the store: a reopen reads it back.
+        await notebook.flush()
+        let bytes = try await PackageStore(root: scratch.packageURL).loadPage(page)
+        #expect(bytes.layers.map(\.locked) == [true])
+        _ = await notebook.close()
+    }
+
     @Test("An undo into an unloaded page whose entry is a layer change applies on arrival and queues a composite without the layer")
     func layerUndoIntoAnUnloadedPage() async throws {
         let scratch = try Scratch("nb-undo-layer-unloaded")
