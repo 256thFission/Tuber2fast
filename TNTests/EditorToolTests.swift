@@ -147,7 +147,8 @@ struct EditorToolTests {
             eraserMode: .pixel,
             pixelEraserWidth: .thick,
             recentColors: [ToolColor(rgba: RGBA8(red: 1, green: 2, blue: 3, alpha: 0xFF))],
-            text: TextPreset(style: TextStyle(font: "system", size: 32, bold: false, italic: true, underline: true, color: RGBA8(red: 9, green: 8, blue: 7, alpha: 0xFF)), alignment: .trailing)
+            text: TextPreset(style: TextStyle(font: "system", size: 32, bold: false, italic: true, underline: true, color: RGBA8(red: 9, green: 8, blue: 7, alpha: 0xFF)), alignment: .trailing),
+            gestures: [.scribble: .erase]
         )
         let data = try PropertyListEncoder().encode(record)
         #expect(try PropertyListDecoder().decode(ToolPaletteRecord.self, from: data) == record)

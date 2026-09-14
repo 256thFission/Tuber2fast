@@ -91,6 +91,12 @@ import UIKit
     /// Called when a stroke somebody drew lands, which is what makes the
     /// colour it landed in a colour they have used.
     package var onInkReported: (@MainActor () -> Void)?
+    /// Which Pencil gestures apply to the stroke in hand. Asked on every
+    /// report rather than copied: a copy would go stale at the initialiser,
+    /// at every tool change, and in every other tab sharing the palette.
+    /// The default is no gesture at all, which is what a binding nobody has
+    /// told about a tool must mean.
+    package var bindingsForStroke: @MainActor () -> GestureBindings = { [:] }
 
     private var runtime: (any CanvasRuntime)? { surface as? any CanvasRuntime }
     /// The last complete window the runtime reported.
@@ -214,7 +220,7 @@ import UIKit
     // MARK: Reports
 
     package func inkChanged(on page: PageID, _ ink: PKDrawing, echoOf: InkSeq?) {
-        notebook.inkChanged(on: page, ink, echoOf: echoOf)
+        notebook.inkChanged(on: page, ink, echoOf: echoOf, bindings: bindingsForStroke())
         // An echo is the runtime restating ink it was handed, which is a
         // restore and not a stroke anybody drew.
         if echoOf == nil { onInkReported?() }

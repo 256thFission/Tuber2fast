@@ -270,7 +270,13 @@ package final class Notebook {
     // MARK: Ink custody
 
     /// A report from the runtime. The value travels; custody is now here.
-    package func inkChanged(on page: PageID, _ ink: PKDrawing, echoOf: InkSeq?) {
+    ///
+    /// `bindings` are the person's gesture preferences for the stroke in
+    /// hand, asked for on every report; the notebook holds no copy, because
+    /// a preference is never notebook state. A gesture applies inside this
+    /// call, so the one entry recorded below runs from the revision before
+    /// the trigger stroke to the revision after its effect.
+    package func inkChanged(on page: PageID, _ ink: PKDrawing, echoOf: InkSeq?, bindings: GestureBindings = [:]) {
         guard case .ready(var content) = states[page] else {
             TNPrecondition.fail("ink reported for page \(page) which is not ready: \(String(describing: states[page]))")
         }
@@ -281,11 +287,50 @@ package final class Notebook {
         }
         content.pendingEcho = nil
         let captured = content.revision
-        content.setInk(ink)
-        recordEdit(on: page, from: captured, to: content.revision)
+        let gesture = gesture(on: page, in: ink, after: captured, bindings: bindings)
+        if let gesture {
+            // The same shape undo pushes: the edited drawing rides
+            // `.inkRestored`, and its echo is swallowed by the latch above.
+            restore(gesture, on: page, in: &content)
+        }
+        content.setInk(gesture ?? ink)
+        // A gesture's drawing this app built, so the entry pays per stroke;
+        // every other report came from the canvas and shares.
+        recordEdit(on: page, from: captured, to: content.revision, rebuilt: gesture != nil)
         states[page] = .ready(content)
         bumpContentVersion(of: page)
         markDirty()
+    }
+
+    /// The drawing a gesture leaves behind, if a gesture fired. Nil when
+    /// nothing applies, which is the common case and the cheap one.
+    ///
+    /// "Exactly one stroke more than the captured revision" is the whole
+    /// test for "a pen stroke landed". The eraser and the lasso add nothing,
+    /// and the pixel eraser masks rather than splits, so it adds nothing
+    /// either. Recognition itself lives in `StrokeGestures.swift`; what is
+    /// here is the page, the log, and the edit.
+    private func gesture(on page: PageID, in ink: PKDrawing, after captured: PageRevision, bindings: GestureBindings) -> PKDrawing? {
+        guard !bindings.isEmpty else { return nil }
+        // The one read of the strokes array; the getter bridges, and both
+        // readings and the edit walk this copy.
+        let strokes = ink.strokes
+        guard strokes.count == captured.ink.strokes.count + 1 else { return nil }
+        let added = strokes.count - 1
+        let match = GestureTrigger.recognise(stroke: added, in: strokes, bindings: bindings) { line in
+            TNLog.event(.gesture, "page=\(page) " + line)
+        }
+        guard let match else { return nil }
+        return match.effect.apply(to: ink, strokes: strokes, subject: match.subject, added: added)
+    }
+
+    /// A drawing the notebook chose, pushed to the canvas: one sequence,
+    /// latched so its echo comes back as nothing. Undo and a gesture are the
+    /// two edits that take this path.
+    private func restore(_ ink: PKDrawing, on page: PageID, in content: inout PageContent) {
+        let seq = InkSeq(nextInkSeq); nextInkSeq += 1
+        content.pendingEcho = seq
+        changes.append(.inkRestored(page, ink, seq: seq))
     }
 
     // MARK: Content versions
@@ -297,6 +342,13 @@ package final class Notebook {
     private func bumpContentVersion(of page: PageID) {
         contentVersions[page, default: 0] += 1
     }
+
+    #if DEBUG
+    /// The estimated bytes the undo stack holds, which is what its byte
+    /// bound is measured against. The tests read it; nothing else does, so
+    /// it does not exist in Release.
+    package var historyByteEstimateForTesting: Int { history.byteEstimate }
+    #endif
 
     package var canUndo: Bool { history.canUndo }
     package var canRedo: Bool { history.canRedo }
@@ -314,9 +366,17 @@ package final class Notebook {
 
     /// Every edit records through here, and only when the revision moved:
     /// an entry that restores nothing would still clear redo on the way in.
-    private func recordEdit(on page: PageID, from captured: PageRevision, to revision: PageRevision) {
+    /// `rebuilt` says the new revision's drawing was built here rather than
+    /// handed over by the canvas, which is what its byte estimate turns on.
+    /// Only the gesture path builds one; see `HistoryEntry`.
+    private func recordEdit(
+        on page: PageID,
+        from captured: PageRevision,
+        to revision: PageRevision,
+        rebuilt: Bool
+    ) {
         guard revision != captured else { return }
-        history.record(HistoryEntry(page: page, before: captured, after: revision))
+        history.record(HistoryEntry(page: page, before: captured, after: revision, rebuilt: rebuilt))
     }
 
     /// One notebook-wide stack, GoodNotes-shaped: an undo restores the page
@@ -348,11 +408,7 @@ package final class Notebook {
             TNPrecondition.require(content.textEditing == nil, "a restore on page \(page) under an open text session on layer \(String(describing: content.textEditing?.layer))")
             let delta = content.adopt(revision)
             guard delta.ink || delta.layers else { return }
-            if delta.ink {
-                let seq = InkSeq(nextInkSeq); nextInkSeq += 1
-                content.pendingEcho = seq
-                changes.append(.inkRestored(page, revision.ink, seq: seq))
-            }
+            if delta.ink { restore(revision.ink, on: page, in: &content) }
             states[page] = .ready(content)
             bumpContentVersion(of: page)
             markDirty()
@@ -757,7 +813,7 @@ package final class Notebook {
         content.inkIndex += 1
         content.pendingLayerFiles.insert(layer.id)
         content.edited()
-        if recording { recordEdit(on: page, from: captured, to: content.revision) }
+        if recording { recordEdit(on: page, from: captured, to: content.revision, rebuilt: false) }
         states[page] = .ready(content)
         bumpContentVersion(of: page)
         markDirty()
@@ -1060,7 +1116,7 @@ package final class Notebook {
         // twice, once to insert and once to remove. Whether the session moved
         // the revision is what the stack needs, and that box did not.
         let changed = content.editSeq != (states[page]?.content?.editSeq ?? content.editSeq)
-        recordEdit(on: page, from: session.before, to: content.revision)
+        recordEdit(on: page, from: session.before, to: content.revision, rebuilt: false)
         content.afterRender.append(.textEditingEnded(page, layer))
         states[page] = .ready(content)
         if changed {
@@ -1085,7 +1141,7 @@ package final class Notebook {
         content.layers[position] = moved
         content.pendingLayerFiles.insert(layerID)
         content.edited()
-        recordEdit(on: page, from: captured, to: content.revision)
+        recordEdit(on: page, from: captured, to: content.revision, rebuilt: false)
         states[page] = .ready(content)
         bumpContentVersion(of: page)
         markDirty()
@@ -1118,7 +1174,7 @@ package final class Notebook {
         content.layers[position] = moved
         content.pendingLayerFiles.insert(layerID)
         content.edited()
-        recordEdit(on: page, from: captured, to: content.revision)
+        recordEdit(on: page, from: captured, to: content.revision, rebuilt: false)
         states[page] = .ready(content)
         bumpContentVersion(of: page)
         markDirty()
@@ -1136,7 +1192,7 @@ package final class Notebook {
         content.layers[position] = content.layers[position].withLock(locked)
         content.pendingLayerFiles.insert(layerID)
         content.edited()
-        recordEdit(on: page, from: captured, to: content.revision)
+        recordEdit(on: page, from: captured, to: content.revision, rebuilt: false)
         states[page] = .ready(content)
         bumpContentVersion(of: page)
         markDirty()
@@ -1158,7 +1214,7 @@ package final class Notebook {
         if position < content.inkIndex { content.inkIndex -= 1 }
         content.pendingLayerFiles.remove(layerID)
         content.edited()
-        recordEdit(on: page, from: captured, to: content.revision)
+        recordEdit(on: page, from: captured, to: content.revision, rebuilt: false)
         states[page] = .ready(content)
         bumpContentVersion(of: page)
         markDirty()

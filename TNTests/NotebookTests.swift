@@ -134,6 +134,108 @@ enum Ink {
         }
         return PKDrawing(strokes: all)
     }
+
+    static func stroke(
+        _ path: [CGPoint],
+        width: CGFloat = 3,
+        type: PKInk.InkType = .pen,
+        transform: CGAffineTransform = .identity,
+        mask: UIBezierPath? = nil
+    ) -> PKStroke {
+        let points = path.enumerated().map { i, location in
+            PKStrokePoint(location: location, timeOffset: Double(i) * 0.01, size: CGSize(width: width, height: width), opacity: 1, force: 1, azimuth: 0, altitude: .pi / 2)
+        }
+        return PKStroke(ink: PKInk(type, color: .black), path: PKStrokePath(controlPoints: points, creationDate: Date()), transform: transform, mask: mask)
+    }
+
+    /// Control points every `spacing` along each leg, with `cusps` copies of
+    /// every interior vertex. PencilKit interpolates through the control
+    /// points, so a repeated point is what makes a corner sharp rather than
+    /// rounded; a hand-drawn scratch-out corner is a cusp, a letter's is not.
+    static func polyline(_ vertices: [CGPoint], spacing: CGFloat = 3, cusps: Int = 3) -> [CGPoint] {
+        var points = [vertices[0]]
+        for (i, pair) in zip(vertices, vertices.dropFirst()).enumerated() {
+            let (a, b) = pair
+            let steps = max(Int(hypot(b.x - a.x, b.y - a.y) / spacing), 1)
+            for step in 1...steps {
+                let t = CGFloat(step) / CGFloat(steps)
+                points.append(CGPoint(x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t))
+            }
+            if i + 2 < vertices.count { points += Array(repeating: b, count: cusps - 1) }
+        }
+        return points
+    }
+
+    /// A scratch-out over `rect`: `turns` sharp reversals across its width,
+    /// descending its height.
+    static func zigzag(over rect: CGRect, turns: Int) -> PKStroke {
+        // A corner at every vertex but the two ends, so `turns` of them needs
+        // two more points than turns.
+        let count = turns + 2
+        let step = rect.height / CGFloat(count - 1)
+        let vertices = (0..<count).map { i in
+            CGPoint(x: i.isMultiple(of: 2) ? rect.minX : rect.maxX, y: rect.minY + CGFloat(i) * step)
+        }
+        return stroke(polyline(vertices), width: 2)
+    }
+
+    static func line(from: CGPoint, to: CGPoint, width: CGFloat = 3, type: PKInk.InkType = .pen, transform: CGAffineTransform = .identity, mask: UIBezierPath? = nil) -> PKStroke {
+        stroke(polyline([from, to]), width: width, type: type, transform: transform, mask: mask)
+    }
+
+    /// `count` turns of a widening ring around `rect`, drawn as a hand draws
+    /// one: no corner anywhere, unless `spikes` asks for some. A spike is an
+    /// inward flick and straight back out, the cusp a scratch-out has and a
+    /// ring does not, so a stroke can read as both shapes at once and the
+    /// order the notebook tries them in is what decides it.
+    static func loops(around rect: CGRect, count: Int, spikes: Int = 0, depth: CGFloat = 14) -> PKStroke {
+        let centre = CGPoint(x: rect.midX, y: rect.midY)
+        let radius = hypot(rect.width, rect.height) / 2 + 10
+        let sweep = CGFloat(count) * 2 * .pi
+        let steps = max(Int(sweep * radius / 3), 8)
+        let every = spikes > 0 ? max(steps / (spikes + 1), 1) : 0
+        var points: [CGPoint] = []
+        for step in 0...steps {
+            let angle = sweep * CGFloat(step) / CGFloat(steps)
+            let r = radius + angle
+            let point = CGPoint(x: centre.x + r * cos(angle), y: centre.y + r * sin(angle))
+            points.append(point)
+            guard every > 0, step > 0, step < steps, step.isMultiple(of: every) else { continue }
+            let inner = CGPoint(x: centre.x + (r - depth) * cos(angle), y: centre.y + (r - depth) * sin(angle))
+            points += polyline([point, inner]).dropFirst()
+            points += Array(repeating: inner, count: 2)
+            points += polyline([inner, point]).dropFirst()
+        }
+        return stroke(points, width: 2)
+    }
+
+    /// A "w": a cusp at each bottom and a rounded middle apex, the way a hand
+    /// writes one. Two sharp turns, not three.
+    static func w(in rect: CGRect) -> PKStroke {
+        let quarter = rect.width / 4
+        let bottomLeft = CGPoint(x: rect.minX + quarter, y: rect.maxY)
+        let bottomRight = CGPoint(x: rect.maxX - quarter, y: rect.maxY)
+        let apex = CGPoint(x: rect.midX, y: rect.minY)
+        let radius = rect.width / 8
+        let apexLeft = CGPoint(x: apex.x - radius / 2, y: apex.y + radius)
+        let apexRight = CGPoint(x: apex.x + radius / 2, y: apex.y + radius)
+        var points = polyline([CGPoint(x: rect.minX, y: rect.minY), bottomLeft])
+        points += Array(repeating: bottomLeft, count: 2)
+        points += polyline([bottomLeft, apexLeft]).dropFirst()
+        let cap = 10
+        points += (1...cap).map { step -> CGPoint in
+            let t = CGFloat(step) / CGFloat(cap + 1)
+            let u = 1 - t
+            return CGPoint(
+                x: u * u * apexLeft.x + 2 * u * t * apex.x + t * t * apexRight.x,
+                y: u * u * apexLeft.y + 2 * u * t * apex.y + t * t * apexRight.y
+            )
+        }
+        points += polyline([apexRight, bottomRight])
+        points += Array(repeating: bottomRight, count: 2)
+        points += polyline([bottomRight, CGPoint(x: rect.maxX, y: rect.minY)]).dropFirst()
+        return stroke(points, width: 2)
+    }
 }
 
 var fast: SaveSchedule {
@@ -248,6 +350,209 @@ struct NotebookTests {
         #expect(notebook.redo() == page)
         #expect(notebook.state(of: page)!.content!.ink.strokes.count == 2)
         #expect(!notebook.canRedo)
+    }
+
+    // MARK: Pencil gestures
+
+    /// Three lines down the page, and a scratch-out across the top two.
+    private static func scribbledLines() -> (lines: PKDrawing, scribbled: PKDrawing) {
+        let lines = (0..<3).map { i in
+            Ink.line(from: CGPoint(x: 0, y: CGFloat(i) * 50), to: CGPoint(x: 200, y: CGFloat(i) * 50))
+        }
+        let scribble = Ink.zigzag(over: CGRect(x: 20, y: -10, width: 80, height: 70), turns: 4)
+        return (PKDrawing(strokes: lines), PKDrawing(strokes: lines + [scribble]))
+    }
+
+    private func gesturePage() async throws -> (Notebook, PageID, Scratch) {
+        let scratch = try Scratch("nb-gesture")
+        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        let page = notebook.pageIDs[0]
+        notebook.windowChanged(to: [page])
+        try await waitUntil { notebook.state(of: page)?.content != nil }
+        _ = notebook.drainChanges()
+        return (notebook, page, scratch)
+    }
+
+    @Test("A scribble bound to erase takes its subject and itself, in one restore and one history entry")
+    func scribbleErases() async throws {
+        let (notebook, page, scratch) = try await gesturePage()
+        _ = scratch
+        let (lines, scribbled) = Self.scribbledLines()
+        notebook.inkChanged(on: page, lines, echoOf: nil)
+        _ = notebook.drainChanges()
+        let editSeqBefore = notebook.state(of: page)!.content!.editSeq
+
+        notebook.inkChanged(on: page, scribbled, echoOf: nil, bindings: [.scribble: .erase])
+        #expect(notebook.state(of: page)?.content?.ink.strokes.count == 1, "the two crossed lines and the scribble are gone")
+        let changes = notebook.drainChanges()
+        let restores = changes.compactMap { change -> (PageID, PKDrawing, InkSeq)? in
+            if case .inkRestored(let p, let ink, let seq) = change { (p, ink, seq) } else { nil }
+        }
+        #expect(restores.count == 1, "\(changes)")
+        let restore = try #require(restores.first)
+        #expect(restore.0 == page && restore.1.strokes.count == 1)
+
+        // The canvas reports the push back; the latch swallows it.
+        notebook.inkChanged(on: page, restore.1, echoOf: restore.2)
+        #expect(notebook.state(of: page)!.content!.editSeq == editSeqBefore + 1, "the gesture is one edit and its echo is none")
+
+        // Two entries stand: the one that laid the lines down and the
+        // gesture. The gesture's is one, from before the trigger stroke to
+        // after its effect, so the first undo lands on the three lines.
+        #expect(notebook.canUndo)
+        #expect(notebook.undo() == page)
+        #expect(notebook.state(of: page)?.content?.ink.strokes.count == 3, "undo brings the lines back and not the scribble")
+        #expect(notebook.undo() == page)
+        #expect(notebook.state(of: page)?.content?.ink.strokes.isEmpty == true)
+        #expect(!notebook.canUndo)
+        #expect(notebook.redo() == page)
+        #expect(notebook.state(of: page)?.content?.ink.strokes.count == 3)
+        #expect(notebook.redo() == page)
+        #expect(notebook.state(of: page)?.content?.ink.strokes.count == 1, "redo removes them again")
+    }
+
+    @Test("A gesture's entry is estimated per stroke; a stroke that only landed is the shared figure")
+    func gestureEntryCostsPerStroke() async throws {
+        let (notebook, page, scratch) = try await gesturePage()
+        _ = scratch
+        let (lines, scribbled) = Self.scribbledLines()
+        notebook.inkChanged(on: page, lines, echoOf: nil)
+        _ = notebook.drainChanges()
+        #expect(notebook.historyByteEstimateForTesting == HistoryEntry.sharedEntryBytes, "the canvas handed that drawing over")
+
+        notebook.inkChanged(on: page, scribbled, echoOf: nil, bindings: [.scribble: .erase])
+        // One line survives the scratch-out, and the gesture built the
+        // drawing that holds it, so its entry pays for that one stroke on
+        // top of the shared figure every entry pays.
+        #expect(notebook.state(of: page)?.content?.ink.strokes.count == 1)
+        #expect(
+            notebook.historyByteEstimateForTesting
+                == 2 * HistoryEntry.sharedEntryBytes + HistoryEntry.rebuiltBytesPerStroke
+        )
+    }
+
+    @Test("With no bindings the same scribble is ink: four strokes, no restore")
+    func scribbleUnbound() async throws {
+        let (notebook, page, scratch) = try await gesturePage()
+        _ = scratch
+        let (lines, scribbled) = Self.scribbledLines()
+        notebook.inkChanged(on: page, lines, echoOf: nil)
+        _ = notebook.drainChanges()
+        notebook.inkChanged(on: page, scribbled, echoOf: nil)
+        #expect(notebook.state(of: page)?.content?.ink.strokes.count == 4)
+        #expect(!notebook.drainChanges().contains { if case .inkRestored = $0 { true } else { false } })
+    }
+
+    @Test("A scribble over blank paper stays, bound or not")
+    func scribbleOverBlankPaper() async throws {
+        for bindings in [GestureBindings(), [.scribble: .erase]] {
+            let (notebook, page, scratch) = try await gesturePage()
+            _ = scratch
+            let scribble = PKDrawing(strokes: [Ink.zigzag(over: CGRect(x: 20, y: -10, width: 80, height: 70), turns: 4)])
+            notebook.inkChanged(on: page, scribble, echoOf: nil, bindings: bindings)
+            #expect(notebook.state(of: page)?.content?.ink.strokes.count == 1)
+            #expect(!notebook.drainChanges().contains { if case .inkRestored = $0 { true } else { false } })
+        }
+    }
+
+    /// Three lines down the page, and a double ring around the top two.
+    private static func circledLines() -> (lines: PKDrawing, circled: PKDrawing) {
+        let lines = [0, 20, 300].map { y in
+            Ink.line(from: CGPoint(x: 0, y: CGFloat(y)), to: CGPoint(x: 200, y: CGFloat(y)))
+        }
+        let circle = Ink.loops(around: CGRect(x: 0, y: 0, width: 200, height: 20), count: 2)
+        return (PKDrawing(strokes: lines), PKDrawing(strokes: lines + [circle]))
+    }
+
+    @Test("A double circle bound to erase takes what it encloses and itself, in one restore and one entry")
+    func doubleCircleErases() async throws {
+        let (notebook, page, scratch) = try await gesturePage()
+        _ = scratch
+        let (lines, circled) = Self.circledLines()
+        notebook.inkChanged(on: page, lines, echoOf: nil)
+        _ = notebook.drainChanges()
+        let editSeqBefore = notebook.state(of: page)!.content!.editSeq
+
+        notebook.inkChanged(on: page, circled, echoOf: nil, bindings: [.doubleCircle: .erase])
+        #expect(notebook.state(of: page)?.content?.ink.strokes.count == 1, "the two enclosed lines and the ring are gone")
+        let restores = notebook.drainChanges().compactMap { change -> (PageID, PKDrawing, InkSeq)? in
+            if case .inkRestored(let p, let ink, let seq) = change { (p, ink, seq) } else { nil }
+        }
+        #expect(restores.count == 1)
+        let restore = try #require(restores.first)
+        #expect(restore.0 == page && restore.1.strokes.count == 1)
+
+        notebook.inkChanged(on: page, restore.1, echoOf: restore.2)
+        #expect(notebook.state(of: page)!.content!.editSeq == editSeqBefore + 1, "the gesture is one edit and its echo is none")
+        #expect(notebook.undo() == page)
+        #expect(notebook.state(of: page)?.content?.ink.strokes.count == 3, "undo brings the lines back and not the ring")
+    }
+
+    @Test("With only the scribble bound a double circle is ink")
+    func doubleCircleUnbound() async throws {
+        let (notebook, page, scratch) = try await gesturePage()
+        _ = scratch
+        let (lines, circled) = Self.circledLines()
+        notebook.inkChanged(on: page, lines, echoOf: nil)
+        _ = notebook.drainChanges()
+        // The built-in bindings, which leave the second trigger off: the map
+        // is the record, and a trigger it does not name is unbound.
+        notebook.inkChanged(on: page, circled, echoOf: nil, bindings: [.scribble: .erase])
+        #expect(notebook.state(of: page)?.content?.ink.strokes.count == 4)
+        #expect(!notebook.drainChanges().contains { if case .inkRestored = $0 { true } else { false } })
+    }
+
+    /// A scratch-out drawn in loops: it encloses one line and crosses
+    /// another, so the two triggers point at different strokes and which
+    /// fires is the bindings' answer.
+    private static func scratchOutInLoops() -> (before: PKDrawing, after: PKDrawing) {
+        let crossing = Ink.line(from: CGPoint(x: -200, y: 10), to: CGPoint(x: 200, y: 10))
+        let enclosed = Ink.line(from: CGPoint(x: 30, y: 10), to: CGPoint(x: 70, y: 10))
+        let loops = Ink.loops(around: CGRect(x: 0, y: 0, width: 100, height: 20), count: 2, spikes: 4)
+        return (PKDrawing(strokes: [crossing, enclosed]), PKDrawing(strokes: [crossing, enclosed, loops]))
+    }
+
+    @Test("With only the double circle bound, an unbound scribble does not swallow it")
+    func unboundScribbleLeavesTheCircleFree() async throws {
+        let (notebook, page, scratch) = try await gesturePage()
+        _ = scratch
+        let (before, after) = Self.scratchOutInLoops()
+        notebook.inkChanged(on: page, before, echoOf: nil)
+        _ = notebook.drainChanges()
+
+        notebook.inkChanged(on: page, after, echoOf: nil, bindings: [.doubleCircle: .erase])
+        let left = try #require(notebook.state(of: page)?.content?.ink.strokes)
+        #expect(left.count == 1, "the enclosed line and the ring go")
+        #expect(left.first?.renderBounds.minX ?? 0 < -100, "the line the loops crossed stays")
+    }
+
+    @Test("With both bound, the scribble wins the same stroke and the crossed line goes")
+    func scribbleWinsOverTheCircle() async throws {
+        let (notebook, page, scratch) = try await gesturePage()
+        _ = scratch
+        let (before, after) = Self.scratchOutInLoops()
+        notebook.inkChanged(on: page, before, echoOf: nil)
+        _ = notebook.drainChanges()
+
+        notebook.inkChanged(on: page, after, echoOf: nil, bindings: [.scribble: .erase, .doubleCircle: .erase])
+        let left = try #require(notebook.state(of: page)?.content?.ink.strokes)
+        #expect(left.count == 1, "the crossed line and the ring go")
+        #expect(left.first?.renderBounds.minX ?? 0 > 0, "the line the loops merely enclosed stays")
+    }
+
+    @Test("A report that adds two strokes at once is never examined")
+    func twoStrokesAtOnceAreNotAGesture() async throws {
+        let (notebook, page, scratch) = try await gesturePage()
+        _ = scratch
+        let (lines, scribbled) = Self.scribbledLines()
+        notebook.inkChanged(on: page, lines, echoOf: nil)
+        _ = notebook.drainChanges()
+        let extra = Ink.line(from: CGPoint(x: 0, y: 200), to: CGPoint(x: 200, y: 200))
+        // The scribble is still the last stroke; the count is what refuses it.
+        let two = PKDrawing(strokes: lines.strokes + [extra] + scribbled.strokes.suffix(1))
+        notebook.inkChanged(on: page, two, echoOf: nil, bindings: [.scribble: .erase])
+        #expect(notebook.state(of: page)?.content?.ink.strokes.count == 5)
+        #expect(!notebook.drainChanges().contains { if case .inkRestored = $0 { true } else { false } })
     }
 
     @Test("Undo survives a page leaving the window: the stack is the notebook's and the page comes back")
@@ -1700,5 +2005,76 @@ extension Notebook {
             try #require(ContinuousClock.now < deadline, "timed out waiting for \(count) asset reads")
             try await Task.sleep(for: .milliseconds(5))
         }
+    }
+}
+
+/// The two bounds on the stack, against the constants rather than against
+/// a real drawing: an estimate is arithmetic on a stroke count, so the
+/// entries here carry one repeated stroke and no fixture is loaded.
+@Suite("EditHistory: the count bound and the byte bound")
+@MainActor
+struct EditHistoryBoundTests {
+    /// A revision whose drawing has `strokes` strokes, all the same one.
+    private static func revision(strokes: Int) -> PageRevision {
+        let stroke = Ink.line(from: .zero, to: CGPoint(x: 10, y: 10))
+        return PageRevision(ink: PKDrawing(strokes: Array(repeating: stroke, count: strokes)), layers: [], inkIndex: 0)
+    }
+
+    private static func entry(_ page: PageID, strokes: Int, rebuilt: Bool) -> HistoryEntry {
+        HistoryEntry(page: page, before: revision(strokes: 0), after: revision(strokes: strokes), rebuilt: rebuilt)
+    }
+
+    @Test("An entry's estimate is the shared figure, or the per-stroke one when the drawing was rebuilt")
+    func estimateArithmetic() {
+        let shared = Self.entry(PageID(), strokes: 7, rebuilt: false)
+        #expect(shared.byteEstimate == HistoryEntry.sharedEntryBytes, "a drawing from the canvas costs per entry, not per stroke")
+        let rebuilt = Self.entry(PageID(), strokes: 7, rebuilt: true)
+        #expect(rebuilt.byteEstimate == HistoryEntry.sharedEntryBytes + 7 * HistoryEntry.rebuiltBytesPerStroke)
+    }
+
+    @Test("Past the byte bound the oldest entries go and the newest stand")
+    func byteBoundEvictsOldest() {
+        // Four of these sum past 64 MB; three do not.
+        let perEntry = 40_000
+        let cost = HistoryEntry.sharedEntryBytes + perEntry * HistoryEntry.rebuiltBytesPerStroke
+        #expect(3 * cost <= EditHistory.maximumBytes && 4 * cost > EditHistory.maximumBytes, "the sizing this test rests on")
+        let after = Self.revision(strokes: perEntry)
+        let before = Self.revision(strokes: 0)
+        let pages = (0..<5).map { _ in PageID() }
+        var history = EditHistory()
+        for page in pages {
+            history.record(HistoryEntry(page: page, before: before, after: after, rebuilt: true))
+        }
+        #expect(history.byteEstimate == 3 * cost)
+        #expect(history.undo()?.page == pages[4])
+        #expect(history.undo()?.page == pages[3])
+        #expect(history.undo()?.page == pages[2])
+        #expect(!history.canUndo, "the two oldest were evicted, not undone")
+    }
+
+    @Test("One entry larger than the whole bound is still kept, and it is the only one")
+    func oversizedEntryIsKept() {
+        let huge = EditHistory.maximumBytes / HistoryEntry.rebuiltBytesPerStroke + 1_000
+        let hugeCost = HistoryEntry.sharedEntryBytes + huge * HistoryEntry.rebuiltBytesPerStroke
+        var history = EditHistory()
+        let small = PageID(), big = PageID()
+        history.record(Self.entry(small, strokes: 1, rebuilt: false))
+        history.record(HistoryEntry(page: big, before: Self.revision(strokes: 0), after: Self.revision(strokes: huge), rebuilt: true))
+        #expect(history.byteEstimate == hugeCost)
+        #expect(history.byteEstimate > EditHistory.maximumBytes, "kept although it alone is past the bound")
+        #expect(history.undo()?.page == big)
+        #expect(!history.canUndo, "the small entry went to make room")
+    }
+
+    @Test("The count bound still applies to entries the byte bound never reaches")
+    func countBoundStillApplies() {
+        var history = EditHistory()
+        let pages = (0..<(EditHistory.maximumEntries + 20)).map { _ in PageID() }
+        for page in pages { history.record(Self.entry(page, strokes: 1, rebuilt: false)) }
+        #expect(history.byteEstimate == EditHistory.maximumEntries * HistoryEntry.sharedEntryBytes)
+        #expect(history.byteEstimate < EditHistory.maximumBytes, "the count is what bounded this stack")
+        #expect(history.undo()?.page == pages.last)
+        for _ in 1..<EditHistory.maximumEntries { _ = history.undo() }
+        #expect(!history.canUndo)
     }
 }

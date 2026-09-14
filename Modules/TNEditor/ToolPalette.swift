@@ -1,6 +1,7 @@
 import Foundation
 import Observation
 import TNCore
+import TNNotebook
 
 /// Which eraser the person last used. Kept across mode switches, so the
 /// eraser button restores what it was rather than a fixed default.
@@ -20,6 +21,8 @@ package struct ToolPaletteRecord: Equatable, Sendable, Codable {
     package var pixelEraserWidth: ToolWidth
     package var recentColors: [ToolColor]
     package var text: TextPreset
+    /// Which Pencil gesture does what. A trigger absent from the map is off.
+    package var gestures: GestureBindings
 
     package init(
         lastKind: ToolPalette.Kind,
@@ -27,7 +30,8 @@ package struct ToolPaletteRecord: Equatable, Sendable, Codable {
         eraserMode: EraserMode,
         pixelEraserWidth: ToolWidth,
         recentColors: [ToolColor],
-        text: TextPreset
+        text: TextPreset,
+        gestures: GestureBindings
     ) {
         self.lastKind = lastKind
         self.inks = inks
@@ -35,16 +39,18 @@ package struct ToolPaletteRecord: Equatable, Sendable, Codable {
         self.pixelEraserWidth = pixelEraserWidth
         self.recentColors = recentColors
         self.text = text
+        self.gestures = gestures
     }
 
     private enum CodingKeys: String, CodingKey {
-        case lastKind, inks, eraserMode, pixelEraserWidth, recentColors, text
+        case lastKind, inks, eraserMode, pixelEraserWidth, recentColors, text, gestures
     }
 
-    // The text slot arrived after the palette first shipped, so a record
-    // written without it is a whole palette somebody keeps, not a record
-    // that cannot be used: it reads back with the built-in text preset. An
-    // ink slot is different, and `isComplete` says why.
+    // The text slot, and later the gesture bindings, arrived after the
+    // palette first shipped, so a record written without either is a whole
+    // palette somebody keeps, not a record that cannot be used: it reads
+    // back with the built-in preset for the field that is missing. An ink
+    // slot is different, and `isComplete` says why.
     package init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         lastKind = try container.decode(ToolPalette.Kind.self, forKey: .lastKind)
@@ -53,6 +59,8 @@ package struct ToolPaletteRecord: Equatable, Sendable, Codable {
         pixelEraserWidth = try container.decode(ToolWidth.self, forKey: .pixelEraserWidth)
         recentColors = try container.decode([ToolColor].self, forKey: .recentColors)
         text = try container.decodeIfPresent(TextPreset.self, forKey: .text) ?? .body
+        gestures = try container.decodeIfPresent(GestureBindings.self, forKey: .gestures)
+            ?? Self.builtIn.gestures
     }
 
     /// What a first launch opens on, and what an unreadable preference
@@ -67,7 +75,10 @@ package struct ToolPaletteRecord: Equatable, Sendable, Codable {
         eraserMode: .object,
         pixelEraserWidth: .medium,
         recentColors: [],
-        text: .body
+        text: .body,
+        // Scribble ships bound: the point of a gesture is not visiting the
+        // toolbar to switch it on.
+        gestures: [.scribble: .erase]
     )
 
     /// Whether every ink kind has a slot.
@@ -120,6 +131,10 @@ package protocol ToolPaletteStore: Sendable {
     package private(set) var recentColors: [ToolColor]
     /// The style and alignment the text tool last typed with.
     package private(set) var text: TextPreset
+    /// Which Pencil gesture does what, for every ink kind at once. A
+    /// trigger absent from the map is off. Nobody copies this: the editor
+    /// binding asks for it on every stroke that lands.
+    package private(set) var gestures: GestureBindings
 
     /// Eight, which is one row beside the defaults on the narrowest strip
     /// the popover draws.
@@ -137,6 +152,7 @@ package protocol ToolPaletteStore: Sendable {
         self.pixelEraserWidth = record.pixelEraserWidth
         self.recentColors = record.recentColors
         self.text = record.text
+        self.gestures = record.gestures
     }
 
     // MARK: The tools it names
@@ -206,6 +222,13 @@ package protocol ToolPaletteStore: Sendable {
         save()
     }
 
+    /// Binds a gesture, or unbinds it when `effect` is nil.
+    package func bind(_ trigger: GestureTrigger, to effect: GestureEffect?) {
+        guard gestures[trigger] != effect else { return }
+        gestures[trigger] = effect
+        save()
+    }
+
     private func save() {
         store.save(ToolPaletteRecord(
             lastKind: lastKind,
@@ -213,7 +236,8 @@ package protocol ToolPaletteStore: Sendable {
             eraserMode: eraserMode,
             pixelEraserWidth: pixelEraserWidth,
             recentColors: recentColors,
-            text: text
+            text: text,
+            gestures: gestures
         ))
     }
 }

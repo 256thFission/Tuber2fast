@@ -56,6 +56,31 @@ struct EditorViewModelTests {
         withExtendedLifetime(scratch) {}
     }
 
+    @Test("The gestures the binding asks for follow the tool in hand and the palette")
+    func gesturesFollowTheToolAndThePalette() async throws {
+        let (scratch, book) = try await notebook("vm-gestures")
+        let binding = EditorBinding(notebook: book, surface: RecordingSurface())
+        let shared = ToolPalette(store: MemoryPaletteStore())
+        let editor = EditorViewModel(binding: binding, palette: shared)
+
+        // Nothing has been selected yet, and `didSet` does not run for the
+        // initial value: a tab that opens on the pen still gestures like one.
+        #expect(editor.tool == shared.currentTool)
+        #expect(binding.bindingsForStroke() == [.scribble: .erase])
+
+        editor.selectEraser()
+        #expect(binding.bindingsForStroke().isEmpty, "an eraser pass is never a gesture")
+
+        editor.select(kind: .highlighter)
+        #expect(binding.bindingsForStroke() == [.scribble: .erase], "every ink kind gestures")
+
+        editor.select(kind: .pen)
+        editor.bind(.scribble, to: nil)
+        #expect(shared.gestures.isEmpty, "the intention went to the palette")
+        #expect(binding.bindingsForStroke().isEmpty, "the closure reads the palette, it does not hold a copy")
+        withExtendedLifetime(scratch) {}
+    }
+
     @Test("Two tabs over one palette open on the same tool")
     func twoTabsOpenOnTheSameTool() async throws {
         let eraser = EditorTool.erasePixel(.thin)

@@ -174,6 +174,38 @@ struct EditorBindingTests {
         _ = await notebook.close()
     }
 
+    @Test("An ink report reaches the notebook with the bindings the closure answers")
+    func inkReportsCarryTheBindings() async throws {
+        let scratch = try Scratch("editor-gesture")
+        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        notebook.appendPage()
+        let surface = RecordingSurface()
+        let binding = EditorBinding(notebook: notebook, surface: surface)
+        let (unbound, bound) = (notebook.pageIDs[0], notebook.pageIDs[1])
+        binding.windowChanged(to: [unbound, bound])
+        try await waitUntil { surface.installed.contains(unbound) && surface.installed.contains(bound) }
+
+        // Three lines down the page and a scratch-out across the top two.
+        let lines = (0..<3).map {
+            Ink.line(from: CGPoint(x: 0, y: CGFloat($0) * 50), to: CGPoint(x: 200, y: CGFloat($0) * 50))
+        }
+        let scribbled = PKDrawing(strokes: lines + [Ink.zigzag(over: CGRect(x: 20, y: -10, width: 80, height: 70), turns: 4)])
+
+        // The default answer is no gesture at all, so the scratch-out is ink.
+        binding.inkChanged(on: unbound, PKDrawing(strokes: lines), echoOf: nil)
+        binding.inkChanged(on: unbound, scribbled, echoOf: nil)
+        #expect(notebook.state(of: unbound)?.content?.ink.strokes.count == 4)
+        #expect(!surface.calls.contains { if case .restoreInk(let p, _) = $0 { p == unbound } else { false } })
+
+        binding.bindingsForStroke = { [.scribble: .erase] }
+        binding.inkChanged(on: bound, PKDrawing(strokes: lines), echoOf: nil)
+        binding.inkChanged(on: bound, scribbled, echoOf: nil)
+        #expect(notebook.state(of: bound)?.content?.ink.strokes.count == 1, "the two crossed lines and the scribble are gone")
+        #expect(surface.calls.contains { if case .restoreInk(let p, _) = $0 { p == bound } else { false } })
+        _ = await notebook.close()
+        withExtendedLifetime(scratch) {}
+    }
+
     @Test("An undo whose entry is a layer change scrolls to that page, with no ink to restore")
     func undoOfALayerChangeScrolls() async throws {
         let scratch = try Scratch("editor-undo-layer")

@@ -17,6 +17,7 @@ is wrong and the fix is here first, then there.
 | `loose-ends.md` | Nine one-commit items over existing intentions, plus a defect: every notebook opens on page 1 | small | none | none |
 | `organisation.md` | A page mark that carries its title, the outline as the marked pages, folder colour and symbol in `.folder.json`, drag and drop between folder cells | medium | none | index to 3, folder sidecar to 2 |
 | `capture.md` | A camera photo as a layer and a VisionKit scan as N pages, both reusing the photo picker's back half from `Data` inwards | small | none | none |
+| `pencil-gestures.md` | Scribble to erase, recognised by the notebook after the stroke commits and applied as a restore; one enum, one pure function, bindings from triggers to effects in the ink popover; reviewed twice 2026-09-14; six steps ending in a double-circle trigger | medium | none | none |
 
 ## Order
 

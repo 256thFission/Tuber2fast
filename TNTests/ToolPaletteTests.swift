@@ -2,6 +2,7 @@ import Foundation
 import Testing
 @testable import TNEditor
 @testable import TNModel
+@testable import TNNotebook
 
 /// A store that keeps the record in memory.
 ///
@@ -74,7 +75,8 @@ struct ToolPaletteTests {
             eraserMode: .pixel,
             pixelEraserWidth: .thin,
             recentColors: [],
-            text: .body
+            text: .body,
+            gestures: [:]
         )
         #expect(!partial.isComplete)
         let palette = ToolPalette(store: MemoryPaletteStore(partial))
@@ -189,6 +191,66 @@ struct ToolPaletteTests {
         palette.used(swatch(0x01))
         palette.used(.red)
         #expect(palette.recentColors == [swatch(0x01)])
+    }
+
+    // MARK: Gesture bindings
+
+    @Test("The bindings round-trip through the encoder the defaults store uses")
+    func theBindingsRoundTrip() throws {
+        // `ToolPaletteDefaults` encodes the whole record as a property list,
+        // and a dictionary keyed by an enum is the one field whose shape on
+        // disk is not obvious. Whatever shape it takes, what matters is that
+        // it comes back.
+        for bindings in [GestureBindings(), [.scribble: .erase]] {
+            var record = ToolPaletteRecord.builtIn
+            record.gestures = bindings
+            let data = try PropertyListEncoder().encode(record)
+            let read = try PropertyListDecoder().decode(ToolPaletteRecord.self, from: data)
+            #expect(read == record)
+            #expect(read.gestures == bindings)
+        }
+    }
+
+    @Test("A record written before the gestures field existed reads the built-in bindings")
+    func aRecordWithoutGesturesDecodes() throws {
+        // A whole palette somebody keeps, not a record that cannot be used.
+        let data = try PropertyListEncoder().encode(ToolPaletteRecord.builtIn)
+        var plist = try #require(try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])
+        #expect(plist.removeValue(forKey: "gestures") != nil)
+        let older = try PropertyListSerialization.data(fromPropertyList: plist, format: .binary, options: 0)
+        let read = try PropertyListDecoder().decode(ToolPaletteRecord.self, from: older)
+        #expect(read == .builtIn)
+        #expect(read.gestures == [.scribble: .erase], "the built-in ships scribble bound to erase")
+    }
+
+    @Test("A record that names only the scribble reads the double circle as unbound")
+    func aRecordWithoutTheDoubleCircle() throws {
+        // The map is the record, not a merge with `builtIn`: `builtIn` is
+        // the fallback for a record written before the field existed, and a
+        // person who kept one with scribble bound has not asked for a
+        // second trigger.
+        var record = ToolPaletteRecord.builtIn
+        record.gestures = [.scribble: .erase]
+        let data = try PropertyListEncoder().encode(record)
+        let read = try PropertyListDecoder().decode(ToolPaletteRecord.self, from: data)
+        #expect(read.gestures[.scribble] == .erase)
+        #expect(read.gestures[.doubleCircle] == nil)
+    }
+
+    @Test("Binding writes the map, nil unbinds, and a second palette opens on what was left")
+    func bindingWritesAndNilUnbinds() {
+        let store = MemoryPaletteStore()
+        let palette = ToolPalette(store: store)
+        #expect(palette.gestures == [.scribble: .erase])
+
+        palette.bind(.scribble, to: nil)
+        #expect(palette.gestures.isEmpty)
+        #expect(store.stored?.gestures.isEmpty == true)
+        #expect(ToolPalette(store: store).gestures.isEmpty, "a trigger unbound stays unbound")
+
+        palette.bind(.scribble, to: .erase)
+        #expect(palette.gestures == [.scribble: .erase])
+        #expect(ToolPalette(store: store).gestures == [.scribble: .erase])
     }
 }
 

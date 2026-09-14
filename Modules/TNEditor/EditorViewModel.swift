@@ -103,6 +103,9 @@ package final class EditorViewModel {
         // The ink report, not the drain: a drain also runs for a page turn
         // and an undo, and neither is a colour anybody drew with.
         binding.onInkReported = { [weak self] in self?.inkReported() }
+        // Asked, never copied: `didSet` does not run for the initial value,
+        // and a second tab over the same palette would go stale anyway.
+        binding.bindingsForStroke = { [weak self] in self?.strokeBindings ?? [:] }
         refreshMirrors()
         // `didSet` does not run for the initial value, and the runtime
         // starts with no tool at all.
@@ -190,6 +193,20 @@ package final class EditorViewModel {
             TNPrecondition.fail("a colour was set on \(tool), which has none")
         }
         tool = .ink(kind, InkPreset(color: color, width: preset.width))
+    }
+
+    /// The gestures that apply to a stroke drawn with the tool in hand. A
+    /// gesture is a property of an ink stroke, so an eraser or a lasso pass
+    /// is never examined; which ink kind it is makes no difference.
+    private var strokeBindings: GestureBindings {
+        guard case .ink = tool else { return [:] }
+        return palette.gestures
+    }
+
+    /// Binds a Pencil gesture to an effect, or unbinds it when `effect` is
+    /// nil. One set of bindings, shared by every ink kind and every tab.
+    package func bind(_ trigger: GestureTrigger, to effect: GestureEffect?) {
+        palette.bind(trigger, to: effect)
     }
 
     /// A stroke landed, so the colour it landed in is one the person drew

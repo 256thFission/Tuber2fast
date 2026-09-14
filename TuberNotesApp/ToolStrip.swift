@@ -1,6 +1,7 @@
 import SwiftUI
 import TNEditor
 import TNModel
+import TNNotebook
 import UIKit
 
 /// One button on the strip.
@@ -161,6 +162,7 @@ private struct InkOptions: View {
         VStack(alignment: .leading, spacing: 18) {
             WidthDots(selected: preset.width, choose: { editor.setWidth($0) })
             colors
+            gestures
         }
         .padding(18)
         .presentationCompactAdaptation(.popover)
@@ -194,6 +196,36 @@ private struct InkOptions: View {
         }
     }
 
+    /// One row per trigger. The bindings live beside the widths and colours
+    /// because a gesture belongs to the pen in hand, and the person who
+    /// asked for a gesture that never visits the toolbar should not have to
+    /// visit one to switch it on. They are one set for pen, pencil and
+    /// highlighter, so all three ink popovers draw the same rows.
+    private var gestures: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ForEach(GestureTrigger.allCases, id: \.self) { trigger in
+                Picker(
+                    Self.name(of: trigger),
+                    // A closure literal, as in `EraserOptions`: `bind` takes
+                    // the trigger too, so there is no method to hand over.
+                    selection: Binding(
+                        get: { editor.palette.gestures[trigger] },
+                        set: { editor.bind(trigger, to: $0) }
+                    )
+                ) {
+                    // Off is the absent key, not an effect: the map is the
+                    // record, and a trigger it does not name is unbound.
+                    Text("Off").tag(GestureEffect?.none)
+                    ForEach(GestureEffect.allCases, id: \.self) { effect in
+                        Text(Self.name(of: effect)).tag(GestureEffect?.some(effect))
+                    }
+                }
+                .pickerStyle(.menu)
+                .font(.callout)
+            }
+        }
+    }
+
     private static let columns = Array(
         repeating: GridItem(.fixed(30), spacing: 10, alignment: .leading),
         count: 8
@@ -201,6 +233,19 @@ private struct InkOptions: View {
 
     /// VoiceOver has no word for a swatch, so it reads the bytes.
     private static func name(of color: ToolColor) -> String { color.rgba.hex }
+
+    private static func name(of trigger: GestureTrigger) -> String {
+        switch trigger {
+        case .scribble: "Scribble"
+        case .doubleCircle: "Double circle"
+        }
+    }
+
+    private static func name(of effect: GestureEffect) -> String {
+        switch effect {
+        case .erase: "Erase"
+        }
+    }
 }
 
 /// Size, weight, alignment and colour for the text in hand. Defaults and

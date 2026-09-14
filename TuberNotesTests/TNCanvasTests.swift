@@ -279,6 +279,57 @@ struct TNCanvasTests {
         _ = runtime.retireAll()
     }
 
+    @Test("A restore that answers the drawing-changed report lands inside it, and the stroke still ends once")
+    func restoreFromInsideTheInkReportLands() throws {
+        let reporter = RecordingReporter()
+        let runtime = hosted(reporter)
+        let pages = descriptors(2)
+        runtime.setPages(pages, seq: StructureSeq(1), answering: nil)
+        runtime.installContent(
+            .editable(id: pages[0].id, ink: PKDrawing(), layers: [], composite: nil, inkSeq: InkSeq(1))
+        )
+        let canvas = try #require(runtime.canvases[pages[0].id])
+        let restored = strokeDrawing(strokes: 2)
+
+        canvas.canvasViewDidBeginUsingTool(canvas.canvasView)
+        canvas.canvasView.drawing = strokeDrawing(strokes: 3)
+        // Content for the second page, held under the stroke: the canvas the
+        // deferred window refresh builds is how the stroke's end is observed
+        // here, because `pageStrokeDidEnd` is the only path that runs it.
+        runtime.installContent(
+            .editable(id: pages[1].id, ink: PKDrawing(), layers: [], composite: nil, inkSeq: InkSeq(1))
+        )
+        #expect(runtime.canvases[pages[1].id] == nil)
+        #expect(reporter.inkChanges.count == 1, "the in-tool assignment's own callback")
+        reporter.inkChanges.removeAll()
+
+        reporter.onInkChanged = { [weak runtime, weak reporter] page, _, _ in
+            reporter?.onInkChanged = nil
+            runtime?.restoreInk(on: page, restored, seq: InkSeq(7))
+        }
+        canvas.canvasViewDidEndUsingTool(canvas.canvasView)
+        canvas.canvasViewDrawingDidChange(canvas.canvasView)
+
+        #expect(reporter.inkChanges.count == 2)
+        #expect(reporter.inkChanges.first?.echoOf == nil)
+        #expect(reporter.inkChanges.first?.ink.strokes.count == 3)
+        #expect(reporter.inkChanges.last?.echoOf == InkSeq(7))
+        // The value, not the count: `PKDrawing` equality is stroke identity,
+        // and what `Notebook.retired` compares rests on the assignment keeping
+        // it.
+        #expect(canvas.canvasView.drawing == restored)
+        // The stroke ended, and the refresh it ran restored nothing further: a
+        // snapshot whose sequence had not followed the canvas's would have made
+        // `applyContent` install the ink again, for a third report.
+        #expect(runtime.canvases[pages[1].id] != nil)
+        #expect(!canvas.isStrokeInFlight)
+        #expect(runtime.retire(pages[0].id) == .retired, "nothing is left waiting on a second stroke end")
+        #expect(reporter.retired.count == 1)
+        #expect(reporter.retired.first?.finalInk == restored)
+
+        _ = runtime.retireAll()
+    }
+
     @Test("A restore and a composite that arrive during a stroke land when it ends, and the restore's report carries its sequence")
     func restoreAndCompositeWaitForTheStroke() throws {
         let reporter = RecordingReporter()
@@ -1114,8 +1165,13 @@ final class RecordingReporter: CanvasReporting {
     /// Answers the end-boundary question, the way the notebook does.
     var onEndBoundary: (@MainActor (ReportSeq) -> Void)?
 
+    /// Answers an ink report, synchronously and from inside it, the way a
+    /// notebook that edits the ink it was just told about would.
+    var onInkChanged: (@MainActor (PageID, PKDrawing, InkSeq?) -> Void)?
+
     func inkChanged(on page: PageID, _ ink: PKDrawing, echoOf: InkSeq?) {
         inkChanges.append((page, ink, echoOf))
+        onInkChanged?(page, ink, echoOf)
     }
 
     var transforms: [(page: PageID, layer: LayerID, transform: PageSpaceTransform)] = []

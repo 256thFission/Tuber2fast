@@ -87,6 +87,7 @@ struct HistoryEntryCostTests {
         // A real eraser never removes a stroke the drawing does not hold, so
         // the pass steps through the array rather than draining one end.
         var erasePass = 0
+        var setterPass = 0
         var lassoPass = 0
         let shapes = [
             Shape(name: "append one stroke") { revision in
@@ -102,6 +103,22 @@ struct HistoryEntryCostTests {
                 }
                 return PageRevision(ink: PKDrawing(strokes: strokes), layers: revision.layers, inkIndex: revision.inkIndex)
             },
+            // The same five strokes, removed through the `strokes` setter on a
+            // copy of the drawing instead of rebuilt with `PKDrawing(strokes:)`.
+            // This is the one shape the gesture path would take, and the
+            // question is only whether the setter shares stroke storage with
+            // the drawing it came from, as an appended stroke does, or mints
+            // afresh, as the initialiser does. The two lines above and below
+            // differ in nothing else, so the difference between their figures
+            // is the answer.
+            Shape(name: "erase five scattered strokes through the strokes setter") { revision in
+                setterPass += 1
+                var edited = revision.ink
+                for slot in stride(from: 4, through: 0, by: -1) {
+                    edited.strokes.remove(at: (setterPass * 7 + slot * (edited.strokes.count / 5)) % edited.strokes.count)
+                }
+                return PageRevision(ink: edited, layers: revision.layers, inkIndex: revision.inkIndex)
+            },
             Shape(name: "lasso-delete twenty contiguous strokes") { revision in
                 lassoPass += 1
                 var strokes = revision.ink.strokes
@@ -116,7 +133,7 @@ struct HistoryEntryCostTests {
                 return PageRevision(ink: revision.ink, layers: layers, inkIndex: revision.inkIndex)
             },
         ]
-        let starts = [inkOnly, inkOnly, inkOnly, withText]
+        let starts = [inkOnly, inkOnly, inkOnly, inkOnly, withText]
 
         let costs = zip(shapes, starts).map { shape, start in
             Self.measure(shape, from: start, on: page)
@@ -148,6 +165,146 @@ struct HistoryEntryCostTests {
         #expect(compare.independentEqual.1 < .milliseconds(10), "an equal-content compare at \(Self.strokeCount) strokes took \(compare.independentEqual.1)")
     }
 
+    /// What recognition costs on a full page, timed as the notebook runs it:
+    /// one read of `drawing.strokes` and `GestureTrigger.recognise` over the
+    /// array, with both triggers bound, so both readings are taken. It is
+    /// taken inside `inkChanged`, synchronously, once per committed stroke,
+    /// so its worst case is a scratch-out over the densest page this suite
+    /// knows how to build. The scribble hit test is the pass that scales
+    /// with the page, and it runs only after the shape thresholds pass, so
+    /// this is the case that pays for it: a zigzag with sharp turns laid
+    /// over the fixture's strokes, whose `hits` is therefore non-nil. The
+    /// double-circle reading stops at the closings count on this shape,
+    /// which is what it does on every stroke that is not a ring.
+    ///
+    /// The same zigzag is timed again clear of every stroke, because the
+    /// cost is two terms and the gate needs to know which one it is failing.
+    /// That reading still walks all twenty thousand `renderBounds` and still
+    /// passes the shape thresholds; it just never reaches a candidate. The
+    /// difference between the two figures is what the candidates cost.
+    ///
+    /// Fastest of five after a warm-up, because a wall-clock figure on a
+    /// shared machine is only trustworthy at its minimum.
+    ///
+    /// The plan asked for ten milliseconds. The suite runs Debug, where the
+    /// whole recognition takes 25.1 ms for a scratch-out that crosses 957 of
+    /// the fixture's strokes and 3.4 ms for the same shape clear of the ink.
+    /// The shipped build is compiled with `SWIFT_OPTIMIZATION_LEVEL=-O`,
+    /// where the earlier reading-only figures were about a third of their
+    /// Debug ones; that run is optional and not this test's.
+    ///
+    /// How it got there. The first reading was 66 ms Debug, split at 725
+    /// candidates and 152 samples, fastest of five:
+    ///
+    /// | Term | Fastest of five |
+    /// |---|---|
+    /// | `drawing.strokes` | 1.4 ms |
+    /// | the `renderBounds` scan over all 20,000 | 2.6 ms |
+    /// | `maskedPathRanges` of the 725 candidates | 0.2 ms |
+    /// | interpolating those candidates' paths | 5.9 ms |
+    /// | the sample-against-sample distance loop | 60 ms |
+    ///
+    /// Three edits to the hit test, none of which changes an answer: a
+    /// candidate point outside the scribble's box grown by the reach is
+    /// skipped before the samples are walked; a candidate is walked lazily
+    /// and the first hit ends the walk, so its path is never copied into
+    /// an array; and a candidate's half width reads three points instead
+    /// of every one. What is left is the floor a full page charges whatever
+    /// the scribble does, the strokes array and the bounds scan, about
+    /// 4 ms Debug, plus the second reading's own scan of the same page.
+    ///
+    /// The fixture is denser than any real page: twenty thousand strokes
+    /// over seven hundred rows, every one of them spanning the same 140
+    /// points of width, so a word-sized scratch-out crosses 957 strokes
+    /// where a real one crosses a handful. On a real page the reading is
+    /// the floor.
+    ///
+    /// The gate below is a tripwire at about twice the Debug figure,
+    /// so it catches an order-of-magnitude regression and survives a busy
+    /// machine. The feel on a device is the plan's step 4.
+    @Test("The whole recognition of one zigzag over the fixture, timed")
+    func gestureRecognitionCost() {
+        let clock = ContinuousClock()
+        let bindings: GestureBindings = [.scribble: .erase, .doubleCircle: .erase]
+        /// The notebook's own body: one read of the strokes array, then the
+        /// entry point over it. The read is inside the timing because the
+        /// notebook pays it on every committed stroke.
+        func recognition(of zigzag: PKStroke) -> (ScribbleReading, GestureMatch?, Duration) {
+            var drawing = Self.drawing(strokes: Self.strokeCount)
+            drawing.strokes.append(zigzag)
+            func once() -> GestureMatch? {
+                let strokes = drawing.strokes
+                return GestureTrigger.recognise(
+                    stroke: strokes.count - 1, in: strokes, bindings: bindings, log: { _ in }
+                )
+            }
+            let match = once()
+            let fastest = (0..<5).map { _ in clock.measure { _ = once() } }.min()!
+            // The reading itself, for the figures the line below prints and
+            // the assertions rest on; untimed, because the gate is on the
+            // recognition as a whole.
+            let strokes = drawing.strokes
+            return (ScribbleReading.measure(stroke: strokes.count - 1, in: strokes), match, fastest)
+        }
+        // The fixture's strokes run from x 10 to x 150, one y a stroke, so a
+        // scratch-out the size of a word crosses the rows it covers, and the
+        // same shape out past x 150 crosses nothing.
+        let (overInk, overInkMatch, overInkTime) = recognition(of: Self.zigzag(over: CGRect(x: 40, y: 100, width: 60, height: 20), turns: 4))
+        let (clearOfInk, clearOfInkMatch, clearOfInkTime) = recognition(of: Self.zigzag(over: CGRect(x: 400, y: 100, width: 60, height: 20), turns: 4))
+
+        print("""
+        gesture recognition, \(Self.strokeCount) strokes plus the zigzag, both triggers bound, fastest of five, simulator
+          over the ink: turns \(overInk.turns), folding \(Self.two(overInk.folding)), hits \(overInk.hits?.count ?? -1), trigger \(overInkMatch?.trigger.rawValue ?? "none"); \(overInkTime)
+          clear of it, the page scan alone: turns \(clearOfInk.turns), folding \(Self.two(clearOfInk.folding)), hits \(clearOfInk.hits?.count ?? -1), trigger \(clearOfInkMatch?.trigger.rawValue ?? "none"); \(clearOfInkTime)
+        """)
+
+        // Non-nil hits is the point of the case: a reading that stopped at the
+        // shape thresholds never pays for the page, and would time nothing.
+        #expect(overInk.hits != nil, "the zigzag read as ink: turns \(overInk.turns), folding \(overInk.folding)")
+        #expect(overInkMatch?.trigger == .scribble, "the zigzag crossed none of the fixture's strokes")
+        #expect(clearOfInk.hits == [], "the zigzag clear of the ink hit \(clearOfInk.hits.map { String($0.count) } ?? "nothing, having failed the shape thresholds")")
+        #expect(clearOfInkMatch == nil, "a trigger with no subject is ink")
+        #expect(overInkTime < .milliseconds(50), "recognition at \(Self.strokeCount) strokes took \(overInkTime), of which \(clearOfInkTime) is the page scan with no candidate")
+    }
+
+    /// A scratch-out over `rect`: `turns` sharp reversals across its width,
+    /// descending its height. The interior vertices are repeated, because
+    /// PencilKit interpolates through the control points and a repeat is what
+    /// makes a corner a cusp rather than a curve. The same construction as
+    /// `Ink.zigzag` in `TNTests/NotebookTests.swift`, copied because hostless
+    /// fixtures are not on this target.
+    static func zigzag(over rect: CGRect, turns: Int) -> PKStroke {
+        // A corner at every vertex but the two ends, so `turns` of them needs
+        // two more points than turns.
+        let count = turns + 2
+        let step = rect.height / CGFloat(count - 1)
+        let vertices = (0..<count).map { i in
+            CGPoint(x: i.isMultiple(of: 2) ? rect.minX : rect.maxX, y: rect.minY + CGFloat(i) * step)
+        }
+        var locations = [vertices[0]]
+        for (i, pair) in zip(vertices, vertices.dropFirst()).enumerated() {
+            let (a, b) = pair
+            let steps = max(Int(hypot(b.x - a.x, b.y - a.y) / 3), 1)
+            for leg in 1...steps {
+                let t = CGFloat(leg) / CGFloat(steps)
+                locations.append(CGPoint(x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t))
+            }
+            if i + 2 < vertices.count { locations += Array(repeating: b, count: 2) }
+        }
+        let points = locations.enumerated().map { i, location in
+            PKStrokePoint(
+                location: location,
+                timeOffset: Double(i) * 0.01,
+                size: CGSize(width: 2, height: 2),
+                opacity: 1,
+                force: 1,
+                azimuth: 0,
+                altitude: .pi / 2
+            )
+        }
+        return PKStroke(ink: PKInk(.pen, color: .black), path: PKStrokePath(controlPoints: points, creationDate: Date()))
+    }
+
     // MARK: - Measurement
 
     /// Warm-up, then two readings around a non-recording run for the noise
@@ -169,7 +326,7 @@ struct HistoryEntryCostTests {
         var current = start
         for _ in 0..<entries {
             let next = shape.edit(current)
-            history?.record(HistoryEntry(page: page, before: current, after: next))
+            history?.record(HistoryEntry(page: page, before: current, after: next, rebuilt: false))
             current = next
         }
         return history
@@ -262,6 +419,7 @@ struct HistoryEntryCostTests {
         "  \(cost.name): per entry resident \(kb(cost.perEntryResident)), malloc \(kb(cost.perEntryMalloc)); noise floor over a hundred unrecorded edits resident \(kb(cost.noise.resident)), malloc \(kb(cost.noise.mallocInUse))"
     }
 
+    static func two(_ value: CGFloat) -> String { String(format: "%.2f", Double(value)) }
     static func kb(_ bytes: Int64) -> String { String(format: "%.1f KB", Double(bytes) / 1024) }
     static func mb(_ bytes: Int64) -> String { String(format: "%.2f MB", Double(bytes) / 1_048_576) }
 }

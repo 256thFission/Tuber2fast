@@ -149,10 +149,47 @@ package struct HistoryEntry: Sendable {
     package let page: PageID
     package let before: PageRevision
     package let after: PageRevision
+
+    /// What this entry costs, in bytes, estimated when it is recorded and
+    /// never again: the byte bound below sums it on every record, so the
+    /// estimate has to be a number already in hand.
+    package let byteEstimate: Int
+
+    /// `rebuilt` is the edit's own answer and not a guess from the two
+    /// revisions. A drawing that came back from the canvas shares its
+    /// strokes however many it lost — a PencilKit eraser pass and a lasso
+    /// delete both arrive that way, with fewer strokes than the revision
+    /// before them — and a drawing this app built for itself copies. So a
+    /// stroke count that fell says nothing about which of the two this is,
+    /// and only the caller that built the drawing knows.
+    package init(page: PageID, before: PageRevision, after: PageRevision, rebuilt: Bool) {
+        self.page = page
+        self.before = before
+        self.after = after
+        // Every entry costs the revision's own fixed overhead; a rebuilt one
+        // costs its strokes on top, because they are its own and not the
+        // canvas's. The stroke count is read once, here, and only when it is
+        // owed: the getter bridges.
+        self.byteEstimate = Self.sharedEntryBytes
+            + (rebuilt ? Self.rebuiltBytesPerStroke * after.ink.strokes.count : 0)
+    }
+
+    /// An entry whose `after` drawing came from the canvas. 406 KB measured
+    /// for a stroke appended to the 20k-stroke fixture; the strokes are
+    /// shared, so the cost is the revision's own fixed overhead and not a
+    /// figure per stroke.
+    package static let sharedEntryBytes = 406 << 10
+
+    /// What a rebuilt entry costs per stroke, on top of `sharedEntryBytes`.
+    /// 8.4 MB measured for the same 20k-stroke fixture with five strokes
+    /// removed through the `strokes` setter, which mints a stroke object per
+    /// stroke: 420 bytes a stroke of the drawing that results.
+    package static let rebuiltBytesPerStroke = 420
 }
 
-/// Undo and redo as one notebook-wide stack of entries, bounded by count.
-/// An entry moves between the stacks whole; nothing here reads a page.
+/// Undo and redo as one notebook-wide stack of entries, bounded by count
+/// and by estimated bytes. An entry moves between the stacks whole;
+/// nothing here reads a page.
 ///
 /// The bound is a count because the cost is measured and the count holds:
 /// `TuberNotesTests/HistoryEntryCostTests` puts a stroke appended to a
@@ -160,20 +197,34 @@ package struct HistoryEntry: Sendable {
 /// transform beside a long text layer at 400 bytes. A hundred entries is
 /// tens of megabytes. Every drawing that reaches custody comes from
 /// `canvasView.drawing`, including a PencilKit eraser pass, and a round
-/// trip through the canvas shares.
+/// trip through the canvas shares. A hundred of those is tens of
+/// megabytes, which is why the count came first and why it stays.
 ///
 /// A drawing this app builds itself does not share: `PKDrawing(strokes:)`
 /// mints a stroke object per stroke, 8 MB an entry at 20k, 840 MB at the
-/// bound. Nothing takes that path today. The first lasso that does needs a
-/// byte bound summed at record time, and that test is the tripwire. It
-/// also needs its own answer to equality, which is on stroke identity: two
-/// rebuilds of one stroke array compare unequal, so "record iff the
-/// revision differs" would record a lasso that removed nothing.
+/// bound. Nor does the `strokes` setter on a copy, which is the other way
+/// to remove a stroke and which was measured beside the initialiser for the
+/// gesture plan: 8422 KB an entry against the initialiser's 8421 KB, the
+/// same drawing edited the same way. There is no cheap way to build a
+/// drawing here; only one that arrived from the canvas is cheap. The first
+/// edit this app makes for itself is the gesture path, and the byte bound
+/// below is what that measurement bought: `HistoryEntry.byteEstimate` from
+/// the two figures, summed at record time, evicting the oldest past
+/// `maximumBytes`. That test stays the tripwire. Such an edit also needs
+/// its own answer to equality,
+/// which is on stroke identity: two rebuilds of one stroke array compare
+/// unequal, so "record iff the revision differs" would record a lasso that
+/// removed nothing.
 ///
 /// The numbers above are the simulator's. The iPad's are the queue's third
 /// device check, and `Docs/Forks/plans/undo.md` step 5 names the run.
 package struct EditHistory: Sendable {
     package static let maximumEntries = 100
+
+    /// The second limit, and the one an app-built drawing hits first: a
+    /// hundred rebuilt entries on a large page would be hundreds of
+    /// megabytes, so the stack also holds at most 64 MB of estimates.
+    package static let maximumBytes = 64 << 20
 
     private var undoStack: [HistoryEntry] = []
     private var redoStack: [HistoryEntry] = []
@@ -183,10 +234,20 @@ package struct EditHistory: Sendable {
     package var canUndo: Bool { !undoStack.isEmpty }
     package var canRedo: Bool { !redoStack.isEmpty }
 
-    /// A new edit clears redo.
+    /// The estimated bytes the undo stack holds. Redo is not summed,
+    /// because a record clears it and nothing else grows it.
+    package var byteEstimate: Int { undoStack.reduce(0) { $0 + $1.byteEstimate } }
+
+    /// A new edit clears redo, and evicts the oldest entries past either
+    /// bound. The entry just recorded is never the one evicted: an edit
+    /// larger than the whole bound is still undoable once.
     package mutating func record(_ entry: HistoryEntry) {
         undoStack.append(entry)
         if undoStack.count > Self.maximumEntries { undoStack.removeFirst() }
+        var bytes = byteEstimate
+        while bytes > Self.maximumBytes, undoStack.count > 1 {
+            bytes -= undoStack.removeFirst().byteEstimate
+        }
         redoStack.removeAll()
     }
 

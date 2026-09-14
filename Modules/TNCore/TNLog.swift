@@ -11,7 +11,7 @@ package enum TNLog {
     private static let subsystem = "com.tubernotes.v2"
 
     package enum Category: String {
-        case format, notebook, library, canvas, lifecycle, contract
+        case format, notebook, library, canvas, gesture, lifecycle, contract
     }
 
     /// `TN_TRACE` present in the environment mirrors every event to stderr,
