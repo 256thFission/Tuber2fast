@@ -441,6 +441,28 @@ package final class EditorViewModel {
         binding.drain()
     }
 
+    /// A sticker onto the current page: the catalogue's PNG through the
+    /// photo's own insert, at a quarter of the page rather than a photo's
+    /// 60%, because a sticker is a mark beside the writing, not the subject
+    /// of the page. The layer it makes is an image layer and nothing else,
+    /// so the frame moves, scales, rotates, locks, and deletes it as one.
+    package func importSticker(_ sticker: Sticker) async {
+        let page = notebook.currentPageID
+        lastContentError = nil
+        guard !notebook.hasTextSession(on: page) else { lastContentError = Self.textBoxOpen(page); return }
+        guard let data = StickerCatalogue.png(sticker) else {
+            lastContentError = .invalidWrite("sticker \(sticker.symbol) could not be rendered")
+            binding.drain()
+            return
+        }
+        do { try await notebook.importImage(data, on: page, fraction: Self.stickerFraction) } catch { lastContentError = error }
+        binding.drain()
+    }
+
+    /// Of each page edge. `#if DEBUG` would hide it from the test that
+    /// checks the placement, and the number is not a secret.
+    package static let stickerFraction = 0.25
+
     /// A photo as the current page's paper. The notebook refuses a page that
     /// has ink or layers on it before it stores anything, because asset paper
     /// covers the whole page; the refusal reaches the bar through
