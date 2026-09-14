@@ -564,7 +564,7 @@ package final class Notebook {
             throw .invalidWrite("no such page \(source)")
         }
 
-        let layers = copied.layers.map { Layer(id: LayerID(), transform: $0.transform, payload: $0.payload) }
+        let layers = copied.layers.map { Layer(id: LayerID(), transform: $0.transform, payload: $0.payload, locked: $0.locked) }
         var content = PageContent(ink: copied.ink, layers: layers, hasInk: false, inkIndex: copied.inkIndex)
         content.pendingLayerFiles = Set(layers.map(\.id))
         // `setInk` rather than the initializer's flag, so the durable flag and
@@ -1040,7 +1040,7 @@ package final class Notebook {
         }
         content.textEditing = nil
         let merged = TextLayer(rect: text.rect, runs: TextRun.merging(text.runs), alignment: text.alignment)
-        let committed = Layer(id: layer, transform: .identity, payload: .text(merged))
+        let committed = Layer(id: layer, transform: .identity, payload: .text(merged), locked: content.layers[position].locked)
         // The overlay's gesture math cannot produce an invalid rect, and a
         // clamp is forbidden.
         do { _ = try committed.validated() } catch { TNPrecondition.fail("a committed text layer is invalid: \(error)") }
@@ -1103,7 +1103,8 @@ package final class Notebook {
         let moved = Layer(
             id: layerID,
             transform: content.layers[position].transform,
-            payload: .link(LinkLayer(rect: rect, style: link.style, target: link.target))
+            payload: .link(LinkLayer(rect: rect, style: link.style, target: link.target)),
+            locked: content.layers[position].locked
         )
         do { _ = try moved.validated() } catch { return .refused(reason: "\(error)") }
         let captured = content.revision

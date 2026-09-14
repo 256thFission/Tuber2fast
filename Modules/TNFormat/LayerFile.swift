@@ -1,7 +1,7 @@
 import Foundation
 import TNModel
 
-/// `layers/<LayerID>.json`: `{ layerID, kind, transform, <kind>: payload }`.
+/// `layers/<LayerID>.json`: `{ layerID, kind, transform, locked, <kind>: payload }`.
 ///
 /// The payload object is keyed by the kind's name so an unknown kind is
 /// seen, and refused as a layer rather than as corruption, before its
@@ -42,16 +42,16 @@ package enum LayerFile {
             switch kind {
             case .image:
                 let body = try Codecs.decode(Body<ImageLayer>.self, from: data)
-                layer = Layer(id: body.layerID, transform: body.transform, payload: .image(body.payload))
+                layer = Layer(id: body.layerID, transform: body.transform, payload: .image(body.payload), locked: body.locked)
             case .pdf:
                 let body = try Codecs.decode(Body<PDFLayer>.self, from: data)
-                layer = Layer(id: body.layerID, transform: body.transform, payload: .pdf(body.payload))
+                layer = Layer(id: body.layerID, transform: body.transform, payload: .pdf(body.payload), locked: body.locked)
             case .link:
                 let body = try Codecs.decode(Body<LinkLayer>.self, from: data)
-                layer = Layer(id: body.layerID, transform: body.transform, payload: .link(body.payload))
+                layer = Layer(id: body.layerID, transform: body.transform, payload: .link(body.payload), locked: body.locked)
             case .text:
                 let body = try Codecs.decode(Body<TextLayer>.self, from: data)
-                layer = Layer(id: body.layerID, transform: body.transform, payload: .text(body.payload))
+                layer = Layer(id: body.layerID, transform: body.transform, payload: .text(body.payload), locked: body.locked)
             }
             return .success(try layer.validated())
         } catch let fault as LayerFault {
@@ -76,12 +76,14 @@ private struct Body<Payload: Codable>: Codable {
     let layerID: LayerID
     let kind: String
     let transform: PageSpaceTransform
+    let locked: Bool
     let payload: Payload
 
     init(layer: Layer, payload: Payload) {
         self.layerID = layer.id
         self.kind = layer.payload.kind.rawValue
         self.transform = layer.transform
+        self.locked = layer.locked
         self.payload = payload
     }
 
@@ -90,6 +92,7 @@ private struct Body<Payload: Codable>: Codable {
         layerID = try container.decode(LayerID.self, forKey: AnyKey(stringValue: "layerID"))
         kind = try container.decode(String.self, forKey: AnyKey(stringValue: "kind"))
         transform = try container.decode(PageSpaceTransform.self, forKey: AnyKey(stringValue: "transform"))
+        locked = try container.decode(Bool.self, forKey: AnyKey(stringValue: "locked"))
         payload = try container.decode(Payload.self, forKey: AnyKey(stringValue: kind))
     }
 
@@ -98,6 +101,7 @@ private struct Body<Payload: Codable>: Codable {
         try container.encode(layerID, forKey: AnyKey(stringValue: "layerID"))
         try container.encode(kind, forKey: AnyKey(stringValue: "kind"))
         try container.encode(transform, forKey: AnyKey(stringValue: "transform"))
+        try container.encode(locked, forKey: AnyKey(stringValue: "locked"))
         try container.encode(payload, forKey: AnyKey(stringValue: kind))
     }
 }

@@ -22,7 +22,7 @@ struct KeySetPins {
         for bookmark in bookmarks {
             #expect(Set(bookmark.keys) == DurableKeys.bookmark)
         }
-        #expect(top["formatVersion"] as? Int == 3)
+        #expect(top["formatVersion"] as? Int == 4)
     }
 
     @Test("pages/<id>.json carries exactly its keys")
@@ -102,11 +102,11 @@ struct StrictDecode {
     @Test("A newer format version refuses by number, an unknown paper refuses the page only")
     func versionAndPaper() throws {
         var object = try jsonObject(try Codecs.encode(Fixture.index(pages: 1)))
-        object["formatVersion"] = 4
+        object["formatVersion"] = 5
         let newer = try IndexFile.decode(try jsonData(object))
-        #expect(throws: NotebookIndexFault.unsupportedFormatVersion(4)) { try newer.validated() }
+        #expect(throws: NotebookIndexFault.unsupportedFormatVersion(5)) { try newer.validated() }
 
-        object["formatVersion"] = 3
+        object["formatVersion"] = 4
         var pages = try #require(object["pages"] as? [[String: Any]])
         pages[0]["paper"] = ["kind": "parchment"]
         object["pages"] = pages
@@ -247,6 +247,21 @@ struct StrictDecode {
         unknown.removeValue(forKey: "image")
         let id = LayerID(raw: UUID(uuidString: unknown["layerID"] as! String)!)
         #expect(LayerFile.decode(try jsonData(unknown), expecting: id) == .failure(.unknownKind(id, kind: "hologram")))
+    }
+
+    @Test("A locked layer of every kind round-trips locked, and an unlocked one unlocked")
+    func lockRoundTrips() throws {
+        for layer in [Fixture.imageLayer(), Fixture.pdfLayer(), Fixture.linkLayer(to: PageID()), Fixture.textLayer()] {
+            #expect(layer.locked == false)
+            #expect(LayerFile.decode(try LayerFile.encode(layer), expecting: layer.id) == .success(layer))
+            let locked = layer.withLock(true)
+            let object = try jsonObject(try LayerFile.encode(locked))
+            #expect(object["locked"] as? Bool == true)
+            let decoded = LayerFile.decode(try LayerFile.encode(locked), expecting: locked.id)
+            #expect(decoded == .success(locked))
+            #expect(try decoded.get().locked)
+            #expect(decoded != .success(layer), "the lock is part of the value")
+        }
     }
 
     @Test("A link layer with a non-identity transform, or an external target, round-trips or refuses as specified")
