@@ -83,6 +83,63 @@ struct LibraryBrowserTests {
         #expect(browser.displayed.map(\.name) == ["Week 1"])
     }
 
+    @Test("A search finds folders beside notebooks, and from Favorites as much as from Documents")
+    func searchingFindsBothKinds() async throws {
+        let (scratch, browser) = try makeBrowser("browser-search-kinds")
+        defer { withExtendedLifetime(scratch) {} }
+        _ = try await browser.library.store.createFolder(named: "Physics", in: "")
+        _ = try await browser.library.store.createFolder(named: "Term", in: "")
+        _ = try await browser.library.store.createNotebook(named: "Physics notes", in: "Term")
+        _ = try await browser.library.store.createNotebook(named: "Essay", in: "")
+        await browser.reload()
+
+        browser.searchText = "phys"
+        await browser.reload()
+        #expect(browser.displayed.map(\.name).sorted() == ["Physics", "Physics notes"])
+        #expect(Set(browser.displayed.map(\.kind)) == [.folder, .notebook])
+
+        // Nothing is starred, so the section's own listing is empty; the
+        // search still reads the whole library.
+        browser.section = .favorites
+        await browser.reload()
+        #expect(browser.displayed.isEmpty)
+        browser.searchText = "phys"
+        await browser.reload()
+        #expect(browser.displayed.map(\.name).sorted() == ["Physics", "Physics notes"])
+        browser.searchText = ""
+        await browser.reload()
+        #expect(browser.displayed.isEmpty)
+    }
+
+    @Test("A search leaves the trash out, and in the trash section looks at nothing else")
+    func searchingAroundTheTrash() async throws {
+        let (scratch, browser) = try makeBrowser("browser-search-trash")
+        defer { withExtendedLifetime(scratch) {} }
+        _ = try await browser.library.store.createFolder(named: "Term", in: "")
+        _ = try await browser.library.store.createNotebook(named: "Lost", in: "Term")
+        let gone = try await browser.library.store.createNotebook(named: "Lost cause", in: "")
+        await browser.reload()
+        await browser.trash([gone.relativePath])
+        #expect(browser.refusal == nil)
+
+        browser.searchText = "lost"
+        await browser.reload()
+        #expect(browser.displayed.map(\.name) == ["Lost"])
+
+        browser.section = .trash
+        #expect(browser.searchText.isEmpty)
+        await browser.reload()
+        #expect(browser.displayedTrash.map(\.name) == ["Lost cause"])
+        browser.searchText = "lost"
+        await browser.reload()
+        #expect(browser.displayedTrash.map(\.name) == ["Lost cause"])
+        #expect(browser.displayed.isEmpty, "the tree is not read from the trash section")
+        browser.searchText = "term"
+        #expect(browser.displayedTrash.isEmpty)
+        browser.searchText = ""
+        #expect(browser.displayedTrash.count == 1)
+    }
+
     @Test("Creating a notebook remembers its size and paper; a refused one does not")
     func theNewNotebookSheetOpensOnTheLastChoice() async throws {
         let (scratch, browser) = try makeBrowser("browser-new-notebook")

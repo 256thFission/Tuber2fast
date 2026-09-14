@@ -20,8 +20,11 @@ struct LibraryTrashView: View {
             if browser.trash.isEmpty {
                 ContentUnavailableView("Trash is empty", systemImage: "trash")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if browser.displayedTrash.isEmpty {
+                ContentUnavailableView.search(text: browser.searchText)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                List(browser.trash) { entry in
+                List(browser.displayedTrash) { entry in
                     row(entry)
                 }
                 .listStyle(.plain)
@@ -55,6 +58,9 @@ struct LibraryTrashView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
             Spacer()
+            // Searching here searches the trash and nothing else: the trash
+            // is not in the tree a search elsewhere reads.
+            LibrarySearchField(text: Bindable(browser).searchText)
             Button("Empty", role: .destructive) { isEmptying = true }
                 .buttonStyle(.bordered)
                 .disabled(browser.trash.isEmpty)

@@ -76,10 +76,20 @@ package final class LibraryBrowser {
             case .notebooks: item.kind == .notebook
             case .folders: item.kind == .folder
             }
-        }.filter { item in
-            searchText.isEmpty || item.name.range(of: searchText, options: [.caseInsensitive, .diacriticInsensitive]) != nil
-        }
+        }.filter { matches($0.name) }
         return options.sorted(narrowed)
+    }
+
+    /// The trash, narrowed by the search. The trash is its own list and is
+    /// never in `listing`, so a search standing in the trash section looks
+    /// at the trash and nothing else, as a search anywhere else looks at
+    /// everything but the trash.
+    package var displayedTrash: [TrashEntry] {
+        trash.filter { matches($0.name) }
+    }
+
+    private func matches(_ name: String) -> Bool {
+        searchText.isEmpty || name.range(of: searchText, options: [.caseInsensitive, .diacriticInsensitive]) != nil
     }
 
     package func isFavorite(_ item: LibraryItem) -> Bool {
@@ -94,8 +104,10 @@ package final class LibraryBrowser {
             switch section {
             // A search reads the whole tree from the root, wherever the
             // reader is standing: searching is looking for something you
-            // cannot see, and the folder you are in is the part you can.
-            case .documents where !searchText.isEmpty:
+            // cannot see, and the folder or the stars you are looking at
+            // are the part you can. The trash is not in the tree, so a
+            // search here never finds a trashed item.
+            case .documents where !searchText.isEmpty, .favorites where !searchText.isEmpty:
                 listing = .loaded(try await library.store.listTree(under: ""))
             case .documents: listing = .loaded(try await library.store.list(folder: folder))
             case .favorites: listing = .loaded(try await library.store.listFavorites())
