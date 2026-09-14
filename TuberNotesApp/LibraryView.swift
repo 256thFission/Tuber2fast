@@ -180,7 +180,7 @@ struct LibraryView: View {
 
             viewOptionsMenu
 
-            searchField
+            LibrarySearchField(text: Bindable(browser).searchText)
         }
     }
 
@@ -228,19 +228,6 @@ struct LibraryView: View {
                 Text(title)
             }
         }
-    }
-
-    private var searchField: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .foregroundStyle(.secondary)
-            TextField("Search", text: Bindable(browser).searchText)
-                .textFieldStyle(.plain)
-                .frame(width: 180)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(.quaternary, in: .capsule)
     }
 
     /// The toolbar row's replacement while selecting, on the spec's shape:
@@ -415,6 +402,25 @@ struct LibraryView: View {
         case .notebooks: "Notebooks"
         case .folders: "Folders"
         }
+    }
+}
+
+/// The one search field, drawn over a folder's listing and over the trash.
+/// The text is the browser's; what it narrows is the section's.
+struct LibrarySearchField: View {
+    @Binding var text: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.secondary)
+            TextField("Search", text: $text)
+                .textFieldStyle(.plain)
+                .frame(width: 180)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.quaternary, in: .capsule)
     }
 }
 
