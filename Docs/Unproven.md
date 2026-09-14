@@ -113,6 +113,16 @@ Nothing here is a reason not to ship. It is a reason not to be surprised.
   live canvases inside the slots (their fit-width scale and content offset are
   `PageCanvasController`'s, not this one's), and whether the re-centre is
   invisible or a visible jump, are device evidence and Phillip's verdict.
+- **Nothing has been dragged in the library, and nothing has been marked on a
+  page.** A library item now drags onto a folder cell and onto the back
+  chevron, a folder carries a colour and a symbol, and a page carries a mark
+  that the page grid's Marked tab lists. Every one of those is proven by tests
+  over the browser, the store, the notebook and the view model — which prove
+  the move, the sidecar, the index and the mirrors, and nothing about the
+  touch. Three things in particular are unproven and are touch facts: whether a
+  drag off a grid cell beats the grid's own scroll, whether the drop highlight
+  reads at a glance, and whether marking the current page from the toolbar
+  turns no page and reloads no canvas. Required but not done.
 - **Pencil feel, stroke fidelity, palm rejection, and Pencil/touch separation
   are unrendered.** They are Phillip's verdict alone, and no mechanical evidence
   substitutes.

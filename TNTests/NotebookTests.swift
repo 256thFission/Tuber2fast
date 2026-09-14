@@ -602,6 +602,84 @@ struct NotebookTests {
         #expect(again.index.pageIDs == [first])
     }
 
+    @Test("A bookmark dirties the index, survives a flush and a reopen, and records no undo entry")
+    func bookmarking() async throws {
+        let scratch = try Scratch("nb-bookmark")
+        let store = try await PackageStore.create(root: scratch.packageURL, index: Fixture.index(pages: 2))
+        let notebook = try await Notebook.open(store: store, schedule: fast)
+        let (a, b) = (notebook.pageIDs[0], notebook.pageIDs[1])
+        _ = notebook.drainChanges()
+        #expect(!notebook.canUndo)
+
+        notebook.bookmark(b, titled: "Chapter two")
+        #expect(notebook.isDirty)
+        #expect(notebook.drainChanges().isEmpty, "a mark queues nothing for the runtime")
+        #expect(!notebook.canUndo, "a mark is not an edit")
+        await notebook.flush()
+        #expect(!notebook.isDirty)
+        var reopened = try await PackageStore(root: scratch.packageURL).load()
+        #expect(reopened.index.bookmarks == [PageBookmark(page: b, title: "Chapter two")])
+
+        // Renaming replaces rather than appends; an unchanged title writes
+        // nothing at all.
+        notebook.bookmark(b, titled: "Chapter two")
+        #expect(!notebook.isDirty, "an unchanged mark is not a change")
+        notebook.bookmark(b, titled: "Two")
+        notebook.bookmark(a, titled: "")
+        await notebook.flush()
+        reopened = try await PackageStore(root: scratch.packageURL).load()
+        #expect(reopened.index.bookmarks.count == 2)
+        #expect(reopened.index.bookmarks.first { $0.page == b }?.title == "Two")
+        #expect(reopened.index.bookmarks.first { $0.page == a }?.title == "", "a mark nobody named is still a mark")
+
+        notebook.removeBookmark(a)
+        #expect(notebook.isDirty)
+        await notebook.flush()
+        #expect(try await PackageStore(root: scratch.packageURL).load().index.bookmarks.map(\.page) == [b])
+        notebook.removeBookmark(a)
+        #expect(!notebook.isDirty, "unmarking a page that carries no mark writes nothing")
+        #expect(!notebook.canUndo)
+    }
+
+    @Test("Deleting a bookmarked page takes its bookmark with it")
+    func deletingABookmarkedPage() async throws {
+        let scratch = try Scratch("nb-bookmark-delete")
+        let store = try await PackageStore.create(root: scratch.packageURL, index: Fixture.index(pages: 2))
+        let notebook = try await Notebook.open(store: store, schedule: fast)
+        let (a, b) = (notebook.pageIDs[0], notebook.pageIDs[1])
+        notebook.bookmark(a, titled: "first")
+        notebook.bookmark(b, titled: "second")
+        await notebook.flush()
+
+        notebook.deletePage(a)
+        #expect(notebook.index.bookmarks.map(\.page) == [b])
+        await notebook.flush()
+        let reopened = try await PackageStore(root: scratch.packageURL).load()
+        #expect(reopened.index.bookmarks.map(\.page) == [b])
+        // The index it wrote is one this build will open again.
+        #expect(throws: Never.self) { try reopened.index.validated() }
+    }
+
+    @Test("Moving pages reorders the outline without touching the list")
+    func movingReordersTheOutline() async throws {
+        let scratch = try Scratch("nb-bookmark-order")
+        let store = try await PackageStore.create(root: scratch.packageURL, index: Fixture.index(pages: 3))
+        let notebook = try await Notebook.open(store: store, schedule: fast)
+        let (a, b, c) = (notebook.pageIDs[0], notebook.pageIDs[1], notebook.pageIDs[2])
+        notebook.bookmark(a, titled: "first")
+        notebook.bookmark(c, titled: "third")
+        // Insertion order, which is not page order and is not meant to be.
+        #expect(notebook.index.bookmarks.map(\.page) == [a, c])
+
+        notebook.movePage(c, before: a)
+        #expect(notebook.index.pageIDs == [c, a, b])
+        #expect(notebook.index.bookmarks.map(\.page) == [a, c], "the list is untouched by a reorder")
+        // The outline is the marked pages read out of `pages`, so it follows
+        // the new order without the list being kept in it.
+        let marked = notebook.index.pages.filter { record in notebook.index.bookmarks.contains { $0.page == record.id } }
+        #expect(marked.map(\.id) == [c, a])
+    }
+
     @Test("Deleting a page drops its entries from both stacks; undo walks only the surviving page")
     func deletingAPageForgetsItsHistory() async throws {
         let scratch = try Scratch("nb-delete-forgets")

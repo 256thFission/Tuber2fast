@@ -18,6 +18,8 @@ struct LibraryView: View {
     @State private var renameTarget: LibraryItem?
     @State private var renameText = ""
     @State private var moveRequest: MoveRequest?
+    @State private var styleTarget: LibraryItem?
+    @State private var isDroppingOnBack = false
 
     /// The paths a move picker is open for. A sheet needs an identity, and a
     /// set of paths has none.
@@ -67,6 +69,11 @@ struct LibraryView: View {
                 run { await browser.move(request.paths, toFolder: destination) }
             }
         }
+        .sheet(item: $styleTarget) { item in
+            FolderStyleSheet(name: item.name, decoration: item.decoration) { decoration in
+                run { await browser.setDecoration(decoration, on: item) }
+            }
+        }
     }
 
     @ViewBuilder private var content: some View {
@@ -107,9 +114,22 @@ struct LibraryView: View {
                             .font(.headline)
                             .frame(width: 44, height: 44)
                             .background(.quaternary, in: .circle)
+                            .overlay {
+                                Circle()
+                                    .strokeBorder(Color.accentColor, lineWidth: 3)
+                                    .opacity(isDroppingOnBack ? 1 : 0)
+                            }
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Back")
+                    // The one way out of a folder by drag: there is no cell
+                    // for the parent to drop onto.
+                    .dropDestination(for: DraggedLibraryItems.self) { dropped, _ in
+                        guard let dragged = dropped.first else { return false }
+                        let destination = parentFolder
+                        run { await browser.move(Set(dragged.paths), toFolder: destination) }
+                        return true
+                    } isTargeted: { isDroppingOnBack = $0 }
                     Spacer()
                 }
                 Text(browser.title)
@@ -291,7 +311,7 @@ struct LibraryView: View {
         ScrollView {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 160), spacing: 28, alignment: .top)], spacing: 28) {
                 ForEach(browser.displayed) { item in
-                    LibraryGridCell(item: item, browser: browser) { itemMenu(for: item) }
+                    LibraryGridCell(item: item, browser: browser, drop: dropTarget(item)) { itemMenu(for: item) }
                         .onTapGesture { tap(item) }
                 }
             }
@@ -303,7 +323,7 @@ struct LibraryView: View {
         ScrollView {
             LazyVStack(spacing: 0) {
                 ForEach(browser.displayed) { item in
-                    LibraryListRow(item: item, browser: browser) { itemMenu(for: item) }
+                    LibraryListRow(item: item, browser: browser, drop: dropTarget(item)) { itemMenu(for: item) }
                         .onTapGesture { tap(item) }
                     Divider()
                 }
@@ -327,6 +347,13 @@ struct LibraryView: View {
                 Label("Duplicate", systemImage: "plus.square.on.square")
             }
         }
+        if item.kind == .folder {
+            Button {
+                styleTarget = item
+            } label: {
+                Label("Customize", systemImage: "paintpalette")
+            }
+        }
         Button {
             moveRequest = MoveRequest(paths: [item.relativePath])
         } label: {
@@ -340,6 +367,20 @@ struct LibraryView: View {
     }
 
     // MARK: Intentions
+
+    /// A drop on a folder cell moves what was dragged into that folder. Every
+    /// refusal — a folder into itself, a folder above an open notebook — is
+    /// the store's or the ledger's and lands in the banner.
+    private func dropTarget(_ item: LibraryItem) -> (Set<String>) -> Void {
+        { paths in run { await browser.move(paths, toFolder: item.relativePath) } }
+    }
+
+    /// One level up from the folder showing, which is where `browser.back()`
+    /// goes and so where a drop on the back chevron lands.
+    private var parentFolder: String {
+        guard let slash = browser.folder.lastIndex(of: "/") else { return "" }
+        return String(browser.folder[..<slash])
+    }
 
     private func tap(_ item: LibraryItem) {
         if browser.isSelecting {

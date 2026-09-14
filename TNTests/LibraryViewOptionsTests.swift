@@ -23,6 +23,7 @@ func listingItem(_ name: String, kind: ItemKind = .notebook, created: Double = 0
         id: name, name: name, kind: kind,
         notebookID: kind == .notebook ? NotebookID() : nil,
         folderID: kind == .folder ? FolderID() : nil,
+        decoration: kind == .folder ? .plain : nil,
         createdAt: Date(timeIntervalSince1970: created),
         modifiedAt: Date(timeIntervalSince1970: modified)
     )

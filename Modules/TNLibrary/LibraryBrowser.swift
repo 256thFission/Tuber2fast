@@ -181,11 +181,23 @@ package final class LibraryBrowser {
         await perform { _ = try await library.rename(at: item.relativePath, to: name) }
     }
 
+    /// Every movable item moves, and the ones that refused are named in one
+    /// line. Not `perform`, which stops at the first refusal with the earlier
+    /// paths already moved: that is liveable from a menu, where a move is
+    /// chosen item by item, and wrong under a drag, where hauling a selection
+    /// that happens to contain an open notebook is the ordinary gesture.
     package func move(_ paths: Set<String>, toFolder destination: String) async {
-        await perform {
-            for path in paths.sorted() { _ = try await library.move(at: path, toFolder: destination) }
+        var refusals: [String] = []
+        for path in paths.sorted() {
+            do {
+                _ = try await library.move(at: path, toFolder: destination)
+            } catch {
+                refusals.append(error.description)
+            }
         }
+        refusal = refusals.isEmpty ? nil : refusals.joined(separator: "; ")
         selection = nil
+        await reload()
     }
 
     package func trash(_ paths: Set<String>) async {
@@ -209,6 +221,10 @@ package final class LibraryBrowser {
         guard let identity = item.identity else { return }
         let starred = !favorites.contains(identity)
         await perform { try await library.store.setFavorite(identity, starred) }
+    }
+
+    package func setDecoration(_ decoration: FolderDecoration, on item: LibraryItem) async {
+        await perform { try await library.store.setDecoration(decoration, at: item.relativePath) }
     }
 
     package func createFolder(named name: String) async {

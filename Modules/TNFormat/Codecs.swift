@@ -74,8 +74,9 @@ package enum Codecs {
 
 /// The key sets the format pins. One place, mirrored by one test each.
 package enum DurableKeys {
-    package static let index: Set<String> = ["formatVersion", "notebookID", "createdAt", "pages"]
+    package static let index: Set<String> = ["formatVersion", "notebookID", "createdAt", "pages", "bookmarks"]
     package static let pageRecord: Set<String> = ["id", "width", "height", "paper"]
+    package static let bookmark: Set<String> = ["page", "title"]
     /// Paper's keys depend on its kind; an unknown kind pins nothing,
     /// because the page is refused before its payload is read.
     package static func paper(kind: String) -> Set<String> {

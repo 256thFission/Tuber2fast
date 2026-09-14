@@ -1,6 +1,7 @@
 import CoreGraphics
 import SwiftUI
 import TNLibrary
+import UniformTypeIdentifiers
 
 /// Where an item lives, shown only while a search is running: a search
 /// lists the whole library, and a bare name does not say which folder it
@@ -10,6 +11,68 @@ import TNLibrary
     return item.parentPath
 }
 
+/// The drag payload: relative paths, because a path is what a move takes and
+/// what a selection already holds. Declared beside the cells that carry it
+/// and not `private`, because `LibraryView` names the type too.
+///
+/// KNOWN DEFECT: the representation is `public.data`, the same defect
+/// `PageNavigatorSheet.DraggedPage` carries and for the same reason, so every
+/// folder cell lights up as a drop target for any data item dragged in from
+/// another app. Such a drop decodes to nothing and moves nothing; only the
+/// highlight is wrong. The fix — one exported `UTType`, which needs a plist
+/// array the app's generated Info.plist has no build-setting form for — is
+/// written out at that declaration and serves both sites at once.
+struct DraggedLibraryItems: Transferable, Codable {
+    let paths: [String]
+
+    static var transferRepresentation: some TransferRepresentation {
+        CodableRepresentation(contentType: .data)
+    }
+}
+
+/// What a drag off a cell carries: the whole selection when this cell is in
+/// it, and this one item otherwise. So a chosen set moves in one gesture,
+/// and dragging something that is not chosen does not quietly take the set
+/// with it.
+@MainActor private func dragged(_ item: LibraryItem, _ browser: LibraryBrowser) -> DraggedLibraryItems {
+    guard let selection = browser.selection, selection.contains(item.relativePath) else {
+        return DraggedLibraryItems(paths: [item.relativePath])
+    }
+    return DraggedLibraryItems(paths: selection.sorted())
+}
+
+/// A folder is a destination and a notebook is not, so a notebook cell takes
+/// no drop modifier at all rather than one that refuses every drop. The
+/// highlight is drawn here, over whichever cell this wraps.
+private struct LibraryFolderDrop: ViewModifier {
+    let item: LibraryItem
+    let drop: (Set<String>) -> Void
+
+    @State private var isTargeted = false
+
+    func body(content: Content) -> some View {
+        if item.kind == .folder {
+            content
+                .dropDestination(for: DraggedLibraryItems.self) { dropped, _ in
+                    guard let dragged = dropped.first else { return false }
+                    drop(Set(dragged.paths))
+                    // True means the drop was taken, not that the move
+                    // landed: a folder into itself, or a folder holding an
+                    // open notebook, is refused by the store or the ledger
+                    // and reaches the reader as the banner that exists.
+                    return true
+                } isTargeted: { isTargeted = $0 }
+                .overlay {
+                    RoundedRectangle(cornerRadius: 10)
+                        .strokeBorder(Color.accentColor, lineWidth: 3)
+                        .opacity(isTargeted ? 1 : 0)
+                }
+        } else {
+            content
+        }
+    }
+}
+
 /// One grid cell: the cover or the folder glyph, the star on it, the name
 /// with the chevron menu beside it, the date beneath. The menu is passed in
 /// because the actions it offers need the browser's sheets and alerts, which
@@ -17,6 +80,10 @@ import TNLibrary
 struct LibraryGridCell<MenuContent: View>: View {
     let item: LibraryItem
     let browser: LibraryBrowser
+    /// Where a drop on this cell goes. A closure, not a browser call, because
+    /// the move has to run through `LibraryView.run`, which clears the last
+    /// refusal first and rebuilds the identity index after.
+    let drop: (Set<String>) -> Void
     @ViewBuilder let menu: () -> MenuContent
 
     var body: some View {
@@ -64,6 +131,8 @@ struct LibraryGridCell<MenuContent: View>: View {
         }
         .contentShape(.rect)
         .contextMenu { menu() }
+        .draggable(dragged(item, browser))
+        .modifier(LibraryFolderDrop(item: item, drop: drop))
     }
 
     @ViewBuilder private var artwork: some View {
@@ -73,7 +142,7 @@ struct LibraryGridCell<MenuContent: View>: View {
                 .aspectRatio(3.0 / 4.0, contentMode: .fit)
                 .shadow(color: .black.opacity(0.25), radius: 6, y: 3)
         case .folder:
-            LibraryFolderGlyph()
+            LibraryFolderGlyph(decoration: item.decoration)
                 .aspectRatio(3.0 / 4.0, contentMode: .fit)
                 .padding(.vertical, 10)
         }
@@ -85,6 +154,7 @@ struct LibraryGridCell<MenuContent: View>: View {
 struct LibraryListRow<MenuContent: View>: View {
     let item: LibraryItem
     let browser: LibraryBrowser
+    let drop: (Set<String>) -> Void
     @ViewBuilder let menu: () -> MenuContent
 
     var body: some View {
@@ -96,7 +166,7 @@ struct LibraryListRow<MenuContent: View>: View {
             Group {
                 switch item.kind {
                 case .notebook: LibraryCover(item: item, browser: browser)
-                case .folder: LibraryFolderGlyph()
+                case .folder: LibraryFolderGlyph(decoration: item.decoration)
                 }
             }
             .frame(width: 44, height: 58)
@@ -141,6 +211,8 @@ struct LibraryListRow<MenuContent: View>: View {
         .padding(.vertical, 8)
         .contentShape(.rect)
         .contextMenu { menu() }
+        .draggable(dragged(item, browser))
+        .modifier(LibraryFolderDrop(item: item, drop: drop))
     }
 }
 
@@ -182,11 +254,18 @@ struct LibraryCover: View {
 }
 
 struct LibraryFolderGlyph: View {
+    /// Nil when the sidecar holding it could not be read. Such a folder has
+    /// already lost its identity and its star; it draws as it drew before
+    /// decoration existed rather than as nothing at all.
+    let decoration: FolderDecoration?
+
+    private var shown: FolderDecoration { decoration ?? .plain }
+
     var body: some View {
-        Image(systemName: "folder.fill")
+        Image(systemName: shown.symbol.rawValue)
             .resizable()
             .scaledToFit()
-            .foregroundStyle(Color.accentColor)
+            .foregroundStyle(LibraryStyle.color(of: shown.color))
     }
 }
 
@@ -257,6 +336,24 @@ private struct LibrarySelectionCheck: View {
 enum LibraryStyle {
     static let paper = Color(red: 0.98, green: 0.97, blue: 0.94)
     static let paperEdge = Color(red: 0.85, green: 0.84, blue: 0.81)
+
+    /// The one place a durable colour name becomes something drawable.
+    /// `TNLibrary` may not import SwiftUI, so the name travels and the colour
+    /// is chosen here; the system colours are used because they already read
+    /// in light and dark. `.neutral` is the accent colour every folder drew
+    /// before decoration existed, so an undecorated folder does not change.
+    static func color(of color: FolderColor) -> Color {
+        switch color {
+        case .neutral: .accentColor
+        case .red: .red
+        case .orange: .orange
+        case .yellow: .yellow
+        case .green: .green
+        case .blue: .blue
+        case .purple: .purple
+        case .pink: .pink
+        }
+    }
 
     /// The spec's absolute date, `MMM d, yyyy 'at' h:mm a`. `Date.FormatStyle`
     /// puts a comma where this wants "at", so the format string is written out.

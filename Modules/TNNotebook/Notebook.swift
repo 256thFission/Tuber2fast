@@ -573,6 +573,45 @@ package final class Notebook {
         return insertPage(after: source, geometry: record.geometry, paper: paper, content: content, answering: nil)
     }
 
+    // MARK: Bookmarks
+
+    /// Marks `page`, or renames a mark it already has. An empty title is a
+    /// mark nobody named, which is a mark all the same: presence is the flag.
+    ///
+    /// Not undoable, and it queues no change. Undo belongs to ink
+    /// (`Docs/Contract.md` — Undo) and `PageRevision` is ink, layers and
+    /// `inkIndex`, so there is no shape for a mark to be recorded in; and
+    /// `EditorBinding.intention` refreshes the mirrors whether or not the
+    /// mutation queued anything, so the navigator sees this without a
+    /// structure change. Deleting, duplicating and moving pages are equally
+    /// not undoable.
+    ///
+    /// A page the notebook does not hold is the programmer's error: the
+    /// index is what the outline is read from, and a mark on nothing would
+    /// be an index this build's own `validated()` refuses.
+    package func bookmark(_ page: PageID, titled title: String) {
+        guard index.record(of: page) != nil else {
+            TNPrecondition.fail("a bookmark was set on page \(page), which the notebook does not hold")
+        }
+        // An unchanged mark writes nothing: an index rewritten for no change
+        // is a bug (`Docs/Contract.md` — One save).
+        guard index.bookmarks.first(where: { $0.page == page })?.title != title else { return }
+        var bookmarks = index.bookmarks.filter { $0.page != page }
+        bookmarks.append(PageBookmark(page: page, title: title))
+        index = index.withBookmarks(bookmarks)
+        indexSeq += 1
+        markDirty()
+    }
+
+    /// Unmarks `page`. A page that carries no mark is not an error and
+    /// writes nothing.
+    package func removeBookmark(_ page: PageID) {
+        guard index.bookmarks.contains(where: { $0.page == page }) else { return }
+        index = index.withBookmarks(index.bookmarks.filter { $0.page != page })
+        indexSeq += 1
+        markDirty()
+    }
+
     package func movePage(_ page: PageID, before target: PageID?) {
         var pages = index.pages
         guard let from = pages.firstIndex(where: { $0.id == page }) else { return }

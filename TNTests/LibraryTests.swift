@@ -34,6 +34,25 @@ struct LibraryTests {
         #expect(await library.store.folderID(of: "Math") != nil)
     }
 
+    @Test("A move into the current parent returns the item and moves no files")
+    func movingIntoTheCurrentParent() async throws {
+        let (scratch, library) = try makeLibrary("lib-move-nowhere")
+        defer { withExtendedLifetime(scratch) {} }
+        _ = try await library.store.createFolder(named: "Drafts", in: "")
+        let item = try await library.store.createNotebook(named: "Essay", in: "Drafts")
+        let before = try await library.store.list(folder: "Drafts")
+
+        let stayed = try await library.move(at: item.relativePath, toFolder: "Drafts")
+        #expect(stayed.relativePath == item.relativePath)
+        #expect(try await library.store.list(folder: "Drafts") == before)
+
+        // And at the root, where the parent path is the empty string.
+        let loose = try await library.store.createNotebook(named: "Loose", in: "")
+        let alsoStayed = try await library.move(at: loose.relativePath, toFolder: "")
+        #expect(alsoStayed.relativePath == loose.relativePath)
+        #expect(try await library.store.list(folder: "").map(\.name) == ["Drafts", "Loose"])
+    }
+
     @Test("The tree lists everything under a folder, depth first, by full path")
     func listingTheTree() async throws {
         let (scratch, library) = try makeLibrary("lib-tree-walk")
@@ -76,7 +95,7 @@ struct LibraryTests {
         _ = try await library.rename(at: item.relativePath, to: "Other")
     }
 
-    @Test("A folder holding an open notebook is locked too")
+    @Test("A folder holding an open notebook is locked too, and the refusal names the notebook")
     func ancestorLock() async throws {
         let (scratch, library) = try makeLibrary("lib-ancestor")
         defer { withExtendedLifetime(scratch) {} }
@@ -84,7 +103,7 @@ struct LibraryTests {
         let item = try await library.store.createNotebook(named: "Plan", in: "Work")
         guard case .opened = await library.checkout(item.relativePath) else { Issue.record("open failed"); return }
         #expect(library.isLocked("Work"))
-        await #expect(throws: LibraryError.notebookIsOpen(name: "Work")) { try await library.rename(at: "Work", to: "Play") }
+        await #expect(throws: LibraryError.notebookIsOpen(name: "Plan.tubernotes")) { try await library.rename(at: "Work", to: "Play") }
         _ = await library.release(item.relativePath)
         #expect(!library.isLocked("Work"))
     }
@@ -277,6 +296,99 @@ struct LibraryTests {
         #expect(try await library.store.favorites() == [identity])
         let recovered = try await library.store.recover(entry)
         #expect(try await library.store.listFavorites().map(\.relativePath) == [recovered.relativePath])
+    }
+
+    @Test("A folder's colour and symbol round trip, and a new folder is plain")
+    func decoration() async throws {
+        let (scratch, library) = try makeLibrary("lib-decoration")
+        defer { withExtendedLifetime(scratch) {} }
+        let made = try await library.store.createFolder(named: "Term", in: "")
+        #expect(made.decoration == .plain)
+        #expect(made.decoration?.color == .neutral)
+        #expect(made.decoration?.symbol == .folder)
+
+        let chosen = FolderDecoration(color: .blue, symbol: .star)
+        try await library.store.setDecoration(chosen, at: "Term")
+        #expect(try await library.store.list(folder: "").first?.decoration == chosen)
+        // Decorating reads the identity back rather than minting one.
+        #expect(await library.store.folderID(of: "Term") == made.folderID)
+
+        // A notebook has no sidecar, so it has no decoration and cannot take
+        // one.
+        let essay = try await library.store.createNotebook(named: "Essay", in: "")
+        #expect(essay.decoration == nil)
+        await #expect(throws: LibraryError.notAFolder(essay.relativePath)) {
+            try await library.store.setDecoration(chosen, at: essay.relativePath)
+        }
+    }
+
+    @Test("Decoration follows the folder through rename, move, trash, and recovery")
+    func decorationSurvivesEveryMove() async throws {
+        let (scratch, library) = try makeLibrary("lib-decoration-survives")
+        defer { withExtendedLifetime(scratch) {} }
+        _ = try await library.store.createFolder(named: "Archive", in: "")
+        _ = try await library.store.createFolder(named: "Term", in: "")
+        let chosen = FolderDecoration(color: .purple, symbol: .school)
+        try await library.store.setDecoration(chosen, at: "Term")
+
+        let renamed = try await library.rename(at: "Term", to: "Autumn")
+        #expect(renamed.decoration == chosen)
+        let moved = try await library.move(at: renamed.relativePath, toFolder: "Archive")
+        #expect(moved.decoration == chosen)
+
+        let entry = try await library.trash(at: moved.relativePath)
+        let recovered = try await library.store.recover(entry)
+        #expect(recovered.decoration == chosen)
+    }
+
+    @Test("A colour name this build does not know refuses the sidecar, so the folder loses its identity")
+    func anUnknownColourRefusesTheSidecar() async throws {
+        let (scratch, library) = try makeLibrary("lib-decoration-unknown")
+        defer { withExtendedLifetime(scratch) {} }
+        let made = try await library.store.createFolder(named: "Term", in: "")
+        let identity = try #require(made.identity)
+        try await library.store.setFavorite(identity, true)
+
+        let sidecar = library.store.url(of: "Term").appendingPathComponent(".folder.json")
+        var object = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: sidecar)) as? [String: Any])
+        object["color"] = "chartreuse"
+        try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]).write(to: sidecar)
+
+        // This is the cost of the version bump, pinned rather than argued
+        // away: an unreadable sidecar is a folder with no identity, and a
+        // folder with no identity has no star, though the file still holds it.
+        let listed = try #require(try await library.store.list(folder: "").first)
+        #expect(listed.decoration == nil)
+        #expect(listed.folderID == nil)
+        #expect(listed.identity == nil)
+        #expect(try await library.store.listFavorites().isEmpty)
+        #expect(try await library.store.favorites() == [identity])
+    }
+
+    @Test("`.folder.json` carries exactly its keys, and losing or gaining one refuses it")
+    func folderFileKeys() async throws {
+        let (scratch, library) = try makeLibrary("lib-folder-keys")
+        defer { withExtendedLifetime(scratch) {} }
+        _ = try await library.store.createFolder(named: "Term", in: "")
+        let sidecar = library.store.url(of: "Term").appendingPathComponent(".folder.json")
+        let written = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: sidecar)) as? [String: Any])
+        #expect(Set(written.keys) == ["formatVersion", "folderID", "color", "symbol"])
+        #expect(written["formatVersion"] as? Int == 2)
+
+        for key in written.keys {
+            var short = written
+            short.removeValue(forKey: key)
+            try JSONSerialization.data(withJSONObject: short, options: [.sortedKeys]).write(to: sidecar)
+            #expect(await library.store.folderFile(of: "Term") == nil, "a sidecar without \(key) must be refused")
+        }
+
+        var extra = written
+        extra["tint"] = "blue"
+        try JSONSerialization.data(withJSONObject: extra, options: [.sortedKeys]).write(to: sidecar)
+        #expect(await library.store.folderFile(of: "Term") == nil, "an unknown key must be refused")
+
+        try JSONSerialization.data(withJSONObject: written, options: [.sortedKeys]).write(to: sidecar)
+        #expect(await library.store.folderFile(of: "Term") != nil, "the file as written must read back")
     }
 
     @Test("Two packages with one identity: the scan re-mints the second")

@@ -3,15 +3,62 @@ import TNCore
 import TNFormat
 import TNModel
 
+/// A folder's colour. Named, not bytes: a name maps to something the app can
+/// draw differently in light and dark, and a name this build does not ship
+/// refuses the sidecar at decode rather than falling back to a colour nobody
+/// chose. The mapping to a drawable colour is the app's, because `TNLibrary`
+/// may not import SwiftUI (`Docs/Contract.md` — Structure).
+///
+/// `.neutral` is what every folder drew before decoration existed, and is
+/// what "undecorated" means here: a value, not an absence.
+package enum FolderColor: String, Codable, Sendable, CaseIterable {
+    case neutral, red, orange, yellow, green, blue, purple, pink
+}
+
+/// A folder's glyph. The raw value *is* the SF Symbol name, so the app draws
+/// `symbol.rawValue` and keeps no second table; the case name is the idea,
+/// and `.folder` is the filled folder every folder drew before this.
+package enum FolderSymbol: String, Codable, Sendable, CaseIterable {
+    case folder = "folder.fill"
+    case star = "star.fill"
+    case heart = "heart.fill"
+    case book = "book.closed.fill"
+    case briefcase = "briefcase.fill"
+    case school = "graduationcap.fill"
+}
+
+/// The pair a cell draws with. Not `Codable`: the two durable keys are flat
+/// on `FolderFile`, so the flat `decodeStrict` below pins them with no nested
+/// check of its own.
+package struct FolderDecoration: Sendable, Equatable {
+    package let color: FolderColor
+    package let symbol: FolderSymbol
+
+    package init(color: FolderColor, symbol: FolderSymbol) {
+        self.color = color
+        self.symbol = symbol
+    }
+
+    /// What a folder gets when it is made and nobody has chosen yet.
+    package static let plain = FolderDecoration(color: .neutral, symbol: .folder)
+}
+
 /// A folder's identity and decoration sidecar: `.folder.json`.
 package struct FolderFile: Codable, Sendable, Equatable {
     package let formatVersion: UInt32
     package let folderID: FolderID
-    package static let currentFormatVersion: UInt32 = 1
-    package init(folderID: FolderID) {
+    package let color: FolderColor
+    package let symbol: FolderSymbol
+    package static let currentFormatVersion: UInt32 = 2
+
+    package init(folderID: FolderID, decoration: FolderDecoration) {
         self.formatVersion = Self.currentFormatVersion
         self.folderID = folderID
+        self.color = decoration.color
+        self.symbol = decoration.symbol
     }
+
+    package var decoration: FolderDecoration { FolderDecoration(color: color, symbol: symbol) }
 }
 
 package struct FolderID: BrandedID {
@@ -38,6 +85,9 @@ package struct LibraryItem: Sendable, Equatable, Identifiable {
     package let kind: ItemKind
     package let notebookID: NotebookID?
     package let folderID: FolderID?
+    /// Nil for a notebook, which has no sidecar to hold one, and for a folder
+    /// whose sidecar is unreadable — the same nil that drops `folderID`.
+    package let decoration: FolderDecoration?
     package let createdAt: Date
     package let modifiedAt: Date
 
@@ -234,12 +284,17 @@ package actor LibraryStore {
 
     private func item(at relativePath: String, url: URL, kind: ItemKind) -> LibraryItem {
         let facts = kind == .notebook ? indexFacts(ofPackageAt: url) : nil
+        // One read of the sidecar, for both the identity and the decoration:
+        // the listing opened it for the identity already, so two more keys in
+        // it cost nothing.
+        let sidecar = kind == .folder ? folderFile(of: relativePath) : nil
         return LibraryItem(
             id: relativePath,
             name: Self.displayName(of: url.lastPathComponent),
             kind: kind,
             notebookID: facts?.id,
-            folderID: kind == .folder ? folderID(of: relativePath) : nil,
+            folderID: sidecar?.folderID,
+            decoration: sidecar?.decoration,
             createdAt: facts?.createdAt ?? createdAt(url),
             modifiedAt: modifiedAt(url, kind: kind)
         )
@@ -291,7 +346,8 @@ package actor LibraryStore {
         guard kind(at: target) == nil else { throw .alreadyExists(name) }
         do {
             try fm.createDirectory(at: target, withIntermediateDirectories: false)
-            try Codecs.encode(FolderFile(folderID: FolderID())).write(to: target.appendingPathComponent(Self.folderSidecar))
+            let sidecar = FolderFile(folderID: FolderID(), decoration: .plain)
+            try Codecs.encode(sidecar).write(to: target.appendingPathComponent(Self.folderSidecar))
         } catch let fault as FormatFault {
             throw .format(fault)
         } catch {
@@ -301,14 +357,23 @@ package actor LibraryStore {
         return item(at: path, url: target, kind: .folder)
     }
 
-    package func folderID(of folder: String) -> FolderID? {
+    /// The sidecar, or nil when it is missing, at another version, or names a
+    /// colour or symbol this build does not ship. Nil costs the folder its
+    /// identity, which costs it its star and its trash container name; the
+    /// remedy the Contract names is deleting the dev library.
+    package func folderFile(of folder: String) -> FolderFile? {
         let sidecar = url(of: folder).appendingPathComponent(Self.folderSidecar)
         guard let data = try? Data(contentsOf: sidecar),
-              let file = try? Codecs.decodeStrict(FolderFile.self, from: data, expectedKeys: ["formatVersion", "folderID"]),
+              let file = try? Codecs.decodeStrict(
+                  FolderFile.self, from: data,
+                  expectedKeys: ["formatVersion", "folderID", "color", "symbol"]
+              ),
               file.formatVersion == FolderFile.currentFormatVersion
         else { return nil }
-        return file.folderID
+        return file
     }
+
+    package func folderID(of folder: String) -> FolderID? { folderFile(of: folder)?.folderID }
 
     /// A new one-page notebook, committed. Its page is US Letter and blank
     /// paper unless told otherwise. Returns its listing item.
@@ -353,6 +418,11 @@ package actor LibraryStore {
         guard folder.isEmpty || self.kind(at: parent) == .folder else { throw .notAFolder(folder) }
         if kind == .folder, folder == relativePath || folder.hasPrefix(relativePath + "/") { throw .destinationInsideSource }
         let target = parent.appendingPathComponent(source.lastPathComponent, isDirectory: true)
+        // Into the folder it is already in is nothing happening, not a
+        // collision with itself. `rename` carries the same line, and every
+        // caller — the picker, whose "Move here" confirms the level showing,
+        // and a drop on the cell's own parent — reaches this the same way.
+        guard target != source else { return item(at: relativePath, url: source, kind: kind) }
         guard self.kind(at: target) == nil else { throw .alreadyExists(source.lastPathComponent) }
         do { try fm.moveItem(at: source, to: target) } catch { throw .io("move \(relativePath): \(error)") }
         let path = folder.isEmpty ? source.lastPathComponent : "\(folder)/\(source.lastPathComponent)"
@@ -445,6 +515,29 @@ package actor LibraryStore {
         }
         try walk("")
         return found
+    }
+
+    // MARK: Decoration
+
+    /// Reads the sidecar, replaces its two decoration fields, and writes the
+    /// file whole and atomically — `setFavorite`'s shape, for the same
+    /// reason: the file is small and has no partial state worth recovering.
+    /// The identity is read back rather than passed in, so decorating cannot
+    /// mint a second `FolderID` for a folder that already has one.
+    package func setDecoration(_ decoration: FolderDecoration, at relativePath: String) throws(LibraryError) {
+        let (url, kind) = try existing(relativePath)
+        guard kind == .folder else { throw .notAFolder(relativePath) }
+        guard let current = folderFile(of: relativePath) else {
+            throw .format(.corruptJSON("\(Self.folderSidecar) of \(relativePath) cannot be read"))
+        }
+        let file = FolderFile(folderID: current.folderID, decoration: decoration)
+        do {
+            try Codecs.encode(file).write(to: url.appendingPathComponent(Self.folderSidecar), options: .atomic)
+        } catch let fault as FormatFault {
+            throw .format(fault)
+        } catch {
+            throw .io("write decoration \(relativePath): \(error)")
+        }
     }
 
     // MARK: Trash
