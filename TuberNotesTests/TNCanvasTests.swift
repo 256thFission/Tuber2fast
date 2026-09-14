@@ -1106,3 +1106,10 @@ final class RecordingReporter: CanvasReporting {
         sequence.append("textEditingEnded")
     }
 }
+    var locks: [(page: PageID, layer: LayerID, locked: Bool)] = []
+
+    func layerLockRequested(on page: PageID, layer: LayerID, locked: Bool) {
+        locks.append((page, layer, locked))
+        sequence.append("layerLockRequested")
+    }
+
