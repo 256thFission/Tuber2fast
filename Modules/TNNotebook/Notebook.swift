@@ -831,14 +831,16 @@ package final class Notebook {
         try insertLayer(layer, on: page)
     }
 
-    /// An image, normalized to HEIC, placed centered at up to 60% of the
-    /// page width, beneath the ink.
-    package func importImage(_ data: Data, on page: PageID) async throws(FormatFault) {
+    /// An image, normalized to HEIC, placed centered at up to `fraction` of
+    /// each page edge, beneath the ink. A photo takes 60%; a sticker is the
+    /// same insert from a different source and asks for less.
+    package func importImage(_ data: Data, on page: PageID, fraction: Double = 0.6) async throws(FormatFault) {
+        TNPrecondition.require(fraction > 0 && fraction <= 1, "an image fit outside the page: \(fraction)")
         guard let normalized = await Task.detached(priority: .userInitiated, operation: { ImageImport.normalize(data) }).value else {
             throw .invalidWrite("image could not be decoded")
         }
         guard let record = index.record(of: page) else { throw .invalidWrite("no such page") }
-        let fit = min(record.geometry.width * 0.6 / Double(normalized.size.width), record.geometry.height * 0.6 / Double(normalized.size.height))
+        let fit = min(record.geometry.width * fraction / Double(normalized.size.width), record.geometry.height * fraction / Double(normalized.size.height))
         let width = Double(normalized.size.width) * fit, height = Double(normalized.size.height) * fit
         let transform = PageSpaceTransform.placing(
             sourceWidth: Double(normalized.size.width), sourceHeight: Double(normalized.size.height),
