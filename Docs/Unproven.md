@@ -174,6 +174,14 @@ Nothing here is a reason not to ship. It is a reason not to be surprised.
   box `Notebook.createTextBox` opens at the tap have met no Pencil and no
   finger. Whether a new box reads as a note and whether the sizes cover a
   heading and a caption are Phillip's verdict on the iPad.
+- **Scribble has never written into a box.** The simulator has no Pencil
+  and Scribble does not run there, so the hosted test proves only the
+  configuration: the interaction is on the live view, its delegate refuses
+  a start outside the bounds, and spelling and autocorrection are on. That
+  handwriting becomes the typed runs, that a Scribble scratch-out inside
+  the box deletes a word and leaves the ink alone, that a stroke starting
+  just outside the box is ink and not a word, and that autocorrection's
+  substitutions read as prose are a device's answer and Phillip's verdict.
 - **No Release build has ever been seen to emit a trace.** `CanvasLog`'s stderr
   mirror now ships in every configuration, gated on `TN_TRACE` alone, and a
   Release build compiles — but no iPad has been watched printing through it, and
