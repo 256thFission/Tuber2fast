@@ -120,6 +120,8 @@ Reports, `CanvasReporting`:
 - `layerTransformed`: answered at once with `.accepted` or `.refused`.
 - `layerDeleteRequested`: answered by an `updateComposite` that omits the
   layer, which is also what takes the selection frame down.
+- `layerLockRequested`: lock or unlock, answered by an `updateComposite`
+  whose layer list carries the flag.
 - `pageBecameCurrent`.
 - `windowChanged`: the complete set of decoded pages. Sent when the set
   changes, never per frame.
@@ -157,7 +159,7 @@ CRC32 of the payload, zeros to 64) followed by the archive. Any header
 mismatch or bad checksum refuses the page. There is no separate checksum
 table.
 
-**Format version is 3.** Adding a key means a version bump and a change
+**Format version is 4.** Adding a key means a version bump and a change
 to the key-set pins in `TNTests/FormatTests.swift`, which fail until every
 file that carries the key round-trips. There is no migrator and none is
 written: a package this build did not write is refused by the key it is
@@ -227,6 +229,9 @@ frames, and the tool are never saved in the package.
 unit square into page space. It must be finite, have `|det| > 1e-9`, and
 translate by no more than ten page edges. Link and text layers carry the
 identity transform and a rect in page space.
+
+**Every layer carries `locked`.** A locked layer renders and exports like
+any other; it refuses a transform and a delete, and says so.
 
 **Assets** are immutable. An asset is written at import, before any layer
 refers to it, and is limited to 64 MB and 16384 pixels on an edge. Images
