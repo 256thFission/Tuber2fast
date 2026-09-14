@@ -87,27 +87,17 @@ package struct SlotLayout: Equatable, Sendable {
     }
 }
 
-/// Where a page sits inside its slot: fitted to the slot's width, and on the
-/// other axis centred when it is shorter than the slot and top-aligned when
-/// it is taller.
-///
-/// Width, not both edges, because the page is read by scrolling down it.
-/// A portrait page in a landscape viewport fitted on both edges is a
-/// postcard in the middle of the screen with the writing surface wasted on
-/// either side; fitted by width it fills the screen and the rest of the page
-/// is a vertical scroll away, which is how GoodNotes presents the same page.
-/// A page that is wider than tall fits by width either way.
+/// Where a page sits inside its slot: fitted on both edges, centred.
 ///
 /// The same scale is the canvas's zoom floor and the placeholder's rect, so a
 /// page that has not been given content yet occupies exactly the rectangle the
-/// page will occupy once it has, and the top of a placeholder is the top of
-/// the page, where a fresh canvas opens.
+/// page will occupy once it has.
 package enum PageFit {
     package static func scale(_ geometry: PageGeometry, in slot: CGSize) -> CGFloat {
         guard slot.width > 0, slot.height > 0, geometry.width > 0, geometry.height > 0 else {
             return 1
         }
-        return slot.width / CGFloat(geometry.width)
+        return min(slot.width / CGFloat(geometry.width), slot.height / CGFloat(geometry.height))
     }
 
     package static func rect(_ geometry: PageGeometry, in slot: CGSize) -> CGRect {
@@ -117,8 +107,8 @@ package enum PageFit {
             height: CGFloat(geometry.height) * scale
         )
         return CGRect(
-            x: 0,
-            y: max(0, (slot.height - size.height) / 2).rounded(),
+            x: ((slot.width - size.width) / 2).rounded(),
+            y: ((slot.height - size.height) / 2).rounded(),
             width: size.width,
             height: size.height
         )

@@ -108,12 +108,6 @@ Nothing here is a reason not to ship. It is a reason not to be surprised.
   what iOS does with it. Whether the first tap prompts rather than
   terminating, whether a denial leaves the row harmless, and whether the
   captured photo lands centred on the page are device evidence.
-- **The width fit.** A portrait page in a landscape viewport opens at the
-  slot's width and scrolls down. Tests prove the arithmetic. That the
-  vertical scroll inside the page and the horizontal page turn share a
-  finger cleanly at the floor, that a pinch out from the floor still
-  bounces rather than dying, and that a rotation carries the scroll
-  position rather than snapping to the top are device evidence.
 - **The sticker sheet has never been opened by a hand.** `StickerSheet` is
   SwiftUI and nothing in either suite presents it. What the tests prove is
   the catalogue and the insert: every symbol renders, normalizes to HEIC
