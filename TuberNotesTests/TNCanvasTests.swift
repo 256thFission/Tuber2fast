@@ -25,12 +25,13 @@ struct TNCanvasTests {
         #expect(layout.frame(at: 2) == CGRect(x: 1600, y: 0, width: 800, height: 1000))
         #expect(layout.offsetX(at: 4) == 3200)
 
-        // A page varies inside its slot; the slot does not. US Letter in this
-        // viewport is taller than it is wide, so the height is what fits.
+        // A page varies inside its slot; the slot does not. US Letter fits the
+        // slot's width and, in this viewport, runs past its bottom.
         let fitted = PageFit.rect(.letter, in: layout.slot)
-        #expect(abs(fitted.height - 1000) < 1e-6)
-        #expect(fitted.width < 800)
-        #expect(abs(PageFit.scale(.letter, in: layout.slot) - 1000 / 792) < 1e-9)
+        #expect(abs(fitted.width - 800) < 1e-6)
+        #expect(fitted.height > 1000)
+        #expect(fitted.origin == .zero)
+        #expect(abs(PageFit.scale(.letter, in: layout.slot) - 800 / 612) < 1e-9)
 
         // The append gesture, at the fraction the device measured.
         #expect(!layout.isPastEnd(offsetX: 4000))
@@ -38,24 +39,24 @@ struct TNCanvasTests {
         #expect(layout.isPastEnd(offsetX: 4121))
     }
 
-    @Test("A page fills the slot on the edge that binds and is centred on the other, whichever way round each is")
-    func pageFitCentresOnTheFreeEdge() {
-        // Both cases fit by the same ratio, 1032 over 842, so both have the
-        // same free-edge length.
-        let shortEdge: CGFloat = 595 * 1032 / 842
-
+    @Test("A page fills the slot's width; shorter than the slot it is centred, taller it starts at the top")
+    func pageFitIsByWidth() {
         let landscapeInPortrait = PageFit.rect(PageGeometry(width: 842, height: 595), in: CGSize(width: 1032, height: 1376))
+        let shortEdge: CGFloat = 595 * 1032 / 842
         #expect(abs(landscapeInPortrait.width - 1032) < 1e-6)
         #expect(abs(landscapeInPortrait.height - shortEdge) < 1e-6)
         #expect(landscapeInPortrait.origin.x == 0)
         // The origin is rounded, so the centre is the nearest whole point.
         #expect(abs(landscapeInPortrait.origin.y - ((1376 - shortEdge) / 2).rounded()) < 1e-6)
 
+        // A portrait page in a landscape viewport is not shrunk to its height:
+        // it fills the width and the rest of it is below the fold.
         let portraitInLandscape = PageFit.rect(PageGeometry(width: 595, height: 842), in: CGSize(width: 1376, height: 1032))
-        #expect(abs(portraitInLandscape.height - 1032) < 1e-6)
-        #expect(abs(portraitInLandscape.width - shortEdge) < 1e-6)
-        #expect(portraitInLandscape.origin.y == 0)
-        #expect(abs(portraitInLandscape.origin.x - ((1376 - shortEdge) / 2).rounded()) < 1e-6)
+        #expect(abs(portraitInLandscape.width - 1376) < 1e-6)
+        #expect(abs(portraitInLandscape.height - 842 * 1376 / 595) < 1e-6)
+        #expect(portraitInLandscape.height > 1032)
+        #expect(portraitInLandscape.origin == .zero)
+        #expect(abs(PageFit.scale(PageGeometry(width: 595, height: 842), in: CGSize(width: 1376, height: 1032)) - 1376 / 595) < 1e-9)
     }
 
     @Test("The window is derived from the offset, rounded and clamped")

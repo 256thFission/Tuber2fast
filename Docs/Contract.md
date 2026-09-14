@@ -328,10 +328,12 @@ page forgets its entries.
 
 Pages sit in equal slots, each one viewport wide, and the user turns them
 horizontally with `UIScrollView` paging. The view never rests between two
-pages. A page is scaled to fit its slot and centered. The minimum zoom is
-that fit and the maximum is `ZoomCap`. A page turn is possible at fit zoom
-or when the page is panned to its own horizontal edge; zoomed in and away
-from an edge, a horizontal drag pans instead.
+pages. A page is scaled to fit its slot's width; shorter than the slot at
+that scale it is centered vertically, taller it starts at its top and
+scrolls vertically inside its slot. The minimum zoom is that width fit and
+the maximum is `ZoomCap`. A page turn is possible at fit zoom or when the
+page is panned to its own horizontal edge; zoomed in and away from an
+edge, a horizontal drag pans instead.
 
 The set of loaded pages follows the scroll position: pages within one slot
 of the current page get a `PKCanvasView`; pages within two get a decoded
