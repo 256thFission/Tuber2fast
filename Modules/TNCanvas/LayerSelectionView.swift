@@ -3,7 +3,8 @@ import UIKit
 
 /// The selected object's frame: a border, four corner handles, a rotate knob
 /// above the top edge, and one pan recognizer whose mode is decided at
-/// `.began` by where it landed.
+/// `.began` by where it landed. Locked, it is the border and a lock badge:
+/// no handles, no drag, and the menu offers Unlock and nothing else.
 ///
 /// It has no pixels of its own. The object the frame surrounds is the
 /// composite beneath it, which the notebook re-renders only when a drag ends,
@@ -65,6 +66,13 @@ final class LayerSelectionView: UIView {
     var onDragEnded: (@MainActor (PageSpaceTransform) -> Void)?
     /// Delete, chosen from the frame's edit menu.
     var onDeleteRequested: (@MainActor () -> Void)?
+    /// Lock or Unlock, chosen from the same menu; the value is the one asked
+    /// for. The frame changes nothing itself: the composite that answers
+    /// restates the flag through `setLocked`.
+    var onLockRequested: (@MainActor (Bool) -> Void)?
+
+    /// The flag the notebook holds, restated by every `setLayers`.
+    private(set) var isLocked: Bool
 
     /// Neither extent may fall below this. `Layer.validated()` refuses a
     /// determinant near zero, and a floor here is what keeps a handle from
@@ -78,13 +86,15 @@ final class LayerSelectionView: UIView {
 
     private var handles: [Corner: UIView] = [:]
     private let knob = UIView()
+    private let badge = UIImageView(image: UIImage(systemName: "lock.fill"))
     private lazy var editMenu = UIEditMenuInteraction(delegate: self)
     private var drag: DragMode?
 
-    init(layer: LayerID, transform: PageSpaceTransform) {
+    init(layer: LayerID, transform: PageSpaceTransform, locked: Bool) {
         self.layerID = layer
         self.accepted = transform
         self.working = transform
+        self.isLocked = locked
         super.init(frame: .zero)
 
         isOpaque = false
@@ -105,6 +115,9 @@ final class LayerSelectionView: UIView {
         knob.backgroundColor = .systemBlue
         knob.layer.cornerRadius = Self.knobSize / 2
         addSubview(knob)
+        badge.tintColor = .systemBlue
+        badge.contentMode = .scaleAspectFit
+        addSubview(badge)
 
         panRecognizer.addTarget(self, action: #selector(handlePan(_:)))
         addGestureRecognizer(panRecognizer)
@@ -112,6 +125,7 @@ final class LayerSelectionView: UIView {
         addGestureRecognizer(tapRecognizer)
         addInteraction(editMenu)
 
+        applyLock()
         place()
     }
 
@@ -155,13 +169,37 @@ final class LayerSelectionView: UIView {
             y: -Self.knobOffset - Self.knobSize,
             width: Self.knobSize, height: Self.knobSize
         )
+        badge.frame = CGRect(x: 4, y: 4, width: Self.knobSize, height: Self.knobSize)
     }
 
     /// The handles and the knob lie outside the bounds; without this a touch
-    /// on one never reaches the view at all.
+    /// on one never reaches the view at all. Locked, there is nothing outside
+    /// the bounds to reach.
     override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
-        if bounds.contains(point) || knob.frame.contains(point) { return true }
+        if bounds.contains(point) { return true }
+        if isLocked { return false }
+        if knob.frame.contains(point) { return true }
         return handles.values.contains { $0.frame.contains(point) }
+    }
+
+    // MARK: - Lock
+
+    /// The notebook restated the flag. A drag cannot start on a locked
+    /// frame; one in flight when a lock lands ends by reporting a transform
+    /// the notebook refuses, and `adopt` answers that as it answers any
+    /// refusal.
+    func setLocked(_ locked: Bool) {
+        guard locked != isLocked else { return }
+        isLocked = locked
+        applyLock()
+    }
+
+    private func applyLock() {
+        for handle in handles.values { handle.isHidden = isLocked }
+        knob.isHidden = isLocked
+        badge.isHidden = !isLocked
+        panRecognizer.isEnabled = !isLocked
+        layer.borderColor = isLocked ? UIColor.systemGray.cgColor : UIColor.systemBlue.cgColor
     }
 
     // MARK: - Told
@@ -276,6 +314,7 @@ final class LayerSelectionView: UIView {
     /// touch stream the simulator does not have. The gesture below is the
     /// only production caller and adds nothing but the touch.
     func beginDrag(at local: CGPoint) {
+        guard !isLocked else { return }
         drag = mode(forTouchAt: local)
     }
 
@@ -349,10 +388,33 @@ final class LayerSelectionView: UIView {
         ))
     }
 
-    /// The menu's one action, and the only thing a test can drive: whether
+    /// The menu's actions, and the only things a test can drive: whether
     /// `UIEditMenuInteraction` actually presents is not observable here.
     func deleteRequested() {
         onDeleteRequested?()
+    }
+
+    func lockRequested(_ locked: Bool) {
+        onLockRequested?(locked)
+    }
+
+    /// Unlock alone on a locked frame; Lock and Delete otherwise. Delete is
+    /// absent rather than disabled, so a locked object cannot be deleted
+    /// from here at all, which is what the notebook's refusal also says.
+    func menuActions() -> [UIAction] {
+        if isLocked {
+            return [UIAction(title: "Unlock", image: UIImage(systemName: "lock.open")) { [weak self] _ in
+                MainActor.assumeIsolated { self?.lockRequested(false) }
+            }]
+        }
+        return [
+            UIAction(title: "Lock", image: UIImage(systemName: "lock")) { [weak self] _ in
+                MainActor.assumeIsolated { self?.lockRequested(true) }
+            },
+            UIAction(title: "Delete", attributes: .destructive) { [weak self] _ in
+                MainActor.assumeIsolated { self?.deleteRequested() }
+            },
+        ]
     }
 }
 
@@ -362,12 +424,6 @@ extension LayerSelectionView: UIEditMenuInteractionDelegate {
         menuFor configuration: UIEditMenuConfiguration,
         suggestedActions: [UIMenuElement]
     ) -> UIMenu? {
-        MainActor.assumeIsolated {
-            UIMenu(children: [
-                UIAction(title: "Delete", attributes: .destructive) { [weak self] _ in
-                    MainActor.assumeIsolated { self?.deleteRequested() }
-                }
-            ])
-        }
+        MainActor.assumeIsolated { UIMenu(children: menuActions()) }
     }
 }

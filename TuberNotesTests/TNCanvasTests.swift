@@ -587,9 +587,9 @@ struct TNCanvasTests {
     func textHitTesting() {
         let a = LayerID(), b = LayerID(), link = LayerID()
         let rects = [
-            HitTarget(id: a, kind: .text, transform: .unitSquare(to: PageRect(x: 0, y: 0, width: 100, height: 100))),
-            HitTarget(id: b, kind: .text, transform: .unitSquare(to: PageRect(x: 50, y: 50, width: 100, height: 100))),
-            HitTarget(id: link, kind: .link, transform: .unitSquare(to: PageRect(x: 300, y: 300, width: 50, height: 50))),
+            HitTarget(id: a, kind: .text, transform: .unitSquare(to: PageRect(x: 0, y: 0, width: 100, height: 100)), locked: false),
+            HitTarget(id: b, kind: .text, transform: .unitSquare(to: PageRect(x: 50, y: 50, width: 100, height: 100)), locked: false),
+            HitTarget(id: link, kind: .link, transform: .unitSquare(to: PageRect(x: 300, y: 300, width: 50, height: 50)), locked: false),
         ]
         #expect(PageCanvasController.textHit(at: CGPoint(x: 10, y: 10), targets: rects) == .edit(a))
         #expect(PageCanvasController.textHit(at: CGPoint(x: 75, y: 75), targets: rects) == .edit(b))
@@ -1003,6 +1003,61 @@ struct TNCanvasTests {
         _ = runtime.retireAll()
     }
 
+    @Test("Lock from the frame's menu is one report; the composite that answers takes the handles down and the drag with them")
+    func lockIsOneReportAndTheCompositeLocksTheFrame() throws {
+        let reporter = RecordingReporter()
+        let image = imageLayer(x: 100, y: 200)
+        let (runtime, page, canvas) = try livePage(reporter, layers: [image])
+        canvas.tapped(at: centre(of: image))
+        let selection = try #require(frame(on: canvas))
+        #expect(!selection.isLocked)
+        #expect(selection.menuActions().map(\.title) == ["Lock", "Delete"])
+
+        selection.lockRequested(true)
+        #expect(reporter.locks.count == 1)
+        #expect(reporter.locks.first?.page == page && reporter.locks.first?.layer == image.id)
+        #expect(reporter.locks.first?.locked == true)
+        #expect(!selection.isLocked, "the frame waits for the composite, as it does for a delete")
+
+        canvas.setLayers([image.withLock(true)])
+        #expect(selection.isLocked)
+        #expect(frame(on: canvas) === selection, "the same frame, restated")
+        #expect(selection.menuActions().map(\.title) == ["Unlock"])
+        #expect(!selection.panRecognizer.isEnabled)
+        canvas.canvasView.layoutIfNeeded()
+        #expect(!selection.point(inside: CGPoint(x: 60, y: -30), with: nil), "the knob is gone")
+        #expect(selection.point(inside: CGPoint(x: 60, y: 40), with: nil), "the border still takes the tap that opens the menu")
+        selection.beginDrag(at: CGPoint(x: 60, y: 40))
+        selection.continueDrag(to: CGPoint(x: 90, y: 80), by: CGPoint(x: 30, y: 40))
+        selection.endDrag()
+        #expect(selection.working == image.transform, "a locked frame does not start a drag")
+        #expect(reporter.transforms.isEmpty)
+
+        selection.lockRequested(false)
+        #expect(reporter.locks.count == 2 && reporter.locks.last?.locked == false)
+        canvas.setLayers([image])
+        #expect(!selection.isLocked)
+        #expect(selection.menuActions().map(\.title) == ["Lock", "Delete"])
+        #expect(selection.panRecognizer.isEnabled)
+        _ = runtime.retireAll()
+    }
+
+    @Test("A tap on a locked image with the lasso raises a frame with the unlock affordance and no handles")
+    func aLockedImageSelectsLocked() throws {
+        let reporter = RecordingReporter()
+        let image = imageLayer(x: 100, y: 200).withLock(true)
+        let (runtime, _, canvas) = try livePage(reporter, layers: [image])
+
+        canvas.tapped(at: centre(of: image))
+        let selection = try #require(frame(on: canvas))
+        #expect(selection.layerID == image.id)
+        #expect(selection.isLocked)
+        #expect(selection.menuActions().map(\.title) == ["Unlock"])
+        #expect(!selection.panRecognizer.isEnabled)
+        #expect(selection.frame.origin == CGPoint(x: 100, y: 200))
+        _ = runtime.retireAll()
+    }
+
     private func descriptors(_ count: Int) -> [PageDescriptor] {
         (0..<count).map { _ in
             PageDescriptor(id: PageID(), geometry: .letter, paper: .known(.drawn(.blank)))
@@ -1080,6 +1135,13 @@ final class RecordingReporter: CanvasReporting {
         sequence.append("layerDeleteRequested")
     }
 
+    var locks: [(page: PageID, layer: LayerID, locked: Bool)] = []
+
+    func layerLockRequested(on page: PageID, layer: LayerID, locked: Bool) {
+        locks.append((page, layer, locked))
+        sequence.append("layerLockRequested")
+    }
+
     func pageBecameCurrent(_ page: PageID) { becameCurrent.append(page) }
     func windowChanged(to pages: [PageID]) { windows.append(pages) }
     func endBoundaryReached(seq: ReportSeq) {
@@ -1106,10 +1168,3 @@ final class RecordingReporter: CanvasReporting {
         sequence.append("textEditingEnded")
     }
 }
-    var locks: [(page: PageID, layer: LayerID, locked: Bool)] = []
-
-    func layerLockRequested(on page: PageID, layer: LayerID, locked: Bool) {
-        locks.append((page, layer, locked))
-        sequence.append("layerLockRequested")
-    }
-
