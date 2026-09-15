@@ -70,9 +70,17 @@ struct PageNavigatorSheet: View {
     @State private var bookmarkTitle = ""
 
     var body: some View {
-        NavigationStack {
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                MacaronHeader("Pages")
+                Spacer()
+                MacaronSegments(options: [(NavigatorTab.all, "All"), (NavigatorTab.marked, "Marked")], selection: $tab)
+                Button("Done") { dismiss() }
+                    .buttonStyle(MacaronWordChipStyle(fill: Macaron.vanilla))
+            }
+            .padding(20)
             ScrollView {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 140), spacing: 16)], spacing: 16) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 140), spacing: 20)], spacing: 20) {
                     ForEach(shown, id: \.element.id) { position, page in
                         cell(page, number: position + 1)
                     }
@@ -82,6 +90,7 @@ struct PageNavigatorSheet: View {
                 }
                 .padding(20)
             }
+            .macaronSheet()
             .overlay {
                 // Only the Marked tab can be empty: a notebook always has a
                 // page, and the All tab always has the "+" tile besides.
@@ -91,20 +100,6 @@ struct PageNavigatorSheet: View {
                         systemImage: "bookmark",
                         description: Text("Mark a page from its menu here, or from the toolbar.")
                     )
-                }
-            }
-            .navigationTitle("Pages")
-            .toolbar {
-                ToolbarItem(placement: .principal) {
-                    Picker("Show", selection: $tab) {
-                        Text("All").tag(NavigatorTab.all)
-                        Text("Marked").tag(NavigatorTab.marked)
-                    }
-                    .pickerStyle(.segmented)
-                    .frame(width: 220)
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
                 }
             }
             .confirmationDialog("Delete this page?", isPresented: isConfirmingDelete, titleVisibility: .visible) {
@@ -118,6 +113,7 @@ struct PageNavigatorSheet: View {
             }
             .bookmarkAlert(editor: editor, page: $bookmarkTarget, title: $bookmarkTitle)
         }
+        .background(MacaronGround())
     }
 
     /// The pages this tab shows, as *enumerated pairs*.
@@ -142,16 +138,14 @@ struct PageNavigatorSheet: View {
     private func cell(_ page: NavigatorPage, number: Int) -> some View {
         VStack(spacing: 6) {
             PageThumbnail(editor: editor, page: page)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 3)
-                        .stroke(page.isCurrent ? Color.accentColor : Color.secondary.opacity(0.35), lineWidth: page.isCurrent ? 3 : 1)
-                )
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .modifier(MacaronSelectedFrame(isSelected: page.isCurrent, radius: 10))
                 .overlay(alignment: .topTrailing) {
                     if page.bookmark != nil {
                         Image(systemName: "bookmark.fill")
-                            .font(.footnote)
-                            .foregroundStyle(Color.accentColor)
-                            .padding(5)
+                            .font(.footnote.weight(.black))
+                            .foregroundStyle(Macaron.strawberry)
+                            .padding(8)
                             .accessibilityLabel("Marked")
                     }
                 }
@@ -162,23 +156,24 @@ struct PageNavigatorSheet: View {
                 }
             HStack {
                 Text("\(number)")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(page.isCurrent ? .primary : .secondary)
+                    .font(Macaron.display(14).monospacedDigit())
+                    .foregroundStyle(Macaron.ink)
                 Spacer()
                 Button(role: .destructive) {
                     pageToDelete = page.id
                 } label: {
                     Label("Delete page", systemImage: "trash").labelStyle(.iconOnly)
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(MacaronChipStyle())
                 .disabled(!page.isDeletable)
             }
+            .padding(.top, 6)
             // A mark nobody named shows nothing here: the ordinal above is
             // already what it is called.
             if let title = page.bookmark, !title.isEmpty {
                 Text(title)
                     .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Macaron.ink)
                     .lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -229,11 +224,12 @@ struct PageNavigatorSheet: View {
                     .font(.caption)
                     .multilineTextAlignment(.center)
             }
-            .foregroundStyle(.secondary)
+            .foregroundStyle(Macaron.ink)
+            .padding(12)
             .frame(maxWidth: .infinity)
             .aspectRatio(PageGeometry.letter.width / PageGeometry.letter.height, contentMode: .fit)
-            .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 3))
-            .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [6])).foregroundStyle(.secondary))
+            .background(Macaron.card, in: RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(style: StrokeStyle(lineWidth: Macaron.outline, dash: [8, 6])).foregroundStyle(Macaron.ink))
         }
         .buttonStyle(.plain)
         .dropDestination(for: DraggedPage.self) { dropped, _ in
@@ -301,7 +297,7 @@ private struct PageThumbnail: View {
 
     var body: some View {
         ZStack {
-            Rectangle().fill(Color(uiColor: .systemBackground))
+            Rectangle().fill(Macaron.card)
             if let image {
                 Image(decorative: image, scale: 1)
                     .resizable()
