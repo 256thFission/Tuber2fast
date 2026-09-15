@@ -67,13 +67,17 @@ enum EditorToolButton: Hashable, CaseIterable, Identifiable {
 /// done is one call on the editor. The strip decides nothing.
 struct ToolStrip: View {
     let editor: EditorViewModel
+    var vertical = false
+    var chip: CGFloat? = nil
 
     @State private var optionsFor: EditorToolButton?
 
     var body: some View {
-        HStack(spacing: 8) {
-            ForEach(EditorToolButton.allCases) { button in
-                toolButton(button)
+        Group {
+            if vertical {
+                VStack(spacing: 8) { buttons }
+            } else {
+                HStack(spacing: 8) { buttons }
             }
         }
         .onAppear {
@@ -83,15 +87,21 @@ struct ToolStrip: View {
         }
     }
 
+    private var buttons: some View {
+        ForEach(EditorToolButton.allCases) { button in
+            toolButton(button)
+        }
+    }
+
     private func toolButton(_ button: EditorToolButton) -> some View {
         let isSelected = EditorToolButton(editor.tool) == button
         return Button {
             tap(button, isSelected: isSelected)
         } label: {
             Image(systemName: button.symbol)
-                .frame(width: 28, height: 24)
+                .frame(width: chip == nil ? 28 : nil, height: chip == nil ? 24 : nil)
         }
-        .buttonStyle(MacaronChipStyle(isOn: isSelected))
+        .buttonStyle(MacaronChipStyle(isOn: isSelected, size: chip))
         .accessibilityLabel(button.label)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
         .popover(isPresented: presentation(of: button)) {

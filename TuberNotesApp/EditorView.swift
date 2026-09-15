@@ -40,16 +40,36 @@ struct EditorView: View {
     @State private var bookmarkTitle = ""
 
     var body: some View {
-        VStack(spacing: 0) {
-            toolbar
-            CanvasHost(controller: editor.canvasHost)
-                .overlay(alignment: .top) {
-                    if let failure = editor.lastSaveError {
-                        RefusalBar(message: Self.message(for: failure))
-                    } else if let fault = editor.lastContentError {
-                        RefusalBar(message: "That couldn't be added: \(fault.description)")
+        GeometryReader { geo in
+            clusterLayout(viewport: geo.size)
+                .coordinateSpace(name: "editor")
+                .onAppear {
+                    viewportSize = geo.size
+                    publishBandActions()
+                    resolvePlacement(viewport: geo.size)
+                    if ProcessInfo.processInfo.arguments.contains("-MacaronShowNavigator") { isShowingNavigator = true }
+                    if let forced = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("-MacaronCluster=") }) {
+                        switch forced.dropFirst("-MacaronCluster=".count) {
+                        case "leading": placement = .snapped(.leading)
+                        case "trailing": placement = .snapped(.trailing)
+                        case "top": placement = .snapped(.top)
+                        case "bottom": placement = .snapped(.bottom)
+                        default: placement = .floating(fx: 0.5, fy: 0.45)
+                        }
                     }
                 }
+                .onChange(of: geo.size) { _, size in
+                    let turned = (size.width > size.height) != (viewportSize.width > viewportSize.height)
+                    viewportSize = size
+                    if turned { resolvePlacement(viewport: size) }
+                }
+        }
+        .overlay(alignment: .top) {
+            if let failure = editor.lastSaveError {
+                RefusalBar(message: Self.message(for: failure))
+            } else if let fault = editor.lastContentError {
+                RefusalBar(message: "That couldn't be added: \(fault.description)")
+            }
         }
         // The choice is acted on after the sheet is gone: the photo leg
         // presents a second sheet, and two presentations in one frame do not
@@ -124,33 +144,85 @@ struct EditorView: View {
         return pages[editor.currentPageIndex]
     }
 
-    // MARK: The toolbar
+    // MARK: The cluster
 
-    private var toolbar: some View {
-        HStack(spacing: 14) {
-            ToolStrip(editor: editor)
-            MacaronBar()
-            Button { editor.undo() } label: {
-                Label("Undo", systemImage: "arrow.uturn.backward").labelStyle(.iconOnly)
+    @State private var placement: ClusterPlacement = .snapped(.leading)
+    @State private var dragPoint: CGPoint?
+    @State private var viewportSize: CGSize = .zero
+
+    private var currentGeometry: PageGeometry {
+        currentPage?.geometry ?? PageGeometry.letter
+    }
+
+    private func resolvePlacement(viewport: CGSize) {
+        let landscape = viewport.width > viewport.height
+        placement = ClusterPlacement.load(landscape: landscape)
+            ?? ClusterPlacement.proposed(page: currentGeometry, viewport: viewport)
+    }
+
+    @ViewBuilder
+    private func clusterLayout(viewport: CGSize) -> some View {
+        let canvas = CanvasHost(controller: editor.canvasHost)
+        if let dragPoint {
+            // Floating while dragged: the viewport never changes under a drag.
+            ZStack {
+                canvas
+                cluster(vertical: true, chip: ClusterMetrics.smallChip, floating: true)
+                    .position(x: dragPoint.x, y: dragPoint.y + clusterLength(chip: ClusterMetrics.smallChip) / 2 - 12)
             }
-            .disabled(!editor.canUndo)
-            .contextMenu {
-                Button { editor.redo() } label: { Label("Redo", systemImage: "arrow.uturn.forward") }
-                    .disabled(!editor.canRedo)
+        } else {
+            switch placement {
+            case .floating(let fx, let fy):
+                ZStack {
+                    canvas
+                    cluster(vertical: true, chip: ClusterMetrics.smallChip, floating: true)
+                        .position(x: fx * viewport.width, y: fy * viewport.height)
+                }
+            case .snapped(let edge):
+                let ribbon = ClusterMetrics.slack(on: edge, page: currentGeometry, viewport: viewport) < ClusterMetrics.thickness
+                let chip = ribbon ? ClusterMetrics.smallChip : ClusterMetrics.chip
+                let snapped = cluster(vertical: edge.isVertical, chip: chip, floating: false)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                switch edge {
+                case .leading: HStack(spacing: 0) { snapped.frame(width: chip + 14); canvas }
+                case .trailing: HStack(spacing: 0) { canvas; snapped.frame(width: chip + 14) }
+                case .top: VStack(spacing: 0) { snapped.frame(height: chip + 14); canvas }
+                case .bottom: VStack(spacing: 0) { canvas; snapped.frame(height: chip + 14) }
+                }
             }
-            Spacer()
-            pageReadout
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-        .buttonStyle(MacaronChipStyle())
-        .menuStyle(.button)
-        .background(Macaron.card)
-        .overlay(alignment: .bottom) { Rectangle().fill(Macaron.ink).frame(height: Macaron.outline) }
-        .onAppear {
-            publishBandActions()
-            if ProcessInfo.processInfo.arguments.contains("-MacaronShowNavigator") { isShowingNavigator = true }
+    }
+
+    private func clusterLength(chip: CGFloat) -> CGFloat { 24 + 7 * (chip + 8) + 3 + 16 }
+
+    private func cluster(vertical: Bool, chip: CGFloat, floating: Bool) -> some View {
+        ClusterView(editor: editor, vertical: vertical, chip: chip, floating: floating) { value in
+            dragPoint = value.location
+        } onDragEnded: { value in
+            dragPoint = nil
+            settle(predicted: value.predictedEndLocation, end: value.location)
         }
+    }
+
+    /// Within snapDistance of an edge, or flicked toward one, snaps; anywhere
+    /// else floats, stored as fractions of the viewport.
+    private func settle(predicted: CGPoint, end: CGPoint) {
+        let viewport = viewportSize
+        guard viewport.width > 0, viewport.height > 0 else { return }
+        let distances: [(ClusterEdge, CGFloat)] = [
+            (.leading, predicted.x), (.trailing, viewport.width - predicted.x),
+            (.top, predicted.y), (.bottom, viewport.height - predicted.y),
+        ]
+        let nearest = distances.min { $0.1 < $1.1 }!
+        if nearest.1 < ClusterMetrics.snapDistance {
+            placement = .snapped(nearest.0)
+        } else {
+            placement = .floating(
+                fx: min(max(end.x / viewport.width, 0.05), 0.95),
+                fy: min(max((end.y + clusterLength(chip: ClusterMetrics.smallChip) / 2 - 12) / viewport.height, 0.1), 0.9)
+            )
+        }
+        placement.save(landscape: viewport.width > viewport.height)
     }
 
     /// The whole chip is a menu; "Go to page" heads it and opens the navigator.
@@ -197,7 +269,7 @@ struct EditorView: View {
         rows.append(.init(label: "PDF", symbol: "doc") { isPickingPDF = true })
         rows.append(.init(label: "Sticker", symbol: "seal") { isPickingSticker = true })
         rows.append(.init(label: "Link", symbol: "link") { isPickingLinkTarget = true })
-        workspace.bandActions = MacaronBandActions(insert: rows, export: { isExporting = true })
+        workspace.bandActions = MacaronBandActions(insert: rows, export: { isExporting = true }, readout: { AnyView(pageReadout) })
     }
 
     private var paperMenu: some View {

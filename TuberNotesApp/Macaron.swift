@@ -50,14 +50,17 @@ extension View {
 struct MacaronChipStyle: ButtonStyle {
     var isOn = false
     var fill: Color? = nil
+    /// A square chip of exactly this size; nil is the band's 34pt-minimum chip.
+    var size: CGFloat? = nil
     @Environment(\.isEnabled) private var isEnabled
 
     func makeBody(configuration: Configuration) -> some View {
         let held = isOn || configuration.isPressed
         configuration.label
-            .font(.system(size: 16, weight: .heavy, design: .rounded))
-            .frame(minWidth: 34, minHeight: 34)
-            .padding(.horizontal, 4)
+            .font(.system(size: size.map { $0 * 0.4 } ?? 16, weight: .heavy, design: .rounded))
+            .frame(minWidth: size ?? 34, minHeight: size ?? 34)
+            .frame(width: size, height: size)
+            .padding(.horizontal, size == nil ? 4 : 0)
             .foregroundStyle(held ? .white : Macaron.ink)
             .macaronCard(fill: held ? Macaron.strawberry : (fill ?? Macaron.card), radius: 10)
             .opacity(isEnabled ? 1 : 0.35)
@@ -81,6 +84,8 @@ struct MacaronBandActions {
     }
     var insert: [Row]
     var export: () -> Void
+    /// The page readout chip, built by the editor that owns its sheets.
+    var readout: () -> AnyView
 }
 
 /// The grid ground as a SwiftUI background, for sheets and the library.

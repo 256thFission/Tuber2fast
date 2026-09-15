@@ -75,6 +75,9 @@ private struct TabBar: View {
             }
             Spacer()
             if workspace.activeTab != nil, let actions = workspace.bandActions {
+                actions.readout()
+                    .buttonStyle(MacaronChipStyle())
+                    .menuStyle(.button)
                 Menu {
                     ForEach(actions.insert) { row in
                         Button(action: row.action) { Label(row.label, systemImage: row.symbol) }
