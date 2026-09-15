@@ -170,3 +170,97 @@ struct MacaronBandActions {
     var insert: [Row]
     var export: () -> Void
 }
+
+/// The grid ground as a SwiftUI background, for sheets and the library.
+struct MacaronGround: View {
+    var body: some View {
+        Canvas { cg, size in
+            let step: CGFloat = 34
+            var path = Path()
+            var x: CGFloat = 0
+            while x < size.width { path.move(to: CGPoint(x: x, y: 0)); path.addLine(to: CGPoint(x: x, y: size.height)); x += step }
+            var y: CGFloat = 0
+            while y < size.height { path.move(to: CGPoint(x: 0, y: y)); path.addLine(to: CGPoint(x: size.width, y: y)); y += step }
+            cg.stroke(path, with: .color(Color(uiColor: Macaron.gridUI)), lineWidth: 1.5)
+        }
+        .background(Macaron.ground)
+        .ignoresSafeArea()
+    }
+}
+
+/// A fat rounded header, the way every sheet and section is titled.
+struct MacaronHeader: View {
+    let text: String
+    var size: CGFloat = 22
+    init(_ text: String, size: CGFloat = 22) { self.text = text; self.size = size }
+    var body: some View {
+        Text(text.uppercased())
+            .font(Macaron.display(size))
+            .foregroundStyle(Macaron.ink)
+    }
+}
+
+/// A section card with a hard shadow: white, 3pt outline, 14pt radius.
+extension View {
+    func macaronSection(padding: CGFloat = 16, shadow: CGFloat = 5) -> some View {
+        self.padding(padding).macaronCard(fill: Macaron.card, radius: 14, shadow: shadow)
+    }
+}
+
+/// A text-bearing chip (a button with a word on it), outlined, held = strawberry.
+struct MacaronWordChipStyle: ButtonStyle {
+    var isOn = false
+    var fill: Color? = nil
+    @Environment(\.isEnabled) private var isEnabled
+    func makeBody(configuration: Configuration) -> some View {
+        let held = isOn || configuration.isPressed
+        configuration.label
+            .font(Macaron.display(14))
+            .textCase(.uppercase)
+            .padding(.horizontal, 12)
+            .frame(minHeight: 34)
+            .foregroundStyle(held ? .white : Macaron.ink)
+            .macaronCard(fill: held ? Macaron.strawberry : (fill ?? Macaron.card), radius: 10)
+            .opacity(isEnabled ? 1 : 0.35)
+    }
+}
+
+/// A row of outlined chips standing in for a segmented picker: one held.
+struct MacaronSegments<T: Hashable>: View {
+    let options: [(T, String)]
+    @Binding var selection: T
+    var body: some View {
+        HStack(spacing: 8) {
+            ForEach(options, id: \.0) { option in
+                Button(option.1) { selection = option.0 }
+                    .buttonStyle(MacaronWordChipStyle(isOn: selection == option.0))
+            }
+        }
+    }
+}
+
+/// A hard-shadowed selection ring around a swatch or thumbnail.
+struct MacaronSelectedFrame: ViewModifier {
+    let isSelected: Bool
+    var radius: CGFloat = 10
+    func body(content: Content) -> some View {
+        content
+            .background(RoundedRectangle(cornerRadius: radius).fill(Macaron.ink).offset(x: isSelected ? 4 : 0, y: isSelected ? 4 : 0))
+            .overlay(RoundedRectangle(cornerRadius: radius).strokeBorder(isSelected ? Macaron.strawberry : Macaron.ink, lineWidth: Macaron.outline))
+    }
+}
+
+/// Text on any Macaron surface reads in ink, not the system label colour.
+struct MacaronSheetChrome: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .foregroundStyle(Macaron.ink)
+            .tint(Macaron.strawberry)
+            .scrollContentBackground(.hidden)
+            .background(MacaronGround())
+    }
+}
+
+extension View {
+    func macaronSheet() -> some View { modifier(MacaronSheetChrome()) }
+}
