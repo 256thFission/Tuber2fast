@@ -147,7 +147,10 @@ struct EditorView: View {
         .menuStyle(.button)
         .background(Macaron.card)
         .overlay(alignment: .bottom) { Rectangle().fill(Macaron.ink).frame(height: Macaron.outline) }
-        .onAppear { publishBandActions() }
+        .onAppear {
+            publishBandActions()
+            if ProcessInfo.processInfo.arguments.contains("-MacaronShowNavigator") { isShowingNavigator = true }
+        }
     }
 
     /// The whole chip is a menu; "Go to page" heads it and opens the navigator.

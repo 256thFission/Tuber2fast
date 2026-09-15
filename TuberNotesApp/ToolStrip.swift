@@ -76,6 +76,11 @@ struct ToolStrip: View {
                 toolButton(button)
             }
         }
+        .onAppear {
+            if ProcessInfo.processInfo.arguments.contains("-MacaronShowTools") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) { optionsFor = EditorToolButton(editor.tool) }
+            }
+        }
     }
 
     private func toolButton(_ button: EditorToolButton) -> some View {
@@ -149,6 +154,35 @@ struct ToolStrip: View {
     }
 }
 
+/// The popover body: a card on the grid ground, hard shadow, 3pt outline.
+private struct MacaronPopover: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .padding(18)
+            .macaronCard(fill: Macaron.card, radius: 14, shadow: 5)
+            .padding(.init(top: 16, leading: 16, bottom: 21, trailing: 21))
+            .background(MacaronGround())
+            .foregroundStyle(Macaron.ink)
+            .tint(Macaron.strawberry)
+            .presentationCompactAdaptation(.popover)
+    }
+}
+
+private extension View {
+    func macaronPopover() -> some View { modifier(MacaronPopover()) }
+}
+
+/// A section label in the fat rounded face.
+private struct SectionLabel: View {
+    let text: String
+    init(_ text: String) { self.text = text }
+    var body: some View {
+        Text(text.uppercased())
+            .font(Macaron.display(12))
+            .foregroundStyle(Macaron.ink)
+    }
+}
+
 /// Width and colour for the ink in hand.
 private struct InkOptions: View {
     let editor: EditorViewModel
@@ -156,28 +190,29 @@ private struct InkOptions: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            WidthDots(selected: preset.width, choose: { editor.setWidth($0) })
+            VStack(alignment: .leading, spacing: 8) {
+                SectionLabel("Width")
+                WidthDots(selected: preset.width, choose: { editor.setWidth($0) })
+            }
             colors
-            gestures
+            VStack(alignment: .leading, spacing: 8) {
+                SectionLabel("Gestures")
+                gestures
+            }
         }
-        .padding(18)
-        .presentationCompactAdaptation(.popover)
+        .macaronPopover()
     }
 
     private var colors: some View {
         VStack(alignment: .leading, spacing: 12) {
-            // Recents first: the colours the person actually drew with are
-            // nearer the thumb than the ones the app shipped with.
-            LazyVGrid(columns: Self.columns, alignment: .leading, spacing: 10) {
-                ForEach(editor.palette.recentColors + ToolColor.defaults, id: \.rgba.hex) { color in
-                    Button { editor.setColor(color) } label: {
-                        Swatch(color: color, isSelected: color == preset.color)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(Self.name(of: color))
-                    .accessibilityAddTraits(color == preset.color ? .isSelected : [])
-                }
+            // Recents in their own row: the colours the person actually drew
+            // with are nearer the thumb than the ones the app shipped with.
+            if !editor.palette.recentColors.isEmpty {
+                SectionLabel("Recent")
+                grid(editor.palette.recentColors)
             }
+            SectionLabel("Colour")
+            grid(ToolColor.defaults)
             ColorPicker(
                 "Custom colour",
                 selection: Binding(
@@ -188,7 +223,20 @@ private struct InkOptions: View {
                 // PencilKit's, and a translucent colour over it dims twice.
                 supportsOpacity: false
             )
-            .font(.callout)
+            .font(Macaron.display(13))
+        }
+    }
+
+    private func grid(_ colors: [ToolColor]) -> some View {
+        LazyVGrid(columns: Self.columns, alignment: .leading, spacing: 12) {
+            ForEach(colors, id: \.rgba.hex) { color in
+                Button { editor.setColor(color) } label: {
+                    Swatch(color: color, isSelected: color == preset.color)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(Self.name(of: color))
+                .accessibilityAddTraits(color == preset.color ? .isSelected : [])
+            }
         }
     }
 
@@ -217,14 +265,14 @@ private struct InkOptions: View {
                     }
                 }
                 .pickerStyle(.menu)
-                .font(.callout)
+                .font(Macaron.display(13))
             }
         }
     }
 
     private static let columns = Array(
-        repeating: GridItem(.fixed(30), spacing: 10, alignment: .leading),
-        count: 8
+        repeating: GridItem(.fixed(36), spacing: 12, alignment: .leading),
+        count: 7
     )
 
     /// VoiceOver has no word for a swatch, so it reads the bytes.
@@ -257,35 +305,51 @@ private struct TextOptions: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            HStack(spacing: 12) {
-                Picker("Size", selection: Binding(get: { style.size }, set: { editor.setTextStyle(style.with(size: $0)) })) {
-                    ForEach(Self.sizes, id: \.self) { size in
-                        Text("\(Int(size)) pt").tag(size)
+            VStack(alignment: .leading, spacing: 8) {
+                SectionLabel("Style")
+                HStack(spacing: 8) {
+                    Picker("Size", selection: Binding(get: { style.size }, set: { editor.setTextStyle(style.with(size: $0)) })) {
+                        ForEach(Self.sizes, id: \.self) { size in
+                            Text("\(Int(size)) pt").tag(size)
+                        }
                     }
+                    .pickerStyle(.menu)
+                    .font(Macaron.display(13))
+                    chip("bold", isOn: style.bold) { editor.setTextStyle(style.with(bold: !style.bold)) }
+                    chip("italic", isOn: style.italic) { editor.setTextStyle(style.with(italic: !style.italic)) }
+                    chip("underline", isOn: style.underline) { editor.setTextStyle(style.with(underline: !style.underline)) }
                 }
-                .pickerStyle(.menu)
-                Toggle("Bold", systemImage: "bold", isOn: Binding(get: { style.bold }, set: { editor.setTextStyle(style.with(bold: $0)) }))
-                Toggle("Italic", systemImage: "italic", isOn: Binding(get: { style.italic }, set: { editor.setTextStyle(style.with(italic: $0)) }))
-                Toggle("Underline", systemImage: "underline", isOn: Binding(get: { style.underline }, set: { editor.setTextStyle(style.with(underline: $0)) }))
             }
-            .toggleStyle(.button)
-            .labelStyle(.iconOnly)
-            Picker("Alignment", selection: Binding(get: { alignment }, set: { editor.setTextAlignment($0) })) {
-                Image(systemName: "text.alignleft").tag(TNModel.TextAlignment.leading)
-                Image(systemName: "text.aligncenter").tag(TNModel.TextAlignment.center)
-                Image(systemName: "text.alignright").tag(TNModel.TextAlignment.trailing)
+            VStack(alignment: .leading, spacing: 8) {
+                SectionLabel("Align")
+                MacaronSegments(
+                    options: [
+                        (TNModel.TextAlignment.leading, "Left"),
+                        (TNModel.TextAlignment.center, "Centre"),
+                        (TNModel.TextAlignment.trailing, "Right"),
+                    ],
+                    selection: Binding(get: { alignment }, set: { editor.setTextAlignment($0) })
+                )
             }
-            .pickerStyle(.segmented)
             colors
         }
-        .frame(width: 340)
-        .padding(18)
-        .presentationCompactAdaptation(.popover)
+        .frame(width: 360)
+        .macaronPopover()
+    }
+
+    private func chip(_ symbol: String, isOn: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol).frame(width: 24, height: 24)
+        }
+        .buttonStyle(MacaronChipStyle(isOn: isOn))
+        .accessibilityLabel(symbol.capitalized)
+        .accessibilityAddTraits(isOn ? .isSelected : [])
     }
 
     private var colors: some View {
         VStack(alignment: .leading, spacing: 12) {
-            LazyVGrid(columns: Self.columns, alignment: .leading, spacing: 10) {
+            SectionLabel("Colour")
+            LazyVGrid(columns: Self.columns, alignment: .leading, spacing: 12) {
                 ForEach(ToolColor.defaults, id: \.rgba.hex) { color in
                     Button { editor.setTextStyle(style.with(color: color.rgba)) } label: {
                         Swatch(color: color, isSelected: color.rgba == style.color)
@@ -303,13 +367,13 @@ private struct TextOptions: View {
                 ),
                 supportsOpacity: false
             )
-            .font(.callout)
+            .font(Macaron.display(13))
         }
     }
 
     private static let columns = Array(
-        repeating: GridItem(.fixed(30), spacing: 10, alignment: .leading),
-        count: 8
+        repeating: GridItem(.fixed(36), spacing: 12, alignment: .leading),
+        count: 7
     )
 }
 
@@ -334,8 +398,9 @@ private struct EraserOptions: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Picker(
-                "Eraser",
+            SectionLabel("Eraser")
+            MacaronSegments(
+                options: [(EraserMode.object, "Object"), (EraserMode.pixel, "Pixel")],
                 // KNOWN DEFECT: the setter is a closure literal because
                 // `set: editor.setEraserMode` crashes the compiler. Apple
                 // Swift 6.3.3 dies in IRGen emitting the reabstraction thunk
@@ -344,21 +409,17 @@ private struct EraserOptions: View {
                 // Measured on this file, 2026-09-11. The literal costs
                 // nothing; delete this note when the toolchain moves.
                 selection: Binding(get: { mode }, set: { editor.setEraserMode($0) })
-            ) {
-                Text("Object").tag(EraserMode.object)
-                Text("Pixel").tag(EraserMode.pixel)
-            }
-            .pickerStyle(.segmented)
+            )
 
             // The object eraser takes whole strokes and has no width, so the
             // dots are absent rather than disabled: `setWidth` traps on it.
             if let pixelWidth {
+                SectionLabel("Width")
                 WidthDots(selected: pixelWidth, choose: { editor.setWidth($0) })
             }
         }
-        .frame(width: 260)
-        .padding(18)
-        .presentationCompactAdaptation(.popover)
+        .frame(width: 260, alignment: .leading)
+        .macaronPopover()
     }
 }
 
@@ -370,17 +431,15 @@ private struct WidthDots: View {
     let choose: (ToolWidth) -> Void
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 10) {
             ForEach(ToolWidth.allCases, id: \.self) { width in
+                let held = selected == width
                 Button { choose(width) } label: {
                     Circle()
-                        .fill(.primary)
+                        .fill(held ? .white : Macaron.ink)
                         .frame(width: Self.diameter(width), height: Self.diameter(width))
                         .frame(width: 44, height: 44)
-                        .background(
-                            selected == width ? Color.accentColor.opacity(0.22) : .clear,
-                            in: .rect(cornerRadius: 8)
-                        )
+                        .macaronCard(fill: held ? Macaron.strawberry : Macaron.card, radius: 10)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(Self.label(width))
@@ -414,17 +473,15 @@ private struct Swatch: View {
     let isSelected: Bool
 
     var body: some View {
+        // The selected swatch is said with a hard offset shadow, not a ring:
+        // nothing in Macaron tints.
         Circle()
             .fill(Color(color.uiColor))
-            .frame(width: 26, height: 26)
-            // A hairline, so a white or near-white swatch still has an edge
-            // against the popover.
-            .overlay(Circle().strokeBorder(.separator, lineWidth: 0.5))
-            .overlay(
-                Circle()
-                    .strokeBorder(Color.accentColor, lineWidth: isSelected ? 2 : 0)
-                    .padding(-3)
+            .overlay(Circle().strokeBorder(Macaron.ink, lineWidth: Macaron.outline))
+            .background(
+                Circle().fill(Macaron.ink).offset(x: isSelected ? 3 : 0, y: isSelected ? 3 : 0)
             )
             .frame(width: 30, height: 30)
+            .frame(width: 36, height: 36, alignment: .topLeading)
     }
 }
