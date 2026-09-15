@@ -455,15 +455,22 @@ if [ -n "$DEPLOYMENT_TARGET" ]; then
   fi
 fi
 
-# An Xcode that predates the device's OS cannot install to it at all.
+# An Xcode a whole major behind the device's OS cannot install to it. A
+# minor ahead is fine: measured 2026-09-15, Xcode 26.6 with SDK 26.5
+# built, installed, launched, and streamed a console to an iPad on
+# iPadOS 26.6.2, once the developer disk image services answered, which
+# the check above already requires. The old gate stopped on any newer
+# minor and blocked every device run for a point release.
 if [ -n "$SDK_VERSION" ]; then
-  sdk_mm="$(printf '%s' "$SDK_VERSION" | cut -d. -f1,2)"
-  dev_mm="$(printf '%s' "$D_OS" | cut -d. -f1,2)"
-  if version_ge "$sdk_mm" "$dev_mm"; then
+  sdk_major="$(printf '%s' "$SDK_VERSION" | cut -d. -f1)"
+  dev_major="$(printf '%s' "$D_OS" | cut -d. -f1)"
+  if [ "$dev_major" -gt "$sdk_major" ]; then
+    bad "iPadOS $D_OS is a major release past the installed SDK $SDK_VERSION" \
+        "update Xcode; this Xcode cannot install to that iPadOS"
+  elif version_ge "$SDK_VERSION" "$D_OS"; then
     ok "SDK $SDK_VERSION supports iPadOS $D_OS"
   else
-    bad "iPadOS $D_OS is newer than the installed SDK $SDK_VERSION" \
-        "update Xcode; this Xcode cannot install to that iPadOS"
+    ok "SDK $SDK_VERSION is behind iPadOS $D_OS by a minor; installs anyway (disk image services answered)"
   fi
 fi
 
