@@ -158,3 +158,15 @@ final class MacaronCanvasSkin {
         mirror.subviews.first?.clipsToBounds = true
     }
 }
+
+/// What the workspace band's Insert and Export chips do for the open editor.
+struct MacaronBandActions {
+    struct Row: Identifiable {
+        let id = UUID()
+        let label: String
+        let symbol: String
+        let action: () -> Void
+    }
+    var insert: [Row]
+    var export: () -> Void
+}

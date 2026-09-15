@@ -127,81 +127,39 @@ struct EditorView: View {
     // MARK: The toolbar
 
     private var toolbar: some View {
-        ScrollView(.horizontal) {
-            HStack(spacing: 14) {
-                ToolStrip(editor: editor)
-                MacaronBar()
-                history
-                MacaronBar()
-                pages
-                MacaronBar()
-                paperMenu
-                insertMenu
-                Button { isExporting = true } label: {
-                    Label("Export", systemImage: "square.and.arrow.up")
-                        .labelStyle(.iconOnly)
-                }
-                .buttonStyle(MacaronChipStyle(fill: Macaron.vanilla))
-                Button(role: .destructive) {
-                    isConfirmingPageDelete = true
-                } label: {
-                    Label("Delete page", systemImage: "trash")
-                        .labelStyle(.iconOnly)
-                }
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-            .buttonStyle(MacaronChipStyle())
-            .menuStyle(.button)
-        }
-        .scrollIndicators(.hidden)
-        .background(Macaron.card)
-        .overlay(alignment: .bottom) { Rectangle().fill(Macaron.ink).frame(height: Macaron.outline) }
-    }
-
-    private var history: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 14) {
+            ToolStrip(editor: editor)
+            MacaronBar()
             Button { editor.undo() } label: {
                 Label("Undo", systemImage: "arrow.uturn.backward").labelStyle(.iconOnly)
             }
             .disabled(!editor.canUndo)
-
-            Button { editor.redo() } label: {
-                Label("Redo", systemImage: "arrow.uturn.forward").labelStyle(.iconOnly)
+            .contextMenu {
+                Button { editor.redo() } label: { Label("Redo", systemImage: "arrow.uturn.forward") }
+                    .disabled(!editor.canRedo)
             }
-            .disabled(!editor.canRedo)
+            Spacer()
+            pageReadout
         }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .buttonStyle(MacaronChipStyle())
+        .menuStyle(.button)
+        .background(Macaron.card)
+        .overlay(alignment: .bottom) { Rectangle().fill(Macaron.ink).frame(height: Macaron.outline) }
+        .onAppear { publishBandActions() }
     }
 
-    private var pages: some View {
-        HStack(spacing: 8) {
-            Button {
-                editor.scroll(toPageIndex: editor.currentPageIndex - 1)
-            } label: {
-                Label("Previous page", systemImage: "chevron.left").labelStyle(.iconOnly)
-            }
-            .disabled(editor.currentPageIndex <= 0)
-
+    /// Tap opens the navigator; long press holds the page actions.
+    private var pageReadout: some View {
+        Button { isShowingNavigator = true } label: {
             Text("Page \(editor.currentPageIndex + 1) of \(editor.pageCount)")
                 .font(Macaron.display(14).monospacedDigit())
-                .foregroundStyle(Macaron.ink)
                 .fixedSize()
-
-            Button {
-                editor.scroll(toPageIndex: editor.currentPageIndex + 1)
-            } label: {
-                Label("Next page", systemImage: "chevron.right").labelStyle(.iconOnly)
-            }
-            .disabled(editor.currentPageIndex >= editor.pageCount - 1)
-
-            Button { isAddingPage = true } label: {
-                Label("Add page", systemImage: "plus.rectangle.portrait").labelStyle(.iconOnly)
-            }
-
-            // Filled when this page is already marked, so the toolbar says
-            // what the state is rather than only offering the action; it
-            // opens the navigator's own alert, pre-filled, so a page marked
-            // from here can be named without being unmarked first.
+                .padding(.horizontal, 6)
+        }
+        .contextMenu {
+            Button { isAddingPage = true } label: { Label("Add page", systemImage: "plus.rectangle.portrait") }
             Button {
                 guard let page = currentPage else { return }
                 bookmarkTitle = page.bookmark ?? ""
@@ -211,13 +169,27 @@ struct EditorView: View {
                     currentPage?.bookmark == nil ? "Bookmark page" : "Edit bookmark",
                     systemImage: currentPage?.bookmark == nil ? "bookmark" : "bookmark.fill"
                 )
-                .labelStyle(.iconOnly)
             }
-
-            Button { isShowingNavigator = true } label: {
-                Label("Pages", systemImage: "rectangle.grid.2x2").labelStyle(.iconOnly)
-            }
+            paperMenu
+            Button(role: .destructive) { isConfirmingPageDelete = true } label: { Label("Delete page", systemImage: "trash") }
         }
+    }
+
+    /// Insert and Export live in the workspace band; the band reaches the
+    /// state here through these closures on the workspace.
+    private func publishBandActions() {
+        var rows: [MacaronBandActions.Row] = []
+        if UIImagePickerController.isSourceTypeAvailable(.camera) {
+            rows.append(.init(label: "Take Photo", symbol: "camera") { isTakingPhoto = true })
+        }
+        rows.append(.init(label: "Photo", symbol: "photo") { photoDestination = .layerOnCurrentPage; isPickingPhoto = true })
+        if VNDocumentCameraViewController.isSupported {
+            rows.append(.init(label: "Scan Document", symbol: "doc.viewfinder") { isScanning = true })
+        }
+        rows.append(.init(label: "PDF", symbol: "doc") { isPickingPDF = true })
+        rows.append(.init(label: "Sticker", symbol: "seal") { isPickingSticker = true })
+        rows.append(.init(label: "Link", symbol: "link") { isPickingLinkTarget = true })
+        workspace.bandActions = MacaronBandActions(insert: rows, export: { isExporting = true })
     }
 
     private var paperMenu: some View {
@@ -234,10 +206,6 @@ struct EditorView: View {
                 }
             }
             Divider()
-            // Not greyed on a page that has something on it: whether a page is
-            // empty is the notebook's answer, and mirroring it here would be a
-            // second copy refreshed per drain. The notebook refuses, and the
-            // bar says so.
             Button {
                 photoDestination = .paperForCurrentPage
                 isPickingPhoto = true
@@ -247,55 +215,7 @@ struct EditorView: View {
         } label: {
             Label("Paper", systemImage: "square.grid.2x2")
         }
-        // A page whose paper this build does not know is a placeholder.
         .disabled(editor.currentPaper == nil)
-    }
-
-    private var insertMenu: some View {
-        Menu {
-            // Absent where there is no camera rather than disabled: the
-            // simulator has none, `.camera` traps there, and a greyed row
-            // invites the question why.
-            if UIImagePickerController.isSourceTypeAvailable(.camera) {
-                Button {
-                    isTakingPhoto = true
-                } label: {
-                    Label("Take Photo", systemImage: "camera")
-                }
-            }
-            Button {
-                photoDestination = .layerOnCurrentPage
-                isPickingPhoto = true
-            } label: {
-                Label("Photo", systemImage: "photo")
-            }
-            // Absent rather than disabled where the hardware cannot scan,
-            // for the reason the camera row gives.
-            if VNDocumentCameraViewController.isSupported {
-                Button {
-                    isScanning = true
-                } label: {
-                    Label("Scan Document", systemImage: "doc.viewfinder")
-                }
-            }
-            Button {
-                isPickingPDF = true
-            } label: {
-                Label("PDF", systemImage: "doc")
-            }
-            Button {
-                isPickingSticker = true
-            } label: {
-                Label("Sticker", systemImage: "seal")
-            }
-            Button {
-                isPickingLinkTarget = true
-            } label: {
-                Label("Link", systemImage: "link")
-            }
-        } label: {
-            Label("Insert", systemImage: "plus.circle")
-        }
     }
 
     // MARK: Pages

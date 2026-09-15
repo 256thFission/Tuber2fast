@@ -38,6 +38,8 @@ final class Workspace {
 
     /// The refusal surface Part 7 names: one line, dismissible.
     var banner: String?
+    /// PROTOTYPE: the band's Insert and Export, published by the open editor.
+    var bandActions: MacaronBandActions?
     /// Set alongside a save-refused banner so the banner can offer the one
     /// action that always works.
     private(set) var discardableTabID: NotebookID?

@@ -39,7 +39,7 @@ private struct TabBar: View {
     @Environment(Workspace.self) private var workspace
 
     var body: some View {
-        ScrollView(.horizontal) {
+        Group {
             HStack(spacing: 8) {
                 Button {
                     workspace.showLibrary()
@@ -51,6 +51,22 @@ private struct TabBar: View {
 
                 ForEach(workspace.tabs) { tab in
                     TabChip(tab: tab, isActive: tab.id == workspace.activeTabID)
+                }
+                Spacer()
+                if workspace.activeTab != nil, let actions = workspace.bandActions {
+                    Menu {
+                        ForEach(actions.insert) { row in
+                            Button(action: row.action) { Label(row.label, systemImage: row.symbol) }
+                        }
+                    } label: {
+                        Label("Insert", systemImage: "plus.circle").labelStyle(.iconOnly)
+                    }
+                    .menuStyle(.button)
+                    .buttonStyle(MacaronChipStyle())
+                    Button(action: actions.export) {
+                        Label("Export", systemImage: "square.and.arrow.up").labelStyle(.iconOnly)
+                    }
+                    .buttonStyle(MacaronChipStyle(fill: Macaron.vanilla))
                 }
             }
             .padding(.horizontal, 12)
