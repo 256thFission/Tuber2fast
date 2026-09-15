@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import TNEditor
 import TNLibrary
 import TNModel
@@ -75,45 +76,44 @@ struct PageSetupControls: View {
     }
 
     var body: some View {
-        Section("Size") {
-            Picker("Size", selection: choice) {
-                ForEach(PageSize.named, id: \.self) { named in
-                    Text(PageNames.size(named)).tag(SizeChoice.named(named))
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 12) {
+                MacaronHeader("Size", size: 16)
+                MacaronChipGrid(minimum: 110) {
+                    ForEach(PageSize.named, id: \.self) { named in
+                        Button(PageNames.size(named)) { choice.wrappedValue = .named(named) }
+                            .buttonStyle(MacaronWordChipStyle(isOn: choice.wrappedValue == .named(named)))
+                    }
+                    Button(PageNames.customSize) { choice.wrappedValue = .custom }
+                        .buttonStyle(MacaronWordChipStyle(isOn: isCustom))
                 }
-                Text(PageNames.customSize).tag(SizeChoice.custom)
+                if isCustom {
+                    HStack(spacing: 10) {
+                        MacaronField(title: "Width", text: $customWidth, keyboard: .decimalPad)
+                            .onChange(of: customWidth) { _, _ in pushCustom() }
+                        MacaronField(title: "Height", text: $customHeight, keyboard: .decimalPad)
+                            .onChange(of: customHeight) { _, _ in pushCustom() }
+                    }
+                    Text("Each edge is \(Self.bounds) points.")
+                        .font(.footnote)
+                }
             }
-            if isCustom {
-                LabeledContent("Width") {
-                    TextField("Width", text: $customWidth)
-                        .multilineTextAlignment(.trailing)
-                        .keyboardType(.decimalPad)
-                        .onChange(of: customWidth) { _, _ in pushCustom() }
-                }
-                LabeledContent("Height") {
-                    TextField("Height", text: $customHeight)
-                        .multilineTextAlignment(.trailing)
-                        .keyboardType(.decimalPad)
-                        .onChange(of: customHeight) { _, _ in pushCustom() }
-                }
-                Text("Each edge is \(Self.bounds) points.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-        }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .macaronSection()
 
-        Section("Orientation") {
-            Picker("Orientation", selection: $orientation) {
-                ForEach(PageOrientation.allCases, id: \.self) { orientation in
-                    Text(PageNames.orientation(orientation)).tag(orientation)
+            VStack(alignment: .leading, spacing: 12) {
+                MacaronHeader("Orientation", size: 16)
+                MacaronSegments(
+                    options: PageOrientation.allCases.map { ($0, PageNames.orientation($0)) },
+                    selection: $orientation
+                )
+                .disabled(orientationReason != nil)
+                if let orientationReason {
+                    Text(orientationReason).font(.footnote)
                 }
             }
-            .pickerStyle(.segmented)
-            .disabled(orientationReason != nil)
-            if let orientationReason {
-                Text(orientationReason)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .macaronSection()
         }
     }
 
@@ -183,27 +183,35 @@ struct NewNotebookSheet: View {
     }
 
     var body: some View {
-        NavigationStack {
-            Form {
-                Section("Name") {
-                    TextField("Name", text: $name)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                MacaronHeader("New notebook")
+                    .padding(.bottom, 2)
+                VStack(alignment: .leading, spacing: 12) {
+                    MacaronHeader("Name", size: 16)
+                    MacaronField(title: "Name", text: $name)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .macaronSection()
+
                 PageSetupControls(size: $size, orientation: $orientation)
-                Section("Paper") {
-                    Picker("Paper", selection: $paper) {
-                        ForEach(DrawnPaper.allCases, id: \.self) { paper in
-                            Text(PageNames.paper(paper)).tag(paper)
+
+                VStack(alignment: .leading, spacing: 12) {
+                    MacaronHeader("Paper", size: 16)
+                    MacaronChipGrid(minimum: 100) {
+                        ForEach(DrawnPaper.allCases, id: \.self) { candidate in
+                            Button(PageNames.paper(candidate)) { paper = candidate }
+                                .buttonStyle(MacaronWordChipStyle(isOn: paper == candidate))
                         }
                     }
                 }
-            }
-            .navigationTitle("New notebook")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .macaronSection()
+
+                HStack(spacing: 10) {
                     Button("Cancel") { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
+                        .buttonStyle(MacaronWordChipStyle())
+                    Spacer()
                     Button("Create") {
                         if let geometry { create(name, geometry, paper) }
                         dismiss()
@@ -211,9 +219,13 @@ struct NewNotebookSheet: View {
                     // An out-of-bounds custom size is refused here, before
                     // anything is created.
                     .disabled(name.isEmpty || geometry == nil)
+                    .buttonStyle(MacaronWordChipStyle(fill: Macaron.vanilla))
                 }
+                .padding(.top, 4)
             }
+            .padding(20)
         }
+        .macaronSheet()
     }
 
     private var geometry: PageGeometry? { size.geometry(orientation) }
@@ -255,44 +267,53 @@ struct AddPageSheet: View {
     }
 
     var body: some View {
-        NavigationStack {
-            Form {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                MacaronHeader("Add page")
                 PageSetupControls(
                     size: $size,
                     orientation: $orientation,
                     orientationDisabledBecause: takesAssetAspect
                         ? "Paper from an image takes that image's aspect." : nil
                 )
-                Section("Paper") {
-                    Picker("Paper", selection: $choice) {
-                        Text("Same as this page").tag(NewPagePaperChoice.sameAsThisPage)
+                VStack(alignment: .leading, spacing: 12) {
+                    MacaronHeader("Paper", size: 16)
+                    MacaronChipGrid(minimum: 150) {
+                        Button("Same as this page") { choice = .sameAsThisPage }
+                            .buttonStyle(MacaronWordChipStyle(isOn: choice == .sameAsThisPage))
                         ForEach(DrawnPaper.allCases, id: \.self) { paper in
-                            Text(PageNames.paper(paper)).tag(NewPagePaperChoice.drawn(paper))
+                            Button(PageNames.paper(paper)) { choice = .drawn(paper) }
+                                .buttonStyle(MacaronWordChipStyle(isOn: choice == .drawn(paper)))
                         }
-                        Text("Photo").tag(NewPagePaperChoice.photo)
-                        Text("This page, flattened").tag(NewPagePaperChoice.flattened)
+                        Button("Photo") { choice = .photo }
+                            .buttonStyle(MacaronWordChipStyle(isOn: choice == .photo))
+                        Button("This page, flattened") { choice = .flattened }
+                            .buttonStyle(MacaronWordChipStyle(isOn: choice == .flattened))
                         ForEach(editor.pagesWithAssetPaper, id: \.page) { source in
-                            Text("Paper from page \(source.number)")
-                                .tag(NewPagePaperChoice.from(source.page))
+                            Button("Paper from page \(source.number)") { choice = .from(source.page) }
+                                .buttonStyle(MacaronWordChipStyle(isOn: choice == .from(source.page)))
                         }
                     }
                 }
-            }
-            .navigationTitle("Add page")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .macaronSection()
+
+                HStack(spacing: 10) {
                     Button("Cancel") { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
+                        .buttonStyle(MacaronWordChipStyle())
+                    Spacer()
                     Button("Add") {
                         add(choice, size, orientation)
                         dismiss()
                     }
                     .disabled(size.geometry(orientation) == nil)
+                    .buttonStyle(MacaronWordChipStyle(fill: Macaron.vanilla))
                 }
+                .padding(.top, 4)
             }
+            .padding(20)
         }
+        .macaronSheet()
     }
 
     private var takesAssetAspect: Bool {
@@ -300,5 +321,33 @@ struct AddPageSheet: View {
         case .photo, .from, .flattened: true
         case .sameAsThisPage, .drawn: false
         }
+    }
+}
+
+/// A wrapping row of chips, standing in for a picker with more options than
+/// a segmented control holds.
+struct MacaronChipGrid<Content: View>: View {
+    var minimum: CGFloat = 110
+    @ViewBuilder let content: Content
+    var body: some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: minimum), spacing: 8)], alignment: .leading, spacing: 8) {
+            content
+        }
+    }
+}
+
+/// A text field drawn as a card rather than a system field.
+struct MacaronField: View {
+    let title: String
+    @Binding var text: String
+    var keyboard: UIKeyboardType = .default
+    var body: some View {
+        TextField(title, text: $text)
+            .keyboardType(keyboard)
+            .font(.body)
+            .foregroundStyle(Macaron.ink)
+            .padding(.horizontal, 10)
+            .frame(minHeight: 38)
+            .macaronCard(radius: 10)
     }
 }

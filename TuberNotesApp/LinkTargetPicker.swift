@@ -16,38 +16,35 @@ struct LinkTargetPicker: View {
     let editor: EditorViewModel
 
     var body: some View {
-        NavigationStack {
-            List {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack {
+                    MacaronHeader("Link to")
+                    Spacer()
+                    Button("Cancel") { dismiss() }
+                        .buttonStyle(MacaronWordChipStyle())
+                }
                 ForEach(tabs) { tab in
-                    Section(tab.name) {
-                        ForEach(Array(tab.editor.navigatorPages.enumerated()), id: \.element.id) { position, page in
-                            Button {
-                                choose(tab, page)
-                            } label: {
-                                HStack {
-                                    Text("Page \(position + 1)")
-                                    if page.isCurrent {
-                                        Text("current")
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                    }
-                                    Spacer()
+                    VStack(alignment: .leading, spacing: 10) {
+                        MacaronHeader(tab.name, size: 16)
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 8)], alignment: .leading, spacing: 8) {
+                            ForEach(Array(tab.editor.navigatorPages.enumerated()), id: \.element.id) { position, page in
+                                Button {
+                                    choose(tab, page)
+                                } label: {
+                                    Text(page.isCurrent ? "Page \(position + 1) (current)" : "Page \(position + 1)")
                                 }
-                                .contentShape(Rectangle())
+                                .buttonStyle(MacaronWordChipStyle(isOn: page.isCurrent))
                             }
-                            .buttonStyle(.plain)
                         }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .macaronSection()
                 }
             }
-            .navigationTitle("Link to")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                }
-            }
+            .padding(20)
         }
+        .macaronSheet()
     }
 
     /// This notebook first: most links point into the one the reader is

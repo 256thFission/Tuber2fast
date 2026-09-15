@@ -62,8 +62,14 @@ struct ExportSheet: View {
     }
 
     var body: some View {
-        NavigationStack {
-            Form {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack {
+                    MacaronHeader("Export")
+                    Spacer()
+                    Button("Done") { dismiss() }
+                        .buttonStyle(MacaronWordChipStyle())
+                }
                 if let file = editor.exportedFile {
                     result(file)
                 } else if let progress = editor.exportProgress {
@@ -72,14 +78,9 @@ struct ExportSheet: View {
                     choices
                 }
             }
-            .navigationTitle("Export")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") { dismiss() }
-                }
-            }
+            .padding(20)
         }
+        .macaronSheet()
         // A sheet dismissed mid-walk stops it; a result the sheet is done
         // with is not kept for the next opening.
         .onDisappear {
@@ -89,25 +90,37 @@ struct ExportSheet: View {
     }
 
     private var choices: some View {
-        Group {
-            Section("Pages") {
-                Picker("Pages", selection: $scope) {
-                    Text("This page").tag(ExportScope.thisPage)
-                    Text("All pages").tag(ExportScope.allPages)
-                    Text("Pages").tag(ExportScope.range)
-                }
-                .pickerStyle(.segmented)
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 12) {
+                MacaronHeader("Pages", size: 16)
+                MacaronSegments(
+                    options: [
+                        (ExportScope.thisPage, "This page"),
+                        (ExportScope.allPages, "All pages"),
+                        (ExportScope.range, "Pages"),
+                    ],
+                    selection: $scope
+                )
                 if scope == .range {
                     Stepper("From \(first)", value: $first, in: 1...max(1, editor.pageCount))
                     Stepper("To \(last)", value: $last, in: 1...max(1, editor.pageCount))
                 }
             }
-            Section {
-                Button("Export PDF") { editor.exportPDF(pages: pages) }
-                Button("Export image of this page") { editor.exportCurrentPageImage() }
-            } footer: {
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .macaronSection()
+
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 10) {
+                    Button("Export PDF") { editor.exportPDF(pages: pages) }
+                        .buttonStyle(MacaronWordChipStyle(fill: Macaron.vanilla))
+                    Button("Image of this page") { editor.exportCurrentPageImage() }
+                        .buttonStyle(MacaronWordChipStyle())
+                }
                 Text("Handwriting is exported as pixels; paper, text, and imported PDF pages stay sharp at any size.")
+                    .font(.footnote)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .macaronSection()
         }
     }
 
@@ -124,41 +137,48 @@ struct ExportSheet: View {
     }
 
     private func walk(_ progress: EditorViewModel.ExportProgress) -> some View {
-        Section {
+        VStack(alignment: .leading, spacing: 12) {
             ProgressView(value: Double(progress.done), total: Double(progress.total)) {
                 Text("Page \(min(progress.done + 1, progress.total)) of \(progress.total)")
             }
             Button("Cancel", role: .cancel) { editor.cancelExport() }
+                .buttonStyle(MacaronWordChipStyle())
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .macaronSection()
     }
 
     private func result(_ file: EditorViewModel.ExportedFile) -> some View {
-        Section {
+        VStack(alignment: .leading, spacing: 12) {
             switch file.kind {
             case .pdf:
-                ShareLink(
-                    item: ExportedPDF(data: file.data, name: "\(name).pdf"),
-                    preview: SharePreview("\(name).pdf", image: Image(systemName: "doc.richtext"))
-                ) {
-                    Label("Share PDF", systemImage: "square.and.arrow.up")
-                }
-                Button {
-                    presentPrintPanel(file.data)
-                } label: {
-                    Label("Print", systemImage: "printer")
+                HStack(spacing: 10) {
+                    ShareLink(
+                        item: ExportedPDF(data: file.data, name: "\(name).pdf"),
+                        preview: SharePreview("\(name).pdf", image: Image(systemName: "doc.richtext"))
+                    ) {
+                        Text("Share PDF")
+                    }
+                    .buttonStyle(MacaronWordChipStyle(fill: Macaron.vanilla))
+                    Button("Print") { presentPrintPanel(file.data) }
+                        .buttonStyle(MacaronWordChipStyle())
                 }
             case .png:
                 ShareLink(
                     item: ExportedImage(data: file.data, name: "\(name).png"),
                     preview: SharePreview("\(name).png", image: Image(systemName: "photo"))
                 ) {
-                    Label("Share image", systemImage: "square.and.arrow.up")
+                    Text("Share image")
                 }
+                .buttonStyle(MacaronWordChipStyle(fill: Macaron.vanilla))
             }
             Button("Export something else") { editor.clearExport() }
-        } footer: {
+                .buttonStyle(MacaronWordChipStyle())
             Text("\(file.data.count / 1024) KB, kept in memory until this sheet closes.")
+                .font(.footnote)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .macaronSection()
     }
 
     /// The same bytes the share sheet would carry, handed to the print

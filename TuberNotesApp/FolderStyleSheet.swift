@@ -54,37 +54,46 @@ struct FolderStyleSheet: View {
     }
 
     var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    HStack {
-                        Spacer()
-                        LibraryFolderGlyph(decoration: chosen)
-                            .frame(width: 92, height: 92)
-                        Spacer()
-                    }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                MacaronHeader(name)
+                HStack {
+                    Spacer()
+                    LibraryFolderGlyph(decoration: chosen)
+                        .frame(width: 92, height: 92)
+                    Spacer()
                 }
-                Section("Colour") {
+                .macaronSection()
+
+                VStack(alignment: .leading, spacing: 12) {
+                    MacaronHeader("Colour", size: 16)
                     swatches
                 }
-                Section("Symbol") {
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .macaronSection()
+
+                VStack(alignment: .leading, spacing: 12) {
+                    MacaronHeader("Symbol", size: 16)
                     symbols
                 }
-            }
-            .navigationTitle(name)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .macaronSection()
+
+                HStack(spacing: 10) {
                     Button("Cancel") { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
+                        .buttonStyle(MacaronWordChipStyle())
+                    Spacer()
                     Button("Done") {
                         apply(chosen)
                         dismiss()
                     }
+                    .buttonStyle(MacaronWordChipStyle(fill: Macaron.vanilla))
                 }
+                .padding(.top, 4)
             }
+            .padding(20)
         }
+        .macaronSheet()
     }
 
     private var chosen: FolderDecoration { FolderDecoration(color: color, symbol: symbol) }
@@ -95,15 +104,10 @@ struct FolderStyleSheet: View {
                 Button {
                     color = candidate
                 } label: {
-                    Circle()
+                    RoundedRectangle(cornerRadius: 10)
                         .fill(LibraryStyle.color(of: candidate))
-                        .frame(width: 34, height: 34)
-                        .overlay {
-                            Circle()
-                                .strokeBorder(Color.primary, lineWidth: 2)
-                                .opacity(candidate == color ? 1 : 0)
-                                .padding(-4)
-                        }
+                        .frame(width: 38, height: 38)
+                        .modifier(MacaronSelectedFrame(isSelected: candidate == color))
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(FolderStyleNames.color(candidate))
@@ -120,12 +124,9 @@ struct FolderStyleSheet: View {
                 } label: {
                     Image(systemName: candidate.rawValue)
                         .font(.title2)
-                        .foregroundStyle(LibraryStyle.color(of: color))
+                        .foregroundStyle(candidate == symbol ? .white : LibraryStyle.color(of: color))
                         .frame(width: 52, height: 44)
-                        .background(
-                            candidate == symbol ? Color.accentColor.opacity(0.18) : .clear,
-                            in: .rect(cornerRadius: 10)
-                        )
+                        .macaronCard(fill: candidate == symbol ? Macaron.strawberry : Macaron.card, radius: 10)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(FolderStyleNames.symbol(candidate))

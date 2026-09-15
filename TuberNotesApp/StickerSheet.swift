@@ -17,8 +17,14 @@ struct StickerSheet: View {
     private let columns = [GridItem(.adaptive(minimum: 88), spacing: 12)]
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack {
+                    MacaronHeader("Stickers")
+                    Spacer()
+                    Button("Cancel") { dismiss() }
+                        .buttonStyle(MacaronWordChipStyle())
+                }
                 LazyVGrid(columns: columns, spacing: 12) {
                     ForEach(StickerCatalogue.all) { sticker in
                         Button {
@@ -33,26 +39,21 @@ struct StickerSheet: View {
                                     .frame(width: 64, height: 64)
                                 Text(sticker.title)
                                     .font(.caption)
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(Macaron.ink)
                             }
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 10)
-                            .background(.fill.tertiary, in: RoundedRectangle(cornerRadius: 12))
+                            .macaronCard(radius: 12, shadow: 5)
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel(sticker.title)
                     }
                 }
-                .padding(16)
+                .padding(.trailing, 5)
             }
-            .navigationTitle("Stickers")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                }
-            }
+            .padding(20)
         }
+        .macaronSheet()
     }
 
     private static func color(_ rgba: RGBA8) -> Color {
