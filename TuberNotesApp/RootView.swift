@@ -9,9 +9,11 @@ struct RootView: View {
     var body: some View {
         VStack(spacing: 0) {
             TabBar()
-            Divider()
+            Slate.rail
             surface
         }
+        .background(Slate.ground)
+        .preferredColorScheme(.dark)
         .overlay(alignment: .top) {
             if let message = workspace.banner {
                 BannerView(message: message)
@@ -47,17 +49,26 @@ private struct TabBar: View {
                     Label("Library", systemImage: "books.vertical")
                         .labelStyle(.titleAndIcon)
                 }
-                .buttonStyle(.bordered)
-                .tint(workspace.activeTabID == nil ? .accentColor : .secondary)
+                .buttonStyle(.plain)
+                .font(Slate.label)
+                .foregroundStyle(Slate.chalk)
+                .opacity(workspace.activeTabID == nil ? 1 : 0.7)
+                .padding(.vertical, 6)
+                .overlay(alignment: .bottom) {
+                    if workspace.activeTabID == nil {
+                        Rectangle().fill(Slate.yellow).frame(height: 3)
+                    }
+                }
 
                 ForEach(workspace.tabs) { tab in
                     TabChip(tab: tab, isActive: tab.id == workspace.activeTabID)
                 }
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 16)
             .padding(.vertical, 8)
         }
         .scrollIndicators(.hidden)
+        .background(Slate.band)
     }
 }
 
@@ -83,11 +94,16 @@ private struct TabChip: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Close \(tab.name)")
         }
-        .padding(.horizontal, 10)
+        .font(Slate.label)
+        .foregroundStyle(Slate.chalk)
+        .opacity(isActive ? 1 : 0.7)
+        .padding(.horizontal, 4)
         .padding(.vertical, 6)
-        .background(isActive ? Color.accentColor.opacity(0.18) : Color.secondary.opacity(0.10))
-        .foregroundStyle(isActive ? Color.accentColor : Color.primary)
-        .clipShape(.rect(cornerRadius: 8))
+        .overlay(alignment: .bottom) {
+            if isActive {
+                Rectangle().fill(Slate.yellow).frame(height: 3)
+            }
+        }
     }
 }
 

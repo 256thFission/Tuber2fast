@@ -51,6 +51,16 @@ struct EditorView: View {
             }
             CanvasHost(controller: editor.canvasHost)
         }
+        .background(Slate.ground)
+        .tint(Slate.chalk)
+        .foregroundStyle(Slate.chalk)
+        .font(Slate.label)
+        .task {
+            while !Task.isCancelled {
+                if let view = editor.canvasHost.viewIfLoaded { Slate.paint(view) }
+                try? await Task.sleep(for: .milliseconds(300))
+            }
+        }
         // The choice is acted on after the sheet is gone: the photo leg
         // presents a second sheet, and two presentations in one frame do not
         // both survive.
@@ -130,18 +140,18 @@ struct EditorView: View {
         ScrollView(.horizontal) {
             HStack(spacing: 14) {
                 ToolStrip(editor: editor)
-                Divider().frame(height: 22)
+                Slate.separator
                 history
-                Divider().frame(height: 22)
+                Slate.separator
                 pages
-                Divider().frame(height: 22)
+                Slate.separator
                 paperMenu
                 insertMenu
                 Button { isExporting = true } label: {
                     Label("Export", systemImage: "square.and.arrow.up")
                         .labelStyle(.iconOnly)
                 }
-                Button(role: .destructive) {
+                Button {
                     isConfirmingPageDelete = true
                 } label: {
                     Label("Delete page", systemImage: "trash")
@@ -152,7 +162,7 @@ struct EditorView: View {
             .padding(.vertical, 8)
         }
         .scrollIndicators(.hidden)
-        .background(.bar)
+        .background(Slate.ground)
     }
 
     private var history: some View {
@@ -179,7 +189,8 @@ struct EditorView: View {
             .disabled(editor.currentPageIndex <= 0)
 
             Text("Page \(editor.currentPageIndex + 1) of \(editor.pageCount)")
-                .font(.callout.monospacedDigit())
+                .font(Slate.label.monospacedDigit())
+                .foregroundStyle(Slate.chalk)
                 .fixedSize()
 
             Button {
