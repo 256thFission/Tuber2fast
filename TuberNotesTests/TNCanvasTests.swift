@@ -135,6 +135,41 @@ struct TNCanvasTests {
         _ = runtime.retireAll()
     }
 
+    @Test("The paper and the overlays mirror the canvas content: page points, scaled by the zoom, at the content's origin")
+    func mirrorsFollowTheContent() throws {
+        let reporter = RecordingReporter()
+        let runtime = hosted(reporter)
+        let pages = descriptors(1)
+        runtime.setPages(pages, seq: StructureSeq(1), answering: nil)
+        runtime.installContent(
+            .editable(id: pages[0].id, ink: PKDrawing(), layers: [], composite: nil, inkSeq: InkSeq(1))
+        )
+        let canvas = try #require(runtime.canvases[pages[0].id])
+        canvas.view.layoutIfNeeded()
+        let zoom = canvas.canvasView.zoomScale
+        #expect(canvas.canvasView.backgroundColor == .clear)
+        for mirror in [canvas.paperView, canvas.overlayView] {
+            #expect(mirror.bounds.size == CGSize(width: 612, height: 792))
+            #expect(abs(mirror.frame.width - 612 * zoom) < 1e-6)
+            #expect(abs(mirror.frame.height - 792 * zoom) < 1e-6)
+            // The content's origin is where the scroll view shows it, which
+            // is the negated offset, pixel-aligned; the inset only says where
+            // it may rest.
+            #expect(abs(mirror.frame.minX + canvas.canvasView.contentOffset.x) < 1e-6, "\(mirror.frame)")
+            #expect(abs(mirror.frame.minY + canvas.canvasView.contentOffset.y) < 1e-6, "\(mirror.frame)")
+            #expect(mirror.frame.minY > 0, "centred below the top, not at it: \(mirror.frame)")
+        }
+        #expect(canvas.view.subviews.firstIndex(of: canvas.paperView)! < canvas.view.subviews.firstIndex(of: canvas.canvasView)!)
+        #expect(canvas.view.subviews.firstIndex(of: canvas.overlayView)! > canvas.view.subviews.firstIndex(of: canvas.canvasView)!)
+
+        canvas.canvasView.zoomScale = zoom * 2
+        canvas.canvasView.contentOffset = CGPoint(x: 40, y: 60)
+        #expect(abs(canvas.paperView.frame.width - 612 * zoom * 2) < 1e-6)
+        #expect(abs(canvas.paperView.frame.minX + 40) < 1e-6, "\(canvas.paperView.frame)")
+        #expect(abs(canvas.paperView.frame.minY + 60) < 1e-6, "\(canvas.paperView.frame)")
+        _ = runtime.retireAll()
+    }
+
     @Test("A page deleted mid-stroke reports nothing until the stroke ends, then retires once with the final ink")
     func departedPageMidStrokeReportsOnlyOnRetire() throws {
         let reporter = RecordingReporter()
@@ -399,7 +434,7 @@ struct TNCanvasTests {
     }
 
     private func backdrop(of canvas: PageCanvasController) -> UIImage? {
-        canvas.canvasView.subviews.compactMap { $0 as? UIImageView }.first?.image
+        canvas.paperView.subviews.compactMap { $0 as? UIImageView }.first?.image
     }
 
     private func solidImage() throws -> CGImage {
@@ -541,7 +576,7 @@ struct TNCanvasTests {
         canvas.tapped(at: CGPoint(x: text.rect.x + 5, y: text.rect.y + 5))
         #expect(reporter.textEditRequests.map(\.layer) == [first.id])
         runtime.beginTextEditing(on: pages[0].id, TextEditStart(layer: first.id, text: text))
-        let overlays = canvas.canvasView.subviews.compactMap { $0 as? TextEditingView }
+        let overlays = canvas.overlayView.subviews.compactMap { $0 as? TextEditingView }
         let overlay = try #require(overlays.first)
         return (runtime, pages[0].id, canvas, overlay)
     }
@@ -552,7 +587,7 @@ struct TNCanvasTests {
     func beginAddsOneOverlay() throws {
         let reporter = RecordingReporter()
         let (runtime, _, canvas, overlay) = try openSession(reporter, layers: [textLayer("hi", x: 100, y: 100)])
-        #expect(canvas.canvasView.subviews.filter { $0 is TextEditingView }.count == 1)
+        #expect(canvas.overlayView.subviews.filter { $0 is TextEditingView }.count == 1)
         #expect(overlay.isFirstResponder)
         #expect(overlay.frame == CGRect(x: 100, y: 100, width: 200, height: 60))
         if case .editing = canvas.phase {} else { Issue.record("phase is \(canvas.phase)") }
@@ -822,7 +857,7 @@ struct TNCanvasTests {
     }
 
     private func frame(on canvas: PageCanvasController) -> LayerSelectionView? {
-        canvas.canvasView.subviews.compactMap { $0 as? LayerSelectionView }.first
+        canvas.overlayView.subviews.compactMap { $0 as? LayerSelectionView }.first
     }
 
     /// The middle of a layer's placement, in page points.
@@ -844,7 +879,7 @@ struct TNCanvasTests {
         }
         #expect(layer == image.id)
         let selection = try #require(frame(on: canvas))
-        #expect(canvas.canvasView.subviews.filter { $0 is LayerSelectionView }.count == 1)
+        #expect(canvas.overlayView.subviews.filter { $0 is LayerSelectionView }.count == 1)
         #expect(selection.frame.origin == CGPoint(x: image.transform.tx, y: image.transform.ty))
         #expect(selection.bounds.size == CGSize(width: 120, height: 80))
         _ = runtime.retireAll()
@@ -873,7 +908,7 @@ struct TNCanvasTests {
         #expect(frame(on: canvas)?.layerID == first.id)
 
         canvas.tapped(at: centre(of: second))
-        #expect(canvas.canvasView.subviews.filter { $0 is LayerSelectionView }.count == 1)
+        #expect(canvas.overlayView.subviews.filter { $0 is LayerSelectionView }.count == 1)
         #expect(frame(on: canvas)?.layerID == second.id)
 
         canvas.tapped(at: CGPoint(x: 580, y: 760))
@@ -975,7 +1010,7 @@ struct TNCanvasTests {
         let (runtime, _, canvas) = try livePage(reporter, layers: [image])
         canvas.tapped(at: centre(of: image))
         let selection = try #require(frame(on: canvas))
-        canvas.canvasView.layoutIfNeeded()
+        canvas.view.layoutIfNeeded()
 
         // The bottom-right corner of the bounds, which its handle straddles.
         selection.beginDrag(at: CGPoint(x: 120, y: 80))
@@ -1098,7 +1133,7 @@ struct TNCanvasTests {
         #expect(frame(on: canvas) === selection, "the same frame, restated")
         #expect(selection.menuActions().map(\.title) == ["Unlock"])
         #expect(!selection.panRecognizer.isEnabled)
-        canvas.canvasView.layoutIfNeeded()
+        canvas.view.layoutIfNeeded()
         #expect(!selection.point(inside: CGPoint(x: 60, y: -30), with: nil), "the knob is gone")
         #expect(selection.point(inside: CGPoint(x: 60, y: 40), with: nil), "the border still takes the tap that opens the menu")
         selection.beginDrag(at: CGPoint(x: 60, y: 40))

@@ -89,6 +89,18 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
     /// Paper and every static layer, as pixels, beneath the ink.
     private let backdropView = UIImageView()
 
+    /// The page, mirrored either side of the ink. Both are page-sized views in
+    /// page points, scaled and placed to sit exactly under the canvas's
+    /// content on every scroll and zoom tick; `paperView` holds the backdrop
+    /// beneath the ink and `overlayView` holds the text box and the selection
+    /// frame above it. A subview placed in `canvasView` itself does not move
+    /// with the ink: PencilKit zooms a private content view and paints its
+    /// tiles opaquely over anything else, which an iPad Air showed on
+    /// 2026-09-14 as a white page-sized strip beside a page that was not
+    /// there. The per-tick placement is the price, and it is two frames.
+    let paperView = PageMirrorView()
+    let overlayView = PageMirrorView()
+
     private var geometry: PageGeometry
     private unowned let owner: any PageCanvasOwner
 
@@ -210,11 +222,6 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
     package override func viewDidLoad() {
         super.viewDidLoad()
 
-        // This background *is* the paper: PencilKit's opaque tiled view paints
-        // it through everything, and opaque is the blank page's freedom from a
-        // full-screen blend.
-        canvasView.backgroundColor = .white
-        canvasView.isOpaque = true
 
         // Finger navigates, Pencil writes. The simulator has no Pencil, so a
         // hosted test would have no way to author a stroke at all.
@@ -223,6 +230,13 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         #else
         canvasView.drawingPolicy = .pencilOnly
         #endif
+
+        // The canvas is the ink and nothing else; the paper is `paperView`
+        // beneath it, so the canvas has to be clear for the paper to show,
+        // and the surround is the same grey as the paging gutter.
+        view.backgroundColor = .systemGray5
+        canvasView.backgroundColor = .clear
+        canvasView.isOpaque = false
 
         canvasView.showsVerticalScrollIndicator = false
         canvasView.showsHorizontalScrollIndicator = false
@@ -245,25 +259,15 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
             canvasView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
 
-        // The backdrop is a subview of the canvas view, rearmost, with its
-        // frame stated in content coordinates — page space — so it pans and
-        // zooms with the ink because the scroll view moves it, not because
-        // anything of ours follows the viewport per frame.
-        //
-        // KNOWN DEFECT: that a subview of `PKCanvasView` stays registered with
-        // the ink through a fast pinch is not proven on a device. PencilKit
-        // zooms through a private content view, and a sibling subview may be
-        // scaled a frame late or not at all, which would read as the paper
-        // sliding under committed ink. The runtime this replaces mirrored a
-        // layer beside the canvas with a per-tick transform for exactly this
-        // doubt, and that structure is the fallback if the device says so. The
-        // evidence that settles it is a pinch on hardware with a ruled page:
-        // the rule lines either stay under the strokes or they do not.
         backdropView.isOpaque = true
         backdropView.backgroundColor = .white
         backdropView.contentMode = .scaleToFill
         backdropView.frame = CGRect(x: 0, y: 0, width: geometry.width, height: geometry.height)
-        canvasView.insertSubview(backdropView, at: 0)
+        paperView.isUserInteractionEnabled = false
+        paperView.addSubview(backdropView)
+        view.insertSubview(paperView, belowSubview: canvasView)
+        view.addSubview(overlayView)
+        syncPageMirrors()
 
         // Allowed to recognize alongside PencilKit's own: a tap that is not on
         // a link must still reach the canvas, and a tap that is must not have
@@ -290,6 +294,34 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         super.viewDidLayoutSubviews()
         establishZoomIfNeeded()
         centerPageInViewport()
+        syncPageMirrors()
+    }
+
+    /// Places both mirrors where the canvas's content is: page points scaled
+    /// by the zoom, with the page's origin where the scroll view shows it.
+    /// Bounds stay in page points so every subview keeps its page-space
+    /// frame; the transform is what carries the zoom.
+    private func syncPageMirrors() {
+        let zoom = canvasView.zoomScale
+        let size = CGSize(width: geometry.width, height: geometry.height)
+        let offset = canvasView.contentOffset
+        let center = CGPoint(
+            x: canvasView.frame.minX - offset.x + size.width * zoom / 2,
+            y: canvasView.frame.minY - offset.y + size.height * zoom / 2
+        )
+        for mirror in [paperView, overlayView] {
+            mirror.bounds = CGRect(origin: .zero, size: size)
+            mirror.transform = CGAffineTransform(scaleX: zoom, y: zoom)
+            mirror.center = center
+        }
+    }
+
+    package func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        syncPageMirrors()
+    }
+
+    package func scrollViewDidZoom(_ scrollView: UIScrollView) {
+        syncPageMirrors()
     }
 
     // MARK: - Told, never asked
@@ -363,7 +395,7 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         }
         let typing: TextStyle = if case .text(let style, _) = tool { style } else { .body }
         let view = TextEditingView(text: start.text, typing: typing)
-        canvasView.addSubview(view)
+        overlayView.addSubview(view)
         setOverlayScale(view)
         // A border drag neither pans the page nor turns it. Turning the page
         // would retire this canvas and destroy the view mid-gesture.
@@ -455,6 +487,7 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         self.geometry = geometry
         canvasView.contentSize = CGSize(width: geometry.width, height: geometry.height)
         backdropView.frame = CGRect(x: 0, y: 0, width: geometry.width, height: geometry.height)
+        syncPageMirrors()
         // The overlay's frame is its rect in page space, which a geometry
         // change does not move.
         zoomRangeBounds = nil
@@ -671,7 +704,7 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
     private func select(_ target: HitTarget) {
         clearSelection()
         let frame = LayerSelectionView(layer: target.id, transform: target.transform, locked: target.locked)
-        canvasView.addSubview(frame)
+        overlayView.addSubview(frame)
         setOverlayScale(frame)
         // A drag on the frame neither draws, nor pans the page, nor turns it.
         // Turning would retire this canvas and destroy the view mid-gesture.
@@ -775,5 +808,14 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         if strokeEnded {
             owner.pageStrokeDidEnd(pageID)
         }
+    }
+}
+
+/// A page-sized container that is nothing to a touch: a tap on it between its
+/// subviews reaches the canvas under it, a tap on a subview is that subview's.
+final class PageMirrorView: UIView {
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        let hit = super.hitTest(point, with: event)
+        return hit === self ? nil : hit
     }
 }

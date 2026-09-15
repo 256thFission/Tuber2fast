@@ -357,8 +357,12 @@ edit is committed. It is rendered by the `Renderer` actor at no more than
 `maximumLongEdgePixels` (2800) on the long side, and sent to the canvas as
 an immutable `CGImage`. A composite result that a later render has
 superseded is dropped. Paper and
-layers are never drawn per frame: the composite is drawn once and the
-scroll view scales it. The renderer's asset cache (48 MB) and thumbnail cache
+layers are never drawn per frame: the composite is drawn once, and the
+page-sized view that holds it is placed and scaled to the canvas's offset
+and zoom on each scroll and zoom tick, which is a frame change, not a draw.
+The text box and the selection frame ride the same way above the ink.
+Nothing of ours is a subview of the `PKCanvasView`: PencilKit zooms only its
+own content view and paints its tiles opaquely over anything else. The renderer's asset cache (48 MB) and thumbnail cache
 (32 MB) each declare their owner, their limit, and what evicts from them,
 at the point they are declared. A cache that cannot state all three is
 forbidden. A thumbnail is 480 pixels on the long side and is rendered by
