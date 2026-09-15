@@ -9,7 +9,7 @@ struct RootView: View {
     var body: some View {
         VStack(spacing: 0) {
             TabBar()
-            Divider()
+            Rectangle().fill(Macaron.ink).frame(height: Macaron.outline)
             surface
         }
         .overlay(alignment: .top) {
@@ -45,10 +45,9 @@ private struct TabBar: View {
                     workspace.showLibrary()
                 } label: {
                     Label("Library", systemImage: "books.vertical")
-                        .labelStyle(.titleAndIcon)
+                        .labelStyle(.iconOnly)
                 }
-                .buttonStyle(.bordered)
-                .tint(workspace.activeTabID == nil ? .accentColor : .secondary)
+                .buttonStyle(MacaronChipStyle(isOn: workspace.activeTabID == nil))
 
                 ForEach(workspace.tabs) { tab in
                     TabChip(tab: tab, isActive: tab.id == workspace.activeTabID)
@@ -58,6 +57,7 @@ private struct TabBar: View {
             .padding(.vertical, 8)
         }
         .scrollIndicators(.hidden)
+        .background(Macaron.card)
     }
 }
 
@@ -68,10 +68,11 @@ private struct TabChip: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            Button(tab.name) {
+            Button(tab.name.uppercased()) {
                 workspace.activeTabID = tab.id
             }
             .buttonStyle(.plain)
+            .font(Macaron.display(14))
             .lineLimit(1)
 
             Button {
@@ -83,11 +84,11 @@ private struct TabChip: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Close \(tab.name)")
         }
-        .padding(.horizontal, 10)
+        .padding(.horizontal, 12)
         .padding(.vertical, 6)
-        .background(isActive ? Color.accentColor.opacity(0.18) : Color.secondary.opacity(0.10))
-        .foregroundStyle(isActive ? Color.accentColor : Color.primary)
-        .clipShape(.rect(cornerRadius: 8))
+        .foregroundStyle(isActive ? .white : Macaron.ink)
+        .macaronCard(fill: isActive ? Macaron.strawberry : Macaron.card, radius: 10, shadow: isActive ? 3 : 0)
+        .padding(.trailing, isActive ? 3 : 0)
     }
 }
 

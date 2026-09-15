@@ -80,17 +80,13 @@ struct ToolStrip: View {
 
     private func toolButton(_ button: EditorToolButton) -> some View {
         let isSelected = EditorToolButton(editor.tool) == button
-        let tint = tint(button)
         return Button {
             tap(button, isSelected: isSelected)
         } label: {
             Image(systemName: button.symbol)
                 .frame(width: 28, height: 24)
         }
-        .buttonStyle(.bordered)
-        .buttonBorderShape(.roundedRectangle(radius: 6))
-        .background(isSelected ? tint.opacity(0.22) : .clear, in: .rect(cornerRadius: 6))
-        .foregroundStyle(tint)
+        .buttonStyle(MacaronChipStyle(isOn: isSelected))
         .accessibilityLabel(button.label)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
         .popover(isPresented: presentation(of: button)) {

@@ -130,17 +130,18 @@ struct EditorView: View {
         ScrollView(.horizontal) {
             HStack(spacing: 14) {
                 ToolStrip(editor: editor)
-                Divider().frame(height: 22)
+                MacaronBar()
                 history
-                Divider().frame(height: 22)
+                MacaronBar()
                 pages
-                Divider().frame(height: 22)
+                MacaronBar()
                 paperMenu
                 insertMenu
                 Button { isExporting = true } label: {
                     Label("Export", systemImage: "square.and.arrow.up")
                         .labelStyle(.iconOnly)
                 }
+                .buttonStyle(MacaronChipStyle(fill: Macaron.vanilla))
                 Button(role: .destructive) {
                     isConfirmingPageDelete = true
                 } label: {
@@ -150,9 +151,12 @@ struct EditorView: View {
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
+            .buttonStyle(MacaronChipStyle())
+            .menuStyle(.button)
         }
         .scrollIndicators(.hidden)
-        .background(.bar)
+        .background(Macaron.card)
+        .overlay(alignment: .bottom) { Rectangle().fill(Macaron.ink).frame(height: Macaron.outline) }
     }
 
     private var history: some View {
@@ -179,7 +183,8 @@ struct EditorView: View {
             .disabled(editor.currentPageIndex <= 0)
 
             Text("Page \(editor.currentPageIndex + 1) of \(editor.pageCount)")
-                .font(.callout.monospacedDigit())
+                .font(Macaron.display(14).monospacedDigit())
+                .foregroundStyle(Macaron.ink)
                 .fixedSize()
 
             Button {
@@ -388,7 +393,12 @@ struct EditorView: View {
 struct CanvasHost: UIViewControllerRepresentable {
     let controller: UIViewController
 
-    func makeUIViewController(context: Context) -> UIViewController { controller }
+    func makeUIViewController(context: Context) -> UIViewController {
+        context.coordinator.attach(to: controller.view)
+        return controller
+    }
+
+    func makeCoordinator() -> MacaronCanvasSkin { MacaronCanvasSkin() }
 
     func updateUIViewController(_ controller: UIViewController, context: Context) {}
 }
