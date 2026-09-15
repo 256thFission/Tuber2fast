@@ -78,6 +78,9 @@ private struct TabBar: View {
                 actions.readout()
                     .buttonStyle(MacaronChipStyle())
                     .menuStyle(.button)
+                if let tab = workspace.activeTab {
+                    ToolStrip(editor: tab.editor, buttons: [.lasso, .text])
+                }
                 Menu {
                     ForEach(actions.insert) { row in
                         Button(action: row.action) { Label(row.label, systemImage: row.symbol) }

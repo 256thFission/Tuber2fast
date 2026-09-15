@@ -41,28 +41,32 @@ struct EditorView: View {
 
     var body: some View {
         GeometryReader { geo in
-            clusterLayout(viewport: geo.size)
-                .coordinateSpace(name: "editor")
-                .onAppear {
-                    viewportSize = geo.size
-                    publishBandActions()
-                    resolvePlacement(viewport: geo.size)
-                    if ProcessInfo.processInfo.arguments.contains("-MacaronShowNavigator") { isShowingNavigator = true }
-                    if let forced = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("-MacaronCluster=") }) {
-                        switch forced.dropFirst("-MacaronCluster=".count) {
-                        case "leading": placement = .snapped(.leading)
-                        case "trailing": placement = .snapped(.trailing)
-                        case "top": placement = .snapped(.top)
-                        case "bottom": placement = .snapped(.bottom)
-                        default: placement = .floating(fx: 0.5, fy: 0.45)
-                        }
+            // The canvas is structurally constant: the bar is only ever an
+            // overlay positioned over it, so a drag never rebuilds the host.
+            ZStack {
+                CanvasHost(controller: editor.canvasHost)
+                bar(viewport: geo.size)
+            }
+            .coordinateSpace(name: "editor")
+            .onAppear {
+                viewportSize = geo.size
+                publishBandActions()
+                resolveSnap(viewport: geo.size)
+                if ProcessInfo.processInfo.arguments.contains("-MacaronShowNavigator") { isShowingNavigator = true }
+                if let forced = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("-MacaronBar=") }) {
+                    let name = String(forced.dropFirst("-MacaronBar=".count))
+                    if name == "drag" {
+                        dragPoint = CGPoint(x: geo.size.width * 0.4, y: geo.size.height * 0.3)
+                    } else if let point = SnapPoint(rawValue: name) {
+                        snap = point
                     }
                 }
-                .onChange(of: geo.size) { _, size in
-                    let turned = (size.width > size.height) != (viewportSize.width > viewportSize.height)
-                    viewportSize = size
-                    if turned { resolvePlacement(viewport: size) }
-                }
+            }
+            .onChange(of: geo.size) { _, size in
+                let turned = (size.width > size.height) != (viewportSize.width > viewportSize.height)
+                viewportSize = size
+                if turned { resolveSnap(viewport: size) }
+            }
         }
         .overlay(alignment: .top) {
             if let failure = editor.lastSaveError {
@@ -144,85 +148,44 @@ struct EditorView: View {
         return pages[editor.currentPageIndex]
     }
 
-    // MARK: The cluster
+    // MARK: The writing bar
 
-    @State private var placement: ClusterPlacement = .snapped(.leading)
+    @State private var snap: SnapPoint = .leading
     @State private var dragPoint: CGPoint?
     @State private var viewportSize: CGSize = .zero
+    @State private var barSize: CGSize = .zero
 
     private var currentGeometry: PageGeometry {
         currentPage?.geometry ?? PageGeometry.letter
     }
 
-    private func resolvePlacement(viewport: CGSize) {
+    private func resolveSnap(viewport: CGSize) {
         let landscape = viewport.width > viewport.height
-        placement = ClusterPlacement.load(landscape: landscape)
-            ?? ClusterPlacement.proposed(page: currentGeometry, viewport: viewport)
+        snap = SnapPoint.load(landscape: landscape) ?? SnapPoint.proposed(page: currentGeometry, viewport: viewport)
     }
 
-    @ViewBuilder
-    private func clusterLayout(viewport: CGSize) -> some View {
-        let canvas = CanvasHost(controller: editor.canvasHost)
-        if let dragPoint {
-            // Floating while dragged: the viewport never changes under a drag.
-            ZStack {
-                canvas
-                cluster(vertical: true, chip: ClusterMetrics.smallChip, floating: true)
-                    .position(x: dragPoint.x, y: dragPoint.y + clusterLength(chip: ClusterMetrics.smallChip) / 2 - 12)
-            }
-        } else {
-            switch placement {
-            case .floating(let fx, let fy):
-                ZStack {
-                    canvas
-                    cluster(vertical: true, chip: ClusterMetrics.smallChip, floating: true)
-                        .position(x: fx * viewport.width, y: fy * viewport.height)
-                }
-            case .snapped(let edge):
-                let ribbon = ClusterMetrics.slack(on: edge, page: currentGeometry, viewport: viewport) < ClusterMetrics.thickness
-                let chip = ribbon ? ClusterMetrics.smallChip : ClusterMetrics.chip
-                let snapped = cluster(vertical: edge.isVertical, chip: chip, floating: false)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                switch edge {
-                case .leading: HStack(spacing: 0) { snapped.frame(width: chip + 14); canvas }
-                case .trailing: HStack(spacing: 0) { canvas; snapped.frame(width: chip + 14) }
-                case .top: VStack(spacing: 0) { snapped.frame(height: chip + 14); canvas }
-                case .bottom: VStack(spacing: 0) { canvas; snapped.frame(height: chip + 14) }
-                }
-            }
-        }
-    }
-
-    private func clusterLength(chip: CGFloat) -> CGFloat { 24 + 7 * (chip + 8) + 3 + 16 }
-
-    private func cluster(vertical: Bool, chip: CGFloat, floating: Bool) -> some View {
-        ClusterView(editor: editor, vertical: vertical, chip: chip, floating: floating) { value in
+    /// Mid-drag the bar follows the finger with the pill under it; at rest it
+    /// sits at its snap point, and the move between the two animates.
+    private func bar(viewport: CGSize) -> some View {
+        let vertical = dragPoint != nil ? !snap.isRow : !snap.isRow
+        let resting = snap.center(in: viewport, size: barSize)
+        let center = dragPoint.map { p in
+            vertical ? CGPoint(x: p.x, y: p.y + barSize.height / 2 - 20) : CGPoint(x: p.x + barSize.width / 2 - 20, y: p.y)
+        } ?? resting
+        return WritingBar(editor: editor, vertical: vertical) { value in
             dragPoint = value.location
         } onDragEnded: { value in
-            dragPoint = nil
-            settle(predicted: value.predictedEndLocation, end: value.location)
+            let landing = SnapPoint.nearest(to: value.predictedEndLocation, in: viewport)
+            withAnimation(.spring(duration: 0.35, bounce: 0.2)) {
+                dragPoint = nil
+                snap = landing
+            }
+            landing.save(landscape: viewport.width > viewport.height)
         }
-    }
-
-    /// Within snapDistance of an edge, or flicked toward one, snaps; anywhere
-    /// else floats, stored as fractions of the viewport.
-    private func settle(predicted: CGPoint, end: CGPoint) {
-        let viewport = viewportSize
-        guard viewport.width > 0, viewport.height > 0 else { return }
-        let distances: [(ClusterEdge, CGFloat)] = [
-            (.leading, predicted.x), (.trailing, viewport.width - predicted.x),
-            (.top, predicted.y), (.bottom, viewport.height - predicted.y),
-        ]
-        let nearest = distances.min { $0.1 < $1.1 }!
-        if nearest.1 < ClusterMetrics.snapDistance {
-            placement = .snapped(nearest.0)
-        } else {
-            placement = .floating(
-                fx: min(max(end.x / viewport.width, 0.05), 0.95),
-                fy: min(max((end.y + clusterLength(chip: ClusterMetrics.smallChip) / 2 - 12) / viewport.height, 0.1), 0.9)
-            )
-        }
-        placement.save(landscape: viewport.width > viewport.height)
+        .fixedSize()
+        .onGeometryChange(for: CGSize.self) { $0.size } action: { barSize = $0 }
+        .position(center)
+        .animation(dragPoint == nil ? .spring(duration: 0.35, bounce: 0.2) : nil, value: snap)
     }
 
     /// The whole chip is a menu; "Go to page" heads it and opens the navigator.

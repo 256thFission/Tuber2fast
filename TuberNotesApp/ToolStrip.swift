@@ -67,6 +67,7 @@ enum EditorToolButton: Hashable, CaseIterable, Identifiable {
 /// done is one call on the editor. The strip decides nothing.
 struct ToolStrip: View {
     let editor: EditorViewModel
+    var buttons: [EditorToolButton] = EditorToolButton.allCases
     var vertical = false
     var chip: CGFloat? = nil
 
@@ -75,20 +76,22 @@ struct ToolStrip: View {
     var body: some View {
         Group {
             if vertical {
-                VStack(spacing: 8) { buttons }
+                VStack(spacing: 8) { buttonViews }
             } else {
-                HStack(spacing: 8) { buttons }
+                HStack(spacing: 8) { buttonViews }
             }
         }
         .onAppear {
             if ProcessInfo.processInfo.arguments.contains("-MacaronShowTools") {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1) { optionsFor = EditorToolButton(editor.tool) }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                    if buttons.contains(EditorToolButton(editor.tool)) { optionsFor = EditorToolButton(editor.tool) }
+                }
             }
         }
     }
 
-    private var buttons: some View {
-        ForEach(EditorToolButton.allCases) { button in
+    private var buttonViews: some View {
+        ForEach(buttons) { button in
             toolButton(button)
         }
     }
