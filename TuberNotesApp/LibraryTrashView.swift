@@ -26,10 +26,16 @@ struct LibraryTrashView: View {
             } else {
                 List(browser.displayedTrash) { entry in
                     row(entry)
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
                 }
                 .listStyle(.plain)
+                .scrollContentBackground(.hidden)
             }
         }
+        .foregroundStyle(Macaron.ink)
+        .tint(Macaron.strawberry)
+        .background(MacaronGround())
         .confirmationDialog(
             "Delete permanently?", isPresented: isDeleting, titleVisibility: .visible, presenting: deleting
         ) { entry in
@@ -52,31 +58,30 @@ struct LibraryTrashView: View {
 
     private var header: some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
-            Text("Trash")
-                .font(.largeTitle.weight(.bold))
-            Text(browser.trash.count == 1 ? "1 item" : "\(browser.trash.count) items")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+            MacaronHeader("Trash", size: 34)
+            Text(browser.trash.count == 1 ? "1 ITEM" : "\(browser.trash.count) ITEMS")
+                .font(Macaron.display(13))
+                .opacity(0.7)
             Spacer()
             // Searching here searches the trash and nothing else: the trash
             // is not in the tree a search elsewhere reads.
             LibrarySearchField(text: Bindable(browser).searchText)
             Button("Empty", role: .destructive) { isEmptying = true }
-                .buttonStyle(.bordered)
+                .buttonStyle(MacaronWordChipStyle(isOn: true))
                 .disabled(browser.trash.isEmpty)
         }
     }
 
     private func row(_ entry: TrashEntry) -> some View {
         HStack(spacing: 14) {
-            Image(systemName: entry.kind == .folder ? "folder" : "book.closed")
-                .foregroundStyle(.secondary)
+            Image(systemName: entry.kind == .folder ? "folder.fill" : "book.closed.fill")
+                .font(.system(size: 16, weight: .black))
             VStack(alignment: .leading, spacing: 3) {
                 Text(entry.name)
-                    .font(.subheadline.weight(.semibold))
+                    .font(Macaron.display(14))
                 Text("Deleted \(LibraryStyle.itemDate.string(from: entry.origin.deletedAt))")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .opacity(0.7)
             }
             Spacer(minLength: 0)
             LibraryChevronMenu(name: entry.name) {
@@ -92,6 +97,11 @@ struct LibraryTrashView: View {
                 }
             }
         }
+        .foregroundStyle(Macaron.ink)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .macaronCard(fill: Macaron.card, radius: 12, shadow: 5)
+        .padding([.trailing, .bottom], 5)
     }
 
     private var isDeleting: Binding<Bool> {

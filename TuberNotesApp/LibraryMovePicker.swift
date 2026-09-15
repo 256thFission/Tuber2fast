@@ -41,9 +41,12 @@ private struct LibraryMoveLevel: View {
     var body: some View {
         List(folders) { item in
             NavigationLink(value: item.relativePath) {
-                Label(item.name, systemImage: "folder")
+                Label(item.name, systemImage: "folder.fill")
+                    .font(Macaron.display(15))
             }
+            .listRowBackground(Color.clear)
         }
+        .macaronSheet()
         .overlay {
             if folders.isEmpty {
                 ContentUnavailableView("No folders here", systemImage: "folder")
@@ -54,9 +57,11 @@ private struct LibraryMoveLevel: View {
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button("Cancel") { cancel() }
+                    .buttonStyle(MacaronWordChipStyle())
             }
             ToolbarItem(placement: .confirmationAction) {
                 Button(folder.isEmpty ? "Move to Documents" : "Move here") { confirm(folder) }
+                    .buttonStyle(MacaronWordChipStyle(isOn: true))
             }
         }
         .task(id: folder) {

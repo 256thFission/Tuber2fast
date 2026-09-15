@@ -38,6 +38,9 @@ struct LibraryView: View {
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
+        .foregroundStyle(Macaron.ink)
+        .tint(Macaron.strawberry)
+        .background(MacaronGround())
         // The lock badge depends on what is checked out, so a tab opening or
         // closing reloads the listing as much as a folder change does.
         // Whether a search is running, not the text: the tree is read once
@@ -111,14 +114,10 @@ struct LibraryView: View {
                         browser.back()
                     } label: {
                         Image(systemName: "chevron.left")
-                            .font(.headline)
+                            .font(.system(size: 17, weight: .black, design: .rounded))
                             .frame(width: 44, height: 44)
-                            .background(.quaternary, in: .circle)
-                            .overlay {
-                                Circle()
-                                    .strokeBorder(Color.accentColor, lineWidth: 3)
-                                    .opacity(isDroppingOnBack ? 1 : 0)
-                            }
+                            .macaronCard(fill: isDroppingOnBack ? Macaron.strawberry : Macaron.card, radius: 12, shadow: 5)
+                            .foregroundStyle(isDroppingOnBack ? Color.white : Macaron.ink)
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Back")
@@ -132,12 +131,10 @@ struct LibraryView: View {
                     } isTargeted: { isDroppingOnBack = $0 }
                     Spacer()
                 }
-                Text(browser.title)
-                    .font(.headline)
+                MacaronHeader(browser.title, size: 20)
             }
         } else {
-            Text(browser.title)
-                .font(.largeTitle.weight(.bold))
+            MacaronHeader(browser.title, size: 34)
                 .frame(height: 44, alignment: .leading)
         }
     }
@@ -154,7 +151,7 @@ struct LibraryView: View {
                 }
                 .pickerStyle(.inline)
             } label: {
-                Label(Self.name(of: browser.filter), systemImage: "line.3.horizontal.decrease")
+                chip(Self.name(of: browser.filter), symbol: "line.3.horizontal.decrease")
             }
 
             Spacer()
@@ -173,15 +170,28 @@ struct LibraryView: View {
                         Label("Folder", systemImage: "folder.badge.plus")
                     }
                 } label: {
-                    Label("New", systemImage: "plus")
+                    chip("New", symbol: "plus", fill: Macaron.strawberry, ink: .white)
                 }
-                .buttonStyle(.borderedProminent)
             }
 
             viewOptionsMenu
 
             LibrarySearchField(text: Bindable(browser).searchText)
         }
+    }
+
+    /// A menu's label drawn as a Macaron chip: a menu cannot take a
+    /// `ButtonStyle`, so the chip is the label itself.
+    private func chip(_ title: String, symbol: String, fill: Color = Macaron.card, ink: Color = Macaron.ink) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: symbol)
+            Text(title.uppercased())
+        }
+        .font(Macaron.display(14))
+        .padding(.horizontal, 12)
+        .frame(minHeight: 34)
+        .foregroundStyle(ink)
+        .macaronCard(fill: fill, radius: 10)
     }
 
     private var viewOptionsMenu: some View {
@@ -201,7 +211,10 @@ struct LibraryView: View {
             sortButton("Type", .type)
         } label: {
             Image(systemName: "square.grid.2x2")
-                .frame(width: 32, height: 32)
+                .font(.system(size: 16, weight: .heavy, design: .rounded))
+                .frame(width: 34, height: 34)
+                .macaronCard(fill: Macaron.card, radius: 10)
+                .foregroundStyle(Macaron.ink)
         }
         .accessibilityLabel("View options")
     }
@@ -236,11 +249,12 @@ struct LibraryView: View {
         VStack(spacing: 10) {
             HStack {
                 Button("Select All") { browser.selectAll() }
+                    .buttonStyle(MacaronWordChipStyle())
                 Spacer()
-                Text(browser.title)
-                    .font(.headline)
+                MacaronHeader(browser.title, size: 18)
                 Spacer()
                 Button("Done") { browser.endSelecting() }
+                    .buttonStyle(MacaronWordChipStyle())
             }
             HStack(spacing: 24) {
                 Spacer()
@@ -249,17 +263,19 @@ struct LibraryView: View {
                 } label: {
                     Label("Move", systemImage: "folder")
                 }
+                .buttonStyle(MacaronWordChipStyle())
                 Button {
                     run { await browser.duplicate(selection) }
                 } label: {
                     Label("Duplicate", systemImage: "plus.square.on.square")
                 }
+                .buttonStyle(MacaronWordChipStyle())
                 Button(role: .destructive) {
                     run { await browser.trash(selection) }
                 } label: {
                     Label("Trash", systemImage: "trash")
                 }
-                .tint(.red)
+                .buttonStyle(MacaronWordChipStyle(isOn: true))
                 Spacer()
             }
             .disabled(selection.isEmpty)
@@ -308,11 +324,10 @@ struct LibraryView: View {
 
     private var list: some View {
         ScrollView {
-            LazyVStack(spacing: 0) {
+            LazyVStack(spacing: 10) {
                 ForEach(browser.displayed) { item in
                     LibraryListRow(item: item, browser: browser, drop: dropTarget(item)) { itemMenu(for: item) }
                         .onTapGesture { tap(item) }
-                    Divider()
                 }
             }
             .padding(.horizontal, 28)
@@ -413,14 +428,16 @@ struct LibrarySearchField: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
-                .foregroundStyle(.secondary)
+                .font(.system(size: 14, weight: .black))
             TextField("Search", text: $text)
                 .textFieldStyle(.plain)
+                .font(.system(size: 14, weight: .bold, design: .rounded))
                 .frame(width: 180)
         }
+        .foregroundStyle(Macaron.ink)
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(.quaternary, in: .capsule)
+        .frame(minHeight: 34)
+        .macaronCard(fill: Macaron.card, radius: 10)
     }
 }
 
@@ -438,7 +455,9 @@ private struct LibrarySidebar: View {
         }
         .padding(14)
         .frame(maxHeight: .infinity)
-        .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 24))
+        .macaronCard(fill: Macaron.card, radius: 14, shadow: 5)
+        .padding(.trailing, 5)
+        .padding(.bottom, 5)
     }
 
     private func row(_ target: LibrarySection, title: String, symbol: String) -> some View {
@@ -448,17 +467,14 @@ private struct LibrarySidebar: View {
             HStack(spacing: 12) {
                 Image(systemName: symbol)
                     .frame(width: 22)
-                Text(title)
-                    .font(.body.weight(.medium))
+                Text(title.uppercased())
+                    .font(Macaron.display(15))
                 Spacer()
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 12)
-            .background(
-                section == target ? Color.accentColor.opacity(0.18) : .clear,
-                in: .rect(cornerRadius: 12)
-            )
-            .foregroundStyle(section == target ? Color.accentColor : Color.primary)
+            .foregroundStyle(section == target ? Color.white : Macaron.ink)
+            .macaronCard(fill: section == target ? Macaron.strawberry : Macaron.card, radius: 10)
             .contentShape(.rect)
         }
         .buttonStyle(.plain)

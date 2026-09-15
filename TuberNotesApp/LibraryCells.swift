@@ -3,6 +3,37 @@ import SwiftUI
 import TNLibrary
 import UniformTypeIdentifiers
 
+// MARK: Macaron presets
+
+/// The four preset accents. A folder's durable colour name maps onto the
+/// nearest of them; nothing else in the library is tinted.
+private let macaronStrawberry = Color(red: 0xFF / 255, green: 0x6A / 255, blue: 0x8C / 255)
+private let macaronPistachio = Color(red: 0xB7 / 255, green: 0xE4 / 255, blue: 0xA0 / 255)
+private let macaronBlueberry = Color(red: 0x8F / 255, green: 0xB8 / 255, blue: 0xF5 / 255)
+private let macaronVanilla = Color(red: 0xFF / 255, green: 0xB3 / 255, blue: 0x47 / 255)
+
+private func macaronPreset(_ color: FolderColor) -> Color {
+    switch color {
+    case .neutral: macaronVanilla
+    case .red, .pink: macaronStrawberry
+    case .orange, .yellow: macaronVanilla
+    case .green: macaronPistachio
+    case .blue, .purple: macaronBlueberry
+    }
+}
+
+/// A cell's accent: a folder's own preset, strawberry for a notebook.
+@MainActor func macaronAccent(of item: LibraryItem) -> Color {
+    switch item.kind {
+    case .folder: macaronPreset((item.decoration ?? .plain).color)
+    case .notebook: macaronStrawberry
+    }
+}
+
+@MainActor func macaronChosen(_ item: LibraryItem, _ browser: LibraryBrowser) -> Bool {
+    browser.selection?.contains(item.relativePath) ?? false
+}
+
 /// Where an item lives, shown only while a search is running: a search
 /// lists the whole library, and a bare name does not say which folder it
 /// came from. Nil at the root, where there is nothing to say.
@@ -63,8 +94,8 @@ private struct LibraryFolderDrop: ViewModifier {
                     return true
                 } isTargeted: { isTargeted = $0 }
                 .overlay {
-                    RoundedRectangle(cornerRadius: 10)
-                        .strokeBorder(Color.accentColor, lineWidth: 3)
+                    RoundedRectangle(cornerRadius: 12)
+                        .strokeBorder(macaronAccent(of: item), lineWidth: Macaron.outline)
                         .opacity(isTargeted ? 1 : 0)
                 }
         } else {
@@ -86,6 +117,9 @@ struct LibraryGridCell<MenuContent: View>: View {
     let drop: (Set<String>) -> Void
     @ViewBuilder let menu: () -> MenuContent
 
+    private var chosen: Bool { macaronChosen(item, browser) }
+    private var accent: Color { macaronAccent(of: item) }
+
     var body: some View {
         VStack(spacing: 10) {
             ZStack(alignment: .topTrailing) {
@@ -100,9 +134,9 @@ struct LibraryGridCell<MenuContent: View>: View {
             .overlay(alignment: .bottomLeading) {
                 if browser.library.isLocked(item.relativePath) {
                     Image(systemName: "lock.fill")
-                        .font(.caption)
-                        .padding(6)
-                        .background(.thinMaterial, in: .circle)
+                        .font(.caption.weight(.black))
+                        .frame(width: 24, height: 24)
+                        .macaronCard(fill: Macaron.card, radius: 8)
                         .padding(6)
                         .accessibilityLabel("Open")
                 }
@@ -110,7 +144,7 @@ struct LibraryGridCell<MenuContent: View>: View {
 
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 Text(item.name)
-                    .font(.subheadline.weight(.semibold))
+                    .font(Macaron.display(13))
                     .lineLimit(2)
                     .truncationMode(.middle)
                     .multilineTextAlignment(.center)
@@ -118,17 +152,22 @@ struct LibraryGridCell<MenuContent: View>: View {
             }
 
             Text(LibraryStyle.itemDate.string(from: item.modifiedAt))
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(.system(size: 11, weight: .bold, design: .rounded))
+                .opacity(0.7)
 
             if let parent = parentWhileSearching(item, browser) {
                 Text(parent)
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                    .font(.system(size: 10, weight: .bold, design: .rounded))
+                    .opacity(0.55)
                     .lineLimit(1)
                     .truncationMode(.head)
             }
         }
+        .foregroundStyle(chosen ? Color.white : Macaron.ink)
+        .padding(12)
+        .macaronCard(fill: chosen ? accent : Macaron.card, radius: 14, shadow: 5)
+        .padding(.trailing, 5)
+        .padding(.bottom, 5)
         .contentShape(.rect)
         .contextMenu { menu() }
         .draggable(dragged(item, browser))
@@ -140,9 +179,8 @@ struct LibraryGridCell<MenuContent: View>: View {
         case .notebook:
             LibraryCover(item: item, browser: browser)
                 .aspectRatio(3.0 / 4.0, contentMode: .fit)
-                .shadow(color: .black.opacity(0.25), radius: 6, y: 3)
         case .folder:
-            LibraryFolderGlyph(decoration: item.decoration)
+            LibraryFolderGlyph(decoration: item.decoration, chosen: chosen)
                 .aspectRatio(3.0 / 4.0, contentMode: .fit)
                 .padding(.vertical, 10)
         }
@@ -157,6 +195,9 @@ struct LibraryListRow<MenuContent: View>: View {
     let drop: (Set<String>) -> Void
     @ViewBuilder let menu: () -> MenuContent
 
+    private var chosen: Bool { macaronChosen(item, browser) }
+    private var accent: Color { macaronAccent(of: item) }
+
     var body: some View {
         HStack(spacing: 14) {
             if browser.isSelecting {
@@ -166,7 +207,7 @@ struct LibraryListRow<MenuContent: View>: View {
             Group {
                 switch item.kind {
                 case .notebook: LibraryCover(item: item, browser: browser)
-                case .folder: LibraryFolderGlyph(decoration: item.decoration)
+                case .folder: LibraryFolderGlyph(decoration: item.decoration, chosen: chosen)
                 }
             }
             .frame(width: 44, height: 58)
@@ -174,24 +215,23 @@ struct LibraryListRow<MenuContent: View>: View {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(item.name)
-                        .font(.subheadline.weight(.semibold))
+                        .font(Macaron.display(14))
                         .lineLimit(1)
                         .truncationMode(.middle)
                     if browser.library.isLocked(item.relativePath) {
                         Image(systemName: "lock.fill")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
+                            .font(.caption2.weight(.black))
                             .accessibilityLabel("Open")
                     }
                 }
                 Text(LibraryStyle.itemDate.string(from: item.modifiedAt))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .opacity(0.7)
 
                 if let parent = parentWhileSearching(item, browser) {
                     Text(parent)
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
+                        .font(.system(size: 10, weight: .bold, design: .rounded))
+                        .opacity(0.55)
                         .lineLimit(1)
                         .truncationMode(.head)
                 }
@@ -204,11 +244,15 @@ struct LibraryListRow<MenuContent: View>: View {
 
             if item.kind == .folder {
                 Image(systemName: "chevron.right")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.tertiary)
+                    .font(.caption.weight(.black))
             }
         }
-        .padding(.vertical, 8)
+        .foregroundStyle(chosen ? Color.white : Macaron.ink)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .macaronCard(fill: chosen ? accent : Macaron.card, radius: 12, shadow: 5)
+        .padding(.trailing, 5)
+        .padding(.bottom, 5)
         .contentShape(.rect)
         .contextMenu { menu() }
         .draggable(dragged(item, browser))
@@ -227,12 +271,7 @@ struct LibraryCover: View {
 
     var body: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 6)
-                .fill(LibraryStyle.paperEdge)
-                .offset(x: 5)
-            RoundedRectangle(cornerRadius: 6)
-                .fill(LibraryStyle.paperEdge.opacity(0.6))
-                .offset(x: 2.5)
+            RoundedRectangle(cornerRadius: 10).fill(Macaron.ink).offset(x: 5, y: 5)
             Group {
                 if let image {
                     Image(decorative: image, scale: 1)
@@ -242,13 +281,12 @@ struct LibraryCover: View {
                     LibraryStyle.paper
                 }
             }
-            .clipShape(
-                UnevenRoundedRectangle(
-                    topLeadingRadius: 4, bottomLeadingRadius: 4,
-                    bottomTrailingRadius: 8, topTrailingRadius: 8
-                )
-            )
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(Macaron.ink, lineWidth: Macaron.outline)
         }
+        .padding(.trailing, 5)
+        .padding(.bottom, 5)
         .task(id: item.modifiedAt) { image = await browser.cover(of: item) }
     }
 }
@@ -258,6 +296,8 @@ struct LibraryFolderGlyph: View {
     /// already lost its identity and its star; it draws as it drew before
     /// decoration existed rather than as nothing at all.
     let decoration: FolderDecoration?
+    /// On a selected card the glyph reads white like the rest of the text.
+    var chosen = false
 
     private var shown: FolderDecoration { decoration ?? .plain }
 
@@ -265,7 +305,7 @@ struct LibraryFolderGlyph: View {
         Image(systemName: shown.symbol.rawValue)
             .resizable()
             .scaledToFit()
-            .foregroundStyle(LibraryStyle.color(of: shown.color))
+            .foregroundStyle(chosen ? Color.white : macaronPreset(shown.color))
     }
 }
 
@@ -283,8 +323,8 @@ struct LibraryFavoriteStar: View {
             Task { await browser.toggleFavorite(item) }
         } label: {
             Image(systemName: starred ? "star.fill" : "star")
-                .font(.footnote.weight(.medium))
-                .foregroundStyle(starred ? Color.accentColor : Color.secondary)
+                .font(.footnote.weight(.black))
+                .foregroundStyle(starred ? macaronStrawberry : Macaron.ink)
                 .frame(width: 28, height: 28)
                 .contentShape(.rect)
         }
@@ -302,8 +342,7 @@ struct LibraryChevronMenu<MenuContent: View>: View {
             menu()
         } label: {
             Image(systemName: "chevron.down")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
+                .font(.caption.weight(.black))
                 .frame(width: 24, height: 24)
                 .contentShape(.rect)
         }
@@ -322,11 +361,11 @@ private struct LibrarySelectionCheck: View {
     var body: some View {
         if let selection = browser.selection {
             let chosen = selection.contains(item.relativePath)
-            Image(systemName: chosen ? "checkmark.circle.fill" : "circle")
-                .font(.title3)
-                .symbolRenderingMode(.palette)
-                .foregroundStyle(chosen ? Color.white : Color.secondary, chosen ? Color.accentColor : Color.clear)
-                .background(.thinMaterial, in: .circle)
+            Image(systemName: chosen ? "checkmark" : "circle")
+                .font(.system(size: 13, weight: .black, design: .rounded))
+                .foregroundStyle(chosen ? Color.white : Macaron.ink)
+                .frame(width: 24, height: 24)
+                .macaronCard(fill: chosen ? macaronStrawberry : Macaron.card, radius: 8)
                 .accessibilityLabel(chosen ? "Selected" : "Not selected")
         }
     }
