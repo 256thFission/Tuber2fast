@@ -42,14 +42,14 @@ struct EditorView: View {
     var body: some View {
         VStack(spacing: 0) {
             toolbar
-            if let failure = editor.lastSaveError {
-                RefusalBar(message: Self.message(for: failure))
-            } else if let fault = editor.lastContentError {
-                // An import or a layer that the page refused: without this it
-                // would be a tap that quietly did nothing.
-                RefusalBar(message: "That couldn't be added: \(fault.description)")
-            }
             CanvasHost(controller: editor.canvasHost)
+                .overlay(alignment: .top) {
+                    if let failure = editor.lastSaveError {
+                        RefusalBar(message: Self.message(for: failure))
+                    } else if let fault = editor.lastContentError {
+                        RefusalBar(message: "That couldn't be added: \(fault.description)")
+                    }
+                }
         }
         // The choice is acted on after the sheet is gone: the photo leg
         // presents a second sheet, and two presentations in one frame do not
@@ -150,15 +150,11 @@ struct EditorView: View {
         .onAppear { publishBandActions() }
     }
 
-    /// Tap opens the navigator; long press holds the page actions.
+    /// The whole chip is a menu; "Go to page" heads it and opens the navigator.
     private var pageReadout: some View {
-        Button { isShowingNavigator = true } label: {
-            Text("Page \(editor.currentPageIndex + 1) of \(editor.pageCount)")
-                .font(Macaron.display(14).monospacedDigit())
-                .fixedSize()
-                .padding(.horizontal, 6)
-        }
-        .contextMenu {
+        Menu {
+            Button { isShowingNavigator = true } label: { Label("Go to page\u{2026}", systemImage: "rectangle.grid.2x2") }
+            Divider()
             Button { isAddingPage = true } label: { Label("Add page", systemImage: "plus.rectangle.portrait") }
             Button {
                 guard let page = currentPage else { return }
@@ -172,6 +168,15 @@ struct EditorView: View {
             }
             paperMenu
             Button(role: .destructive) { isConfirmingPageDelete = true } label: { Label("Delete page", systemImage: "trash") }
+        } label: {
+            HStack(spacing: 6) {
+                Text("Page \(editor.currentPageIndex + 1) of \(editor.pageCount)")
+                    .font(Macaron.display(14).monospacedDigit())
+                    .fixedSize()
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 11, weight: .black))
+            }
+            .padding(.horizontal, 6)
         }
     }
 
@@ -325,12 +330,12 @@ private struct RefusalBar: View {
 
     var body: some View {
         Text(message)
-            .font(.footnote)
+            .font(Macaron.display(14))
             .foregroundStyle(.white)
-            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 16)
-            .padding(.vertical, 6)
-            .background(Color.red)
+            .padding(.vertical, 10)
+            .macaronCard(fill: Macaron.strawberry, radius: 12, shadow: 5)
+            .padding(.top, 24)
     }
 }
 
