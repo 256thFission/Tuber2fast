@@ -313,12 +313,7 @@ struct EditorView: View {
 struct CanvasHost: UIViewControllerRepresentable {
     let controller: UIViewController
 
-    func makeUIViewController(context: Context) -> UIViewController {
-        context.coordinator.attach(to: controller.view)
-        return controller
-    }
-
-    func makeCoordinator() -> MacaronCanvasSkin { MacaronCanvasSkin() }
+    func makeUIViewController(context: Context) -> UIViewController { controller }
 
     func updateUIViewController(_ controller: UIViewController, context: Context) {}
 }

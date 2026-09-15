@@ -234,7 +234,7 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         // The canvas is the ink and nothing else; the paper is `paperView`
         // beneath it, so the canvas has to be clear for the paper to show,
         // and the surround is the same grey as the paging gutter.
-        view.backgroundColor = .systemGray5
+        view.backgroundColor = .clear
         canvasView.backgroundColor = .clear
         canvasView.isOpaque = false
 
@@ -264,6 +264,8 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         backdropView.contentMode = .scaleToFill
         backdropView.frame = CGRect(x: 0, y: 0, width: geometry.width, height: geometry.height)
         paperView.isUserInteractionEnabled = false
+        paperView.layer.cornerRadius = 14
+        paperView.layer.masksToBounds = true
         paperView.addSubview(backdropView)
         view.insertSubview(paperView, belowSubview: canvasView)
         view.addSubview(overlayView)

@@ -102,8 +102,12 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
         scrollView.alwaysBounceVertical = false
         scrollView.alwaysBounceHorizontal = true
         scrollView.contentInsetAdjustmentBehavior = .never
-        scrollView.backgroundColor = .systemGray5
+        scrollView.backgroundColor = .clear
         scrollView.delegate = self
+
+        let ground = MacaronGridGround(frame: view.bounds)
+        ground.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        view.addSubview(ground)
 
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(scrollView)
@@ -394,12 +398,30 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
         currentPageID.flatMap { order.firstIndex(of: $0) }
     }
 
+    /// PROTOTYPE (Macaron): one card under every page, at the fitted rect.
+    private var pageFrames: [PageID: MacaronPageFrame] = [:]
+
     private func layoutSlots() {
         let layout = currentLayout
         scrollView.contentSize = layout.contentSize
         guard !layout.isEmpty else { return }
+        let present = Set(order)
+        for (page, frame) in pageFrames where !present.contains(page) {
+            frame.removeFromSuperview()
+            pageFrames[page] = nil
+        }
         for (index, page) in order.enumerated() {
             let slot = layout.frame(at: index)
+            if let descriptor = descriptors[page] {
+                let frame = pageFrames[page] ?? {
+                    let made = MacaronPageFrame(frame: .zero)
+                    scrollView.insertSubview(made, at: 0)
+                    pageFrames[page] = made
+                    return made
+                }()
+                frame.frame = PageFit.rect(descriptor.geometry, in: layout.slot)
+                    .offsetBy(dx: slot.minX, dy: slot.minY)
+            }
             canvases[page]?.view.frame = slot
             if let placeholder = placeholders[page], let descriptor = descriptors[page] {
                 placeholder.frame = PageFit.rect(descriptor.geometry, in: layout.slot)

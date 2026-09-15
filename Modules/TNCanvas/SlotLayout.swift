@@ -93,7 +93,12 @@ package struct SlotLayout: Equatable, Sendable {
 /// page that has not been given content yet occupies exactly the rectangle the
 /// page will occupy once it has.
 package enum PageFit {
+    /// PROTOTYPE (Macaron): the page sits inside its slot with room for the
+    /// 3pt outline and the 5pt hard shadow.
+    package static let inset: CGFloat = 16
+
     package static func scale(_ geometry: PageGeometry, in slot: CGSize) -> CGFloat {
+        let slot = CGSize(width: slot.width - 2 * inset, height: slot.height - 2 * inset)
         guard slot.width > 0, slot.height > 0, geometry.width > 0, geometry.height > 0 else {
             return 1
         }

@@ -80,12 +80,13 @@ final class LayerSelectionView: UIView {
     /// flooring at a line.
     static let minimumExtent: Double = 8
 
-    private static let handleSize: CGFloat = 12
+    private static let handleSize: CGFloat = 16
     private static let knobSize: CGFloat = 14
     private static let knobOffset: CGFloat = 24
 
     private var handles: [Corner: UIView] = [:]
     private let knob = UIView()
+    private let marquee = CAShapeLayer()
     private let badge = UIImageView(image: UIImage(systemName: "lock.fill"))
     private lazy var editMenu = UIEditMenuInteraction(delegate: self)
     private var drag: DragMode?
@@ -102,20 +103,27 @@ final class LayerSelectionView: UIView {
         // The anchor is the bounds origin, so `position` is the placement's
         // translation and nothing has to compensate for a centre.
         self.layer.anchorPoint = .zero
-        self.layer.borderWidth = 1
-        self.layer.borderColor = UIColor.systemBlue.cgColor
+        marquee.fillColor = nil
+        marquee.strokeColor = MacaronCanvasChrome.ink.cgColor
+        marquee.lineWidth = MacaronCanvasChrome.outline
+        marquee.lineDashPattern = [8, 6]
+        self.layer.addSublayer(marquee)
 
         for corner in Corner.allCases {
             let handle = UIView()
-            handle.backgroundColor = .systemBlue
-            handle.layer.cornerRadius = Self.handleSize / 2
+            handle.backgroundColor = MacaronCanvasChrome.strawberry
+            handle.layer.cornerRadius = 4
+            handle.layer.borderWidth = MacaronCanvasChrome.outline
+            handle.layer.borderColor = MacaronCanvasChrome.ink.cgColor
             addSubview(handle)
             handles[corner] = handle
         }
-        knob.backgroundColor = .systemBlue
+        knob.backgroundColor = MacaronCanvasChrome.strawberry
         knob.layer.cornerRadius = Self.knobSize / 2
+        knob.layer.borderWidth = MacaronCanvasChrome.outline
+        knob.layer.borderColor = MacaronCanvasChrome.ink.cgColor
         addSubview(knob)
-        badge.tintColor = .systemBlue
+        badge.tintColor = MacaronCanvasChrome.ink
         badge.contentMode = .scaleAspectFit
         addSubview(badge)
 
@@ -155,6 +163,8 @@ final class LayerSelectionView: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        marquee.frame = bounds
+        marquee.path = UIBezierPath(rect: bounds).cgPath
         let size = Self.handleSize
         for (corner, handle) in handles {
             let unit = corner.unit
@@ -199,7 +209,7 @@ final class LayerSelectionView: UIView {
         knob.isHidden = isLocked
         badge.isHidden = !isLocked
         panRecognizer.isEnabled = !isLocked
-        layer.borderColor = isLocked ? UIColor.systemGray.cgColor : UIColor.systemBlue.cgColor
+        marquee.lineDashPattern = isLocked ? nil : [8, 6]
     }
 
     // MARK: - Told

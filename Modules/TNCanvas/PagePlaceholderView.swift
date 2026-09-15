@@ -15,9 +15,7 @@ final class PagePlaceholderView: UIView {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        backgroundColor = UIColor.systemGray6
-        layer.borderColor = UIColor.systemGray4.cgColor
-        layer.borderWidth = 1 / max(traitCollection.displayScale, 1)
+        backgroundColor = .clear
         isUserInteractionEnabled = false
 
         label.font = .preferredFont(forTextStyle: .footnote)
