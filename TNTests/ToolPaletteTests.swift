@@ -62,7 +62,7 @@ struct ToolPaletteTests {
     func anUnreadableRecordIsTheBuiltInDefault() {
         let store = MemoryPaletteStore()
         let first = ToolPalette(store: store)
-        first.remember(.ink(.pencil, InkPreset(color: .red, width: .thick)))
+        first.remember(.ink(.pencil, InkPreset(color: swatch(0xC4), width: .thick)))
         store.makeUnreadable()
 
         let second = ToolPalette(store: store)
@@ -78,7 +78,7 @@ struct ToolPaletteTests {
         // whole of it goes instead.
         let partial = ToolPaletteRecord(
             lastKind: .ink(.pen),
-            inks: [.pen: InkPreset(color: .red, width: .thick)],
+            inks: [.pen: InkPreset(color: swatch(0xC4), width: .thick)],
             eraserMode: .pixel,
             pixelEraserWidth: .thin,
             recentColors: [],
@@ -95,15 +95,15 @@ struct ToolPaletteTests {
     func aSecondPaletteRestoresTheFirst() {
         let store = MemoryPaletteStore()
         let first = ToolPalette(store: store)
-        first.remember(.ink(.highlighter, InkPreset(color: .purple, width: .thin)))
+        first.remember(.ink(.highlighter, InkPreset(color: swatch(0x7A), width: .thin)))
         first.remember(.erasePixel(.thick))
         first.used(swatch(0x11))
-        first.remember(.ink(.pencil, InkPreset(color: .orange, width: .thick)))
+        first.remember(.ink(.pencil, InkPreset(color: swatch(0xE0), width: .thick)))
 
         let second = ToolPalette(store: store)
         #expect(second.lastKind == .ink(.pencil))
-        #expect(second.currentTool == .ink(.pencil, InkPreset(color: .orange, width: .thick)))
-        #expect(second.inks[.highlighter] == InkPreset(color: .purple, width: .thin))
+        #expect(second.currentTool == .ink(.pencil, InkPreset(color: swatch(0xE0), width: .thick)))
+        #expect(second.inks[.highlighter] == InkPreset(color: swatch(0x7A), width: .thin))
         #expect(second.eraserMode == .pixel)
         #expect(second.pixelEraserWidth == .thick)
         #expect(second.recentColors == [swatch(0x11)])
@@ -117,9 +117,9 @@ struct ToolPaletteTests {
         let palette = ToolPalette(store: MemoryPaletteStore())
         let before = palette.inks
 
-        palette.remember(.ink(.pen, InkPreset(color: .blue, width: .thick)))
+        palette.remember(.ink(.pen, InkPreset(color: swatch(0x1A), width: .thick)))
 
-        #expect(palette.inks[.pen] == InkPreset(color: .blue, width: .thick))
+        #expect(palette.inks[.pen] == InkPreset(color: swatch(0x1A), width: .thick))
         #expect(palette.inks[.pencil] == before[.pencil])
         #expect(palette.inks[.highlighter] == before[.highlighter])
         #expect(palette.lastKind == .ink(.pen))
@@ -144,7 +144,7 @@ struct ToolPaletteTests {
     func rememberingALassoWritesNothing() {
         let store = MemoryPaletteStore()
         let palette = ToolPalette(store: store)
-        palette.remember(.ink(.pencil, InkPreset(color: .green, width: .thin)))
+        palette.remember(.ink(.pencil, InkPreset(color: swatch(0x2B), width: .thin)))
         let written = store.stored
 
         palette.remember(.lasso)

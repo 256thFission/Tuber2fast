@@ -78,12 +78,11 @@ package struct ToolColor: Equatable, Sendable, Codable {
         try container.encode(rgba)
     }
 
+    /// The two a fresh palette writes in, and the only drawing colours the
+    /// app names at all. Every other colour on offer is the theme's, and a
+    /// second list of shipped inks beside it would be a list to keep in
+    /// step with seven presets.
     package static let black = ToolColor(hex: "#1C1C1FFF")
-    package static let blue = ToolColor(hex: "#1A70C7FF")
-    package static let red = ToolColor(hex: "#C42929FF")
-    package static let green = ToolColor(hex: "#2B823DFF")
-    package static let orange = ToolColor(hex: "#E07B1AFF")
-    package static let purple = ToolColor(hex: "#7A3FC4FF")
     package static let yellow = ToolColor(hex: "#F2C200FF")
 
     /// A literal spelled the way the durable form is spelled, so the two

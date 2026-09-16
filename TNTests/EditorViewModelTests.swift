@@ -27,7 +27,8 @@ struct EditorViewModelTests {
 
     @Test("A tab opens on the tool the palette last held")
     func aTabOpensOnTheLastTool() async throws {
-        let thickRedPencil = EditorTool.ink(.pencil, InkPreset(color: .red, width: .thick))
+        let scarlet = ToolColor(rgba: RGBA8(red: 0xC4, green: 0x29, blue: 0x29, alpha: 0xFF))
+        let thickRedPencil = EditorTool.ink(.pencil, InkPreset(color: scarlet, width: .thick))
         let (scratch, book) = try await notebook("vm-last-tool")
         let editor = EditorViewModel(notebook: book, palette: palette(lastTool: thickRedPencil)) { _ in }
 
@@ -102,16 +103,17 @@ struct EditorViewModelTests {
         let shared = ToolPalette(store: MemoryPaletteStore())
         let editor = EditorViewModel(notebook: book, palette: shared) { _ in }
 
+        let violet = ToolColor(rgba: RGBA8(red: 0x7A, green: 0x3F, blue: 0xC4, alpha: 0xFF))
         editor.select(kind: .highlighter)
-        editor.setColor(.purple)
+        editor.setColor(violet)
         editor.setWidth(.thin)
-        #expect(editor.tool == .ink(.highlighter, InkPreset(color: .purple, width: .thin)))
+        #expect(editor.tool == .ink(.highlighter, InkPreset(color: violet, width: .thin)))
 
         editor.select(kind: .pen)
         #expect(editor.tool == .ink(.pen, InkPreset(color: .black, width: .medium)))
 
         editor.select(kind: .highlighter)
-        #expect(editor.tool == .ink(.highlighter, InkPreset(color: .purple, width: .thin)))
+        #expect(editor.tool == .ink(.highlighter, InkPreset(color: violet, width: .thin)))
         withExtendedLifetime(scratch) {}
     }
 

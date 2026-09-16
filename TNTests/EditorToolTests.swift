@@ -39,20 +39,17 @@ struct EditorToolTests {
     @Test("A tool colour round-trips through the UIColor it vends")
     func toolColorRoundTripsThroughUIColor() {
         let offered = Theme.presets.flatMap(\.theme.palette).map { ToolColor(rgba: $0) }
-        for color in offered + [.black, .blue, .red, .green, .orange, .purple, .yellow] {
+        for color in offered + [.black, .yellow] {
             #expect(ToolColor(color.uiColor) == color)
         }
     }
 
-    @Test("The named inks are the four inks this replaced, byte for byte")
-    func theNamedInksAreTheFourOldOnes() {
+    @Test("The two inks a fresh palette writes in, byte for byte")
+    func theNamedInksAreTheBuiltInPresets() {
         // How many colours the strip offers, and whether any of them
         // repeats, is the theme's question now and `ThemeTests` holds every
-        // preset to it. The bytes are still this file's: `.black` is what a
-        // fresh palette writes in whichever theme is on.
-        #expect([ToolColor.black, .blue, .red, .green].map(\.rgba.hex) == [
-            "#1C1C1FFF", "#1A70C7FF", "#C42929FF", "#2B823DFF",
-        ])
+        // preset to it. These two are the app's own, whichever theme is on.
+        #expect([ToolColor.black, .yellow].map(\.rgba.hex) == ["#1C1C1FFF", "#F2C200FF"])
     }
 
     // MARK: pkTool
@@ -66,12 +63,13 @@ struct EditorToolTests {
             // this is the one place the two meet.
             (.highlighter, .marker, 22),
         ]
+        let scarlet = ToolColor(rgba: RGBA8(red: 0xC4, green: 0x29, blue: 0x29, alpha: 0xFF))
         for (kind, inkType, width) in expected {
-            let preset = InkPreset(color: .red, width: .medium)
+            let preset = InkPreset(color: scarlet, width: .medium)
             let tool = try #require(EditorTool.ink(kind, preset).pkTool as? PKInkingTool)
             #expect(tool.inkType == inkType)
             #expect(tool.width == width)
-            #expect(ToolColor(tool.color) == ToolColor.red)
+            #expect(ToolColor(tool.color) == scarlet)
         }
     }
 
@@ -141,7 +139,7 @@ struct EditorToolTests {
         let record = ToolPaletteRecord(
             lastKind: .ink(.pencil),
             inks: [
-                .pen: InkPreset(color: .blue, width: .thin),
+                .pen: InkPreset(color: ToolColor(rgba: RGBA8(red: 1, green: 0x70, blue: 0xC7, alpha: 0xFF)), width: .thin),
                 .pencil: InkPreset(color: ToolColor(rgba: RGBA8(red: 9, green: 8, blue: 7, alpha: 0xFF)), width: .thick),
                 .highlighter: InkPreset(color: .yellow, width: .medium),
             ],
