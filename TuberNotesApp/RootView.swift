@@ -29,11 +29,20 @@ struct RootView: View {
         .animation(.default, value: workspace.banner)
         .environment(\.macaron, workspace.theme)
         .background(workspace.theme.ground.color)
+        // Presented here rather than beside either library chip: the picker
+        // is about the whole app, and the two chips live in different views.
+        .sheet(isPresented: themesBinding) {
+            ThemesPanel { workspace.isShowingThemes = false }
+        }
         // The view reports the hour and the workspace decides what to do
         // with it: a theme picked by hand is a choice, and the system does
         // not get to overrule it.
         .onAppear { workspace.colourScheme = scheme }
         .onChange(of: scheme) { _, scheme in workspace.colourScheme = scheme }
+    }
+
+    private var themesBinding: Binding<Bool> {
+        Binding(get: { workspace.isShowingThemes }, set: { workspace.isShowingThemes = $0 })
     }
 
     @ViewBuilder private var surface: some View {
@@ -107,6 +116,11 @@ private struct TabBar: View {
             }
         }
         .buttonStyle(.plain)
+        // The themes hang off the library chip, and this is the one the app
+        // opens on.
+        .contextMenu {
+            Button("Themes…") { workspace.isShowingThemes = true }
+        }
     }
 }
 

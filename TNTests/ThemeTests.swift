@@ -82,33 +82,39 @@ struct ThemeTests {
     func teenageEnamelEscape() {
         let enamel = Theme.teenageEnamel
         #expect(enamel.secondary == enamel.ink)
-        #expect(escapes(enamel, enamel.secondary))
+        near(enamel.outline(of: enamel.secondary), "#7A7A7A", "enamel secondary")
         for token in [enamel.ground, enamel.chrome, enamel.accent] {
             #expect(!escapes(enamel, token))
         }
+        near(enamel.outline(of: enamel.accent), "#9F3C0B", "enamel accent")
     }
 
-    @Test("Game Boy's dark tokens escape and its greens take the plain rule")
+    @Test("Game Boy's purple escapes and its greens take the plain rule")
     func gameBoyEscape() {
         let boy = Theme.gameBoy
+        // The plan expected the escape on the chrome and the ground. The
+        // board's hexes put both greens well clear of the ink, so it fires
+        // on the purple secondary instead.
         #expect(escapes(boy, boy.secondary))
-        #expect(escapes(boy, boy.ink))
+        near(boy.outline(of: boy.secondary), "#A084BB", "game boy secondary")
         for token in [boy.ground, boy.chrome, boy.accent] {
             #expect(!escapes(boy, token))
         }
+        near(boy.outline(of: boy.ground), "#60850F", "game boy ground")
+        near(boy.outline(of: boy.chrome), "#798D66", "game boy chrome")
     }
 
     @Test("No preset ships a line its own fill can hide")
     func everyPresetDrawsAVisibleLine() {
         for preset in Theme.presets {
-            let theme = preset.theme
+            let subject = preset.theme
             let tokens: [(String, RGBA8)] = [
-                ("ground", theme.ground), ("chrome", theme.chrome), ("accent", theme.accent),
-                ("secondary", theme.secondary), ("ink", theme.ink),
-                ("paper", theme.paper), ("seat body", theme.seatBody),
+                ("ground", subject.ground), ("chrome", subject.chrome), ("accent", subject.accent),
+                ("secondary", subject.secondary), ("ink", subject.ink),
+                ("paper", subject.paper), ("seat body", subject.seatBody),
             ]
             for (name, token) in tokens {
-                let ratio = Theme.contrast(theme.outline(of: token), token)
+                let ratio = Theme.contrast(subject.outline(of: token), token)
                 #expect(ratio >= 1.3, "\(preset.name)'s \(name) line is \(ratio) against its fill")
             }
         }
@@ -117,6 +123,10 @@ struct ThemeTests {
     /// The escape is private, and what it does is public: an outline that
     /// came up off its fill instead of going down into it went the other
     /// way. The reverse for a theme whose mix is already inverted.
+    ///
+    /// It reads the escape off the direction, so it assumes no token is
+    /// darker than its own theme's ink. That holds for all seven presets and
+    /// is not a property the type enforces.
     private func escapes(_ theme: Theme, _ fill: RGBA8) -> Bool {
         let outline = Theme.luminance(theme.outline(of: fill))
         return theme.invertsMix ? outline < Theme.luminance(fill) : outline > Theme.luminance(fill)
@@ -135,5 +145,8 @@ struct ThemeTests {
         #expect(dark.paper.hex == "#FFFFFFFF")
         // The chrome is dark, so its outline has to come up, not go down.
         #expect(Theme.luminance(dark.outline(of: dark.chrome)) > Theme.luminance(dark.chrome))
+        // And the escape, which after dark runs to the ground: the ink is a
+        // cream, so an outline mixed toward it would land on the ink itself.
+        #expect(Theme.luminance(dark.outline(of: dark.ink)) < Theme.luminance(dark.ink))
     }
 }

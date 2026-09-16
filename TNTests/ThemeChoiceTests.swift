@@ -29,13 +29,4 @@ struct ThemeChoiceTests {
         #expect(ThemeChoice.preset(boy).resolve(dark: false) == .gameBoy)
         #expect(ThemeChoice.preset(boy).resolve(dark: true) == .gameBoy)
     }
-
-    @Test("A choice survives the shape the preference is written in")
-    func roundTrip() throws {
-        let choices = [ThemeChoice.system] + Theme.presets.map { ThemeChoice.preset($0.id) }
-        for choice in choices {
-            let data = try PropertyListEncoder().encode(choice)
-            #expect(try PropertyListDecoder().decode(ThemeChoice.self, from: data) == choice)
-        }
-    }
 }

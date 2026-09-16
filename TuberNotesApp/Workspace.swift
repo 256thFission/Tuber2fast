@@ -69,14 +69,25 @@ final class Workspace {
     /// `-TNTheme <name>` opens on a theme, so a screenshot of one needs no
     /// taps to reach it. It is not saved: a run that exists to be
     /// photographed must not leave the machine holding a theme nobody chose.
-    private static func launchChoice(_ store: ThemeDefaults) -> ThemeChoice {
-        let arguments = ProcessInfo.processInfo.arguments
-        guard let index = arguments.firstIndex(of: "-TNTheme"),
-              index + 1 < arguments.count,
-              let match = Theme.presets.first(where: { $0.name == arguments[index + 1] })
-        else { return store.load() ?? .system }
+    ///
+    /// A name no preset answers to traps. The argument is a developer's, not
+    /// a preference, and a run that quietly opened on last week's theme would
+    /// file the screenshot under the name it was asked for.
+    static func launchChoice(_ arguments: [String], _ store: ThemeDefaults) -> ThemeChoice {
+        guard let index = arguments.firstIndex(of: "-TNTheme"), index + 1 < arguments.count else {
+            return store.load() ?? .system
+        }
+        let name = arguments[index + 1]
+        guard let match = Theme.presets.first(where: { $0.name == name }) else {
+            TNPrecondition.fail("-TNTheme names no preset: \(name)")
+        }
         return .preset(match.id)
     }
+
+    /// Whether the themes panel is up. It hangs off the library chip, and
+    /// both chips that call themselves that are in different views, so the
+    /// flag is here rather than in either of them.
+    var isShowingThemes = ProcessInfo.processInfo.arguments.contains("-TNShowThemes")
 
     /// Whether the seat is out. One tenant, one flag.
     var isSeatOpen = ProcessInfo.processInfo.arguments.contains("-TNSeatOpen")
@@ -107,7 +118,7 @@ final class Workspace {
         // Assigned here rather than in its declaration so the launch
         // argument and the preference are read through the one store this
         // object owns.
-        choice = Self.launchChoice(themeStore)
+        choice = Self.launchChoice(ProcessInfo.processInfo.arguments, themeStore)
         resolveTheme()
         Task { await self.refreshIdentities() }
         // The renderer caches declare "on memory pressure from the app" as an

@@ -50,3 +50,34 @@ struct ThemeDefaultsTests {
         }
     }
 }
+
+/// What the app opens on, which is the launch argument first and the
+/// preference second.
+@Suite("The launch theme")
+@MainActor
+struct LaunchThemeTests {
+    private func store() -> ThemeDefaults {
+        ThemeDefaults(UserDefaults(suiteName: "tn.launchTests.\(UUID().uuidString)")!)
+    }
+
+    @Test("-TNTheme names a theme by the name the picker shows")
+    func namedTheme() {
+        for preset in Theme.presets {
+            let choice = Workspace.launchChoice(["TuberNotes", "-TNTheme", preset.name], store())
+            #expect(choice == .preset(preset.id))
+        }
+    }
+
+    @Test("Without the argument the preference decides, and without one the system does")
+    func fallsBackToThePreference() {
+        #expect(Workspace.launchChoice(["TuberNotes"], store()) == .system)
+        let remembered = store()
+        remembered.save(.preset(ThemeID(rawValue: "kirby")))
+        #expect(Workspace.launchChoice(["TuberNotes"], remembered) == .preset(ThemeID(rawValue: "kirby")))
+    }
+
+    @Test("A theme argument with no name after it is not an argument")
+    func danglingArgument() {
+        #expect(Workspace.launchChoice(["TuberNotes", "-TNTheme"], store()) == .system)
+    }
+}

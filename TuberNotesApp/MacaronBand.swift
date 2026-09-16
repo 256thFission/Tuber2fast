@@ -14,8 +14,6 @@ struct MacaronBand: View {
     let editor: EditorViewModel
     let action: (BandAction) -> Void
 
-    @State private var isShowingThemes = false
-
     /// How much of the top the band takes, so nothing else parks under it.
     static let slack: CGFloat = 56 + 32
 
@@ -51,12 +49,6 @@ struct MacaronBand: View {
                 }
                 .padding(.top, -Macaron.shellRadius)
         }
-        .sheet(isPresented: $isShowingThemes) {
-            ThemesPanel { isShowingThemes = false }
-        }
-        .onAppear {
-            if ProcessInfo.processInfo.arguments.contains("-TNShowThemes") { isShowingThemes = true }
-        }
     }
 
     private var shell: UnevenRoundedRectangle {
@@ -87,7 +79,7 @@ struct MacaronBand: View {
         // The themes hang off the one chip that is about the whole app
         // rather than about the notebook. The band's own list is fixed.
         .contextMenu {
-            Button("Themes\u{2026}") { isShowingThemes = true }
+            Button("Themes…") { workspace.isShowingThemes = true }
         }
     }
 

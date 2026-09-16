@@ -8,7 +8,6 @@ import TNModel
 /// the only way to compare two themes.
 struct ThemesPanel: View {
     @Environment(Workspace.self) private var workspace
-    @Environment(\.macaron) private var theme
     let onClose: () -> Void
 
     private static let columns = 4
@@ -92,8 +91,8 @@ private struct ThemeCard: View {
     private var bar: some View {
         let theme = preset.theme
         return HStack(spacing: Macaron.rowGap) {
-            dot(theme.accent, in: theme)
-            dot(theme.secondary, in: theme)
+            dot(theme.accent)
+            dot(theme.secondary)
         }
         .padding(Macaron.rowGap)
         .background {
@@ -106,10 +105,12 @@ private struct ThemeCard: View {
         }
     }
 
-    private func dot(_ fill: RGBA8, in theme: Theme) -> some View {
+    private func dot(_ fill: RGBA8) -> some View {
         Circle()
             .fill(fill.color)
-            .overlay { Circle().strokeBorder(theme.outline(of: fill).color, lineWidth: Macaron.line) }
+            .overlay {
+                Circle().strokeBorder(preset.theme.outline(of: fill).color, lineWidth: Macaron.line)
+            }
             .frame(width: Self.dot, height: Self.dot)
     }
 }
