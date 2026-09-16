@@ -217,6 +217,14 @@ edge, so 16 is what a page's margin is and what separates one block from the
 next; 8 (`columnGap`) separates neighbours inside a run, and 6 (`rowGap`)
 separates rows. The library is on those three numbers and no others.
 
+The controls are a tray: one shell holding the filter, New, the view options
+and the search, the way the writing bar's shell holds a run of chips. Loose
+on the ground they read as three unrelated buttons, and in portrait they lost
+the argument for width against the collection's name, which truncated to
+`Docum...` while `All` and `New` lost their words. The name and the tray
+share a line only while both fit on it, and drop to two lines when they do
+not.
+
 What that changed, beyond the numbers: the chip bar is flush with the top of
 the display and carries the same bottom-only radii as the band, because it is
 the band's other half and was floating on the ground with air above it. The

@@ -88,10 +88,19 @@ struct LibraryView: View {
                     if browser.isSelecting {
                         selectBar
                     } else {
-                        HStack(alignment: .center, spacing: Macaron.columnGap) {
-                            header
-                            Spacer(minLength: Macaron.inset)
-                            toolbarRow
+                        // One line while the name and the tray both fit on
+                        // it. A truncated collection name is not a trade
+                        // worth making for a shorter page.
+                        ViewThatFits(in: .horizontal) {
+                            HStack(alignment: .center, spacing: Macaron.columnGap) {
+                                header
+                                Spacer(minLength: Macaron.inset)
+                                toolbarRow
+                            }
+                            VStack(alignment: .leading, spacing: Macaron.columnGap) {
+                                header
+                                toolbarRow
+                            }
                         }
                     }
                 }
@@ -149,41 +158,46 @@ struct LibraryView: View {
     // MARK: Toolbar
 
     private var toolbarRow: some View {
-        HStack(spacing: Macaron.columnGap) {
-            MacaronMenuCap {
-                Picker("Filter", selection: Bindable(browser).filter) {
+        MacaronShell {
+            HStack(spacing: Macaron.columnGap) {
+                MacaronMenuCap {
+                    Picker("Filter", selection: Bindable(browser).filter) {
                     Text("All").tag(LibraryFilter.all)
                     Text("Notebooks").tag(LibraryFilter.notebooks)
-                    Text("Folders").tag(LibraryFilter.folders)
-                }
-                .pickerStyle(.inline)
-            } label: {
-                capLabel(Self.name(of: browser.filter), "line.3.horizontal.decrease")
-            }
-
-            if browser.section == .documents {
-                // The accent, because making a notebook is the one thing the
-                // library exists to do that nothing else in it can.
-                MacaronMenuCap(fill: theme.accent) {
-                    Button {
-                        isCreatingNotebook = true
-                    } label: {
-                        Label("Notebook", systemImage: "book.closed")
+                        Text("Folders").tag(LibraryFilter.folders)
                     }
-                    Button {
-                        newFolderName = "New folder"
-                        isNamingFolder = true
-                    } label: {
-                        Label("Folder", systemImage: "folder.badge.plus")
-                    }
+                    .pickerStyle(.inline)
                 } label: {
-                    capLabel("New", "plus")
+                    capLabel(Self.name(of: browser.filter), "line.3.horizontal.decrease")
                 }
+
+                if browser.section == .documents {
+                    // The accent, because making a notebook is the one thing
+                    // the library exists to do that nothing else in it can.
+                    MacaronMenuCap(fill: theme.accent) {
+                        Button {
+                            isCreatingNotebook = true
+                        } label: {
+                            Label("Notebook", systemImage: "book.closed")
+                        }
+                        Button {
+                            newFolderName = "New folder"
+                            isNamingFolder = true
+                        } label: {
+                            Label("Folder", systemImage: "folder.badge.plus")
+                        }
+                    } label: {
+                        capLabel("New", "plus")
+                    }
+                }
+
+                viewOptionsMenu
+
+                MacaronDivider()
+
+                LibrarySearchField(text: Bindable(browser).searchText)
             }
-
-            viewOptionsMenu
-
-            LibrarySearchField(text: Bindable(browser).searchText)
+            .fixedSize(horizontal: true, vertical: false)
         }
     }
 
