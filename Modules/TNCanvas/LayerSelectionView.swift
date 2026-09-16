@@ -80,11 +80,17 @@ final class LayerSelectionView: UIView {
     /// flooring at a line.
     static let minimumExtent: Double = 8
 
-    private static let handleSize: CGFloat = 12
+    private static let handleSize: CGFloat = 15
+    private static let handleRadius: CGFloat = 5
     private static let knobSize: CGFloat = 14
     private static let knobOffset: CGFloat = 24
+    private static let lineWidth: CGFloat = 3
+    private static let dashPattern: [NSNumber] = [9, 7]
+    /// How much of the accent the box lays over what it surrounds.
+    private static let fillAlpha: CGFloat = 0.10
 
     private var handles: [Corner: UIView] = [:]
+    private let box = CAShapeLayer()
     private let knob = UIView()
     private let badge = UIImageView(image: UIImage(systemName: "lock.fill"))
     private lazy var editMenu = UIEditMenuInteraction(delegate: self)
@@ -102,22 +108,28 @@ final class LayerSelectionView: UIView {
         // The anchor is the bounds origin, so `position` is the placement's
         // translation and nothing has to compensate for a centre.
         self.layer.anchorPoint = .zero
-        self.layer.borderWidth = 1
-        self.layer.borderColor = UIColor.systemBlue.cgColor
+        // Added before the handles, so it sits under them however the
+        // subviews' own layers stack.
+        box.lineWidth = Self.lineWidth
+        box.lineDashPattern = Self.dashPattern
+        // Not view-backed, so its path and frame would implicitly animate and
+        // trail the handles for a quarter second on every resize step.
+        box.actions = ["path": NSNull(), "bounds": NSNull(), "position": NSNull()]
+        self.layer.addSublayer(box)
 
         for corner in Corner.allCases {
             let handle = UIView()
-            handle.backgroundColor = .systemBlue
-            handle.layer.cornerRadius = Self.handleSize / 2
+            handle.layer.cornerRadius = Self.handleRadius
+            handle.layer.borderWidth = Self.lineWidth
             addSubview(handle)
             handles[corner] = handle
         }
-        knob.backgroundColor = .systemBlue
         knob.layer.cornerRadius = Self.knobSize / 2
+        knob.layer.borderWidth = Self.lineWidth
         addSubview(knob)
-        badge.tintColor = .systemBlue
         badge.contentMode = .scaleAspectFit
         addSubview(badge)
+        applyTheme()
 
         panRecognizer.addTarget(self, action: #selector(handlePan(_:)))
         addGestureRecognizer(panRecognizer)
@@ -155,6 +167,10 @@ final class LayerSelectionView: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        box.frame = bounds
+        // Stroked on the bounds rather than inside them, so the line's own
+        // centre is where the object's edge actually is.
+        box.path = CGPath(rect: bounds, transform: nil)
         let size = Self.handleSize
         for (corner, handle) in handles {
             let unit = corner.unit
@@ -199,7 +215,27 @@ final class LayerSelectionView: UIView {
         knob.isHidden = isLocked
         badge.isHidden = !isLocked
         panRecognizer.isEnabled = !isLocked
-        layer.borderColor = isLocked ? UIColor.systemGray.cgColor : UIColor.systemBlue.cgColor
+        applyTheme()
+    }
+
+    /// Every colour the frame draws is the accent or is derived from it, so
+    /// the frame belongs to the theme and never borrows the ink it sits over.
+    /// Locked, the box drops to the accent's own outline tint: the document
+    /// names no locked treatment, and that is the dimmer end of the one
+    /// colour the lasso is allowed.
+    private func applyTheme() {
+        let theme = Theme.current
+        let accent = theme.accent.uiColor
+        let tint = theme.outline(of: theme.accent).uiColor
+        box.fillColor = accent.withAlphaComponent(Self.fillAlpha).cgColor
+        box.strokeColor = (isLocked ? tint : accent).cgColor
+        for handle in handles.values {
+            handle.backgroundColor = accent
+            handle.layer.borderColor = tint.cgColor
+        }
+        knob.backgroundColor = accent
+        knob.layer.borderColor = tint.cgColor
+        badge.tintColor = tint
     }
 
     // MARK: - Told
