@@ -78,8 +78,18 @@ struct Keycap<Label: View>: View {
     @Environment(\.macaron) private var theme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var phase = 0
+    @State private var trampoline = 0
 
     private var outline: RGBA8 { theme.outline(of: fill) }
+
+    /// A tool becoming held throws the cap above its rest for a moment,
+    /// leaving a taller wall under it, and lands sunk.
+    private var wallHeight: CGFloat { trampoline == 2 ? 11 : wall }
+    private var wallIsVisible: Bool { trampoline == 2 || !isHeld }
+    private var capOffset: CGFloat {
+        if trampoline == 2 { return -7 }
+        return isHeld ? wall : 0
+    }
 
     /// Volume conserved: 1.14 × 0.82, then 0.86 × 1.24, then rest.
     private var squash: CGSize {
@@ -95,8 +105,8 @@ struct Keycap<Label: View>: View {
             RoundedRectangle(cornerRadius: radius, style: .continuous)
                 .fill(outline.color)
                 .frame(width: size.width, height: size.height)
-                .offset(y: wall)
-                .opacity(isHeld ? 0 : 1)
+                .offset(y: wallHeight)
+                .opacity(wallIsVisible ? 1 : 0)
 
             RoundedRectangle(cornerRadius: radius, style: .continuous)
                 .fill(fill.color)
@@ -106,13 +116,31 @@ struct Keycap<Label: View>: View {
                 }
                 .frame(width: size.width, height: size.height)
                 .overlay { label().foregroundStyle(outline.color) }
-                .offset(y: isHeld ? wall : 0)
+                .offset(y: capOffset)
         }
         .frame(width: size.width, height: size.height + wall)
-        .scaleEffect(x: squash.width, y: squash.height, anchor: .bottom)
+        .scaleEffect(
+            x: squash.width,
+            y: squash.height * (trampoline == 1 ? 0.86 : 1),
+            anchor: .bottom
+        )
         .contentShape(.rect)
         .onTapGesture(perform: press)
         .animation(reduceMotion ? MacaronCurve.reduced : MacaronCurve.settle, value: isHeld)
+        .onChange(of: isHeld) { _, held in if held { trampolineIn() } }
+    }
+
+    /// Squash, throw, settle sunk. Only on the way in: letting go of a tool
+    /// is the other tool's arrival, and two dialects at once is noise.
+    private func trampolineIn() {
+        guard !reduceMotion else { return }
+        withAnimation(MacaronCurve.outQuint) { trampoline = 1 }
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(60))
+            withAnimation(MacaronCurve.outBack) { trampoline = 2 }
+            try? await Task.sleep(for: .milliseconds(130))
+            withAnimation(MacaronCurve.settle) { trampoline = 0 }
+        }
     }
 
     /// The fill commits on the stretch, not on contact.
@@ -152,6 +180,9 @@ extension Keycap where Label == EmptyView {
 /// and hugging its contents at 8 points of padding.
 struct MacaronShell<Content: View>: View {
     var radius = Macaron.shellRadius
+    /// Off by default: the writing bar's shell is flat. Only a thing that
+    /// floats free of an edge — the seat — takes the hard offset.
+    var floats = false
     @ViewBuilder var content: () -> Content
 
     @Environment(\.macaron) private var theme
@@ -170,8 +201,11 @@ struct MacaronShell<Content: View>: View {
             // The hard zero-blur offset the earlier kit gave floating things.
             // The document names no colour for it, so it takes the ground's
             // own outline: nothing is black but ink, and the chrome's outline
-            // here reads as a second border rather than as a shadow.
-            .shadow(color: theme.outline(of: theme.ground).color, radius: 0, x: 0, y: 6)
+            // here would read as a second border rather than as a shadow.
+            .shadow(
+                color: floats ? theme.outline(of: theme.ground).color : .clear,
+                radius: 0, x: 0, y: 6
+            )
     }
 }
 
