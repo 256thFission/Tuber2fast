@@ -37,12 +37,14 @@ final class Workspace {
     var activeTabID: NotebookID?
 
     /// Which theme was asked for: the system's own light and dark, or one
-    /// preset. Setting it writes the preference and repaints the app.
-    var choice: ThemeChoice = .system {
-        didSet {
-            themeStore.save(choice)
-            resolveTheme()
-        }
+    /// preset. `choose` is the only way in, so that writing the preference
+    /// cannot be separated from making the choice.
+    private(set) var choice: ThemeChoice = .system
+
+    func choose(_ choice: ThemeChoice) {
+        self.choice = choice
+        themeStore.save(choice)
+        resolveTheme()
     }
 
     /// Whether the system is drawing dark. `RootView` reports it; nothing
@@ -104,8 +106,7 @@ final class Workspace {
         browser = LibraryBrowser(library: library, optionsStore: LibraryViewDefaults(.standard))
         // Assigned here rather than in its declaration so the launch
         // argument and the preference are read through the one store this
-        // object owns. A set inside `init` runs no observer, so the first
-        // resolve is explicit.
+        // object owns.
         choice = Self.launchChoice(themeStore)
         resolveTheme()
         Task { await self.refreshIdentities() }

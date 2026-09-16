@@ -20,7 +20,7 @@ struct ThemesPanel: View {
                 icon: "circle.lefthalf.filled",
                 isHeld: workspace.choice == .system
             ) {
-                workspace.choice = .system
+                workspace.choose(.system)
             }
 
             // Laid out in rows rather than in a `LazyVGrid`: a lazy
@@ -40,7 +40,7 @@ struct ThemesPanel: View {
 
     private func card(_ preset: ThemePreset) -> some View {
         ThemeCard(preset: preset, isChosen: workspace.choice == .preset(preset.id)) {
-            workspace.choice = .preset(preset.id)
+            workspace.choose(.preset(preset.id))
         }
     }
 
