@@ -25,7 +25,7 @@ column only in the vertical one.
 | 5 | done | `a62ea4d` | The band, flat, with the active tab sunk in the accent and its callsign badge; readout, undo/redo, the four actions and the orange seat toggle. `step5-band-*.png`. |
 | 6 | done | `c0f98e2` | The seat docked right with no right line, and floating with its grab bar and hard offset. Pink body, accent strip, orange grip. `step6-seat-*.png`. |
 | 7 | **partial** | `d8ad8b3` | **No screenshot.** Reaching a selection needs a layer on the page and a drag the screenshot path cannot drive. The code is there and builds; the magic loop is not built at all — see below. |
-| 8 | done | `28186c6` | Switch: dark console ground, grey chrome, neon red held, neon blue toggle. Game Boy: LCD-green chrome on the shell's beige, dark green held. `step8-theme-*.png`. |
+| 8 | done | `28186c6` | Two themes that were not on any board, to prove the derivation on chrome that is not Macaron's: Switch as a dark console ground under grey chrome, Game Boy as LCD-green chrome on the shell's beige. `step8-theme-*.png`. Both sets of hexes are gone. **The theme manager** below replaced them with the board's. |
 | 9 | done | `08c0bb4` | Dark Macaron: outlines come up off their fills instead of down into them, the paper still white. `step9-dark-*.png`. |
 
 ## What is not built
@@ -70,12 +70,13 @@ column only in the vertical one.
 - **The band's spare width.** §4.2 measures the band at 1162. A band as wide
   as this iPad has slack the mock did not, so what is open sits left and the
   actions sit right.
-- **Switch and Game Boy.** §10 step 8 names both themes and the document has
-  no hexes for either. Switch takes the shell colours the Joy-Cons store for
-  themselves (`#FF3C28`, `#0AB9E6`, `#828282`, `#414548`, `#0F0F0F`) rather
-  than the louder pair the box art uses. Game Boy takes the canonical DMG four
-  (`#9BBC0F`, `#8BAC0F`, `#306230`, `#0F380F`) plus the shell's commonly cited
-  beige `#C2C0BC`.
+- **Switch and Game Boy.** §10 step 8 names both themes and the document had
+  no hexes for either, so step 8 invented them: Switch from the shell colours
+  the Joy-Cons store for themselves, Game Boy from the canonical DMG four
+  plus the shell's commonly cited beige. Neither survives. The *Six themes,
+  one geometry* board has real hexes for both, and the theme manager below
+  took them, which turned Game Boy inside out: the LCD green moved from
+  the chrome to the ground.
 - **The locked selection box.** §6 gives the lasso no locked treatment. It
   drops from the accent to the accent's own outline tint: the dimmer end of
   the one colour the lasso is allowed, rather than a grey.
@@ -235,6 +236,61 @@ down, which was two layouts for one thing. And a grid cell's name keeps the
 cover's centre line, with the menu hanging off the trailing edge rather than
 sharing the row and pushing the name off the cover it belongs to.
 
+## The theme manager
+
+`Docs/Design/Macaron-themes.md` planned it; four commits built it, in that
+plan's order. Screenshots are in this session's scratchpad, one per preset
+plus the open panel, named `theme-*.png` and `themes-panel*.png`:
+
+    /private/tmp/claude-501/-Users-phil-Documents-Build-Week-TuberNotes-postoai/
+      e228118f-1f9d-4a3c-9d52-6205caea2e4d/scratchpad/shots/
+
+A theme is a row of a table: a `ThemeID` that is saved, a name that is
+shown, and the six hexes. `Theme.all` is gone. The seven rows are the
+board's, so step 8's invented Switch and Game Boy went with it.
+
+`ThemeChoice` is the one piece of chosen state, replacing the theme and the
+flag saying whether it had been chosen, which were two values for one fact.
+The workspace holds it, resolves the theme from it and the hour, and writes
+it to `tn.theme` through `ThemeDefaults` on the way past; `RootView` reports
+the colour scheme and decides nothing. An id the preference names and the
+table has no row for loads as no choice at all, because a preference is
+external data and a build that ships fewer themes than the one that wrote it
+should open on the system rather than trap.
+
+The picker is one menu entry on the library chip and a panel behind it.
+A card is a keycap in the theme's own ground, a bar of its chrome lying on
+it carrying the accent and the secondary; every line on a card is derived by
+the card's theme rather than by the app's, so a card shows what a theme does
+to its own chrome before it is worn. Chosen is sunk. `-TNShowThemes` opens
+the panel at launch.
+
+### One derivation changed
+
+After dark the paper escape ran to the ink, and a dark theme's ink is a
+cream. Every near-white fill was mixed toward something it already was:
+Macaron Dark's ink swatch, its paper and its seat body carried lines at
+1.0, 1.10 and 1.01 against their own fills, which is no line at all. The
+page had no frame after dark and nobody had noticed, because a white page
+separates from a dark ground without one. The escape now runs to the
+`ground`, which is the dark end of an inverted theme the way the ink is of
+an upright one. The page's frame in Macaron Dark is `#888582`, read off the
+screenshot.
+
+### What the board's hexes do to the derivation
+
+- **Game Boy is not where the plan expected it.** `Macaron-themes.md` says
+  its chrome and its ground take the escape. Under the board's hexes they do
+  not: both greens clear 1.6 against `#0F380F` easily, and the escape fires
+  on the purple secondary and on the ink. The test asserts what the hexes
+  actually do.
+- **Teenage Enamel behaves as the plan says.** Its secondary is its ink, so
+  that one token escapes to the paper and the other three take the plain
+  rule.
+- **Nothing ships an invisible line.** Every token of every preset carries at
+  least 1.3 against its own fill, which is the test that found the dark-mode
+  escape above.
+
 ## Things a reviewer should look at first
 
 0. **Four surfaces were never looked at.** The trash, the move picker, the
@@ -255,6 +311,13 @@ sharing the row and pushing the name off the cover it belongs to.
    paper, and the paper stays white after dark, so the seat is a bright pink
    panel on a dark ground. That is what the two rules say together. It may not
    be what you want.
-5. **Game Boy's accent.** `#306230` sits at 1.83 against the ink, just above
-   the escape's 1.6, so it takes the plain rule and its outline lands close to
-   it. The paper escape never fires on it. The greens survive, but only just.
+5. **Game Boy's greens.** The board's Game Boy is `#9BBC0F` on the ground
+   with `#0F380F` for the ink, and every one of its greens clears the
+   escape's 1.6 comfortably, so the escape fires only on its purple secondary
+   and on the ink itself. What is left to judge is the ground: the LCD green
+   is the loudest ground of the seven, and at fit-page it is a lime margin
+   around a white page rather than a wallpaper.
+6. **Teenage Enamel's black.** Its secondary and its ink are the same
+   `#1A1A1A`, which the board chose, so the seat toggle and the dirty dot are
+   black caps. §2 says nothing is black but ink. A theme's own table can
+   reach past that rule and this one does.
