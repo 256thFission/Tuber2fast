@@ -104,25 +104,25 @@ struct Keycap<Label: View>: View {
         }
     }
 
-    var body: some View {
-        ZStack(alignment: .top) {
-            RoundedRectangle(cornerRadius: radius, style: .continuous)
-                .fill(outline.color)
-                .frame(width: size.width, height: size.height)
-                .offset(y: wallHeight)
-                .opacity(wallIsVisible ? 1 : 0)
+    /// A width of zero means the label decides, which is how a cap with a
+    /// word on it gets to be as wide as the word.
+    private var shape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: radius, style: .continuous)
+    }
 
-            RoundedRectangle(cornerRadius: radius, style: .continuous)
-                .fill(fill.color)
-                .overlay {
-                    RoundedRectangle(cornerRadius: radius, style: .continuous)
-                        .strokeBorder(outline.color, lineWidth: Macaron.line)
-                }
-                .frame(width: size.width, height: size.height)
-                .overlay { label().foregroundStyle(outline.color) }
-                .offset(y: capOffset)
-        }
-        .frame(width: size.width, height: size.height + wall)
+    var body: some View {
+        label()
+            .foregroundStyle(outline.color)
+            .frame(width: size.width > 0 ? size.width : nil, height: size.height)
+            .background { shape.fill(fill.color) }
+            .overlay { shape.strokeBorder(outline.color, lineWidth: Macaron.line) }
+            .background {
+                shape.fill(outline.color)
+                    .offset(y: wallHeight - capOffset)
+                    .opacity(wallIsVisible ? 1 : 0)
+            }
+            .offset(y: capOffset)
+            .frame(height: size.height + wall, alignment: .top)
         .scaleEffect(
             x: squash.width,
             y: squash.height * (trampoline == 1 ? 0.86 : 1),
@@ -165,7 +165,7 @@ struct Keycap<Label: View>: View {
     }
 }
 
-extension Keycap where Label == EmptyView {
+extension Keycap where Label == Color {
     init(
         fill: RGBA8,
         size: CGSize = CGSize(width: Macaron.chip, height: Macaron.chip),
@@ -177,7 +177,7 @@ extension Keycap where Label == EmptyView {
     ) {
         self.init(
             fill: fill, size: size, radius: radius, wall: wall, isHeld: isHeld,
-            isEnabled: isEnabled, action: action, label: { EmptyView() }
+            isEnabled: isEnabled, action: action, label: { Color.clear }
         )
     }
 }
@@ -227,5 +227,109 @@ struct MacaronDivider: View {
                 width: vertical ? Macaron.divider.height : Macaron.divider.width,
                 height: vertical ? Macaron.divider.width : Macaron.divider.height
             )
+    }
+}
+
+/// A sheet's chrome. The document names no sheet, so this is derived from
+/// the seat in §4.3, which is the one panel it does name: an accent title
+/// strip with a close control, a flat body, and a 3pt derived outline.
+///
+/// It fills its presentation rather than floating inside it, so the sheet's
+/// own corners are the only corners and no second border appears.
+struct MacaronPanel<Content: View>: View {
+    let title: String
+    var onClose: (() -> Void)?
+    @ViewBuilder var content: () -> Content
+
+    @Environment(\.macaron) private var theme
+
+    static var strip: CGFloat { 44 }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ZStack {
+                theme.accent.color
+                HStack(spacing: 8) {
+                    Text(title)
+                        .font(Macaron.title(17))
+                        .foregroundStyle(theme.outline(of: theme.accent).color)
+                    Spacer()
+                    if let onClose {
+                        Button(action: onClose) {
+                            Image(systemName: "xmark")
+                                .font(Macaron.body(15))
+                                .foregroundStyle(theme.outline(of: theme.accent).color)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Close")
+                    }
+                }
+                .padding(.horizontal, 14)
+            }
+            .frame(height: Self.strip)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    content()
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(14)
+            }
+        }
+        .background(theme.chrome.color)
+        .presentationBackground(theme.chrome.color)
+        .environment(\.macaron, theme)
+    }
+}
+
+/// A keycap with a word on it. The same atom the bar's chips are; only the
+/// width and the label differ, so a panel's buttons press like the bar's.
+///
+/// The fill says what the button is. Chrome for an ordinary action, the
+/// accent for the one action the panel exists to perform, the secondary for
+/// a second-rank one, and the ground for a control that is not a peer of the
+/// others — the band's overflow chip sets that last precedent. Nothing here
+/// gets a colour the six tokens do not already hold, so a destructive action
+/// is an ordinary cap whose word says what it does.
+struct MacaronButton: View {
+    let title: String
+    var icon: String?
+    var fill: RGBA8?
+    var isHeld = false
+    var isEnabled = true
+    var action: () -> Void
+
+    @Environment(\.macaron) private var theme
+
+    var body: some View {
+        Keycap(
+            fill: fill ?? theme.chrome,
+            size: CGSize(width: 0, height: Macaron.chip + 6),
+            isHeld: isHeld,
+            isEnabled: isEnabled,
+            action: action
+        ) {
+            HStack(spacing: 6) {
+                if let icon {
+                    Image(systemName: icon).font(Macaron.body(14))
+                }
+                Text(title).font(Macaron.title(15))
+            }
+            .padding(.horizontal, 14)
+            .fixedSize(horizontal: true, vertical: false)
+        }
+    }
+}
+
+/// A section's name over the controls it covers. A readout, so it is flat.
+struct MacaronHeading: View {
+    let text: String
+    @Environment(\.macaron) private var theme
+
+    var body: some View {
+        Text(text.uppercased())
+            .font(Macaron.body(11))
+            .tracking(1.2)
+            .foregroundStyle(theme.outline(of: theme.chrome).color)
     }
 }
