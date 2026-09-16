@@ -210,6 +210,46 @@ struct ToolPaletteTests {
         #expect(store.saves == 2)
     }
 
+    /// The third thing asked of the drawing colours: they follow the
+    /// person, not whatever notebook is open. `Workspace` builds one
+    /// `ToolPalette` for the whole app and hands it to every tab, and no
+    /// package holds a tool colour at all, so a colour earned in one
+    /// notebook is on the bar of the next one opened.
+    ///
+    /// Over a recording surface, because what is being pinned is custody
+    /// and a live canvas would only be two more page controllers to tear
+    /// down.
+    @Test("A colour drawn with in one notebook is a recent in every other, and outlives them")
+    func theColoursFollowThePersonAndNotTheNotebook() async throws {
+        let store = MemoryPaletteStore()
+        let shared = ToolPalette(store: store)
+        let firstScratch = try Scratch("palette-global-one")
+        let secondScratch = try Scratch("palette-global-two")
+        let one = EditorViewModel(
+            binding: EditorBinding(
+                notebook: try await Notebook.create(at: firstScratch.packageURL, schedule: fast),
+                surface: RecordingSurface()
+            ),
+            palette: shared
+        )
+        let two = EditorViewModel(
+            binding: EditorBinding(
+                notebook: try await Notebook.create(at: secondScratch.packageURL, schedule: fast),
+                surface: RecordingSurface()
+            ),
+            palette: shared
+        )
+
+        one.palette.used(swatch(0x21))
+
+        #expect(two.palette.recentColors == [swatch(0x21)])
+        // And it is in the preference, not in either package: a palette
+        // built fresh over the same store reads it back with no notebook
+        // anywhere near it.
+        #expect(ToolPalette(store: store).recentColors == [swatch(0x21)])
+        withExtendedLifetime((firstScratch, secondScratch)) {}
+    }
+
     // MARK: Gesture bindings
 
     @Test("The bindings round-trip through the encoder the defaults store uses")
