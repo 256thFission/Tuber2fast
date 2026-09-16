@@ -125,9 +125,11 @@ package protocol ToolPaletteStore: Sendable {
     package private(set) var inks: [InkKind: InkPreset]
     package private(set) var eraserMode: EraserMode
     package private(set) var pixelEraserWidth: ToolWidth
-    /// Most recent first, at most `recentLimit`, no duplicates, and never a
-    /// colour `ToolColor.defaults` already shows. A colour becomes recent
-    /// when a stroke lands in it, not when it is picked.
+    /// Simply the colours drawn with: most recent first, at most
+    /// `recentLimit`, no duplicates. A colour becomes recent when a stroke
+    /// lands in it, not when it is picked. Whoever draws a row of swatches
+    /// out of this and the theme's own is the one responsible for not
+    /// showing the same swatch twice.
     package private(set) var recentColors: [ToolColor]
     /// The style and alignment the text tool last typed with.
     package private(set) var text: TextPreset
@@ -136,8 +138,8 @@ package protocol ToolPaletteStore: Sendable {
     /// binding asks for it on every stroke that lands.
     package private(set) var gestures: GestureBindings
 
-    /// Eight, which is one row beside the defaults on the narrowest strip
-    /// the popover draws.
+    /// Eight, which is one row beside the theme's own colours on the
+    /// narrowest strip the popover draws.
     package static let recentLimit = 8
 
     @ObservationIgnored private let store: any ToolPaletteStore
@@ -209,11 +211,13 @@ package protocol ToolPaletteStore: Sendable {
         save()
     }
 
-    /// A colour a stroke landed in.
+    /// A colour a stroke landed in, whatever it is.
+    ///
+    /// The colours on offer belong to the theme, and the theme can change.
+    /// A colour refused for sitting on this theme's row would be missing
+    /// from the next theme's, and a preference would be rewritten by a
+    /// choice of chrome, so nothing is refused here.
     package func used(_ color: ToolColor) {
-        // The defaults are always on screen; repeating one there would cost
-        // the person a slot and show the same swatch twice.
-        guard !ToolColor.defaults.contains(color) else { return }
         // Called once per stroke, from the ink report. Drawing on and on in
         // one colour must not write the preference on every stroke, which
         // is work on the report path for no change at all.

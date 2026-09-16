@@ -12,6 +12,7 @@ import Testing
 final class MemoryPaletteStore: ToolPaletteStore, @unchecked Sendable {
     private let lock = NSLock()
     private var record: ToolPaletteRecord?
+    private var saveCount = 0
     /// Set to fail every load, which is what an unreadable preference looks
     /// like from inside the palette.
     private var isUnreadable = false
@@ -23,10 +24,16 @@ final class MemoryPaletteStore: ToolPaletteStore, @unchecked Sendable {
     }
 
     func save(_ record: ToolPaletteRecord) {
-        lock.withLock { self.record = record }
+        lock.withLock {
+            self.record = record
+            saveCount += 1
+        }
     }
 
     var stored: ToolPaletteRecord? { lock.withLock { record } }
+    /// How many times the palette has written, which is how a test says
+    /// that a report changing nothing touched nothing.
+    var saves: Int { lock.withLock { saveCount } }
 
     func makeUnreadable() { lock.withLock { isUnreadable = true } }
 }
@@ -182,15 +189,25 @@ struct ToolPaletteTests {
         #expect(Set(palette.recentColors.map(\.rgba.hex)).count == ToolPalette.recentLimit)
     }
 
-    @Test("A colour the strip already shows never becomes a recent")
-    func aDefaultColourIsNeverARecent() {
-        let palette = ToolPalette(store: MemoryPaletteStore())
-        for color in ToolColor.defaults { palette.used(color) }
-        #expect(palette.recentColors.isEmpty)
+    @Test("A colour a theme offers is recorded, and drawing on in it writes once")
+    func aThemeColourIsRecordedAndRepeatingItWritesNothing() {
+        let store = MemoryPaletteStore()
+        let palette = ToolPalette(store: store)
+        let offered = ToolColor(rgba: Theme.macaron.palette[0])
+
+        palette.used(offered)
+        #expect(palette.recentColors == [offered])
+        #expect(store.saves == 1)
+
+        // The report path runs once per stroke, and a second stroke in the
+        // colour already at the front changes nothing to write.
+        palette.used(offered)
+        #expect(palette.recentColors == [offered])
+        #expect(store.saves == 1)
 
         palette.used(swatch(0x01))
-        palette.used(.red)
-        #expect(palette.recentColors == [swatch(0x01)])
+        #expect(palette.recentColors == [swatch(0x01), offered])
+        #expect(store.saves == 2)
     }
 
     // MARK: Gesture bindings
