@@ -11,7 +11,7 @@ package struct ThemeID: RawRepresentable, Hashable, Codable, Sendable {
 }
 
 /// One row of the theme table: an identity that is saved, a name that is
-/// shown, and the six hexes.
+/// shown, and the colours.
 package struct ThemePreset: Equatable, Sendable {
     package let id: ThemeID
     package let name: String
@@ -24,10 +24,10 @@ package struct ThemePreset: Equatable, Sendable {
     }
 }
 
-/// The six colours a theme sets, and everything the design derives from them.
+/// The colours a theme sets, and everything the design derives from them.
 ///
-/// Six hexes and two percentages is the whole of a theme: nothing else in the
-/// editor's chrome carries a colour of its own. Outlines, keycap walls, the
+/// Five hexes, two percentages and a palette are the whole of a theme:
+/// nothing else in the editor's chrome carries a colour of its own. Outlines, keycap walls, the
 /// grid line, and the seat's body are all computed here, so a new theme is a
 /// row of hexes and never a sweep through the views.
 ///
@@ -44,6 +44,14 @@ package struct Theme: Equatable, Sendable {
     package let secondary: RGBA8
     /// What handwriting is, and what every outline is mixed toward.
     package let ink: RGBA8
+    /// The seven colours the brush offers, in the order they are drawn.
+    ///
+    /// Written down per theme rather than derived from the five above. A
+    /// drawing colour has two jobs the chrome's hexes cannot do at once: it
+    /// has to be legible on the paper, which is white in every theme, and it
+    /// has to be recognisably of this theme's world. The first is always the
+    /// theme's darkest, because that is the colour people actually write in.
+    package let palette: [RGBA8]
     /// How far a saturated fill travels toward `ink` to become its outline.
     package let outlineMixSaturated: Double
     /// The same for a pale fill, which has further to go to be seen.
@@ -57,6 +65,7 @@ package struct Theme: Equatable, Sendable {
         accent: RGBA8,
         secondary: RGBA8,
         ink: RGBA8,
+        palette: [RGBA8],
         outlineMixSaturated: Double = 0.42,
         outlineMixPale: Double = 0.55,
         invertsMix: Bool = false
@@ -66,6 +75,7 @@ package struct Theme: Equatable, Sendable {
         self.accent = accent
         self.secondary = secondary
         self.ink = ink
+        self.palette = palette
         self.outlineMixSaturated = outlineMixSaturated
         self.outlineMixPale = outlineMixPale
         self.invertsMix = invertsMix
@@ -165,7 +175,14 @@ package struct Theme: Equatable, Sendable {
         chrome: hex("#FFFFFF"),
         accent: hex("#FF6A8C"),
         secondary: hex("#FFB347"),
-        ink: hex("#141414")
+        ink: hex("#141414"),
+        // The strawberry and the vanilla are the chrome's own, taken down to
+        // where a line of handwriting in them can be read; the rest are the
+        // other flavours in the box.
+        palette: [
+            hex("#141414"), hex("#FF6A8C"), hex("#E9932B"), hex("#3E9B6B"),
+            hex("#3B7FD4"), hex("#8A4FBF"), hex("#8C5A2B"),
+        ]
     )
 
     /// The same theme after dark: the cream and the ink trade places and
@@ -177,6 +194,9 @@ package struct Theme: Equatable, Sendable {
         accent: hex("#FF6A8C"),
         secondary: hex("#FFB347"),
         ink: hex("#F4EADA"),
+        // The paper stays white after dark, so the colours that read on it
+        // do not change. The day theme's palette is the whole of the answer.
+        palette: Theme.macaron.palette,
         invertsMix: true
     )
 
@@ -187,7 +207,13 @@ package struct Theme: Equatable, Sendable {
         chrome: hex("#F2F3F5"),
         accent: hex("#FF3C28"),
         secondary: hex("#0AB9E6"),
-        ink: hex("#1B1D21")
+        ink: hex("#1B1D21"),
+        // The two Joy-Cons first, then the neons the other pairs ship in,
+        // and the shell's own grey last.
+        palette: [
+            hex("#1B1D21"), hex("#FF3C28"), hex("#0AB9E6"), hex("#E0A400"),
+            hex("#17A34A"), hex("#8C33C2"), hex("#5A6270"),
+        ]
     )
 
     /// The DMG: its screen's lightest green is the ground, its darkest is
@@ -199,7 +225,14 @@ package struct Theme: Equatable, Sendable {
         chrome: hex("#C6CBA5"),
         accent: hex("#B0176B"),
         secondary: hex("#5C2B8A"),
-        ink: hex("#0F380F")
+        ink: hex("#0F380F"),
+        // The screen's four greens are only three here: the lightest is the
+        // ground and cannot be written with. The red is the power lamp, and
+        // the grey is the lettering on the shell.
+        palette: [
+            hex("#0F380F"), hex("#306230"), hex("#8BAC0F"), hex("#B0176B"),
+            hex("#5C2B8A"), hex("#C1272D"), hex("#4B5A67"),
+        ]
     )
 
     /// Paper and grass: a cream ground, a leaf green, the sky, and an ink
@@ -209,7 +242,14 @@ package struct Theme: Equatable, Sendable {
         chrome: hex("#FFFBF0"),
         accent: hex("#8CC63F"),
         secondary: hex("#7EC8E3"),
-        ink: hex("#7A6244")
+        ink: hex("#7A6244"),
+        // The brown ink leads, since here that is the near-black. The leaf
+        // and the sky are the chrome's, deepened: both are pale enough on
+        // the chrome to sit behind a page, and neither can be read on one.
+        palette: [
+            hex("#7A6244"), hex("#5EA226"), hex("#3E9ECF"), hex("#D9A521"),
+            hex("#D2527C"), hex("#2E6DA4"), hex("#E1701E"),
+        ]
     )
 
     /// Pink on pink, with the sky for the second colour and a plum for the
@@ -219,7 +259,13 @@ package struct Theme: Equatable, Sendable {
         chrome: hex("#FFFFFF"),
         accent: hex("#FF8AB5"),
         secondary: hex("#7FC8F0"),
-        ink: hex("#3A2233")
+        ink: hex("#3A2233"),
+        // The plum, then the pink and the sky a shade down from the chrome's,
+        // then the reds and the star yellow that pink is always drawn against.
+        palette: [
+            hex("#3A2233"), hex("#F2669B"), hex("#4FA8DE"), hex("#D6335A"),
+            hex("#DBA00A"), hex("#5B4FC2"), hex("#57A65B"),
+        ]
     )
 
     /// Enamel on a grey shell: one orange, and a black that is the ink and
@@ -230,7 +276,15 @@ package struct Theme: Equatable, Sendable {
         chrome: hex("#EFEFEC"),
         accent: hex("#FF5500"),
         secondary: hex("#1A1A1A"),
-        ink: hex("#1A1A1A")
+        ink: hex("#1A1A1A"),
+        // The black and the orange are the whole theme, and a palette of two
+        // is not a palette. The other five are the key colours off the
+        // instruments the shell is quoting, which is where its own colour
+        // budget goes when it spends any.
+        palette: [
+            hex("#1A1A1A"), hex("#FF5500"), hex("#6E6E6B"), hex("#0052CC"),
+            hex("#1F8A5B"), hex("#E02B20"), hex("#D8A100"),
+        ]
     )
 
     /// Every theme this build ships, in the order the design board lays

@@ -120,6 +120,29 @@ struct ThemeTests {
         }
     }
 
+    @Test("Every preset writes in seven colours, each of them readable on the paper")
+    func everyPresetWritesInSevenReadableColours() {
+        for preset in Theme.presets {
+            let palette = preset.theme.palette
+            #expect(palette.count == 7, "\(preset.name) offers \(palette.count) colours")
+            #expect(
+                Set(palette.map(\.hex)).count == palette.count,
+                "\(preset.name) spends two of its seven slots on one colour"
+            )
+            // The threshold is the number the chrome already calls pale
+            // against the paper, and a colour the paper cannot be told from
+            // is a colour handwriting disappears into.
+            for colour in palette {
+                let ratio = Theme.contrast(colour, preset.theme.paper)
+                #expect(ratio >= Theme.threshold, "\(preset.name)'s \(colour.hex) is \(ratio) on the paper")
+            }
+            // What people write in comes first, whatever else the theme
+            // carries, so the bar's first swatch is never a decoration.
+            let darkest = palette.min { Theme.luminance($0) < Theme.luminance($1) }
+            #expect(palette.first == darkest, "\(preset.name) opens on a colour that is not its darkest")
+        }
+    }
+
     /// The escape is private, and what it does is public: an outline that
     /// came up off its fill instead of going down into it went the other
     /// way. The reverse for a theme whose mix is already inverted.
@@ -140,6 +163,7 @@ struct ThemeTests {
             accent: theme.accent,
             secondary: theme.secondary,
             ink: colour("#F4EADA"),
+            palette: Theme.macaronDark.palette,
             invertsMix: true
         )
         #expect(dark.paper.hex == "#FFFFFFFF")
