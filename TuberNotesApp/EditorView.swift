@@ -45,6 +45,12 @@ struct EditorView: View {
             // The bar parks inside the slack the band leaves, not under it.
             .overlay { WritingBar(editor: editor).padding(.top, MacaronBand.slack) }
             .coordinateSpace(.named("editor"))
+            .overlay(alignment: .topTrailing) {
+                if workspace.isSeatOpen {
+                    MacaronSeat(editor: editor, isOpen: seatBinding)
+                        .padding(.top, MacaronBand.slack)
+                }
+            }
             .overlay(alignment: .top) {
                 VStack(spacing: 0) {
                     MacaronBand(editor: editor, action: take)
@@ -135,6 +141,10 @@ struct EditorView: View {
             Text("The page and everything on it are removed.")
         }
         .bookmarkAlert(editor: editor, page: $bookmarkTarget, title: $bookmarkTitle)
+    }
+
+    private var seatBinding: Binding<Bool> {
+        Binding(get: { workspace.isSeatOpen }, set: { workspace.isSeatOpen = $0 })
     }
 
     private func take(_ action: BandAction) {

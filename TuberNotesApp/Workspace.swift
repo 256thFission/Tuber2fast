@@ -37,7 +37,7 @@ final class Workspace {
     var activeTabID: NotebookID?
 
     /// Whether the seat is out. One tenant, one flag.
-    var isSeatOpen = false
+    var isSeatOpen = ProcessInfo.processInfo.arguments.contains("-TNSeatOpen")
 
     /// The refusal surface Part 7 names: one line, dismissible.
     var banner: String?
