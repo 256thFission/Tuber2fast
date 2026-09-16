@@ -36,30 +36,44 @@ final class Workspace {
     /// `nil` means the library is showing.
     var activeTabID: NotebookID?
 
-    /// The theme every piece of chrome draws from. The SwiftUI half reads
-    /// it through the environment; the canvas reads `Theme.current`, which
-    /// is why setting it does both.
-    var theme: Theme = Workspace.launchTheme() {
+    /// Which theme was asked for: the system's own light and dark, or one
+    /// preset. Setting it writes the preference and repaints the app.
+    var choice: ThemeChoice = .system {
         didSet {
-            Theme.current = theme
-            NotificationCenter.default.post(name: Theme.changed, object: nil)
+            themeStore.save(choice)
+            resolveTheme()
         }
     }
 
-    /// A theme named at launch or picked by hand. The system's own
-    /// light-and-dark does not get to overrule either.
-    var themeIsChosen = ProcessInfo.processInfo.arguments.contains("-TNTheme")
+    /// Whether the system is drawing dark. `RootView` reports it; nothing
+    /// here asks, and only `.system` is affected by the answer.
+    var colourScheme: ColorScheme = .light {
+        didSet { resolveTheme() }
+    }
+
+    /// The theme every piece of chrome draws from, resolved from the choice
+    /// and the hour. The SwiftUI half reads it through the environment; the
+    /// canvas reads `Theme.current`, which is why setting it does both.
+    private(set) var theme: Theme = .macaron
+
+    private let themeStore = ThemeDefaults(.standard)
+
+    private func resolveTheme() {
+        theme = choice.resolve(dark: colourScheme == .dark)
+        Theme.current = theme
+        NotificationCenter.default.post(name: Theme.changed, object: nil)
+    }
 
     /// `-TNTheme <name>` opens on a theme, so a screenshot of one needs no
-    /// taps to reach it.
-    private static func launchTheme() -> Theme {
+    /// taps to reach it. It is not saved: a run that exists to be
+    /// photographed must not leave the machine holding a theme nobody chose.
+    private static func launchChoice(_ store: ThemeDefaults) -> ThemeChoice {
         let arguments = ProcessInfo.processInfo.arguments
         guard let index = arguments.firstIndex(of: "-TNTheme"),
               index + 1 < arguments.count,
               let match = Theme.presets.first(where: { $0.name == arguments[index + 1] })
-        else { return .macaron }
-        Theme.current = match.theme
-        return match.theme
+        else { return store.load() ?? .system }
+        return .preset(match.id)
     }
 
     /// Whether the seat is out. One tenant, one flag.
@@ -88,6 +102,12 @@ final class Workspace {
             TNPrecondition.fail("the library store could not be created: \(error)")
         }
         browser = LibraryBrowser(library: library, optionsStore: LibraryViewDefaults(.standard))
+        // Assigned here rather than in its declaration so the launch
+        // argument and the preference are read through the one store this
+        // object owns. A set inside `init` runs no observer, so the first
+        // resolve is explicit.
+        choice = Self.launchChoice(themeStore)
+        resolveTheme()
         Task { await self.refreshIdentities() }
         // The renderer caches declare "on memory pressure from the app" as an
         // evictor; this is the one place that keeps the promise.

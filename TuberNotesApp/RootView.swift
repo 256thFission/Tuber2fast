@@ -29,19 +29,11 @@ struct RootView: View {
         .animation(.default, value: workspace.banner)
         .environment(\.macaron, workspace.theme)
         .background(workspace.theme.ground.color)
-        // Macaron follows the system after dark. A theme picked by hand is
-        // a choice, and the system does not get to overrule it.
-        .onAppear { followScheme() }
-        .onChange(of: scheme) { _, _ in followScheme() }
-    }
-
-    private func followScheme() {
-        guard !workspace.themeIsChosen else { return }
-        switch (scheme, workspace.theme) {
-        case (.dark, .macaron): workspace.theme = .macaronDark
-        case (.light, .macaronDark): workspace.theme = .macaron
-        default: break
-        }
+        // The view reports the hour and the workspace decides what to do
+        // with it: a theme picked by hand is a choice, and the system does
+        // not get to overrule it.
+        .onAppear { workspace.colourScheme = scheme }
+        .onChange(of: scheme) { _, scheme in workspace.colourScheme = scheme }
     }
 
     @ViewBuilder private var surface: some View {

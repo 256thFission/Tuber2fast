@@ -827,6 +827,10 @@ struct ContractStructureTests {
         // The browser's grid-or-list, sort key and direction: a preference
         // on the tool palette's reasoning above.
         "TuberNotesApp/LibraryViewDefaults.swift",
+        // Which theme the app opens in: a preference on the same reasoning,
+        // and the one whose unreadable state is a launch in the wrong
+        // colours.
+        "TuberNotesApp/ThemeDefaults.swift",
     ]
 
     @Test("Each module imports only the frameworks its place in the graph allows")
