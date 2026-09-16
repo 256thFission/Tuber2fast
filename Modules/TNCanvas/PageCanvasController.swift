@@ -232,9 +232,11 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         #endif
 
         // The canvas is the ink and nothing else; the paper is `paperView`
-        // beneath it, so the canvas has to be clear for the paper to show,
-        // and the surround is the same grey as the paging gutter.
-        view.backgroundColor = .systemGray5
+        // beneath it, so the canvas has to be clear for the paper to show.
+        // The surround is clear too: the ground belongs to the paging scroll
+        // view underneath, and a second copy of it here would break the
+        // grid's register at every slot boundary.
+        view.backgroundColor = .clear
         canvasView.backgroundColor = .clear
         canvasView.isOpaque = false
 
@@ -260,8 +262,10 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         ])
 
         backdropView.isOpaque = true
-        backdropView.backgroundColor = .white
+        backdropView.backgroundColor = MacaronPage.paper
         backdropView.contentMode = .scaleToFill
+        backdropView.layer.borderColor = MacaronPage.outline.cgColor
+        backdropView.clipsToBounds = true
         backdropView.frame = CGRect(x: 0, y: 0, width: geometry.width, height: geometry.height)
         paperView.isUserInteractionEnabled = false
         paperView.addSubview(backdropView)
@@ -314,6 +318,12 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
             mirror.transform = CGAffineTransform(scaleX: zoom, y: zoom)
             mirror.center = center
         }
+        // The mirror carries the zoom, so the frame's radius and line are
+        // written in page points divided by it: 10 and 3 on the glass at
+        // every zoom, which is what the design fixes them at.
+        let divisor = max(zoom, 0.0001)
+        backdropView.layer.cornerRadius = MacaronPage.radius / divisor
+        backdropView.layer.borderWidth = MacaronPage.lineWidth / divisor
     }
 
     package func scrollViewDidScroll(_ scrollView: UIScrollView) {

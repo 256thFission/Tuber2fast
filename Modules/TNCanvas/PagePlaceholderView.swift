@@ -15,13 +15,14 @@ final class PagePlaceholderView: UIView {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        backgroundColor = UIColor.systemGray6
-        layer.borderColor = UIColor.systemGray4.cgColor
-        layer.borderWidth = 1 / max(traitCollection.displayScale, 1)
+        backgroundColor = MacaronPage.paper
+        layer.borderColor = MacaronPage.outline.cgColor
+        layer.borderWidth = MacaronPage.lineWidth
+        layer.cornerRadius = MacaronPage.radius
         isUserInteractionEnabled = false
 
         label.font = .preferredFont(forTextStyle: .footnote)
-        label.textColor = .secondaryLabel
+        label.textColor = Theme.current.outline(of: Theme.current.paper).uiColor
         label.textAlignment = .center
         label.numberOfLines = 3
         label.translatesAutoresizingMaskIntoConstraints = false

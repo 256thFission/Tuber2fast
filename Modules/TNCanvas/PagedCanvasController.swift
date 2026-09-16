@@ -102,7 +102,11 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
         scrollView.alwaysBounceVertical = false
         scrollView.alwaysBounceHorizontal = true
         scrollView.contentInsetAdjustmentBehavior = .never
-        scrollView.backgroundColor = .systemGray5
+        // The one ground in the runtime. Every page controller above it is
+        // clear, so the grid is continuous across a page turn.
+        scrollView.backgroundColor = MacaronGround.grid(
+            Theme.current, scale: view.traitCollection.displayScale
+        )
         scrollView.delegate = self
 
         scrollView.translatesAutoresizingMaskIntoConstraints = false
