@@ -128,30 +128,38 @@ private struct TabChip: View {
     let isActive: Bool
 
     var body: some View {
-        HStack(spacing: Macaron.rowGap) {
-            Keycap(
-                fill: isActive ? theme.accent : theme.chrome,
-                size: CGSize(width: 0, height: Macaron.chip),
-                isHeld: isActive
-            ) {
-                workspace.activeTabID = tab.id
-            } label: {
+        // One cap, not two: the close glyph rides inside the name's cap so a
+        // tab reads as a single object. The glyph keeps its own tap region —
+        // the innermost gesture wins, so the cap's own tap still activates
+        // everywhere else on it.
+        Keycap(
+            fill: isActive ? theme.accent : theme.chrome,
+            size: CGSize(width: 0, height: Macaron.chip),
+            isHeld: isActive
+        ) {
+            workspace.activeTabID = tab.id
+        } label: {
+            HStack(spacing: Macaron.rowGap) {
                 Text(tab.name)
                     .font(Macaron.title(14))
                     .lineLimit(1)
-                    .padding(.horizontal, Macaron.shellPadding)
-            }
-            .accessibilityAddTraits(isActive ? [.isButton, .isSelected] : .isButton)
-            .accessibilityLabel(tab.name)
 
-            Keycap(fill: theme.chrome, size: CGSize(width: Macaron.chip, height: Macaron.chip)) {
-                Task { await workspace.close(tabID: tab.id) }
-            } label: {
-                Image(systemName: "xmark").font(Macaron.body(13))
+                Image(systemName: "xmark")
+                    .font(Macaron.body(13))
+                    .frame(width: Macaron.chip - Macaron.shellPadding, height: Macaron.chip)
+                    .contentShape(.rect)
+                    .onTapGesture {
+                        Task { await workspace.close(tabID: tab.id) }
+                    }
+                    .accessibilityElement()
+                    .accessibilityAddTraits(.isButton)
+                    .accessibilityLabel("Close \(tab.name)")
             }
-            .accessibilityAddTraits(.isButton)
-            .accessibilityLabel("Close \(tab.name)")
+            .padding(.leading, Macaron.shellPadding)
+            .padding(.trailing, Macaron.chipWall)
         }
+        .accessibilityAddTraits(isActive ? [.isButton, .isSelected] : .isButton)
+        .accessibilityLabel(tab.name)
     }
 }
 
