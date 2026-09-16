@@ -42,7 +42,10 @@ package struct Theme: Equatable, Sendable {
     package let accent: RGBA8
     /// Seat toggle, resize grip, dirty dot, rule lines, highlighter.
     package let secondary: RGBA8
-    /// What handwriting is, and what every outline is mixed toward.
+    /// What every outline is mixed toward, and what the chrome's own
+    /// lettering is. Not what handwriting is: a stroke keeps the colour
+    /// it was drawn in, and no module the ink passes through can name a
+    /// theme at all.
     package let ink: RGBA8
     /// The seven colours the brush offers, in the order they are drawn.
     ///
