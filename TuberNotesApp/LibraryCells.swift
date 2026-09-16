@@ -180,15 +180,20 @@ struct LibraryGridCell<MenuContent: View>: View {
                 }
             }
 
-            HStack(alignment: .center, spacing: Macaron.rowGap) {
-                Text(item.name)
-                    .font(Macaron.title(14))
-                    .foregroundStyle(theme.outline(of: theme.ground).color)
-                    .lineLimit(2)
-                    .truncationMode(.middle)
-                    .multilineTextAlignment(.center)
-                LibraryChevronMenu(name: item.name, menu: menu)
-            }
+            // The name keeps the cover's centre line. The menu hangs off
+            // the trailing edge rather than sharing the row, which would
+            // push the name off the cover it belongs to.
+            Text(item.name)
+                .font(Macaron.title(14))
+                .foregroundStyle(theme.outline(of: theme.ground).color)
+                .lineLimit(2)
+                .truncationMode(.middle)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, Macaron.chip)
+                .frame(maxWidth: .infinity)
+                .overlay(alignment: .trailing) {
+                    LibraryChevronMenu(name: item.name, menu: menu)
+                }
 
             Text(LibraryStyle.itemDate.string(from: item.modifiedAt))
                 .font(Macaron.body(11))

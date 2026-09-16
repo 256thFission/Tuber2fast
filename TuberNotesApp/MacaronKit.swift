@@ -29,6 +29,9 @@ extension EnvironmentValues {
 /// The measurements the design fixes and no theme may touch.
 enum Macaron {
     static let line: CGFloat = 3
+    /// The band is 16 in from each edge (§4.2), so 16 is what a page's
+    /// margin is, and what separates one block of a page from the next.
+    static let inset: CGFloat = 16
     static let chip: CGFloat = 34
     static let swatch: CGFloat = 18
     static let heldSwatch: CGFloat = 26

@@ -205,6 +205,28 @@ library's selection checkmark carried "Selected" and "Not selected"; the cell
 now carries the selected trait instead, as the band's tabs do. The two
 steppers in export read as "From 3" and now read as a pair of caps.
 
+## The library's rhythm
+
+The first pass changed the library's colours and left its layout where it
+was, so the page ran two spacing systems at once: the caps on the document's
+scale, and 28-point gutters, a 260 sidebar and a 180 search field from
+before. Nothing lined up with anything.
+
+`Macaron.inset` (16) is now in the kit. §4.2 insets the band 16 from each
+edge, so 16 is what a page's margin is and what separates one block from the
+next; 8 (`columnGap`) separates neighbours inside a run, and 6 (`rowGap`)
+separates rows. The library is on those three numbers and no others.
+
+What that changed, beyond the numbers: the chip bar is flush with the top of
+the display and carries the same bottom-only radii as the band, because it is
+the band's other half and was floating on the ground with air above it. The
+collection's name and the run of controls share one row rather than stacking
+into two bands with a third of the page between them and the first notebook.
+A folder's name keeps the left edge instead of moving to the centre one level
+down, which was two layouts for one thing. And a grid cell's name keeps the
+cover's centre line, with the menu hanging off the trailing edge rather than
+sharing the row and pushing the name off the cover it belongs to.
+
 ## Things a reviewer should look at first
 
 0. **Four surfaces were never looked at.** The trash, the move picker, the

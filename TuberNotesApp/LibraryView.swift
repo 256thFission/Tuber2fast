@@ -32,10 +32,11 @@ struct LibraryView: View {
     private var browser: LibraryBrowser { workspace.browser }
 
     var body: some View {
-        HStack(spacing: 0) {
+        HStack(alignment: .top, spacing: Macaron.inset) {
             LibrarySidebar(section: Bindable(browser).section)
-                .frame(width: 260)
-                .padding([.leading, .vertical], 12)
+                .frame(width: 232)
+                .padding(.leading, Macaron.inset)
+                .padding(.top, Macaron.inset)
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
@@ -82,19 +83,20 @@ struct LibraryView: View {
         case .trash:
             LibraryTrashView(browser: browser)
         case .documents, .favorites:
-            VStack(alignment: .leading, spacing: 0) {
-                header
-                    .padding(.horizontal, 28)
-                    .padding(.top, 16)
-                if browser.isSelecting {
-                    selectBar
-                        .padding(.horizontal, 28)
-                        .padding(.vertical, 14)
-                } else {
-                    toolbarRow
-                        .padding(.horizontal, 28)
-                        .padding(.vertical, 14)
+            VStack(alignment: .leading, spacing: Macaron.inset) {
+                Group {
+                    if browser.isSelecting {
+                        selectBar
+                    } else {
+                        HStack(alignment: .center, spacing: Macaron.columnGap) {
+                            header
+                            Spacer(minLength: Macaron.inset)
+                            toolbarRow
+                        }
+                    }
                 }
+                .padding(.horizontal, Macaron.inset)
+                .padding(.top, Macaron.inset)
                 listing
             }
         }
@@ -105,49 +107,42 @@ struct LibraryView: View {
     /// At the root of a collection, the large title. Inside a folder, the
     /// small centred title with the back chevron at the pane's top left.
     @ViewBuilder private var header: some View {
-        if browser.section == .documents && !browser.folder.isEmpty {
-            ZStack {
-                HStack {
-                    Keycap(
-                        fill: theme.chrome,
-                        size: CGSize(width: Macaron.chip, height: Macaron.chip)
-                    ) {
-                        browser.back()
-                    } label: {
-                        Image(systemName: "chevron.left").font(Macaron.body(14))
-                    }
-                    // Dashed, because what is hovering over the way out has
-                    // no body here until it is let go of.
-                    .overlay(alignment: .top) {
-                        RoundedRectangle(cornerRadius: Macaron.chipRadius, style: .continuous)
-                            .strokeBorder(
-                                theme.accent.color,
-                                style: StrokeStyle(lineWidth: Macaron.line, dash: Macaron.dash)
-                            )
-                            .frame(width: Macaron.chip, height: Macaron.chip)
-                            .opacity(isDroppingOnBack ? 1 : 0)
-                    }
-                    .accessibilityAddTraits(.isButton)
-                    .accessibilityLabel("Back")
-                    // The one way out of a folder by drag: there is no cell
-                    // for the parent to drop onto.
-                    .dropDestination(for: DraggedLibraryItems.self) { dropped, _ in
-                        guard let dragged = dropped.first else { return false }
-                        let destination = parentFolder
-                        run { await browser.move(Set(dragged.paths), toFolder: destination) }
-                        return true
-                    } isTargeted: { isDroppingOnBack = $0 }
-                    Spacer()
+        HStack(spacing: Macaron.columnGap) {
+            if browser.section == .documents && !browser.folder.isEmpty {
+                Keycap(
+                    fill: theme.chrome,
+                    size: CGSize(width: Macaron.chip, height: Macaron.chip)
+                ) {
+                    browser.back()
+                } label: {
+                    Image(systemName: "chevron.left").font(Macaron.body(14))
                 }
-                Text(browser.title)
-                    .font(Macaron.title(17))
-                    .foregroundStyle(theme.outline(of: theme.ground).color)
+                // Dashed, because what is hovering over the way out has
+                // no body here until it is let go of.
+                .overlay(alignment: .top) {
+                    RoundedRectangle(cornerRadius: Macaron.chipRadius, style: .continuous)
+                        .strokeBorder(
+                            theme.accent.color,
+                            style: StrokeStyle(lineWidth: Macaron.line, dash: Macaron.dash)
+                        )
+                        .frame(width: Macaron.chip, height: Macaron.chip)
+                        .opacity(isDroppingOnBack ? 1 : 0)
+                }
+                .accessibilityAddTraits(.isButton)
+                .accessibilityLabel("Back")
+                // The one way out of a folder by drag: there is no cell
+                // for the parent to drop onto.
+                .dropDestination(for: DraggedLibraryItems.self) { dropped, _ in
+                    guard let dragged = dropped.first else { return false }
+                    let destination = parentFolder
+                    run { await browser.move(Set(dragged.paths), toFolder: destination) }
+                    return true
+                } isTargeted: { isDroppingOnBack = $0 }
             }
-        } else {
             Text(browser.title)
                 .font(Macaron.title(28))
                 .foregroundStyle(theme.outline(of: theme.ground).color)
-                .frame(height: 44, alignment: .leading)
+                .lineLimit(1)
         }
     }
 
@@ -165,8 +160,6 @@ struct LibraryView: View {
             } label: {
                 capLabel(Self.name(of: browser.filter), "line.3.horizontal.decrease")
             }
-
-            Spacer()
 
             if browser.section == .documents {
                 // The accent, because making a notebook is the one thing the
@@ -352,18 +345,19 @@ struct LibraryView: View {
                     }
             }
         }
-        .padding(28)
+        .padding(Macaron.inset)
     }
 
     private var grid: some View {
         ScrollView {
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 160), spacing: 28, alignment: .top)], spacing: 28) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 160), spacing: Macaron.inset, alignment: .top)], spacing: Macaron.inset) {
                 ForEach(browser.displayed) { item in
                     LibraryGridCell(item: item, browser: browser, drop: dropTarget(item)) { itemMenu(for: item) }
                         .onTapGesture { tap(item) }
                 }
             }
-            .padding(28)
+            .padding(.horizontal, Macaron.inset)
+            .padding(.bottom, Macaron.inset)
         }
     }
 
@@ -377,8 +371,8 @@ struct LibraryView: View {
                         .onTapGesture { tap(item) }
                 }
             }
-            .padding(.horizontal, 28)
-            .padding(.vertical, Macaron.shellPadding)
+            .padding(.horizontal, Macaron.inset)
+            .padding(.bottom, Macaron.inset)
         }
     }
 

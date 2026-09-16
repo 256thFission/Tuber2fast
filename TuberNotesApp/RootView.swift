@@ -10,12 +10,14 @@ struct RootView: View {
     var body: some View {
         VStack(spacing: 0) {
             // The band carries the tabs while a notebook is open. The
-            // library has no band, so it keeps the plain chip bar.
+            // library has no band, so it keeps the chip bar, which is the
+            // same object: flush with the top of the display.
             if workspace.activeTab == nil {
                 TabBar()
             }
             surface
         }
+        .ignoresSafeArea(edges: .top)
         .overlay(alignment: .top) {
             if let message = workspace.banner {
                 BannerView(message: message)
@@ -66,10 +68,28 @@ private struct TabBar: View {
                     TabChip(tab: tab, isActive: tab.id == workspace.activeTabID)
                 }
             }
-            .padding(.horizontal, Macaron.shellPadding)
-            .padding(.vertical, Macaron.shellPadding)
+            .padding(.horizontal, Macaron.inset)
+            .frame(height: Macaron.shell)
         }
         .scrollIndicators(.hidden)
+        .frame(maxWidth: .infinity)
+        .safeAreaPadding(.top)
+        .background {
+            shell.fill(theme.chrome.color)
+                .overlay {
+                    shell.strokeBorder(theme.outline(of: theme.chrome).color, lineWidth: Macaron.line)
+                }
+                .padding(.top, -Macaron.shellRadius)
+        }
+    }
+
+    /// Only the bottom corners are rounded: the top two are the display's.
+    private var shell: UnevenRoundedRectangle {
+        UnevenRoundedRectangle(
+            bottomLeadingRadius: Macaron.shellRadius,
+            bottomTrailingRadius: Macaron.shellRadius,
+            style: .continuous
+        )
     }
 
     /// Flat, like the band's library chip: it leaves what is open rather
