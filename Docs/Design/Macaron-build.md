@@ -133,22 +133,98 @@ is in hand the bar's widths and swatches have no owner and none is sunk.
 `ToolStrip.swift` went with it. It held the same two calls and nothing had
 referenced it since the band replaced the old toolbar.
 
+## The rest of the application
+
+The ten steps above built the editor. Everything else still drew itself from
+the system: blue buttons, grey list rows, segmented controls, a `Form`'s own
+background. Two commits bring those surfaces into the identity.
+
+`143b166` adds the vocabulary they are built from. `MacaronPanel` is a
+sheet's chrome, derived from the seat in 4.3 because that is the only panel
+the document names: an accent title strip carrying the title and the close,
+a flat body, a 3pt derived outline. It fills its presentation rather than
+floating inside it, so the sheet's own corners are the only corners.
+`MacaronButton` is a keycap with a word on it, and `MacaronHeading` is a
+section's name, flat because it is a readout. `Keycap` was changed to let a
+label carry its own width; the blank cap the bar uses now sizes from a clear
+colour rather than an `EmptyView`, which has no layout footprint of its own.
+
+`c530f8c` applies it:
+
+| surface | what it is now |
+|---|---|
+| library grid and list | a notebook's cover is a paper cap, a folder's is a ground cap, and a selected cell is sunk. The checkmark over thin material is gone. |
+| library sidebar | a shell of caps sharing one width, the current collection accent and sunk |
+| tab bar (no notebook open) | tab chips are keycaps, the active one sunk, matching the band |
+| banner | a flat chrome readout with the kit's hard offset, its actions caps |
+| export | a panel. The scope picker is a run of caps, the steppers a minus and a plus around a flat readout, the progress bar a flat track. |
+| folder style, move, trash, link target | panels; the folder colour is the cap's own fill, and the selection rings are gone |
+| new notebook, add page | panels. Sizes, orientations and paper sources are runs of caps; a paper preview is a page-shaped cap drawing its rules small. |
+| page navigator | a panel. A thumbnail is the page: white paper, radius 10, its derived outline. The current page is sunk, not ringed. The add-a-page slot is dashed, having no body yet. |
+| stickers | a panel of chrome caps. The stickers' own colours stay, because they are the artwork that lands on the page, not chrome. |
+
+Two rules were settled here that the document does not state:
+
+- **A cap's fill says what it is.** Chrome for an ordinary action, the accent
+  for the one action the surface exists to perform, the secondary for second
+  rank, the ground for a control that is not a peer of the others. The band's
+  overflow chip is the precedent for that last one.
+- **A destructive action gets no colour of its own.** The six tokens do not
+  hold one and a theme cannot reach a number, so Delete, Trash and Empty are
+  ordinary chrome caps whose word says what they do. The confirmation is the
+  dialog's job.
+
+Further values derived for these surfaces, each from 2:
+
+- `MacaronPanel.strip` 44 and `minWidth` 480. A fitted panel hugs its
+  content, and a browsing panel holding one page would otherwise hug down to
+  a strip.
+- Type above the kit's ladder: 28 for a collection's name, 22 for the trash
+  page's heading. 3.3 fixes the faces, not their sizes.
+- A sticker cap at 102 (three chips) and a navigator thumbnail at five chips
+  tall, the page's own aspect giving the width.
+- A paper preview at 56 square, radius 10, its rules at 1.5pt in the
+  secondary: the ground's grid weight, and the token that owns rule lines.
+- A text field flat in the ground with its derived outline and no wall. A
+  field is not pressable, and the ground is the one token that reads as a
+  hole rather than a surface.
+
+Screenshots are in the scratchpad: `11-library.png`, `12-export.png`,
+`13-navigator.png`, `14-addpage.png`, `15-sticker.png`, `16-linktarget.png`.
+`-TNShowExport`, `-TNShowNavigator`, `-TNShowAddPage`, `-TNShowSticker` and
+`-TNShowLinkTarget` open each sheet at launch, because a sheet cannot be
+reached without a finger.
+
+Not photographed, because no launch argument reaches them and this build
+cannot synthesise a tap: the trash, the move picker, the folder style sheet,
+the new-notebook sheet, and the library's list layout. They were written to
+the same rules and they compile, but no one has looked at them.
+
+One accessibility change came with the rules rather than by choice. The
+library's selection checkmark carried "Selected" and "Not selected"; the cell
+now carries the selected trait instead, as the band's tabs do. The two
+steppers in export read as "From 3" and now read as a pair of caps.
+
 ## Things a reviewer should look at first
 
-0. **The seat covers the standing bar.** With the seat open and the bar
+0. **Four surfaces were never looked at.** The trash, the move picker, the
+   folder style sheet and the new-notebook sheet have no launch argument and
+   no one has seen them render. They were written to the rules and they
+   compile; that is all that is known.
+1. **The seat covers the standing bar.** With the seat open and the bar
    snapped to the right edge, the seat sits over the bar's top third. Both
    want that edge and the document does not say who wins.
-1. **The shell's hard shadow.** §4.1 says the writing bar's shell is flat, so
+2. **The shell's hard shadow.** §4.1 says the writing bar's shell is flat, so
    it has none; only the floating seat takes the 6-point offset. The first cut
    gave the bar one and it read as a second border. Worth a verdict.
-2. **The bar's long axis.** The fixed sizes and gaps in §3.3 add to 444 across
+3. **The bar's long axis.** The fixed sizes and gaps in §3.3 add to 444 across
    with the padding, not the 424 the mock measures. The shell hugs its
    contents rather than being pinned to 424, because density is the rule that
    generated the number. Same 12-point gap in the standing state.
-3. **Dark mode's seat.** The seat body is the accent 80 percent toward the
+4. **Dark mode's seat.** The seat body is the accent 80 percent toward the
    paper, and the paper stays white after dark, so the seat is a bright pink
    panel on a dark ground. That is what the two rules say together. It may not
    be what you want.
-4. **Game Boy's accent.** `#306230` sits at 1.83 against the ink, just above
+5. **Game Boy's accent.** `#306230` sits at 1.83 against the ink, just above
    the escape's 1.6, so it takes the plain rule and its outline lands close to
    it. The paper escape never fires on it. The greens survive, but only just.
