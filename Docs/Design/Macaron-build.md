@@ -258,12 +258,14 @@ table has no row for loads as no choice at all, because a preference is
 external data and a build that ships fewer themes than the one that wrote it
 should open on the system rather than trap.
 
-The picker is one menu entry on the library chip and a panel behind it.
+The picker is one menu entry on either library chip, the band's and the
+library's own, and a panel behind it.
 A card is a keycap in the theme's own ground, a bar of its chrome lying on
 it carrying the accent and the secondary; every line on a card is derived by
 the card's theme rather than by the app's, so a card shows what a theme does
 to its own chrome before it is worn. Chosen is sunk. `-TNShowThemes` opens
-the panel at launch.
+the panel at launch, wherever the app opens; `-TNTheme` with a name no preset
+answers to traps rather than opening on whatever was last saved.
 
 ### One derivation changed
 

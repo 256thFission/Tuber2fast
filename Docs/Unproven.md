@@ -43,6 +43,15 @@ Nothing here is a reason not to ship. It is a reason not to be surprised.
   banner, the blocked opens, the eventual drain — has been exercised only
   through a gated test store, never against a really-failing disk, and never
   on an iPad. Required but not done.
+- **The themes panel has never been touched, and `Workspace` has no device
+  evidence for this change.** Seven presets and the picker were proven in the
+  pinned simulator: a screenshot per theme, the panel open over both the
+  editor and the library, and the page frame read back off the pixels. Not
+  one card has been pressed, because the simulator cannot synthesise the tap;
+  the sunk state was reached by launching on a theme instead. `Workspace.swift`
+  is on CONTRIBUTING's device-evidence list and this change edits it, so the
+  evidence is required and not done. The press feel of a card and the seven
+  themes on a real display are Phillip's verdict.
 - **Off-main `PKDrawing` thumbnail rendering is measured on the simulator
   only.** ~52 ms cold / 2–14 ms warm per thumbnail, deterministic across
   runs — on a Mac's CPU through a simulator PencilKit. No inequality about

@@ -110,7 +110,9 @@ Default-theme results, for checking a build against the mocks:
 | ground `#F4EADA` | `ground2` `#E6D9BE` |
 
 Dark mode is the same rule with the mix target inverted toward white; the
-paper stays white.
+paper stays white. The escape inverts with it and runs to the `ground`,
+because a dark theme's ink is a cream: a near-white fill sent toward the ink
+would land on itself, and the line would not be there at all.
 
 ### 3.3 Fixed by the design (no theme can touch these)
 

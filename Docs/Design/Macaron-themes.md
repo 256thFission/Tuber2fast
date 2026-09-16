@@ -66,7 +66,9 @@ ones now.
 - Teenage Enamel's secondary is its ink, so `outline(of: secondary)` mixes
   toward paper (the escape), and every other token there takes the plain
   rule.
-- Game Boy: `chrome` and `ground` take the escape.
+- Game Boy: the purple `secondary` takes the escape and both greens take the
+  plain rule. (Written as `chrome` and `ground` before the build measured
+  them; the board's greens clear 1.6 against `#0F380F` comfortably.)
 - Every preset: `outline(of:)` of each token has contrast ≥ 1.3 against the
   token, so no theme ships an invisible line.
 - Preset ids are unique; `-TNTheme` names match preset names.
