@@ -139,6 +139,33 @@ package struct Theme: Equatable, Sendable {
         ink: hex("#141414")
     )
 
+    /// Joy-Con neon red and neon blue over the console's own greys. The
+    /// hexes are the shell colours the hardware stores for itself, not the
+    /// louder pair the box art uses.
+    package static let switchConsole = Theme(
+        ground: hex("#414548"),
+        chrome: hex("#828282"),
+        accent: hex("#FF3C28"),
+        secondary: hex("#0AB9E6"),
+        ink: hex("#0F0F0F")
+    )
+
+    /// The DMG's four greens and its shell. The four are a two-band palette
+    /// rather than a four-step ramp — the two light greens are 1.2 to 1 on
+    /// each other, and so are the two dark ones — so chrome and secondary
+    /// take one from each band and the accent carries the dark one.
+    package static let gameBoy = Theme(
+        ground: hex("#C2C0BC"),
+        chrome: hex("#9BBC0F"),
+        accent: hex("#306230"),
+        secondary: hex("#8BAC0F"),
+        ink: hex("#0F380F")
+    )
+
+    package static let all: [(name: String, theme: Theme)] = [
+        ("Macaron", .macaron), ("Switch", .switchConsole), ("Game Boy", .gameBoy),
+    ]
+
     /// The second notebook's tab colour in the mocks. A per-notebook preset,
     /// not a theme token, so it lives beside the themes rather than in one.
     package static let pistachio = hex("#DFF3C8")

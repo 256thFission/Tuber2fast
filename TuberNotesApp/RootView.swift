@@ -25,6 +25,8 @@ struct RootView: View {
             }
         }
         .animation(.default, value: workspace.banner)
+        .environment(\.macaron, workspace.theme)
+        .background(workspace.theme.ground.color)
     }
 
     @ViewBuilder private var surface: some View {

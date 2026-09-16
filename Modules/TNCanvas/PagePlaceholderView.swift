@@ -40,6 +40,12 @@ final class PagePlaceholderView: UIView {
         fatalError("PagePlaceholderView is created in code only")
     }
 
+    func repaintPaper() {
+        backgroundColor = MacaronPage.paper
+        layer.borderColor = MacaronPage.outline.cgColor
+        label.textColor = Theme.current.outline(of: Theme.current.paper).uiColor
+    }
+
     var text: String {
         get { label.text ?? "" }
         set { label.text = newValue }

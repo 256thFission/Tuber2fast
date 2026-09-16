@@ -36,6 +36,28 @@ final class Workspace {
     /// `nil` means the library is showing.
     var activeTabID: NotebookID?
 
+    /// The theme every piece of chrome draws from. The SwiftUI half reads
+    /// it through the environment; the canvas reads `Theme.current`, which
+    /// is why setting it does both.
+    var theme: Theme = Workspace.launchTheme() {
+        didSet {
+            Theme.current = theme
+            NotificationCenter.default.post(name: Theme.changed, object: nil)
+        }
+    }
+
+    /// `-TNTheme <name>` opens on a theme, so a screenshot of one needs no
+    /// taps to reach it.
+    private static func launchTheme() -> Theme {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: "-TNTheme"),
+              index + 1 < arguments.count,
+              let match = Theme.all.first(where: { $0.name == arguments[index + 1] })
+        else { return .macaron }
+        Theme.current = match.theme
+        return match.theme
+    }
+
     /// Whether the seat is out. One tenant, one flag.
     var isSeatOpen = ProcessInfo.processInfo.arguments.contains("-TNSeatOpen")
 

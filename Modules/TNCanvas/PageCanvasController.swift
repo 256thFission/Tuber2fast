@@ -294,6 +294,13 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         }
     }
 
+    /// The theme changed under it. The frame's geometry is restated by the
+    /// next mirror sync; only the two colours are read again here.
+    func repaintPaper() {
+        backdropView.backgroundColor = MacaronPage.paper
+        backdropView.layer.borderColor = MacaronPage.outline.cgColor
+    }
+
     package override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         establishZoomIfNeeded()

@@ -109,6 +109,12 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
         )
         scrollView.delegate = self
 
+        NotificationCenter.default.addObserver(
+            forName: Theme.changed, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.repaintGround() }
+        }
+
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(scrollView)
         NSLayoutConstraint.activate([
@@ -117,6 +123,14 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
             scrollView.topAnchor.constraint(equalTo: view.topAnchor),
             scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
+    }
+
+    private func repaintGround() {
+        scrollView.backgroundColor = MacaronGround.grid(
+            Theme.current, scale: view.traitCollection.displayScale
+        )
+        for canvas in canvases.values { canvas.repaintPaper() }
+        for placeholder in placeholders.values { placeholder.repaintPaper() }
     }
 
     /// The viewport-change hook, and the reason it is this one: every offset in
