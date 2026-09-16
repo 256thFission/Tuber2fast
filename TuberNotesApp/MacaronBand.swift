@@ -69,7 +69,10 @@ struct MacaronBand: View {
         // rather than about the notebook. The band's own list is fixed.
         .contextMenu {
             ForEach(Theme.all, id: \.name) { entry in
-                Button(entry.name) { workspace.theme = entry.theme }
+                Button(entry.name) {
+                    workspace.theme = entry.theme
+                    workspace.themeIsChosen = true
+                }
             }
         }
     }

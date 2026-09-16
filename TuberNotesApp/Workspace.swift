@@ -46,6 +46,10 @@ final class Workspace {
         }
     }
 
+    /// A theme named at launch or picked by hand. The system's own
+    /// light-and-dark does not get to overrule either.
+    var themeIsChosen = ProcessInfo.processInfo.arguments.contains("-TNTheme")
+
     /// `-TNTheme <name>` opens on a theme, so a screenshot of one needs no
     /// taps to reach it.
     private static func launchTheme() -> Theme {

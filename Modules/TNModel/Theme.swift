@@ -162,8 +162,21 @@ package struct Theme: Equatable, Sendable {
         ink: hex("#0F380F")
     )
 
+    /// The same theme after dark: the cream and the ink trade places and
+    /// the mix target inverts, so an outline now comes up off its fill
+    /// instead of going down into it. The paper stays white.
+    package static let macaronDark = Theme(
+        ground: hex("#26211B"),
+        chrome: hex("#332C24"),
+        accent: hex("#FF6A8C"),
+        secondary: hex("#FFB347"),
+        ink: hex("#F4EADA"),
+        invertsMix: true
+    )
+
     package static let all: [(name: String, theme: Theme)] = [
-        ("Macaron", .macaron), ("Switch", .switchConsole), ("Game Boy", .gameBoy),
+        ("Macaron", .macaron), ("Macaron Dark", .macaronDark),
+        ("Switch", .switchConsole), ("Game Boy", .gameBoy),
     ]
 
     /// The second notebook's tab colour in the mocks. A per-notebook preset,
