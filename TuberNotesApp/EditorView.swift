@@ -50,6 +50,12 @@ struct EditorView: View {
                 RefusalBar(message: "That couldn't be added: \(fault.description)")
             }
             CanvasHost(controller: editor.canvasHost)
+                .overlay(alignment: .topLeading) {
+                    MacaronShell {
+                        HStack(spacing: Macaron.rowGap) { InstrumentRun(editor: editor) }
+                    }
+                    .padding(16)
+                }
         }
         // The choice is acted on after the sheet is gone: the photo leg
         // presents a second sheet, and two presentations in one frame do not
