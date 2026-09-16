@@ -280,7 +280,15 @@ package final class Notebook {
         guard case .ready(var content) = states[page] else {
             TNPrecondition.fail("ink reported for page \(page) which is not ready: \(String(describing: states[page]))")
         }
-        if let echoOf, echoOf == content.pendingEcho {
+        // An echo restates the value that was pushed. A report stamped with
+        // the sequence but carrying different ink is PencilKit committing a
+        // stroke on top of the install: on the device the commit that
+        // follows `canvasViewDidEndUsingTool` can land after an undo's
+        // restore and rides in under its latch. Swallowing it left the
+        // undone stroke on the canvas and out of custody, and the next
+        // stroke reported it back as new ink. Equality is the check, so the
+        // value on screen is the value held either way.
+        if let echoOf, echoOf == content.pendingEcho, ink == content.ink {
             content.pendingEcho = nil
             states[page] = .ready(content)
             return
