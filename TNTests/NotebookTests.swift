@@ -352,6 +352,30 @@ struct NotebookTests {
         #expect(!notebook.canRedo)
     }
 
+    @Test("An echo whose ink differs from the restored value is an edit: PencilKit committed a stroke over the restore")
+    func echoCarryingDifferentInkIsAnEdit() async throws {
+        let scratch = try Scratch("nb-undo-late-commit")
+        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        let page = notebook.pageIDs[0]
+        notebook.windowChanged(to: [page])
+        try await waitUntil { notebook.state(of: page)?.content != nil }
+        _ = notebook.drainChanges()
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 1), echoOf: nil)
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 2), echoOf: nil)
+        #expect(notebook.undo() == page)
+        guard case .inkRestored(_, let restored, let seq) = try #require(notebook.drainChanges().last) else { Issue.record("no restore"); return }
+        #expect(restored.strokes.count == 1)
+        // The canvas installed the restore, then PencilKit finished committing
+        // the undone stroke on top of it and reported the result stamped as
+        // the install's echo. The drawing on the canvas is two strokes again.
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 2), echoOf: seq)
+        #expect(notebook.state(of: page)!.content!.ink.strokes.count == 2, "custody follows the canvas: the value it holds is the value on screen")
+        #expect(notebook.state(of: page)!.content!.isDirty)
+        #expect(notebook.canUndo, "the stroke that came back is undoable again")
+        #expect(notebook.undo() == page)
+        #expect(notebook.state(of: page)!.content!.ink.strokes.count == 1)
+    }
+
     // MARK: Pencil gestures
 
     /// Three lines down the page, and a scratch-out across the top two.
