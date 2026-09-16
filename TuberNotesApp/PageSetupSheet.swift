@@ -39,6 +39,172 @@ enum PageNames {
     }
 }
 
+/// A line of writing the person does rather than presses. Flat, and in the
+/// ground, which is the one token that reads as a hole in the chrome rather
+/// than a surface standing on it.
+private struct MacaronField: View {
+    let prompt: String
+    @Binding var text: String
+
+    @Environment(\.macaron) private var theme
+
+    var body: some View {
+        TextField(prompt, text: $text)
+            .font(Macaron.body(15))
+            .foregroundStyle(theme.ink.color)
+            .tint(theme.accent.color)
+            .padding(.horizontal, 10)
+            .frame(height: Macaron.chip)
+            .background {
+                RoundedRectangle(cornerRadius: Macaron.chipRadius, style: .continuous)
+                    .fill(theme.ground.color)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: Macaron.chipRadius, style: .continuous)
+                            .strokeBorder(theme.outline(of: theme.ground).color, lineWidth: Macaron.line)
+                    }
+            }
+    }
+}
+
+/// A sentence the sheet says about a choice. A readout, so it is flat.
+private struct MacaronNote: View {
+    let text: String
+
+    @Environment(\.macaron) private var theme
+
+    var body: some View {
+        Text(text)
+            .font(Macaron.body(11))
+            .foregroundStyle(theme.outline(of: theme.chrome).color)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// One paper, shown as the page it makes: white paper, radius 10, the 3pt
+/// derived outline, and its rules drawn small in the token that owns rule
+/// lines. Held is sunk, which is the whole of the chosen state.
+private struct PaperCap: View {
+    let paper: DrawnPaper
+    let isHeld: Bool
+    let select: () -> Void
+
+    @Environment(\.macaron) private var theme
+
+    var body: some View {
+        VStack(spacing: Macaron.rowGap) {
+            Keycap(
+                fill: theme.paper,
+                size: CGSize(width: Macaron.shell, height: Macaron.shell),
+                radius: Macaron.chipRadius,
+                isHeld: isHeld,
+                action: select
+            ) {
+                marks
+            }
+            Text(PageNames.paper(paper))
+                .font(Macaron.body(11))
+                .foregroundStyle(theme.outline(of: theme.chrome).color)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(PageNames.paper(paper))
+        .accessibilityAddTraits(isHeld ? [.isButton, .isSelected] : .isButton)
+    }
+
+    private var marks: some View {
+        let rule = theme.secondary.color
+        return Canvas { context, size in
+            let step = size.width / 4
+            var path = Path()
+            switch paper {
+            case .none, .blank:
+                break
+            case .lined:
+                for row in 1..<4 {
+                    path.move(to: CGPoint(x: 0, y: step * CGFloat(row)))
+                    path.addLine(to: CGPoint(x: size.width, y: step * CGFloat(row)))
+                }
+            case .grid:
+                for index in 1..<4 {
+                    path.move(to: CGPoint(x: 0, y: step * CGFloat(index)))
+                    path.addLine(to: CGPoint(x: size.width, y: step * CGFloat(index)))
+                    path.move(to: CGPoint(x: step * CGFloat(index), y: 0))
+                    path.addLine(to: CGPoint(x: step * CGFloat(index), y: size.height))
+                }
+            case .dotted:
+                for row in 1..<4 {
+                    for column in 1..<4 {
+                        path.addEllipse(
+                            in: CGRect(x: step * CGFloat(column) - 1, y: step * CGFloat(row) - 1, width: 2, height: 2)
+                        )
+                    }
+                }
+            }
+            if paper == .dotted {
+                context.fill(path, with: .color(rule))
+            } else {
+                context.stroke(path, with: .color(rule), lineWidth: 1.5)
+            }
+        }
+        .frame(width: Macaron.chip, height: Macaron.chip)
+    }
+}
+
+/// A run of caps. Each cap is as wide as its word, neighbours sit one column
+/// gap apart, and a line that will not fit the width wraps to the next one a
+/// row gap down. A fixed column grid would centre every word in a column of
+/// the widest word's width, which reads as caps floating at unrelated
+/// distances rather than as one run.
+private struct MacaronRun: Layout {
+    private struct Line {
+        var indices: [Int] = []
+        var width: CGFloat = 0
+        var height: CGFloat = 0
+    }
+
+    private func lines(of sizes: [CGSize], within limit: CGFloat) -> [Line] {
+        var lines: [Line] = []
+        var line = Line()
+        for (index, size) in sizes.enumerated() {
+            if !line.indices.isEmpty, line.width + Macaron.columnGap + size.width > limit {
+                lines.append(line)
+                line = Line()
+            }
+            line.width = line.indices.isEmpty ? size.width : line.width + Macaron.columnGap + size.width
+            line.height = max(line.height, size.height)
+            line.indices.append(index)
+        }
+        if !line.indices.isEmpty { lines.append(line) }
+        return lines
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        let laid = lines(of: sizes, within: proposal.width ?? .infinity)
+        let gaps = Macaron.rowGap * CGFloat(max(laid.count - 1, 0))
+        return CGSize(
+            width: laid.map(\.width).max() ?? 0,
+            height: laid.map(\.height).reduce(0, +) + gaps
+        )
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        var y = bounds.minY
+        for line in lines(of: sizes, within: bounds.width) {
+            var x = bounds.minX
+            for index in line.indices {
+                subviews[index].place(
+                    at: CGPoint(x: x, y: y),
+                    anchor: .topLeading,
+                    proposal: ProposedViewSize(sizes[index])
+                )
+                x += sizes[index].width + Macaron.columnGap
+            }
+            y += line.height + Macaron.rowGap
+        }
+    }
+}
+
 /// The size and orientation rows both creation sheets show. The size is the
 /// caller's state; this only edits it.
 struct PageSetupControls: View {
@@ -55,6 +221,8 @@ struct PageSetupControls: View {
     /// parsing it back out of `size` would fight the person typing.
     @State private var customWidth: String
     @State private var customHeight: String
+
+    @Environment(\.macaron) private var theme
 
     init(
         size: Binding<PageSize>,
@@ -75,45 +243,61 @@ struct PageSetupControls: View {
     }
 
     var body: some View {
-        Section("Size") {
-            Picker("Size", selection: choice) {
-                ForEach(PageSize.named, id: \.self) { named in
-                    Text(PageNames.size(named)).tag(SizeChoice.named(named))
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 10) {
+                MacaronHeading(text: "Size")
+                MacaronRun {
+                    ForEach(PageSize.named, id: \.self) { named in
+                        MacaronButton(
+                            title: PageNames.size(named),
+                            isHeld: choice.wrappedValue == .named(named)
+                        ) {
+                            choice.wrappedValue = .named(named)
+                        }
+                    }
+                    MacaronButton(title: PageNames.customSize, isHeld: isCustom) {
+                        choice.wrappedValue = .custom
+                    }
                 }
-                Text(PageNames.customSize).tag(SizeChoice.custom)
+                if isCustom {
+                    HStack(spacing: Macaron.columnGap) {
+                        edge("Width", text: $customWidth)
+                        edge("Height", text: $customHeight)
+                    }
+                    Text("Each edge is \(Self.bounds) points.")
+                        .font(Macaron.body(11))
+                        .foregroundStyle(theme.outline(of: theme.chrome).color)
+                }
             }
-            if isCustom {
-                LabeledContent("Width") {
-                    TextField("Width", text: $customWidth)
-                        .multilineTextAlignment(.trailing)
-                        .keyboardType(.decimalPad)
-                        .onChange(of: customWidth) { _, _ in pushCustom() }
+
+            VStack(alignment: .leading, spacing: 10) {
+                MacaronHeading(text: "Orientation")
+                MacaronRun {
+                    ForEach(PageOrientation.allCases, id: \.self) { candidate in
+                        MacaronButton(
+                            title: PageNames.orientation(candidate),
+                            isHeld: orientation == candidate,
+                            isEnabled: orientationReason == nil
+                        ) {
+                            orientation = candidate
+                        }
+                    }
                 }
-                LabeledContent("Height") {
-                    TextField("Height", text: $customHeight)
-                        .multilineTextAlignment(.trailing)
-                        .keyboardType(.decimalPad)
-                        .onChange(of: customHeight) { _, _ in pushCustom() }
+                if let orientationReason {
+                    MacaronNote(text: orientationReason)
                 }
-                Text("Each edge is \(Self.bounds) points.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
             }
         }
+    }
 
-        Section("Orientation") {
-            Picker("Orientation", selection: $orientation) {
-                ForEach(PageOrientation.allCases, id: \.self) { orientation in
-                    Text(PageNames.orientation(orientation)).tag(orientation)
-                }
-            }
-            .pickerStyle(.segmented)
-            .disabled(orientationReason != nil)
-            if let orientationReason {
-                Text(orientationReason)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
+    private func edge(_ name: String, text: Binding<String>) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            MacaronHeading(text: name)
+            MacaronField(prompt: name, text: text)
+                .keyboardType(.decimalPad)
+                .multilineTextAlignment(.trailing)
+                .onChange(of: text.wrappedValue) { _, _ in pushCustom() }
+                .frame(width: 120)
         }
     }
 
@@ -163,6 +347,7 @@ struct PageSetupControls: View {
 /// the library creates.
 struct NewNotebookSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.macaron) private var theme
 
     let create: (String, PageGeometry, DrawnPaper) -> Void
 
@@ -183,35 +368,32 @@ struct NewNotebookSheet: View {
     }
 
     var body: some View {
-        NavigationStack {
-            Form {
-                Section("Name") {
-                    TextField("Name", text: $name)
-                }
-                PageSetupControls(size: $size, orientation: $orientation)
-                Section("Paper") {
-                    Picker("Paper", selection: $paper) {
-                        ForEach(DrawnPaper.allCases, id: \.self) { paper in
-                            Text(PageNames.paper(paper)).tag(paper)
-                        }
+        MacaronPanel(title: "New notebook", onClose: { dismiss() }) {
+            VStack(alignment: .leading, spacing: 10) {
+                MacaronHeading(text: "Name")
+                MacaronField(prompt: "Name", text: $name)
+            }
+
+            PageSetupControls(size: $size, orientation: $orientation)
+
+            VStack(alignment: .leading, spacing: 10) {
+                MacaronHeading(text: "Paper")
+                HStack(alignment: .top, spacing: Macaron.columnGap) {
+                    ForEach(DrawnPaper.allCases, id: \.self) { candidate in
+                        PaperCap(paper: candidate, isHeld: paper == candidate) { paper = candidate }
                     }
                 }
             }
-            .navigationTitle("New notebook")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Create") {
-                        if let geometry { create(name, geometry, paper) }
-                        dismiss()
-                    }
-                    // An out-of-bounds custom size is refused here, before
-                    // anything is created.
-                    .disabled(name.isEmpty || geometry == nil)
-                }
+
+            // An out-of-bounds custom size is refused here, before anything
+            // is created.
+            MacaronButton(
+                title: "Create",
+                fill: theme.accent,
+                isEnabled: !name.isEmpty && geometry != nil
+            ) {
+                if let geometry { create(name, geometry, paper) }
+                dismiss()
             }
         }
     }
@@ -236,6 +418,7 @@ enum NewPagePaperChoice: Hashable {
 /// chooses; `EditorView` routes the choice to the intention that serves it.
 struct AddPageSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.macaron) private var theme
 
     let editor: EditorViewModel
     let add: (NewPagePaperChoice, PageSize, PageOrientation) -> Void
@@ -255,42 +438,47 @@ struct AddPageSheet: View {
     }
 
     var body: some View {
-        NavigationStack {
-            Form {
-                PageSetupControls(
-                    size: $size,
-                    orientation: $orientation,
-                    orientationDisabledBecause: takesAssetAspect
-                        ? "Paper from an image takes that image's aspect." : nil
-                )
-                Section("Paper") {
-                    Picker("Paper", selection: $choice) {
-                        Text("Same as this page").tag(NewPagePaperChoice.sameAsThisPage)
-                        ForEach(DrawnPaper.allCases, id: \.self) { paper in
-                            Text(PageNames.paper(paper)).tag(NewPagePaperChoice.drawn(paper))
+        MacaronPanel(title: "Add page", onClose: { dismiss() }) {
+            PageSetupControls(
+                size: $size,
+                orientation: $orientation,
+                orientationDisabledBecause: takesAssetAspect
+                    ? "Paper from an image takes that image's aspect." : nil
+            )
+
+            VStack(alignment: .leading, spacing: 10) {
+                MacaronHeading(text: "Paper")
+                // The papers that are drawn show themselves; the ones that
+                // come from somewhere else can only say where.
+                HStack(alignment: .top, spacing: Macaron.columnGap) {
+                    ForEach(DrawnPaper.allCases, id: \.self) { candidate in
+                        PaperCap(paper: candidate, isHeld: choice == .drawn(candidate)) {
+                            choice = .drawn(candidate)
                         }
-                        Text("Photo").tag(NewPagePaperChoice.photo)
-                        Text("This page, flattened").tag(NewPagePaperChoice.flattened)
-                        ForEach(editor.pagesWithAssetPaper, id: \.page) { source in
-                            Text("Paper from page \(source.number)")
-                                .tag(NewPagePaperChoice.from(source.page))
+                    }
+                }
+                MacaronRun {
+                    MacaronButton(title: "Same as this page", isHeld: choice == .sameAsThisPage) {
+                        choice = .sameAsThisPage
+                    }
+                    MacaronButton(title: "Photo", isHeld: choice == .photo) { choice = .photo }
+                    MacaronButton(title: "This page, flattened", isHeld: choice == .flattened) {
+                        choice = .flattened
+                    }
+                    ForEach(editor.pagesWithAssetPaper, id: \.page) { source in
+                        MacaronButton(
+                            title: "Paper from page \(source.number)",
+                            isHeld: choice == .from(source.page)
+                        ) {
+                            choice = .from(source.page)
                         }
                     }
                 }
             }
-            .navigationTitle("Add page")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Add") {
-                        add(choice, size, orientation)
-                        dismiss()
-                    }
-                    .disabled(size.geometry(orientation) == nil)
-                }
+
+            MacaronButton(title: "Add", fill: theme.accent, isEnabled: size.geometry(orientation) != nil) {
+                add(choice, size, orientation)
+                dismiss()
             }
         }
     }

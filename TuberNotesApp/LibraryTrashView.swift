@@ -10,6 +10,8 @@ struct LibraryTrashView: View {
     @State private var deleting: TrashEntry?
     @State private var isEmptying = false
 
+    @Environment(\.macaron) private var theme
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
@@ -18,16 +20,19 @@ struct LibraryTrashView: View {
                 .padding(.bottom, 14)
 
             if browser.trash.isEmpty {
-                ContentUnavailableView("Trash is empty", systemImage: "trash")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                empty("Trash is empty")
             } else if browser.displayedTrash.isEmpty {
-                ContentUnavailableView.search(text: browser.searchText)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                empty("No results for \(browser.searchText)")
             } else {
-                List(browser.displayedTrash) { entry in
-                    row(entry)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: Macaron.rowGap) {
+                        ForEach(browser.displayedTrash) { entry in
+                            row(entry)
+                        }
+                    }
+                    .padding(.horizontal, 28)
+                    .padding(.bottom, 16)
                 }
-                .listStyle(.plain)
             }
         }
         .confirmationDialog(
@@ -50,33 +55,44 @@ struct LibraryTrashView: View {
         }
     }
 
+    /// A readout, so it is flat and has no wall.
+    private func empty(_ text: String) -> some View {
+        Text(text)
+            .font(Macaron.body(13))
+            .foregroundStyle(theme.outline(of: theme.chrome).color)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
     private var header: some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
             Text("Trash")
-                .font(.largeTitle.weight(.bold))
-            Text(browser.trash.count == 1 ? "1 item" : "\(browser.trash.count) items")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .font(Macaron.title(22))
+                .foregroundStyle(theme.outline(of: theme.chrome).color)
+            Text(verbatim: browser.trash.count == 1 ? "1 item" : "\(browser.trash.count) items")
+                .font(Macaron.body(13))
+                .foregroundStyle(theme.outline(of: theme.chrome).color)
             Spacer()
             // Searching here searches the trash and nothing else: the trash
             // is not in the tree a search elsewhere reads.
             LibrarySearchField(text: Bindable(browser).searchText)
-            Button("Empty", role: .destructive) { isEmptying = true }
-                .buttonStyle(.bordered)
-                .disabled(browser.trash.isEmpty)
+            MacaronButton(title: "Empty", fill: theme.accent, isEnabled: !browser.trash.isEmpty) {
+                isEmptying = true
+            }
         }
     }
 
     private func row(_ entry: TrashEntry) -> some View {
         HStack(spacing: 14) {
             Image(systemName: entry.kind == .folder ? "folder" : "book.closed")
-                .foregroundStyle(.secondary)
+                .font(Macaron.body(14))
+                .foregroundStyle(theme.outline(of: theme.chrome).color)
             VStack(alignment: .leading, spacing: 3) {
                 Text(entry.name)
-                    .font(.subheadline.weight(.semibold))
-                Text("Deleted \(LibraryStyle.itemDate.string(from: entry.origin.deletedAt))")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(Macaron.title(14))
+                    .foregroundStyle(theme.outline(of: theme.chrome).color)
+                Text(verbatim: "Deleted \(LibraryStyle.itemDate.string(from: entry.origin.deletedAt))")
+                    .font(Macaron.body(11))
+                    .foregroundStyle(theme.outline(of: theme.chrome).color)
             }
             Spacer(minLength: 0)
             LibraryChevronMenu(name: entry.name) {
@@ -92,6 +108,7 @@ struct LibraryTrashView: View {
                 }
             }
         }
+        .padding(.vertical, 8)
     }
 
     private var isDeleting: Binding<Bool> {

@@ -12,19 +12,27 @@ struct LibraryMovePicker: View {
     @Environment(\.dismiss) private var dismiss
     @State private var stack: [String] = []
 
-    var body: some View {
-        NavigationStack(path: $stack) {
-            level("")
-                .navigationDestination(for: String.self) { level($0) }
-        }
-    }
+    /// The level being shown is the top of the stack; the root is what is
+    /// under an empty one.
+    private var folder: String { stack.last ?? "" }
 
-    private func level(_ folder: String) -> some View {
-        LibraryMoveLevel(browser: browser, paths: paths, folder: folder) { destination in
-            confirm(destination)
-            dismiss()
-        } cancel: {
-            dismiss()
+    var body: some View {
+        MacaronPanel(
+            title: folder.isEmpty ? "Documents" : Workspace.displayName(ofPath: folder),
+            onClose: { dismiss() }
+        ) {
+            LibraryMoveLevel(
+                browser: browser,
+                paths: paths,
+                folder: folder,
+                canGoBack: !stack.isEmpty,
+                enter: { stack.append($0) },
+                back: { stack.removeLast() },
+                confirm: { destination in
+                    confirm(destination)
+                    dismiss()
+                }
+            )
         }
     }
 }
@@ -33,30 +41,38 @@ private struct LibraryMoveLevel: View {
     let browser: LibraryBrowser
     let paths: Set<String>
     let folder: String
+    let canGoBack: Bool
+    let enter: (String) -> Void
+    let back: () -> Void
     let confirm: (String) -> Void
-    let cancel: () -> Void
 
+    @Environment(\.macaron) private var theme
     @State private var folders: [LibraryItem] = []
 
     var body: some View {
-        List(folders) { item in
-            NavigationLink(value: item.relativePath) {
-                Label(item.name, systemImage: "folder")
+        VStack(alignment: .leading, spacing: 16) {
+            // The ground's fill, as the band's overflow chip takes: a way
+            // back out is not a peer of the destinations it sits over.
+            if canGoBack {
+                MacaronButton(title: "Back", icon: "chevron.left", fill: theme.ground) { back() }
             }
-        }
-        .overlay {
+
+            MacaronHeading(text: "Folders")
             if folders.isEmpty {
-                ContentUnavailableView("No folders here", systemImage: "folder")
+                Text("No folders here")
+                    .font(Macaron.body(13))
+                    .foregroundStyle(theme.outline(of: theme.chrome).color)
+            } else {
+                ForEach(folders) { item in
+                    MacaronButton(title: item.name, icon: "folder") { enter(item.relativePath) }
+                }
             }
-        }
-        .navigationTitle(folder.isEmpty ? "Documents" : Workspace.displayName(ofPath: folder))
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .cancellationAction) {
-                Button("Cancel") { cancel() }
-            }
-            ToolbarItem(placement: .confirmationAction) {
-                Button(folder.isEmpty ? "Move to Documents" : "Move here") { confirm(folder) }
+
+            MacaronButton(
+                title: folder.isEmpty ? "Move to Documents" : "Move here",
+                fill: theme.accent
+            ) {
+                confirm(folder)
             }
         }
         .task(id: folder) {

@@ -244,6 +244,10 @@ struct MacaronPanel<Content: View>: View {
     @Environment(\.macaron) private var theme
 
     static var strip: CGFloat { 44 }
+    /// A fitted panel hugs its content, and a browsing panel holding one
+    /// item would hug down to a strip. This is the narrowest a panel is
+    /// allowed to get.
+    static var minWidth: CGFloat { 480 }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -272,12 +276,16 @@ struct MacaronPanel<Content: View>: View {
                 VStack(alignment: .leading, spacing: 16) {
                     content()
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(minWidth: Self.minWidth, maxWidth: .infinity, alignment: .leading)
                 .padding(14)
             }
         }
         .background(theme.chrome.color)
         .presentationBackground(theme.chrome.color)
+        // A panel is as tall as what is in it. A fixed card with a field of
+        // empty chrome under the last control reads as a panel that failed
+        // to load.
+        .presentationSizing(.fitted)
         .environment(\.macaron, theme)
     }
 }

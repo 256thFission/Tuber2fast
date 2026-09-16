@@ -13,7 +13,6 @@ struct RootView: View {
             // library has no band, so it keeps the plain chip bar.
             if workspace.activeTab == nil {
                 TabBar()
-                Divider()
             }
             surface
         }
@@ -57,57 +56,82 @@ struct RootView: View {
 
 private struct TabBar: View {
     @Environment(Workspace.self) private var workspace
+    @Environment(\.macaron) private var theme
 
     var body: some View {
         ScrollView(.horizontal) {
-            HStack(spacing: 8) {
-                Button {
-                    workspace.showLibrary()
-                } label: {
-                    Label("Library", systemImage: "books.vertical")
-                        .labelStyle(.titleAndIcon)
-                }
-                .buttonStyle(.bordered)
-                .tint(workspace.activeTabID == nil ? .accentColor : .secondary)
-
+            HStack(spacing: Macaron.columnGap) {
+                libraryChip
                 ForEach(workspace.tabs) { tab in
                     TabChip(tab: tab, isActive: tab.id == workspace.activeTabID)
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+            .padding(.horizontal, Macaron.shellPadding)
+            .padding(.vertical, Macaron.shellPadding)
         }
         .scrollIndicators(.hidden)
     }
+
+    /// Flat, like the band's library chip: it leaves what is open rather
+    /// than acting on it, and this bar is only shown when nothing is open.
+    private var libraryChip: some View {
+        Button {
+            workspace.showLibrary()
+        } label: {
+            HStack(spacing: Macaron.rowGap) {
+                Image(systemName: "books.vertical").font(Macaron.body(14))
+                Text("Library").font(Macaron.title(14))
+            }
+            .foregroundStyle(theme.outline(of: theme.chrome).color)
+            .padding(.horizontal, Macaron.shellPadding)
+            .frame(height: Macaron.chip)
+            .background {
+                RoundedRectangle(cornerRadius: Macaron.chipRadius, style: .continuous)
+                    .fill(theme.chrome.color)
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: Macaron.chipRadius, style: .continuous)
+                    .strokeBorder(theme.outline(of: theme.chrome).color, lineWidth: Macaron.line)
+            }
+        }
+        .buttonStyle(.plain)
+    }
 }
 
+/// The band's tabs, in the bar the library keeps: keycaps, and the active
+/// one is sunk. The close cap stands beside the name rather than inside it,
+/// because a cap holds one press and this chip answers two.
 private struct TabChip: View {
     @Environment(Workspace.self) private var workspace
+    @Environment(\.macaron) private var theme
     let tab: Workspace.Tab
     let isActive: Bool
 
     var body: some View {
-        HStack(spacing: 6) {
-            Button(tab.name) {
+        HStack(spacing: Macaron.rowGap) {
+            Keycap(
+                fill: isActive ? theme.accent : theme.chrome,
+                size: CGSize(width: 0, height: Macaron.chip),
+                isHeld: isActive
+            ) {
                 workspace.activeTabID = tab.id
+            } label: {
+                Text(tab.name)
+                    .font(Macaron.title(14))
+                    .lineLimit(1)
+                    .padding(.horizontal, Macaron.shellPadding)
             }
-            .buttonStyle(.plain)
-            .lineLimit(1)
+            .accessibilityAddTraits(isActive ? [.isButton, .isSelected] : .isButton)
+            .accessibilityLabel(tab.name)
 
-            Button {
+            Keycap(fill: theme.chrome, size: CGSize(width: Macaron.chip, height: Macaron.chip)) {
                 Task { await workspace.close(tabID: tab.id) }
             } label: {
-                Image(systemName: "xmark")
-                    .imageScale(.small)
+                Image(systemName: "xmark").font(Macaron.body(13))
             }
-            .buttonStyle(.plain)
+            .accessibilityAddTraits(.isButton)
             .accessibilityLabel("Close \(tab.name)")
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(isActive ? Color.accentColor.opacity(0.18) : Color.secondary.opacity(0.10))
-        .foregroundStyle(isActive ? Color.accentColor : Color.primary)
-        .clipShape(.rect(cornerRadius: 8))
     }
 }
 
@@ -115,32 +139,42 @@ private struct TabChip: View {
 /// will not succeed.
 private struct BannerView: View {
     @Environment(Workspace.self) private var workspace
+    @Environment(\.macaron) private var theme
     let message: String
 
+    private var shape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: Macaron.chipRadius, style: .continuous)
+    }
+
+    /// The words are a readout and stay flat; the two things you can do
+    /// about them are caps.
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 12) {
+        HStack(alignment: .center, spacing: Macaron.columnGap) {
             Text(message)
-                .font(.callout)
+                .font(Macaron.body(14))
+                .foregroundStyle(theme.outline(of: theme.chrome).color)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             if let tabID = workspace.discardableTabID {
-                Button("Discard and close") {
+                // The one thing that still works when a save will not.
+                MacaronButton(title: "Discard and close", fill: theme.accent) {
                     Task { await workspace.discardAndClose(tabID: tabID) }
                 }
-                .font(.callout.weight(.semibold))
             }
 
-            Button {
+            Keycap(fill: theme.chrome, size: CGSize(width: Macaron.chip, height: Macaron.chip)) {
                 workspace.dismissBanner()
             } label: {
-                Image(systemName: "xmark.circle.fill")
+                Image(systemName: "xmark").font(Macaron.body(13))
             }
-            .buttonStyle(.plain)
+            .accessibilityAddTraits(.isButton)
             .accessibilityLabel("Dismiss")
         }
-        .padding(12)
-        .background(.thickMaterial, in: .rect(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.secondary.opacity(0.25)))
-        .shadow(radius: 4, y: 2)
+        .padding(Macaron.shellPadding)
+        .background { shape.fill(theme.chrome.color) }
+        .overlay { shape.strokeBorder(theme.outline(of: theme.chrome).color, lineWidth: Macaron.line) }
+        // It floats over whatever it interrupted, so it takes the hard
+        // offset the kit gives a floating shell.
+        .shadow(color: theme.outline(of: theme.ground).color, radius: 0, x: 0, y: 6)
     }
 }

@@ -11,6 +11,7 @@ typealias LibraryItem = TNLibrary.LibraryItem
 /// `LibraryBrowser`'s; this view holds only what is on screen over it.
 struct LibraryView: View {
     @Environment(Workspace.self) private var workspace
+    @Environment(\.macaron) private var theme
 
     @State private var newFolderName = ""
     @State private var isNamingFolder = false
@@ -107,20 +108,26 @@ struct LibraryView: View {
         if browser.section == .documents && !browser.folder.isEmpty {
             ZStack {
                 HStack {
-                    Button {
+                    Keycap(
+                        fill: theme.chrome,
+                        size: CGSize(width: Macaron.chip, height: Macaron.chip)
+                    ) {
                         browser.back()
                     } label: {
-                        Image(systemName: "chevron.left")
-                            .font(.headline)
-                            .frame(width: 44, height: 44)
-                            .background(.quaternary, in: .circle)
-                            .overlay {
-                                Circle()
-                                    .strokeBorder(Color.accentColor, lineWidth: 3)
-                                    .opacity(isDroppingOnBack ? 1 : 0)
-                            }
+                        Image(systemName: "chevron.left").font(Macaron.body(14))
                     }
-                    .buttonStyle(.plain)
+                    // Dashed, because what is hovering over the way out has
+                    // no body here until it is let go of.
+                    .overlay(alignment: .top) {
+                        RoundedRectangle(cornerRadius: Macaron.chipRadius, style: .continuous)
+                            .strokeBorder(
+                                theme.accent.color,
+                                style: StrokeStyle(lineWidth: Macaron.line, dash: Macaron.dash)
+                            )
+                            .frame(width: Macaron.chip, height: Macaron.chip)
+                            .opacity(isDroppingOnBack ? 1 : 0)
+                    }
+                    .accessibilityAddTraits(.isButton)
                     .accessibilityLabel("Back")
                     // The one way out of a folder by drag: there is no cell
                     // for the parent to drop onto.
@@ -133,11 +140,13 @@ struct LibraryView: View {
                     Spacer()
                 }
                 Text(browser.title)
-                    .font(.headline)
+                    .font(Macaron.title(17))
+                    .foregroundStyle(theme.outline(of: theme.ground).color)
             }
         } else {
             Text(browser.title)
-                .font(.largeTitle.weight(.bold))
+                .font(Macaron.title(28))
+                .foregroundStyle(theme.outline(of: theme.ground).color)
                 .frame(height: 44, alignment: .leading)
         }
     }
@@ -145,8 +154,8 @@ struct LibraryView: View {
     // MARK: Toolbar
 
     private var toolbarRow: some View {
-        HStack(spacing: 12) {
-            Menu {
+        HStack(spacing: Macaron.columnGap) {
+            MacaronMenuCap {
                 Picker("Filter", selection: Bindable(browser).filter) {
                     Text("All").tag(LibraryFilter.all)
                     Text("Notebooks").tag(LibraryFilter.notebooks)
@@ -154,13 +163,15 @@ struct LibraryView: View {
                 }
                 .pickerStyle(.inline)
             } label: {
-                Label(Self.name(of: browser.filter), systemImage: "line.3.horizontal.decrease")
+                capLabel(Self.name(of: browser.filter), "line.3.horizontal.decrease")
             }
 
             Spacer()
 
             if browser.section == .documents {
-                Menu {
+                // The accent, because making a notebook is the one thing the
+                // library exists to do that nothing else in it can.
+                MacaronMenuCap(fill: theme.accent) {
                     Button {
                         isCreatingNotebook = true
                     } label: {
@@ -173,9 +184,8 @@ struct LibraryView: View {
                         Label("Folder", systemImage: "folder.badge.plus")
                     }
                 } label: {
-                    Label("New", systemImage: "plus")
+                    capLabel("New", "plus")
                 }
-                .buttonStyle(.borderedProminent)
             }
 
             viewOptionsMenu
@@ -184,8 +194,15 @@ struct LibraryView: View {
         }
     }
 
+    private func capLabel(_ title: String, _ symbol: String) -> some View {
+        HStack(spacing: Macaron.rowGap) {
+            Image(systemName: symbol).font(Macaron.body(14))
+            Text(title).font(Macaron.title(15))
+        }
+    }
+
     private var viewOptionsMenu: some View {
-        Menu {
+        MacaronMenuCap(padding: Macaron.rowGap) {
             Button {
                 browser.beginSelecting()
             } label: {
@@ -200,8 +217,7 @@ struct LibraryView: View {
             sortButton("Name", .name)
             sortButton("Type", .type)
         } label: {
-            Image(systemName: "square.grid.2x2")
-                .frame(width: 32, height: 32)
+            Image(systemName: "square.grid.2x2").font(Macaron.body(14))
         }
         .accessibilityLabel("View options")
     }
@@ -233,33 +249,34 @@ struct LibraryView: View {
     /// The toolbar row's replacement while selecting, on the spec's shape:
     /// Select All, the collection's name, Done, and the actions beneath.
     private var selectBar: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: Macaron.columnGap) {
             HStack {
-                Button("Select All") { browser.selectAll() }
+                MacaronButton(title: "Select All", fill: theme.secondary) { browser.selectAll() }
                 Spacer()
                 Text(browser.title)
-                    .font(.headline)
+                    .font(Macaron.title(17))
+                    .foregroundStyle(theme.outline(of: theme.ground).color)
                 Spacer()
-                Button("Done") { browser.endSelecting() }
+                // Leaving the mode is the one action this row exists for;
+                // the three beneath it act on what is chosen.
+                MacaronButton(title: "Done", fill: theme.accent) { browser.endSelecting() }
             }
-            HStack(spacing: 24) {
+            HStack(spacing: Macaron.columnGap) {
                 Spacer()
-                Button {
+                MacaronButton(title: "Move", icon: "folder", isEnabled: !selection.isEmpty) {
                     moveRequest = MoveRequest(paths: selection)
-                } label: {
-                    Label("Move", systemImage: "folder")
                 }
-                Button {
+                MacaronButton(
+                    title: "Duplicate",
+                    icon: "plus.square.on.square",
+                    isEnabled: !selection.isEmpty
+                ) {
                     run { await browser.duplicate(selection) }
-                } label: {
-                    Label("Duplicate", systemImage: "plus.square.on.square")
                 }
-                Button(role: .destructive) {
+                // No colour of its own: the word is what says it destroys.
+                MacaronButton(title: "Trash", icon: "trash", isEnabled: !selection.isEmpty) {
                     run { await browser.trash(selection) }
-                } label: {
-                    Label("Trash", systemImage: "trash")
                 }
-                .tint(.red)
                 Spacer()
             }
             .disabled(selection.isEmpty)
@@ -274,17 +291,23 @@ struct LibraryView: View {
         switch browser.listing {
         case .loading:
             ProgressView()
+                .tint(theme.outline(of: theme.ground).color)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .refused(let message):
-            ContentUnavailableView(
+            // A refusal has a body: it is a thing that happened, and it
+            // stays until the folder changes.
+            placeholder(
                 "This folder could not be shown",
-                systemImage: "exclamationmark.triangle",
-                description: Text(message)
+                symbol: "exclamationmark.triangle",
+                detail: message,
+                isEmptySlot: false
             )
         case .loaded(let items) where items.isEmpty:
-            ContentUnavailableView(
+            placeholder(
                 browser.section == .favorites ? "No favorites yet" : "This folder is empty",
-                systemImage: browser.section == .favorites ? "star" : "folder"
+                symbol: browser.section == .favorites ? "star" : "folder",
+                detail: nil,
+                isEmptySlot: true
             )
         case .loaded:
             switch browser.options.layout {
@@ -292,6 +315,44 @@ struct LibraryView: View {
             case .list: list
             }
         }
+    }
+
+    /// An empty collection is a slot with nothing in it, so it is dashed and
+    /// has no fill. Anything else here is a real thing to read, so it has a
+    /// body and a solid line.
+    private func placeholder(
+        _ title: String,
+        symbol: String,
+        detail: String?,
+        isEmptySlot: Bool
+    ) -> some View {
+        let shape = RoundedRectangle(cornerRadius: Macaron.shellRadius, style: .continuous)
+        return VStack(spacing: Macaron.columnGap) {
+            Image(systemName: symbol).font(Macaron.title(28))
+            Text(title).font(Macaron.title(17))
+            if let detail {
+                Text(detail)
+                    .font(Macaron.body(13))
+                    .multilineTextAlignment(.center)
+            }
+        }
+        .foregroundStyle(theme.outline(of: isEmptySlot ? theme.ground : theme.chrome).color)
+        .padding(Macaron.shellRadius)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background {
+            if isEmptySlot {
+                shape.strokeBorder(
+                    theme.accent.color,
+                    style: StrokeStyle(lineWidth: Macaron.line, dash: Macaron.dash)
+                )
+            } else {
+                shape.fill(theme.chrome.color)
+                    .overlay {
+                        shape.strokeBorder(theme.outline(of: theme.chrome).color, lineWidth: Macaron.line)
+                    }
+            }
+        }
+        .padding(28)
     }
 
     private var grid: some View {
@@ -308,15 +369,16 @@ struct LibraryView: View {
 
     private var list: some View {
         ScrollView {
-            LazyVStack(spacing: 0) {
+            // Each row is its own card with its own line, so there is no
+            // divider left to draw between them.
+            LazyVStack(spacing: Macaron.rowGap) {
                 ForEach(browser.displayed) { item in
                     LibraryListRow(item: item, browser: browser, drop: dropTarget(item)) { itemMenu(for: item) }
                         .onTapGesture { tap(item) }
-                    Divider()
                 }
             }
             .padding(.horizontal, 28)
-            .padding(.vertical, 8)
+            .padding(.vertical, Macaron.shellPadding)
         }
     }
 
@@ -410,17 +472,28 @@ struct LibraryView: View {
 struct LibrarySearchField: View {
     @Binding var text: String
 
+    @Environment(\.macaron) private var theme
+
+    private var shape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: Macaron.chipRadius, style: .continuous)
+    }
+
+    /// Typing into it is not pressing it, so it is flat.
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: Macaron.rowGap) {
             Image(systemName: "magnifyingglass")
-                .foregroundStyle(.secondary)
+                .font(Macaron.body(13))
             TextField("Search", text: $text)
                 .textFieldStyle(.plain)
+                .font(Macaron.body(14))
+                .tint(theme.accent.color)
                 .frame(width: 180)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(.quaternary, in: .capsule)
+        .foregroundStyle(theme.outline(of: theme.chrome).color)
+        .padding(.horizontal, Macaron.shellPadding)
+        .frame(height: Macaron.chip)
+        .background { shape.fill(theme.chrome.color) }
+        .overlay { shape.strokeBorder(theme.outline(of: theme.chrome).color, lineWidth: Macaron.line) }
     }
 }
 
@@ -429,38 +502,47 @@ struct LibrarySearchField: View {
 private struct LibrarySidebar: View {
     @Binding var section: LibrarySection
 
+    @Environment(\.macaron) private var theme
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            row(.documents, title: "Documents", symbol: "folder.fill")
-            row(.favorites, title: "Favorites", symbol: "star.fill")
-            row(.trash, title: "Trash", symbol: "trash")
-            Spacer()
+        // A shell hugs what is in it. The column is taller than three rows,
+        // so the shell sits at the top of it and the ground shows below.
+        MacaronShell {
+            VStack(alignment: .leading, spacing: Macaron.rowGap) {
+                row(.documents, title: "Documents", symbol: "folder.fill")
+                row(.favorites, title: "Favorites", symbol: "star.fill")
+                row(.trash, title: "Trash", symbol: "trash")
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(14)
-        .frame(maxHeight: .infinity)
-        .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 24))
+        .frame(maxHeight: .infinity, alignment: .top)
     }
 
+    /// The band's tabs, in a column: the collection you are in is the cap
+    /// that has dropped its wall, and nothing else marks it.
+    ///
+    /// The cap is composed here rather than taken from `MacaronButton`,
+    /// which hugs its word by design: three caps each as wide as their own
+    /// word read as three objects, not as one list. The label fills the
+    /// column instead, and the glyph sits in a fixed slot so the words start
+    /// on one edge.
     private func row(_ target: LibrarySection, title: String, symbol: String) -> some View {
-        Button {
+        Keycap(
+            fill: section == target ? theme.accent : theme.chrome,
+            size: CGSize(width: 0, height: Macaron.chip + 6),
+            isHeld: section == target
+        ) {
             section = target
         } label: {
-            HStack(spacing: 12) {
+            HStack(spacing: Macaron.columnGap) {
                 Image(systemName: symbol)
-                    .frame(width: 22)
-                Text(title)
-                    .font(.body.weight(.medium))
-                Spacer()
+                    .font(Macaron.body(14))
+                    .frame(width: Macaron.swatch)
+                Text(title).font(Macaron.title(15))
+                Spacer(minLength: 0)
             }
             .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-            .background(
-                section == target ? Color.accentColor.opacity(0.18) : .clear,
-                in: .rect(cornerRadius: 12)
-            )
-            .foregroundStyle(section == target ? Color.accentColor : Color.primary)
-            .contentShape(.rect)
         }
-        .buttonStyle(.plain)
+        .accessibilityAddTraits(section == target ? .isSelected : [])
     }
 }

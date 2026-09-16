@@ -63,7 +63,13 @@ struct EditorView: View {
         }
         .ignoresSafeArea(edges: .top)
         .onAppear {
-            if ProcessInfo.processInfo.arguments.contains("-TNSelectLasso") { editor.selectLasso() }
+            let args = ProcessInfo.processInfo.arguments
+            if args.contains("-TNSelectLasso") { editor.selectLasso() }
+            if args.contains("-TNShowExport") { isExporting = true }
+            if args.contains("-TNShowNavigator") { isShowingNavigator = true }
+            if args.contains("-TNShowAddPage") { isAddingPage = true }
+            if args.contains("-TNShowSticker") { isPickingSticker = true }
+            if args.contains("-TNShowLinkTarget") { isPickingLinkTarget = true }
         }
             .confirmationDialog("Insert", isPresented: $isInserting, titleVisibility: .visible) {
                 Button("Photo") {

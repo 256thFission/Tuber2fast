@@ -15,36 +15,27 @@ struct LinkTargetPicker: View {
     let workspace: Workspace
     let editor: EditorViewModel
 
+    @Environment(\.macaron) private var theme
+
     var body: some View {
-        NavigationStack {
-            List {
-                ForEach(tabs) { tab in
-                    Section(tab.name) {
-                        ForEach(Array(tab.editor.navigatorPages.enumerated()), id: \.element.id) { position, page in
-                            Button {
-                                choose(tab, page)
-                            } label: {
-                                HStack {
-                                    Text("Page \(position + 1)")
-                                    if page.isCurrent {
-                                        Text("current")
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                    }
-                                    Spacer()
-                                }
-                                .contentShape(Rectangle())
+        MacaronPanel(title: "Link to", onClose: { dismiss() }) {
+            ForEach(tabs) { tab in
+                MacaronHeading(text: tab.name)
+                ForEach(Array(tab.editor.navigatorPages.enumerated()), id: \.element.id) { position, page in
+                    Keycap(
+                        fill: theme.chrome,
+                        size: CGSize(width: 0, height: Macaron.chip + 6),
+                        action: { choose(tab, page) }
+                    ) {
+                        HStack(spacing: 8) {
+                            Text(verbatim: "Page \(position + 1)").font(Macaron.title(15))
+                            if page.isCurrent {
+                                Text("current").font(Macaron.body(11))
                             }
-                            .buttonStyle(.plain)
                         }
+                        .padding(.horizontal, 14)
+                        .fixedSize(horizontal: true, vertical: false)
                     }
-                }
-            }
-            .navigationTitle("Link to")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
                 }
             }
         }

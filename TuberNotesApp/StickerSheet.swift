@@ -11,47 +11,46 @@ import TNModel
 /// megabyte-sized bitmaps for a grid of 64-point icons.
 struct StickerSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.macaron) private var theme
 
     let editor: EditorViewModel
 
-    private let columns = [GridItem(.adaptive(minimum: 88), spacing: 12)]
+    private let columns = [GridItem(.adaptive(minimum: 110), spacing: Macaron.columnGap)]
+
+    /// Three chips high and wide: the chip is the document's size class for a
+    /// pressable square, and a 44pt symbol over its name needs three of them.
+    private static let cap = Macaron.chip * 3
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                LazyVGrid(columns: columns, spacing: 12) {
-                    ForEach(StickerCatalogue.all) { sticker in
-                        Button {
+        MacaronPanel(title: "Stickers", onClose: { dismiss() }) {
+            LazyVGrid(columns: columns, spacing: Macaron.columnGap + Macaron.chipWall) {
+                ForEach(StickerCatalogue.all) { sticker in
+                    Keycap(
+                        fill: theme.chrome,
+                        size: CGSize(width: Self.cap, height: Self.cap),
+                        action: {
                             dismiss()
                             Task { await editor.importSticker(sticker) }
-                        } label: {
-                            VStack(spacing: 6) {
-                                Image(systemName: sticker.symbol)
-                                    .font(.system(size: 44))
-                                    .symbolRenderingMode(.palette)
-                                    .foregroundStyle(Self.color(sticker.primary), Self.color(sticker.secondary))
-                                    .frame(width: 64, height: 64)
-                                Text(sticker.title)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 10)
-                            .background(.fill.tertiary, in: RoundedRectangle(cornerRadius: 12))
                         }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel(sticker.title)
+                    ) {
+                        VStack(spacing: Macaron.rowGap) {
+                            // The sticker's own two colours, which are what it
+                            // will be once it is on the page: content, not
+                            // chrome, and so not the theme's to set.
+                            Image(systemName: sticker.symbol)
+                                .font(.system(size: 44))
+                                .symbolRenderingMode(.palette)
+                                .foregroundStyle(Self.color(sticker.primary), Self.color(sticker.secondary))
+                                .frame(width: 64, height: 64)
+                            Text(sticker.title)
+                                .font(Macaron.body(11))
+                                .lineLimit(1)
+                        }
                     }
-                }
-                .padding(16)
-            }
-            .navigationTitle("Stickers")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    .accessibilityLabel(sticker.title)
                 }
             }
+            .frame(maxWidth: .infinity)
         }
     }
 

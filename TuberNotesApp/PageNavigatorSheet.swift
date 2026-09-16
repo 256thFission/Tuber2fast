@@ -62,6 +62,7 @@ struct PageNavigatorSheet: View {
     let editor: EditorViewModel
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.macaron) private var theme
     /// The page a delete is being confirmed for. The toolbar's own dialog
     /// is bound to the current page and cannot take an argument.
     @State private var pageToDelete: PageID?
@@ -69,10 +70,44 @@ struct PageNavigatorSheet: View {
     @State private var bookmarkTarget: NavigatorPage?
     @State private var bookmarkTitle = ""
 
+    /// Five chips tall, and never wider than the column the grid asks for;
+    /// the cap keeps the page's own aspect inside that box, which is what
+    /// makes it page-shaped rather than cell-shaped.
+    private static let thumbnailHeight = Macaron.chip * 5
+    private static let column: CGFloat = 140
+    /// The ordinal and the delete cap under the thumbnail. A cap stands on
+    /// its wall, so the row is as tall as both.
+    private static let caption = Macaron.chip + Macaron.chipWall
+
+    private static func thumbnailSize(of geometry: PageGeometry) -> CGSize {
+        let aspect = CGFloat(geometry.width / geometry.height)
+        let tall = CGSize(width: thumbnailHeight * aspect, height: thumbnailHeight)
+        guard tall.width > column else { return tall }
+        return CGSize(width: column, height: column / aspect)
+    }
+
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 140), spacing: 16)], spacing: 16) {
+        MacaronPanel(title: "Pages", onClose: { dismiss() }) {
+            HStack(spacing: Macaron.columnGap) {
+                MacaronButton(title: "All", isHeld: tab == .all) { tab = .all }
+                MacaronButton(title: "Marked", isHeld: tab == .marked) { tab = .marked }
+            }
+
+            // Only the Marked tab can be empty: a notebook always has a
+            // page, and the All tab always has the "+" tile besides.
+            if tab == .marked, shown.isEmpty {
+                VStack(alignment: .leading, spacing: Macaron.rowGap) {
+                    MacaronHeading(text: "No marked pages")
+                    Text("Mark a page from its menu here, or from the toolbar.")
+                        .font(Macaron.body(13))
+                        .foregroundStyle(theme.outline(of: theme.chrome).color)
+                }
+                .padding(.vertical, 20)
+            } else {
+                LazyVGrid(
+                    columns: [GridItem(.adaptive(minimum: Self.column), spacing: Macaron.columnGap)],
+                    spacing: Macaron.columnGap + Macaron.chipWall
+                ) {
                     ForEach(shown, id: \.element.id) { position, page in
                         cell(page, number: position + 1)
                     }
@@ -80,44 +115,19 @@ struct PageNavigatorSheet: View {
                     // not the end of.
                     if tab == .all { addTile }
                 }
-                .padding(20)
+                .frame(maxWidth: .infinity)
             }
-            .overlay {
-                // Only the Marked tab can be empty: a notebook always has a
-                // page, and the All tab always has the "+" tile besides.
-                if tab == .marked, shown.isEmpty {
-                    ContentUnavailableView(
-                        "No marked pages",
-                        systemImage: "bookmark",
-                        description: Text("Mark a page from its menu here, or from the toolbar.")
-                    )
-                }
-            }
-            .navigationTitle("Pages")
-            .toolbar {
-                ToolbarItem(placement: .principal) {
-                    Picker("Show", selection: $tab) {
-                        Text("All").tag(NavigatorTab.all)
-                        Text("Marked").tag(NavigatorTab.marked)
-                    }
-                    .pickerStyle(.segmented)
-                    .frame(width: 220)
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
-                }
-            }
-            .confirmationDialog("Delete this page?", isPresented: isConfirmingDelete, titleVisibility: .visible) {
-                Button("Delete page", role: .destructive) {
-                    if let page = pageToDelete { editor.deletePage(page) }
-                    pageToDelete = nil
-                }
-                Button("Cancel", role: .cancel) { pageToDelete = nil }
-            } message: {
-                Text("The page and everything on it are removed.")
-            }
-            .bookmarkAlert(editor: editor, page: $bookmarkTarget, title: $bookmarkTitle)
         }
+        .confirmationDialog("Delete this page?", isPresented: isConfirmingDelete, titleVisibility: .visible) {
+            Button("Delete page", role: .destructive) {
+                if let page = pageToDelete { editor.deletePage(page) }
+                pageToDelete = nil
+            }
+            Button("Cancel", role: .cancel) { pageToDelete = nil }
+        } message: {
+            Text("The page and everything on it are removed.")
+        }
+        .bookmarkAlert(editor: editor, page: $bookmarkTarget, title: $bookmarkTitle)
     }
 
     /// The pages this tab shows, as *enumerated pairs*.
@@ -140,49 +150,60 @@ struct PageNavigatorSheet: View {
     // MARK: Cells
 
     private func cell(_ page: NavigatorPage, number: Int) -> some View {
-        VStack(spacing: 6) {
-            PageThumbnail(editor: editor, page: page)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 3)
-                        .stroke(page.isCurrent ? Color.accentColor : Color.secondary.opacity(0.35), lineWidth: page.isCurrent ? 3 : 1)
-                )
-                .overlay(alignment: .topTrailing) {
-                    if page.bookmark != nil {
-                        Image(systemName: "bookmark.fill")
-                            .font(.footnote)
-                            .foregroundStyle(Color.accentColor)
-                            .padding(5)
-                            .accessibilityLabel("Marked")
-                    }
-                }
-                .contentShape(Rectangle())
-                .onTapGesture {
+        let thumbnail = Self.thumbnailSize(of: page.geometry)
+        return VStack(spacing: Macaron.rowGap) {
+            // The page itself, as a cap: white paper, radius 10, the derived
+            // 3pt outline. The page being read is sunk, and that is the whole
+            // of the current state.
+            Keycap(
+                fill: theme.paper,
+                size: thumbnail,
+                radius: Macaron.chipRadius,
+                isHeld: page.isCurrent,
+                action: {
                     dismiss()
                     editor.scroll(toPageIndex: number - 1)
                 }
-            HStack {
-                Text("\(number)")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(page.isCurrent ? .primary : .secondary)
-                Spacer()
-                Button(role: .destructive) {
-                    pageToDelete = page.id
-                } label: {
-                    Label("Delete page", systemImage: "trash").labelStyle(.iconOnly)
-                }
-                .buttonStyle(.borderless)
-                .disabled(!page.isDeletable)
+            ) {
+                PageThumbnail(editor: editor, page: page)
             }
+            .overlay(alignment: .topTrailing) {
+                if page.bookmark != nil {
+                    Image(systemName: "bookmark.fill")
+                        .font(Macaron.body(13))
+                        .foregroundStyle(theme.outline(of: theme.secondary).color)
+                        .padding(5)
+                        .accessibilityLabel("Marked")
+                }
+            }
+
+            HStack(spacing: Macaron.columnGap) {
+                Text(verbatim: "\(number)")
+                    .font(Macaron.title(13))
+                    .monospacedDigit()
+                    .foregroundStyle(theme.outline(of: theme.chrome).color)
+                Spacer()
+                Keycap(
+                    fill: theme.chrome,
+                    isEnabled: page.isDeletable,
+                    action: { pageToDelete = page.id }
+                ) {
+                    Image(systemName: "trash").font(Macaron.body(14))
+                }
+                .accessibilityLabel("Delete page")
+            }
+            .frame(height: Self.caption)
             // A mark nobody named shows nothing here: the ordinal above is
             // already what it is called.
             if let title = page.bookmark, !title.isEmpty {
                 Text(title)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    .font(Macaron.body(11))
+                    .foregroundStyle(theme.outline(of: theme.chrome).color)
                     .lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
+        .frame(width: thumbnail.width)
         .modifier(
             NavigatorReorder(page: page, enabled: tab == .all) { dragged in
                 editor.movePage(dragged, before: page.id)
@@ -218,24 +239,40 @@ struct PageNavigatorSheet: View {
     }
 
     /// The past-the-end drop target, and a tap adds after the last page.
+    ///
+    /// Dashed, and with no body behind it: the page it stands for does not
+    /// exist yet, which is exactly what a dashed line says in this design.
     private var addTile: some View {
-        Button {
+        // The page it stands for would be added after the last one, so it
+        // takes that page's footprint and the grid stays one grid.
+        let thumbnail = Self.thumbnailSize(of: editor.navigatorPages.last?.geometry ?? .letter)
+        return Button {
             if let last = editor.navigatorPages.last { editor.addPage(after: last.id) }
         } label: {
-            VStack(spacing: 8) {
+            VStack(spacing: Macaron.rowGap) {
                 Image(systemName: "plus")
-                    .font(.title)
+                    .font(Macaron.title(22))
                 Text(Self.addAfterLabel)
-                    .font(.caption)
+                    .font(Macaron.body(11))
                     .multilineTextAlignment(.center)
             }
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity)
-            .aspectRatio(PageGeometry.letter.width / PageGeometry.letter.height, contentMode: .fit)
-            .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 3))
-            .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [6])).foregroundStyle(.secondary))
+            .foregroundStyle(theme.outline(of: theme.accent).color)
+            .padding(8)
+            .frame(width: thumbnail.width, height: thumbnail.height)
+            .overlay {
+                RoundedRectangle(cornerRadius: Macaron.chipRadius, style: .continuous)
+                    .strokeBorder(
+                        theme.accent.color,
+                        style: StrokeStyle(lineWidth: Macaron.line, dash: Macaron.dash)
+                    )
+            }
         }
         .buttonStyle(.plain)
+        .frame(
+            width: thumbnail.width,
+            height: thumbnail.height + Macaron.rowGap + Self.caption,
+            alignment: .top
+        )
         .dropDestination(for: DraggedPage.self) { dropped, _ in
             guard let dragged = dropped.first else { return false }
             editor.movePage(dragged.id, before: nil)
@@ -288,6 +325,10 @@ extension View {
 /// One page's pixels over a page-shaped placeholder. The fetch is keyed by
 /// the content version and the loading flag, so it re-fires when the page
 /// changes or its load settles, and is cancelled when the cell scrolls away.
+///
+/// The paper under it belongs to the cap this sits in, so the placeholder is
+/// nothing at all: a second white rectangle would square off the page's
+/// corners.
 private struct PageThumbnail: View {
     let editor: EditorViewModel
     let page: NavigatorPage
@@ -301,13 +342,14 @@ private struct PageThumbnail: View {
 
     var body: some View {
         ZStack {
-            Rectangle().fill(Color(uiColor: .systemBackground))
+            Color.clear
             if let image {
                 Image(decorative: image, scale: 1)
                     .resizable()
             }
         }
         .aspectRatio(page.geometry.width / page.geometry.height, contentMode: .fit)
+        .clipShape(RoundedRectangle(cornerRadius: Macaron.chipRadius, style: .continuous))
         .task(id: FetchKey(version: page.version, isLoading: page.isLoading)) {
             // nil while the page is loading: the placeholder, or the last
             // image, stays until the load settles and the key changes.
