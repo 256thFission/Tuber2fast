@@ -36,6 +36,9 @@ final class Workspace {
     /// `nil` means the library is showing.
     var activeTabID: NotebookID?
 
+    /// Whether the seat is out. One tenant, one flag.
+    var isSeatOpen = false
+
     /// The refusal surface Part 7 names: one line, dismissible.
     var banner: String?
     /// Set alongside a save-refused banner so the banner can offer the one

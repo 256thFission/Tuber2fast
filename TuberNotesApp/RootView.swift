@@ -8,8 +8,12 @@ struct RootView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            TabBar()
-            Divider()
+            // The band carries the tabs while a notebook is open. The
+            // library has no band, so it keeps the plain chip bar.
+            if workspace.activeTab == nil {
+                TabBar()
+                Divider()
+            }
             surface
         }
         .overlay(alignment: .top) {

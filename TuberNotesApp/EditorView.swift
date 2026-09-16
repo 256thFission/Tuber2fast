@@ -38,21 +38,41 @@ struct EditorView: View {
     @State private var isExporting = false
     @State private var bookmarkTarget: NavigatorPage?
     @State private var bookmarkTitle = ""
+    @State private var isInserting = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            toolbar
-            if let failure = editor.lastSaveError {
-                RefusalBar(message: Self.message(for: failure))
-            } else if let fault = editor.lastContentError {
-                // An import or a layer that the page refused: without this it
-                // would be a tap that quietly did nothing.
-                RefusalBar(message: "That couldn't be added: \(fault.description)")
+        CanvasHost(controller: editor.canvasHost)
+            // The bar parks inside the slack the band leaves, not under it.
+            .overlay { WritingBar(editor: editor).padding(.top, MacaronBand.slack) }
+            .coordinateSpace(.named("editor"))
+            .overlay(alignment: .top) {
+                VStack(spacing: 0) {
+                    MacaronBand(editor: editor, action: take)
+                    if let failure = editor.lastSaveError {
+                        RefusalBar(message: Self.message(for: failure))
+                    } else if let fault = editor.lastContentError {
+                        // An import or a layer that the page refused: without
+                        // this it would be a tap that quietly did nothing.
+                        RefusalBar(message: "That couldn't be added: \(fault.description)")
+                    }
+                }
             }
-            CanvasHost(controller: editor.canvasHost)
-                .overlay { WritingBar(editor: editor) }
-                .coordinateSpace(.named("editor"))
-        }
+            .confirmationDialog("Insert", isPresented: $isInserting, titleVisibility: .visible) {
+                Button("Photo") {
+                    photoDestination = .layerOnCurrentPage
+                    isPickingPhoto = true
+                }
+                if VNDocumentCameraViewController.isSupported {
+                    Button("Scan Document") { isScanning = true }
+                }
+                Button("PDF") { isPickingPDF = true }
+                Button("Sticker") { isPickingSticker = true }
+                Button("Link") { isPickingLinkTarget = true }
+                Button("Add page") { isAddingPage = true }
+                Button("Pages") { isShowingNavigator = true }
+                Button("Delete page", role: .destructive) { isConfirmingPageDelete = true }
+                Button("Cancel", role: .cancel) {}
+            }
         // The choice is acted on after the sheet is gone: the photo leg
         // presents a second sheet, and two presentations in one frame do not
         // both survive.
@@ -117,6 +137,16 @@ struct EditorView: View {
         .bookmarkAlert(editor: editor, page: $bookmarkTarget, title: $bookmarkTitle)
     }
 
+    private func take(_ action: BandAction) {
+        switch action {
+        case .lasso: editor.selectLasso()
+        case .text: editor.selectText()
+        case .insert: isInserting = true
+        case .export: isExporting = true
+        case .seat: workspace.isSeatOpen.toggle()
+        }
+    }
+
     /// The page the reader is on, as the navigator sees it. Nil only if the
     /// mirrors have not caught up with an empty notebook, which cannot
     /// happen: a notebook always has a page.
@@ -124,175 +154,6 @@ struct EditorView: View {
         let pages = editor.navigatorPages
         guard editor.currentPageIndex >= 0, editor.currentPageIndex < pages.count else { return nil }
         return pages[editor.currentPageIndex]
-    }
-
-    // MARK: The toolbar
-
-    private var toolbar: some View {
-        ScrollView(.horizontal) {
-            HStack(spacing: 14) {
-                ToolStrip(editor: editor)
-                Divider().frame(height: 22)
-                history
-                Divider().frame(height: 22)
-                pages
-                Divider().frame(height: 22)
-                paperMenu
-                insertMenu
-                Button { isExporting = true } label: {
-                    Label("Export", systemImage: "square.and.arrow.up")
-                        .labelStyle(.iconOnly)
-                }
-                Button(role: .destructive) {
-                    isConfirmingPageDelete = true
-                } label: {
-                    Label("Delete page", systemImage: "trash")
-                        .labelStyle(.iconOnly)
-                }
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-        }
-        .scrollIndicators(.hidden)
-        .background(.bar)
-    }
-
-    private var history: some View {
-        HStack(spacing: 8) {
-            Button { editor.undo() } label: {
-                Label("Undo", systemImage: "arrow.uturn.backward").labelStyle(.iconOnly)
-            }
-            .disabled(!editor.canUndo)
-
-            Button { editor.redo() } label: {
-                Label("Redo", systemImage: "arrow.uturn.forward").labelStyle(.iconOnly)
-            }
-            .disabled(!editor.canRedo)
-        }
-    }
-
-    private var pages: some View {
-        HStack(spacing: 8) {
-            Button {
-                editor.scroll(toPageIndex: editor.currentPageIndex - 1)
-            } label: {
-                Label("Previous page", systemImage: "chevron.left").labelStyle(.iconOnly)
-            }
-            .disabled(editor.currentPageIndex <= 0)
-
-            Text("Page \(editor.currentPageIndex + 1) of \(editor.pageCount)")
-                .font(.callout.monospacedDigit())
-                .fixedSize()
-
-            Button {
-                editor.scroll(toPageIndex: editor.currentPageIndex + 1)
-            } label: {
-                Label("Next page", systemImage: "chevron.right").labelStyle(.iconOnly)
-            }
-            .disabled(editor.currentPageIndex >= editor.pageCount - 1)
-
-            Button { isAddingPage = true } label: {
-                Label("Add page", systemImage: "plus.rectangle.portrait").labelStyle(.iconOnly)
-            }
-
-            // Filled when this page is already marked, so the toolbar says
-            // what the state is rather than only offering the action; it
-            // opens the navigator's own alert, pre-filled, so a page marked
-            // from here can be named without being unmarked first.
-            Button {
-                guard let page = currentPage else { return }
-                bookmarkTitle = page.bookmark ?? ""
-                bookmarkTarget = page
-            } label: {
-                Label(
-                    currentPage?.bookmark == nil ? "Bookmark page" : "Edit bookmark",
-                    systemImage: currentPage?.bookmark == nil ? "bookmark" : "bookmark.fill"
-                )
-                .labelStyle(.iconOnly)
-            }
-
-            Button { isShowingNavigator = true } label: {
-                Label("Pages", systemImage: "rectangle.grid.2x2").labelStyle(.iconOnly)
-            }
-        }
-    }
-
-    private var paperMenu: some View {
-        Menu {
-            ForEach(DrawnPaper.allCases, id: \.self) { paper in
-                Button {
-                    Task { await editor.setPaper(paper) }
-                } label: {
-                    if editor.currentPaper == .drawn(paper) {
-                        Label(PageNames.paper(paper), systemImage: "checkmark")
-                    } else {
-                        Text(PageNames.paper(paper))
-                    }
-                }
-            }
-            Divider()
-            // Not greyed on a page that has something on it: whether a page is
-            // empty is the notebook's answer, and mirroring it here would be a
-            // second copy refreshed per drain. The notebook refuses, and the
-            // bar says so.
-            Button {
-                photoDestination = .paperForCurrentPage
-                isPickingPhoto = true
-            } label: {
-                Label("Photo", systemImage: "photo")
-            }
-        } label: {
-            Label("Paper", systemImage: "square.grid.2x2")
-        }
-        // A page whose paper this build does not know is a placeholder.
-        .disabled(editor.currentPaper == nil)
-    }
-
-    private var insertMenu: some View {
-        Menu {
-            // Absent where there is no camera rather than disabled: the
-            // simulator has none, `.camera` traps there, and a greyed row
-            // invites the question why.
-            if UIImagePickerController.isSourceTypeAvailable(.camera) {
-                Button {
-                    isTakingPhoto = true
-                } label: {
-                    Label("Take Photo", systemImage: "camera")
-                }
-            }
-            Button {
-                photoDestination = .layerOnCurrentPage
-                isPickingPhoto = true
-            } label: {
-                Label("Photo", systemImage: "photo")
-            }
-            // Absent rather than disabled where the hardware cannot scan,
-            // for the reason the camera row gives.
-            if VNDocumentCameraViewController.isSupported {
-                Button {
-                    isScanning = true
-                } label: {
-                    Label("Scan Document", systemImage: "doc.viewfinder")
-                }
-            }
-            Button {
-                isPickingPDF = true
-            } label: {
-                Label("PDF", systemImage: "doc")
-            }
-            Button {
-                isPickingSticker = true
-            } label: {
-                Label("Sticker", systemImage: "seal")
-            }
-            Button {
-                isPickingLinkTarget = true
-            } label: {
-                Label("Link", systemImage: "link")
-            }
-        } label: {
-            Label("Insert", systemImage: "plus.circle")
-        }
     }
 
     // MARK: Pages
