@@ -168,6 +168,10 @@ final class LayerSelectionView: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         box.frame = bounds
+        // The page's overlay scale is set on the view and its subviews, and
+        // a sublayer is neither, so the box has to be told the same number
+        // or its dashes are drawn at one-to-one and go soft under zoom.
+        box.contentsScale = layer.contentsScale
         // Stroked on the bounds rather than inside them, so the line's own
         // centre is where the object's edge actually is.
         box.path = CGPath(rect: bounds, transform: nil)

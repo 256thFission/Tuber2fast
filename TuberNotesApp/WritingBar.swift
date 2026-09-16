@@ -69,23 +69,30 @@ enum SnapPoint: CaseIterable {
         }
     }
 
-    /// The centre this point puts a bar of `size` at, inside `bounds`.
-    func centre(of size: CGSize, in bounds: CGSize, inset: CGFloat) -> CGPoint {
-        let minX = inset + size.width / 2
-        let maxX = bounds.width - inset - size.width / 2
-        let minY = inset + size.height / 2
-        let maxY = bounds.height - inset - size.height / 2
+    /// The top-left a bar of `size` sits at when it is parked here.
+    ///
+    /// A corner, not a centre: the shell is placed by an offset from the
+    /// surface's own origin, so that the tilt and the lift during a drag
+    /// turn the bar about itself rather than about the surface.
+    func origin(of size: CGSize, in bounds: CGSize, inset: CGFloat) -> CGPoint {
         let x: CGFloat = switch self {
-        case .topLeading, .leading, .bottomLeading: minX
-        case .top, .bottom: bounds.width / 2
-        case .topTrailing, .trailing, .bottomTrailing: maxX
+        case .topLeading, .leading, .bottomLeading: inset
+        case .top, .bottom: (bounds.width - size.width) / 2
+        case .topTrailing, .trailing, .bottomTrailing: bounds.width - inset - size.width
         }
         let y: CGFloat = switch self {
-        case .topLeading, .top, .topTrailing: minY
-        case .leading, .trailing: bounds.height / 2
-        case .bottomLeading, .bottom, .bottomTrailing: maxY
+        case .topLeading, .top, .topTrailing: inset
+        case .leading, .trailing: (bounds.height - size.height) / 2
+        case .bottomLeading, .bottom, .bottomTrailing: bounds.height - inset - size.height
         }
         return CGPoint(x: x, y: y)
+    }
+
+    /// The centre of that same rectangle, which is what a throw's predicted
+    /// end location is compared against.
+    func centre(of size: CGSize, in bounds: CGSize, inset: CGFloat) -> CGPoint {
+        let corner = origin(of: size, in: bounds, inset: inset)
+        return CGPoint(x: corner.x + size.width / 2, y: corner.y + size.height / 2)
     }
 }
 
@@ -99,6 +106,10 @@ struct WritingBar: View {
 
     @State private var snap: SnapPoint
     @State private var drag: CGSize = .zero
+    /// Explicit, rather than read off a non-zero translation: the first
+    /// change of a drag can report exactly zero, and a dialect switched on
+    /// by a comparison to zero flickers on and off at the start of one.
+    @State private var isDragging = false
     @State private var target: SnapPoint?
     @State private var measured: CGSize = .zero
     @State private var isShowingWidths = false
@@ -107,6 +118,9 @@ struct WritingBar: View {
     @State private var boundsGuess: CGSize = .zero
 
     private static let inset: CGFloat = 16
+    /// The bar's own surface. A throw's predicted end has to be measured in
+    /// the same space as the eight candidates it is compared against.
+    private static let space = "writing-bar"
 
     init(editor: EditorViewModel) {
         self.editor = editor
@@ -121,21 +135,27 @@ struct WritingBar: View {
     var body: some View {
         GeometryReader { proxy in
             let bounds = proxy.size
+            let corner = snap.origin(of: measured, in: bounds, inset: Self.inset)
             ZStack(alignment: .topLeading) {
-                if let target, target != snap || drag != .zero {
+                if isDragging, let target {
                     ghost(for: target, in: bounds)
                 }
                 shell
                     .onGeometryChange(for: CGSize.self) { $0.size } action: { measured = $0 }
-                    .position(snap.centre(of: measured, in: bounds, inset: Self.inset))
-                    .offset(drag)
-                    .rotationEffect(.degrees(drag == .zero ? 0 : -4))
-                    .offset(y: drag == .zero ? 0 : -5)
+                    // The peel is applied to the shell itself, before it is
+                    // placed, so the tilt turns it about its own middle.
+                    .rotationEffect(.degrees(isDragging ? -4 : 0))
                     .shadow(
-                        color: theme.ink.color.opacity(drag == .zero ? 0 : 0.42),
-                        radius: drag == .zero ? 0 : 18, x: 0, y: drag == .zero ? 0 : 12
+                        color: theme.ink.color.opacity(isDragging ? 0.42 : 0),
+                        radius: isDragging ? 18 : 0, x: 0, y: isDragging ? 12 : 0
+                    )
+                    .offset(
+                        x: corner.x + drag.width,
+                        y: corner.y + drag.height - (isDragging ? 5 : 0)
                     )
             }
+            .frame(width: bounds.width, height: bounds.height, alignment: .topLeading)
+            .coordinateSpace(.named(Self.space))
             .onGeometryChange(for: CGSize.self) { _ in bounds } action: { boundsGuess = $0 }
         }
         .ignoresSafeArea(.keyboard)
@@ -186,17 +206,25 @@ struct WritingBar: View {
     }
 
     private var grab: some Gesture {
-        DragGesture(coordinateSpace: .named("editor"))
+        DragGesture(coordinateSpace: .named(Self.space))
             .onChanged { value in
+                if !isDragging {
+                    withAnimation(reduceMotion ? MacaronCurve.reduced : MacaronCurve.settle) {
+                        isDragging = true
+                    }
+                }
                 drag = value.translation
                 target = nearest(to: value.predictedEndLocation)
             }
             .onEnded { value in
                 let landing = nearest(to: value.predictedEndLocation)
-                drag = .zero
                 target = nil
+                // The bar lands first and the peel comes off with it, in one
+                // animation: two would fight over the same offset.
                 withAnimation(reduceMotion ? MacaronCurve.reduced : MacaronCurve.snap) {
                     snap = landing
+                    drag = .zero
+                    isDragging = false
                 }
             }
     }
@@ -236,7 +264,10 @@ struct WritingBar: View {
                 style: StrokeStyle(lineWidth: Macaron.line, dash: Macaron.dash)
             )
             .frame(width: size.width, height: size.height)
-            .position(point.centre(of: size, in: bounds, inset: Self.inset))
+            .offset(
+                x: point.origin(of: size, in: bounds, inset: Self.inset).x,
+                y: point.origin(of: size, in: bounds, inset: Self.inset).y
+            )
     }
 
     // MARK: Widths

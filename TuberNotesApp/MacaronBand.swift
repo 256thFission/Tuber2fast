@@ -37,15 +37,26 @@ struct MacaronBand: View {
         }
         .padding(.horizontal, Self.padding)
         .frame(height: Self.height)
+        .frame(maxWidth: .infinity)
+        // The status bar sits over the band's own top, which reaches the
+        // display's edge: the band has no top to outline, the way a docked
+        // seat has no right one.
+        .safeAreaPadding(.top)
         .background {
-            RoundedRectangle(cornerRadius: Macaron.shellRadius, style: .continuous)
-                .fill(theme.chrome.color)
+            shell.fill(theme.chrome.color)
                 .overlay {
-                    RoundedRectangle(cornerRadius: Macaron.shellRadius, style: .continuous)
-                        .strokeBorder(theme.outline(of: theme.chrome).color, lineWidth: Macaron.line)
+                    shell.strokeBorder(theme.outline(of: theme.chrome).color, lineWidth: Macaron.line)
                 }
+                .padding(.top, -Macaron.shellRadius)
         }
-        .padding(16)
+    }
+
+    private var shell: UnevenRoundedRectangle {
+        UnevenRoundedRectangle(
+            bottomLeadingRadius: Macaron.shellRadius,
+            bottomTrailingRadius: Macaron.shellRadius,
+            style: .continuous
+        )
     }
 
     // MARK: What is open

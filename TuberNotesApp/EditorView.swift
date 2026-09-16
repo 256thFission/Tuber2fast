@@ -41,28 +41,30 @@ struct EditorView: View {
     @State private var isInserting = false
 
     var body: some View {
-        CanvasHost(controller: editor.canvasHost)
-            // The bar parks inside the slack the band leaves, not under it.
-            .overlay { WritingBar(editor: editor).padding(.top, MacaronBand.slack) }
-            .coordinateSpace(.named("editor"))
-            .overlay(alignment: .topTrailing) {
-                if workspace.isSeatOpen {
-                    MacaronSeat(editor: editor, isOpen: seatBinding)
-                        .padding(.top, MacaronBand.slack)
-                }
+        // The band is the top of the display and the page begins where it
+        // ends: stacked, not floated over, so nothing of the page passes
+        // behind it.
+        VStack(spacing: 0) {
+            MacaronBand(editor: editor, action: take)
+            if let failure = editor.lastSaveError {
+                RefusalBar(message: Self.message(for: failure))
+            } else if let fault = editor.lastContentError {
+                // An import or a layer that the page refused: without this it
+                // would be a tap that quietly did nothing.
+                RefusalBar(message: "That couldn't be added: \(fault.description)")
             }
-            .overlay(alignment: .top) {
-                VStack(spacing: 0) {
-                    MacaronBand(editor: editor, action: take)
-                    if let failure = editor.lastSaveError {
-                        RefusalBar(message: Self.message(for: failure))
-                    } else if let fault = editor.lastContentError {
-                        // An import or a layer that the page refused: without
-                        // this it would be a tap that quietly did nothing.
-                        RefusalBar(message: "That couldn't be added: \(fault.description)")
+            CanvasHost(controller: editor.canvasHost)
+                .overlay { WritingBar(editor: editor) }
+                .overlay(alignment: .topTrailing) {
+                    if workspace.isSeatOpen {
+                        MacaronSeat(editor: editor, isOpen: seatBinding)
                     }
                 }
-            }
+        }
+        .ignoresSafeArea(edges: .top)
+        .onAppear {
+            if ProcessInfo.processInfo.arguments.contains("-TNSelectLasso") { editor.selectLasso() }
+        }
             .confirmationDialog("Insert", isPresented: $isInserting, titleVisibility: .visible) {
                 Button("Photo") {
                     photoDestination = .layerOnCurrentPage
