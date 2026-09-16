@@ -79,7 +79,7 @@ struct MacaronBand: View {
         // The themes hang off the one chip that is about the whole app
         // rather than about the notebook. The band's own list is fixed.
         .contextMenu {
-            ForEach(Theme.all, id: \.name) { entry in
+            ForEach(Theme.presets, id: \.id) { entry in
                 Button(entry.name) {
                     workspace.theme = entry.theme
                     workspace.themeIsChosen = true

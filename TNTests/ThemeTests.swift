@@ -78,6 +78,50 @@ struct ThemeTests {
         #expect(Theme.luminance(theme.ground2) < Theme.luminance(theme.ground))
     }
 
+    @Test("Teenage Enamel's secondary is its ink, so it is the one token that escapes")
+    func teenageEnamelEscape() {
+        let enamel = Theme.teenageEnamel
+        #expect(enamel.secondary == enamel.ink)
+        #expect(escapes(enamel, enamel.secondary))
+        for token in [enamel.ground, enamel.chrome, enamel.accent] {
+            #expect(!escapes(enamel, token))
+        }
+    }
+
+    @Test("Game Boy's dark tokens escape and its greens take the plain rule")
+    func gameBoyEscape() {
+        let boy = Theme.gameBoy
+        #expect(escapes(boy, boy.secondary))
+        #expect(escapes(boy, boy.ink))
+        for token in [boy.ground, boy.chrome, boy.accent] {
+            #expect(!escapes(boy, token))
+        }
+    }
+
+    @Test("No preset ships a line its own fill can hide")
+    func everyPresetDrawsAVisibleLine() {
+        for preset in Theme.presets {
+            let theme = preset.theme
+            let tokens: [(String, RGBA8)] = [
+                ("ground", theme.ground), ("chrome", theme.chrome), ("accent", theme.accent),
+                ("secondary", theme.secondary), ("ink", theme.ink),
+                ("paper", theme.paper), ("seat body", theme.seatBody),
+            ]
+            for (name, token) in tokens {
+                let ratio = Theme.contrast(theme.outline(of: token), token)
+                #expect(ratio >= 1.3, "\(preset.name)'s \(name) line is \(ratio) against its fill")
+            }
+        }
+    }
+
+    /// The escape is private, and what it does is public: an outline that
+    /// came up off its fill instead of going down into it went the other
+    /// way. The reverse for a theme whose mix is already inverted.
+    private func escapes(_ theme: Theme, _ fill: RGBA8) -> Bool {
+        let outline = Theme.luminance(theme.outline(of: fill))
+        return theme.invertsMix ? outline < Theme.luminance(fill) : outline > Theme.luminance(fill)
+    }
+
     @Test("Dark mode is the same rule with the target inverted, and the paper stays white")
     func inverted() {
         let dark = Theme(

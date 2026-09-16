@@ -56,7 +56,7 @@ final class Workspace {
         let arguments = ProcessInfo.processInfo.arguments
         guard let index = arguments.firstIndex(of: "-TNTheme"),
               index + 1 < arguments.count,
-              let match = Theme.all.first(where: { $0.name == arguments[index + 1] })
+              let match = Theme.presets.first(where: { $0.name == arguments[index + 1] })
         else { return .macaron }
         Theme.current = match.theme
         return match.theme

@@ -1,6 +1,29 @@
 import Foundation
 import TNCore
 
+/// A preset's identity in the theme table.
+///
+/// Branded rather than a `String`, because the one place a theme is written
+/// down is a preference and a display name must not be able to land there.
+package struct ThemeID: RawRepresentable, Hashable, Codable, Sendable {
+    package let rawValue: String
+    package init(rawValue: String) { self.rawValue = rawValue }
+}
+
+/// One row of the theme table: an identity that is saved, a name that is
+/// shown, and the six hexes.
+package struct ThemePreset: Equatable, Sendable {
+    package let id: ThemeID
+    package let name: String
+    package let theme: Theme
+
+    package init(id: ThemeID, name: String, theme: Theme) {
+        self.id = id
+        self.name = name
+        self.theme = theme
+    }
+}
+
 /// The six colours a theme sets, and everything the design derives from them.
 ///
 /// Six hexes and two percentages is the whole of a theme: nothing else in the
@@ -77,8 +100,14 @@ package struct Theme: Equatable, Sendable {
 
     /// The paper escape. A fill the ink cannot be told apart from mixes
     /// toward the paper at the same percentage.
+    ///
+    /// After dark the escape runs to the ground rather than to the ink,
+    /// because a dark theme's ink is a cream: a near-white fill sent toward
+    /// it would land on itself and the line would not be there at all. The
+    /// ground is the dark end of an inverted theme, which is what the ink is
+    /// the rest of the time.
     private func mixTarget(of fill: RGBA8) -> RGBA8 {
-        if invertsMix { return Self.contrast(fill, paper) < Self.threshold ? ink : paper }
+        if invertsMix { return Self.contrast(fill, paper) < Self.threshold ? ground : paper }
         return Self.contrast(fill, ink) < Self.threshold ? paper : ink
     }
 
@@ -139,29 +168,6 @@ package struct Theme: Equatable, Sendable {
         ink: hex("#141414")
     )
 
-    /// Joy-Con neon red and neon blue over the console's own greys. The
-    /// hexes are the shell colours the hardware stores for itself, not the
-    /// louder pair the box art uses.
-    package static let switchConsole = Theme(
-        ground: hex("#414548"),
-        chrome: hex("#828282"),
-        accent: hex("#FF3C28"),
-        secondary: hex("#0AB9E6"),
-        ink: hex("#0F0F0F")
-    )
-
-    /// The DMG's four greens and its shell. The four are a two-band palette
-    /// rather than a four-step ramp — the two light greens are 1.2 to 1 on
-    /// each other, and so are the two dark ones — so chrome and secondary
-    /// take one from each band and the accent carries the dark one.
-    package static let gameBoy = Theme(
-        ground: hex("#C2C0BC"),
-        chrome: hex("#9BBC0F"),
-        accent: hex("#306230"),
-        secondary: hex("#8BAC0F"),
-        ink: hex("#0F380F")
-    )
-
     /// The same theme after dark: the cream and the ink trade places and
     /// the mix target inverts, so an outline now comes up off its fill
     /// instead of going down into it. The paper stays white.
@@ -174,10 +180,78 @@ package struct Theme: Equatable, Sendable {
         invertsMix: true
     )
 
-    package static let all: [(name: String, theme: Theme)] = [
-        ("Macaron", .macaron), ("Macaron Dark", .macaronDark),
-        ("Switch", .switchConsole), ("Game Boy", .gameBoy),
+    /// The console's own white-grey shell, with the Joy-Cons' neon red and
+    /// neon blue on it.
+    package static let switchConsole = Theme(
+        ground: hex("#E7E9EC"),
+        chrome: hex("#F2F3F5"),
+        accent: hex("#FF3C28"),
+        secondary: hex("#0AB9E6"),
+        ink: hex("#1B1D21")
+    )
+
+    /// The DMG: its screen's lightest green is the ground, its darkest is
+    /// the ink, and the shell's grey-green is the chrome. The magenta and
+    /// the purple are the lettering printed around the screen, which is the
+    /// only part of a Game Boy that is not a green or a grey.
+    package static let gameBoy = Theme(
+        ground: hex("#9BBC0F"),
+        chrome: hex("#C6CBA5"),
+        accent: hex("#B0176B"),
+        secondary: hex("#5C2B8A"),
+        ink: hex("#0F380F")
+    )
+
+    /// Paper and grass: a cream ground, a leaf green, the sky, and an ink
+    /// that is brown rather than black.
+    package static let animalCrossing = Theme(
+        ground: hex("#F3EAD6"),
+        chrome: hex("#FFFBF0"),
+        accent: hex("#8CC63F"),
+        secondary: hex("#7EC8E3"),
+        ink: hex("#7A6244")
+    )
+
+    /// Pink on pink, with the sky for the second colour and a plum for the
+    /// ink.
+    package static let kirby = Theme(
+        ground: hex("#FFE9F1"),
+        chrome: hex("#FFFFFF"),
+        accent: hex("#FF8AB5"),
+        secondary: hex("#7FC8F0"),
+        ink: hex("#3A2233")
+    )
+
+    /// Enamel on a grey shell: one orange, and a black that is the ink and
+    /// the second colour at once. It is the theme the paper escape exists
+    /// for, since a secondary that is the ink has nowhere darker to go.
+    package static let teenageEnamel = Theme(
+        ground: hex("#D9D9D6"),
+        chrome: hex("#EFEFEC"),
+        accent: hex("#FF5500"),
+        secondary: hex("#1A1A1A"),
+        ink: hex("#1A1A1A")
+    )
+
+    /// Every theme this build ships, in the order the design board lays
+    /// them out. A theme is a row of this table and nothing more: no view
+    /// names one, and adding one is a row.
+    package static let presets: [ThemePreset] = [
+        ThemePreset(id: ThemeID(rawValue: "macaron"), name: "Macaron", theme: .macaron),
+        ThemePreset(id: ThemeID(rawValue: "macaronDark"), name: "Macaron Dark", theme: .macaronDark),
+        ThemePreset(id: ThemeID(rawValue: "switch"), name: "Switch", theme: .switchConsole),
+        ThemePreset(id: ThemeID(rawValue: "gameBoy"), name: "Game Boy", theme: .gameBoy),
+        ThemePreset(id: ThemeID(rawValue: "animalCrossing"), name: "Animal Crossing", theme: .animalCrossing),
+        ThemePreset(id: ThemeID(rawValue: "kirby"), name: "Kirby", theme: .kirby),
+        ThemePreset(id: ThemeID(rawValue: "teenageEnamel"), name: "Teenage Enamel", theme: .teenageEnamel),
     ]
+
+    /// `nil` for an id this build has no row for, which is how a preference
+    /// naming a theme that has been renamed or dropped is refused rather
+    /// than guessed at.
+    package static func preset(_ id: ThemeID) -> ThemePreset? {
+        presets.first { $0.id == id }
+    }
 
     /// The second notebook's tab colour in the mocks. A per-notebook preset,
     /// not a theme token, so it lives beside the themes rather than in one.
@@ -189,4 +263,29 @@ package struct Theme: Equatable, Sendable {
 
     /// Posted when `current` changes, so the UIKit half repaints.
     @MainActor package static let changed = Notification.Name("TNThemeChanged")
+}
+
+/// What the app was told to draw in. One value: a theme and a flag saying
+/// whether it was chosen are two, and they disagree the moment one is set
+/// without the other.
+package enum ThemeChoice: Equatable, Codable, Sendable {
+    /// Macaron by day and Macaron Dark after dark.
+    case system
+    /// One preset, whatever the system says the hour is.
+    case preset(ThemeID)
+
+    package func resolve(dark: Bool) -> Theme {
+        switch self {
+        case .system:
+            return dark ? .macaronDark : .macaron
+        case .preset(let id):
+            guard let preset = Theme.preset(id) else {
+                // An id that reaches here has already passed the defaults
+                // boundary, which is the one place an unknown one is an
+                // answer rather than a bug.
+                TNPrecondition.fail("a theme choice naming no preset: \(id.rawValue)")
+            }
+            return preset.theme
+        }
+    }
 }
