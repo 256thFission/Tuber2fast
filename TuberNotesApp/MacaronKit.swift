@@ -72,6 +72,10 @@ struct Keycap<Label: View>: View {
     var radius = Macaron.chipRadius
     var wall = Macaron.chipWall
     var isHeld = false
+    /// A cap the tool in hand has no use for. Dimmed and inert, never
+    /// removed: the run's order is fixed and a gap in it would be read as a
+    /// different bar.
+    var isEnabled = true
     var action: () -> Void
     @ViewBuilder var label: () -> Label
 
@@ -124,8 +128,9 @@ struct Keycap<Label: View>: View {
             y: squash.height * (trampoline == 1 ? 0.86 : 1),
             anchor: .bottom
         )
+        .opacity(isEnabled ? 1 : 0.4)
         .contentShape(.rect)
-        .onTapGesture(perform: press)
+        .onTapGesture { if isEnabled { press() } }
         .animation(reduceMotion ? MacaronCurve.reduced : MacaronCurve.settle, value: isHeld)
         .onChange(of: isHeld) { _, held in if held { trampolineIn() } }
     }
@@ -167,11 +172,12 @@ extension Keycap where Label == EmptyView {
         radius: CGFloat = Macaron.chipRadius,
         wall: CGFloat = Macaron.chipWall,
         isHeld: Bool = false,
+        isEnabled: Bool = true,
         action: @escaping () -> Void
     ) {
         self.init(
             fill: fill, size: size, radius: radius, wall: wall, isHeld: isHeld,
-            action: action, label: { EmptyView() }
+            isEnabled: isEnabled, action: action, label: { EmptyView() }
         )
     }
 }

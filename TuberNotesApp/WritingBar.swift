@@ -280,15 +280,19 @@ struct WritingBar: View {
         } else {
             // One chip standing for the width in hand; the other two live in
             // the bubble it opens.
-            widthChip(currentWidth, isHeld: false)
+            widthChip(currentWidth ?? .medium, isHeld: false)
                 .popover(isPresented: $isShowingWidths, arrowEdge: .leading) { widthBubble }
         }
     }
 
     private func widthChip(_ width: ToolWidth, isHeld: Bool) -> some View {
-        Keycap(fill: isHeld ? theme.accent : theme.chrome, isHeld: isHeld) {
+        Keycap(
+            fill: isHeld ? theme.accent : theme.chrome,
+            isHeld: isHeld,
+            isEnabled: widthApplies
+        ) {
             if isHorizontal {
-                editor.setWidth(width)
+                take(width)
             } else {
                 isShowingWidths = true
             }
@@ -308,10 +312,41 @@ struct WritingBar: View {
         }
     }
 
-    private var currentWidth: ToolWidth {
-        if case .ink(_, let preset) = editor.tool { return preset.width }
-        if case .erasePixel(let width) = editor.tool { return width }
-        return .medium
+    /// The width the tool in hand carries, or nothing when it carries none.
+    /// The object eraser is the interesting one: it has no width at all, so
+    /// no chip is sunk while it is held.
+    private var currentWidth: ToolWidth? {
+        switch editor.tool {
+        case .ink(_, let preset): preset.width
+        case .erasePixel(let width): width
+        case .eraseObject, .lasso, .text: nil
+        }
+    }
+
+    /// Whether a width chip means anything with the tool in hand.
+    ///
+    /// The editor traps on a width set on a tool that has none, and it is
+    /// right to: a view that draws a control the tool does not have is the
+    /// defect. The lasso and text are the band's tools, not the bar's, so
+    /// while one of them is in hand the bar's widths and swatches have no
+    /// owner and are not offered.
+    private var widthApplies: Bool {
+        switch editor.tool {
+        case .ink, .erasePixel, .eraseObject: true
+        case .lasso, .text: false
+        }
+    }
+
+    private var colourApplies: Bool {
+        if case .ink = editor.tool { return true }
+        return false
+    }
+
+    /// Asking the object eraser for a width is how it becomes the eraser
+    /// that has one. Every other tool here already carries its own.
+    private func take(_ width: ToolWidth) {
+        if case .eraseObject = editor.tool { editor.setEraserMode(.pixel) }
+        editor.setWidth(width)
     }
 
     /// A speech bubble with a tail pointing at the chip that owns it. No
@@ -320,7 +355,7 @@ struct WritingBar: View {
         HStack(spacing: Macaron.rowGap) {
             ForEach(ToolWidth.allCases, id: \.self) { width in
                 Button {
-                    editor.setWidth(width)
+                    take(width)
                     isShowingWidths = false
                 } label: {
                     Circle()
@@ -370,7 +405,8 @@ struct WritingBar: View {
                 ),
                 radius: Macaron.swatchRadius,
                 wall: Macaron.swatchWall,
-                isHeld: isHeld
+                isHeld: isHeld,
+                isEnabled: colourApplies
             ) {
                 editor.setColor(colour)
             }

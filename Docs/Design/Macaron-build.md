@@ -107,8 +107,37 @@ opened tonight, so where the document disagrees with **itself**, the build
 followed §2's rules over §3.2's transcribed values, because §2 is what the
 document says generated them.
 
+## The crash, and what it was
+
+Two reports, one cause. `EditorViewModel.setWidth` traps on the object
+eraser, the lasso and text, and `setColor` traps on anything that is not ink.
+Both are deliberate, and the comment beside them says exactly what went
+wrong: "reaching here is a view that drew a control the tool does not have."
+
+That view was the writing bar. It drew the three width chips and the four
+swatches unconditionally, so a width tapped while the object eraser was in
+hand, or a swatch tapped while the lasso was, walked straight into the trap.
+Confirmed by reaching the state from a launch argument and watching the
+process go.
+
+The fix is on the view's side, where the defect was. A width chip is offered
+when the tool in hand has a width or can take one, and a swatch is offered
+only to ink; otherwise the cap is dimmed and inert. It is never removed,
+because the run's order is fixed and a gap in it reads as a different bar.
+Asking the object eraser for a width is how it becomes the pixel eraser that
+has one, which is the only behaviour added.
+
+The lasso and text are the band's tools, not the bar's, so while one of them
+is in hand the bar's widths and swatches have no owner and none is sunk.
+
+`ToolStrip.swift` went with it. It held the same two calls and nothing had
+referenced it since the band replaced the old toolbar.
+
 ## Things a reviewer should look at first
 
+0. **The seat covers the standing bar.** With the seat open and the bar
+   snapped to the right edge, the seat sits over the bar's top third. Both
+   want that edge and the document does not say who wins.
 1. **The shell's hard shadow.** §4.1 says the writing bar's shell is flat, so
    it has none; only the floating seat takes the 6-point offset. The first cut
    gave the bar one and it read as a second border. Worth a verdict.
