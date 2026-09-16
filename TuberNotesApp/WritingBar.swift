@@ -414,12 +414,13 @@ struct WritingBar: View {
         }
     }
 
-    /// The colours the person actually drew with, ahead of the shipped ones,
+    /// The colours the person actually drew with, ahead of the theme's own,
     /// cut to four. The document fixes the count and leaves the source to
-    /// the palette that already holds it.
+    /// the palette and the theme that already hold them.
     private var fourColours: [ToolColor] {
         var seen: [ToolColor] = []
-        for colour in editor.palette.recentColors + ToolColor.defaults where !seen.contains(colour) {
+        let offered = theme.palette.map { ToolColor(rgba: $0) }
+        for colour in editor.palette.recentColors + offered where !seen.contains(colour) {
             seen.append(colour)
             if seen.count == 4 { break }
         }

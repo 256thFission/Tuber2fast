@@ -86,10 +86,6 @@ package struct ToolColor: Equatable, Sendable, Codable {
     package static let purple = ToolColor(hex: "#7A3FC4FF")
     package static let yellow = ToolColor(hex: "#F2C200FF")
 
-    /// The colours the strip offers before any of the person's own. The
-    /// order is the order they are drawn in.
-    package static let defaults: [ToolColor] = [black, blue, red, green, orange, purple, yellow]
-
     /// A literal spelled the way the durable form is spelled, so the two
     /// cannot drift. A literal that is not a colour is a programmer error.
     private init(hex: String) {

@@ -38,20 +38,21 @@ struct EditorToolTests {
 
     @Test("A tool colour round-trips through the UIColor it vends")
     func toolColorRoundTripsThroughUIColor() {
-        for color in ToolColor.defaults {
+        let offered = Theme.presets.flatMap(\.theme.palette).map { ToolColor(rgba: $0) }
+        for color in offered + [.black, .blue, .red, .green, .orange, .purple, .yellow] {
             #expect(ToolColor(color.uiColor) == color)
         }
     }
 
-    @Test("The first four defaults are the four inks this replaced, byte for byte")
-    func defaultsOpenWithTheFourOldInks() {
-        #expect(ToolColor.defaults.count == 7)
-        #expect(ToolColor.defaults.prefix(4).map(\.rgba.hex) == [
+    @Test("The named inks are the four inks this replaced, byte for byte")
+    func theNamedInksAreTheFourOldOnes() {
+        // How many colours the strip offers, and whether any of them
+        // repeats, is the theme's question now and `ThemeTests` holds every
+        // preset to it. The bytes are still this file's: `.black` is what a
+        // fresh palette writes in whichever theme is on.
+        #expect([ToolColor.black, .blue, .red, .green].map(\.rgba.hex) == [
             "#1C1C1FFF", "#1A70C7FF", "#C42929FF", "#2B823DFF",
         ])
-        // No duplicates: two identical swatches would be two slots spent on
-        // one colour, and `used(_:)` excludes the defaults by value.
-        #expect(Set(ToolColor.defaults.map(\.rgba.hex)).count == ToolColor.defaults.count)
     }
 
     // MARK: pkTool
