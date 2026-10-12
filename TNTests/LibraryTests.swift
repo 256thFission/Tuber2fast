@@ -34,6 +34,23 @@ struct LibraryTests {
         #expect(await library.store.folderID(of: "Math") != nil)
     }
 
+    @Test("Creating under a taken name lands on the first free Name (n); renaming onto one refuses")
+    func takenNames() async throws {
+        let (scratch, library) = try makeLibrary("lib-taken-names")
+        defer { withExtendedLifetime(scratch) {} }
+        _ = try await library.store.createNotebook(named: "New notebook", in: "")
+        let second = try await library.store.createNotebook(named: "New notebook", in: "")
+        let third = try await library.store.createNotebook(named: "New notebook", in: "")
+        #expect(second.relativePath == "New notebook (1).tubernotes")
+        #expect(third.relativePath == "New notebook (2).tubernotes")
+        _ = try await library.store.createFolder(named: "New folder", in: "")
+        let folder = try await library.store.createFolder(named: "New folder", in: "")
+        #expect(folder.relativePath == "New folder (1)")
+        await #expect(throws: LibraryError.alreadyExists("New notebook (1)")) {
+            try await library.rename(at: third.relativePath, to: "New notebook (1)")
+        }
+    }
+
     @Test("A move into the current parent returns the item and moves no files")
     func movingIntoTheCurrentParent() async throws {
         let (scratch, library) = try makeLibrary("lib-move-nowhere")
@@ -402,5 +419,47 @@ struct LibraryTests {
         #expect(library.identities.live.count == 2)
         let ids = try await library.store.list(folder: "").compactMap(\.notebookID)
         #expect(Set(ids).count == 2)
+    }
+
+    @Test("A deleted page's files survive the save and go on the background pass")
+    func compactingOpenPackages() async throws {
+        let (scratch, library) = try makeLibrary("lib-compact")
+        defer { withExtendedLifetime(scratch) {} }
+        let item = try await library.store.createNotebook(named: "Notes", in: "")
+        guard case .opened(let notebook) = await library.checkout(item.relativePath, schedule: fast) else {
+            Issue.record("open failed"); return
+        }
+        let kept = notebook.pageIDs[0]
+        let doomed = notebook.appendPage(after: kept)
+        await notebook.flush()
+        let layout = PackageLayout(root: library.store.url(of: item.relativePath))
+        let fs = FileManager.default
+        #expect(fs.fileExists(atPath: layout.pageURL(doomed).path))
+
+        notebook.deletePage(doomed)
+        await notebook.flush()
+        #expect(notebook.pageIDs == [kept])
+        #expect(fs.fileExists(atPath: layout.pageURL(doomed).path), "a save deletes nothing")
+        await library.compactOpenPackages()
+        #expect(fs.fileExists(atPath: layout.pageURL(doomed).path), "younger than a day, so kept")
+
+        try scratch.backdate(layout.pageURL(doomed), by: 2 * 86_400)
+        await library.compactOpenPackages()
+        #expect(!fs.fileExists(atPath: layout.pageURL(doomed).path))
+        #expect(fs.fileExists(atPath: layout.pageURL(kept).path))
+        #expect(await library.release(item.relativePath) == .clean)
+    }
+
+    @Test("A package nobody has open is not swept")
+    func compactSkipsClosedPackages() async throws {
+        let (scratch, library) = try makeLibrary("lib-compact-closed")
+        defer { withExtendedLifetime(scratch) {} }
+        let item = try await library.store.createNotebook(named: "Closed", in: "")
+        let layout = PackageLayout(root: library.store.url(of: item.relativePath))
+        let orphan = layout.pageURL(PageID())
+        try Data([1]).write(to: orphan)
+        try scratch.backdate(orphan, by: 2 * 86_400)
+        await library.compactOpenPackages()
+        #expect(FileManager.default.fileExists(atPath: orphan.path))
     }
 }

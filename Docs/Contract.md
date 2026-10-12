@@ -274,10 +274,17 @@ report     which pages were refused. Nothing is deleted.
 - **Atomic per page, not across pages.** A crash between phases can leave
   an ink file for a page whose file says `hasInk: false`. Open treats the
   ink file as the ink and marks the page dirty.
-- **Only `compact()` deletes.** Open, save, and close delete nothing.
-  Compact removes files no page refers to, only if they are more than a
-  day old, and skips a whole class of file if it could not read every file
-  that might refer to it.
+- **Only `compact()` deletes, and it runs when the app leaves the
+  foreground.** Open, save, and close delete nothing. Compact removes
+  files no page refers to, only if they are more than a day old, and
+  skips a whole class of file if it could not read every file that might
+  refer to it. `Workspace` runs it inside the background lease, after
+  every open notebook's forced pass, over each open package's own store.
+  It is last because a save that does not land loses work while a sweep
+  that does not run costs disk, and it is safe to cut short because it
+  removes one file at a time. Only open packages are swept: a notebook
+  nobody has open is reclaimed the next time it is, which is the price of
+  never scanning the library to find bytes to free.
 - **A missing file that the index refers to refuses the page. A file the
   index does not refer to is ignored** until compact.
 - **`view.json`** is written by rename, without fsync, one second after a

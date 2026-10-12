@@ -27,6 +27,15 @@ import Testing
 /// allocator, a different page size, and PencilKit built for the Mac. The
 /// simulator number says which shapes share and which copy; the device
 /// number is the one the bound is set from.
+///
+/// KNOWN DEFECT: `entryCost` is flaky in a whole-suite run. It failed once
+/// and passed twice across three identical runs of the full suite, and
+/// passes every time it runs alone. Both readings are process-wide, so what
+/// the rest of the suite left allocated lands inside the measurement, and
+/// the noise floor is differenced before the suite's peak rather than after
+/// it. Until the readings are taken in a child process, or the floor is
+/// re-taken next to each shape, a red `entryCost` is not evidence about
+/// `EditHistory`.
 @Suite("History entry cost", .serialized)
 struct HistoryEntryCostTests {
     static let strokeCount = 20_000

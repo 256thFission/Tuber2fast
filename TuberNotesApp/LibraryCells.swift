@@ -11,6 +11,12 @@ import UniformTypeIdentifiers
     return item.parentPath
 }
 
+/// The date a cell shows is the one the listing is ordered by, so a listing
+/// sorted by creation date does not read as out of order.
+@MainActor private func shownDate(_ item: LibraryItem, _ browser: LibraryBrowser) -> Date {
+    browser.options.sortKey == .dateCreated ? item.createdAt : item.modifiedAt
+}
+
 /// The drag payload: relative paths, because a path is what a move takes and
 /// what a selection already holds. Declared beside the cells that carry it
 /// and not `private`, because `LibraryView` names the type too.
@@ -109,6 +115,9 @@ struct LibraryGridCell<MenuContent: View>: View {
             }
 
             HStack(alignment: .firstTextBaseline, spacing: 4) {
+                // Balances the chevron's width, so the name stays on the
+                // cover's centre line instead of being pushed off it.
+                Color.clear.frame(width: 24, height: 0)
                 Text(item.name)
                     .font(.subheadline.weight(.semibold))
                     .lineLimit(2)
@@ -117,7 +126,7 @@ struct LibraryGridCell<MenuContent: View>: View {
                 LibraryChevronMenu(name: item.name, menu: menu)
             }
 
-            Text(LibraryStyle.itemDate.string(from: item.modifiedAt))
+            Text(LibraryStyle.itemDate.string(from: shownDate(item, browser)))
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -184,7 +193,7 @@ struct LibraryListRow<MenuContent: View>: View {
                             .accessibilityLabel("Open")
                     }
                 }
-                Text(LibraryStyle.itemDate.string(from: item.modifiedAt))
+                Text(LibraryStyle.itemDate.string(from: shownDate(item, browser)))
                     .font(.caption)
                     .foregroundStyle(.secondary)
 

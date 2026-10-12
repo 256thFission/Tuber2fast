@@ -37,6 +37,15 @@ enum PageNames {
         case .dotted: "Dotted"
         }
     }
+
+    /// What creating without the sheet would make. Portrait is left unsaid,
+    /// as the sizes are stated portrait; landscape would otherwise be a
+    /// caption that disagrees with the page it names.
+    static func setup(_ setup: NotebookSetup?) -> String {
+        let matched = PageSize.matching(setup?.geometry ?? .letter)
+        let turned = matched.orientation == .landscape ? " \(orientation(.landscape))" : ""
+        return "\(size(matched.size))\(turned), \(paper(setup?.paper ?? .blank))"
+    }
 }
 
 /// The size and orientation rows both creation sheets show. The size is the
@@ -166,7 +175,7 @@ struct NewNotebookSheet: View {
 
     let create: (String, PageGeometry, DrawnPaper) -> Void
 
-    @State private var name = "New notebook"
+    @State private var name = ""
     @State private var size: PageSize
     @State private var orientation: PageOrientation
     @State private var paper: DrawnPaper
@@ -186,7 +195,7 @@ struct NewNotebookSheet: View {
         NavigationStack {
             Form {
                 Section("Name") {
-                    TextField("Name", text: $name)
+                    TextField("New notebook", text: $name)
                 }
                 PageSetupControls(size: $size, orientation: $orientation)
                 Section("Paper") {
@@ -205,18 +214,51 @@ struct NewNotebookSheet: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Create") {
-                        if let geometry { create(name, geometry, paper) }
+                        if let geometry { create(LibraryView.nameOrDefault(name, "New notebook"), geometry, paper) }
                         dismiss()
                     }
                     // An out-of-bounds custom size is refused here, before
                     // anything is created.
-                    .disabled(name.isEmpty || geometry == nil)
+                    .disabled(geometry == nil)
                 }
             }
         }
     }
 
     private var geometry: PageGeometry? { size.geometry(orientation) }
+}
+
+/// A name, and nothing else. The same shape as `NewNotebookSheet` rather
+/// than an alert, so both creations are the same gesture.
+struct NewFolderSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    let create: (String) -> Void
+
+    @State private var name = ""
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Name") {
+                    TextField("New folder", text: $name)
+                }
+            }
+            .navigationTitle("New folder")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Create") {
+                        create(LibraryView.nameOrDefault(name, "New folder"))
+                        dismiss()
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Where a new page's paper comes from. One choice rather than a paper, a

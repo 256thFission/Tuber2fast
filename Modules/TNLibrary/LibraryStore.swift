@@ -244,6 +244,20 @@ package actor LibraryStore {
         return fileName.hasSuffix(suffix) ? String(fileName.dropLast(suffix.count)) : fileName
     }
 
+    /// `name` if nothing in `parent` has it, else `name (1)`, `name (2)`, and
+    /// so on: a second "New notebook" is the ordinary case, not a mistake,
+    /// so creation never refuses on a taken name. Rename still does.
+    private func freeName(_ name: String, kind: ItemKind, in parent: URL) -> String {
+        func taken(_ candidate: String) -> Bool {
+            let fileName = kind == .notebook ? Self.packageName(candidate) : candidate
+            return self.kind(at: parent.appendingPathComponent(fileName)) != nil
+        }
+        guard taken(name) else { return name }
+        var attempt = 1
+        while taken("\(name) (\(attempt))") { attempt += 1 }
+        return "\(name) (\(attempt))"
+    }
+
     private func kind(at url: URL) -> ItemKind? {
         var isDirectory: ObjCBool = false
         guard fm.fileExists(atPath: url.path, isDirectory: &isDirectory), isDirectory.boolValue else { return nil }
@@ -342,8 +356,8 @@ package actor LibraryStore {
         try Self.validate(name: name)
         let parent = url(of: folder)
         guard folder.isEmpty || kind(at: parent) == .folder else { throw .notAFolder(folder) }
+        let name = freeName(name, kind: .folder, in: parent)
         let target = parent.appendingPathComponent(name, isDirectory: true)
-        guard kind(at: target) == nil else { throw .alreadyExists(name) }
         do {
             try fm.createDirectory(at: target, withIntermediateDirectories: false)
             let sidecar = FolderFile(folderID: FolderID(), decoration: .plain)
@@ -376,7 +390,8 @@ package actor LibraryStore {
     package func folderID(of folder: String) -> FolderID? { folderFile(of: folder)?.folderID }
 
     /// A new one-page notebook, committed. Its page is US Letter and blank
-    /// paper unless told otherwise. Returns its listing item.
+    /// paper unless told otherwise. Returns its listing item, whose name is
+    /// the one asked for or the first free `Name (n)` after it.
     package func createNotebook(
         named name: String, in folder: String,
         geometry: PageGeometry = .letter, paper: DrawnPaper = .blank
@@ -384,8 +399,7 @@ package actor LibraryStore {
         try Self.validate(name: name)
         let parent = url(of: folder)
         guard folder.isEmpty || kind(at: parent) == .folder else { throw .notAFolder(folder) }
-        let target = parent.appendingPathComponent(Self.packageName(name), isDirectory: true)
-        guard kind(at: target) == nil else { throw .alreadyExists(name) }
+        let target = parent.appendingPathComponent(Self.packageName(freeName(name, kind: .notebook, in: parent)), isDirectory: true)
         let index = NotebookIndex.new(
             notebookID: NotebookID(), firstPage: PageID(), createdAt: Date(),
             geometry: geometry, paper: paper

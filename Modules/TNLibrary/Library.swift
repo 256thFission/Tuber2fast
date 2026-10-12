@@ -25,7 +25,7 @@ package enum CheckoutOutcome: Sendable {
 @MainActor @Observable
 package final class Library {
     @ObservationIgnored package let store: LibraryStore
-    @ObservationIgnored private var openNotebooks: [String: Notebook] = [:]
+    @ObservationIgnored private var checkouts: [String: Checkout] = [:]
     @ObservationIgnored private var reservations: Set<String> = []
     package private(set) var identities = IdentityIndex()
     package private(set) var openCount = 0
@@ -47,8 +47,17 @@ package final class Library {
 
     // MARK: The ledger
 
+    /// One checked-out package: the notebook, and the store it was opened
+    /// over. The library keeps the store because `compact()` is its business
+    /// and a second store over the same root would be a second writer of the
+    /// package's bytes.
+    private struct Checkout {
+        let notebook: Notebook
+        let store: PackageStore
+    }
+
     package func isCheckedOut(_ relativePath: String) -> Bool {
-        openNotebooks[relativePath] != nil || reservations.contains(relativePath)
+        checkouts[relativePath] != nil || reservations.contains(relativePath)
     }
 
     /// True when the path is checked out or is a folder holding one.
@@ -60,20 +69,20 @@ package final class Library {
         if isCheckedOut(relativePath) { return relativePath }
         guard !relativePath.isEmpty else { return nil }
         let prefix = relativePath + "/"
-        return openNotebooks.keys.first { $0.hasPrefix(prefix) }
+        return checkouts.keys.first { $0.hasPrefix(prefix) }
             ?? reservations.first { $0.hasPrefix(prefix) }
     }
 
-    package func openNotebook(at relativePath: String) -> Notebook? { openNotebooks[relativePath] }
+    package func openNotebook(at relativePath: String) -> Notebook? { checkouts[relativePath]?.notebook }
 
     package func checkout(_ relativePath: String, schedule: SaveSchedule = SaveSchedule()) async -> CheckoutOutcome {
-        if let open = openNotebooks[relativePath] { return .alreadyOpen(open.notebookID) }
+        if let open = checkouts[relativePath] { return .alreadyOpen(open.notebook.notebookID) }
         if reservations.contains(relativePath) {
             // A reservation with no notebook yet: the first open is in flight.
-            while reservations.contains(relativePath), openNotebooks[relativePath] == nil {
+            while reservations.contains(relativePath), checkouts[relativePath] == nil {
                 try? await Task.sleep(for: .milliseconds(10))
             }
-            if let open = openNotebooks[relativePath] { return .alreadyOpen(open.notebookID) }
+            if let open = checkouts[relativePath] { return .alreadyOpen(open.notebook.notebookID) }
             return .failed(.itemNotFound(relativePath))
         }
         reservations.insert(relativePath)
@@ -81,8 +90,8 @@ package final class Library {
         let packageStore = PackageStore(root: store.url(of: relativePath))
         do {
             let notebook = try await Notebook.open(store: packageStore, schedule: schedule)
-            openNotebooks[relativePath] = notebook
-            openCount = openNotebooks.count
+            checkouts[relativePath] = Checkout(notebook: notebook, store: packageStore)
+            openCount = checkouts.count
             return .opened(notebook)
         } catch {
             return .failed(.format(error))
@@ -92,11 +101,32 @@ package final class Library {
     /// The final pass, then the checkout ends. The outcome says what, if
     /// anything, is unsaved.
     package func release(_ relativePath: String) async -> CloseOutcome? {
-        guard let notebook = openNotebooks[relativePath] else { return nil }
-        let outcome = await notebook.close()
-        openNotebooks[relativePath] = nil
-        openCount = openNotebooks.count
+        guard let checkout = checkouts[relativePath] else { return nil }
+        let outcome = await checkout.notebook.close()
+        checkouts[relativePath] = nil
+        openCount = checkouts.count
         return outcome
+    }
+
+    /// Reclaims every open package, one at a time, through the store that
+    /// package was opened over. The one production caller of `compact()`.
+    /// `deletePage` unlinks a page from the index and nothing more, so
+    /// without this a notebook keeps every page it has ever held.
+    ///
+    /// A package nobody has open is not swept. Its orphans go the next time
+    /// it is open and the app leaves the foreground, which is the price of
+    /// never scanning the whole library to find bytes to free.
+    ///
+    /// A compact that throws is logged and not surfaced: nothing the reader
+    /// asked for failed, and the next pass sweeps what this one left.
+    package func compactOpenPackages() async {
+        for (path, checkout) in checkouts {
+            do {
+                _ = try await checkout.store.compact()
+            } catch {
+                TNLog.event(.library, "compact refused \(path): \(error)")
+            }
+        }
     }
 
     // MARK: The identity index
@@ -148,7 +178,7 @@ package final class Library {
     /// and there is one per package, so a cover cannot open one.
     package func cover(of item: LibraryItem) async -> CGImage? {
         guard item.kind == .notebook else { return nil }
-        if let notebook = openNotebooks[item.relativePath] {
+        if let notebook = checkouts[item.relativePath]?.notebook {
             guard let first = notebook.pageIDs.first else { return nil }
             return await notebook.thumbnail(of: first)
         }

@@ -234,9 +234,15 @@ final class Workspace {
     }
 
     /// The lease outlives the write. Every open notebook runs one forced pass,
-    /// active tab first, and the lease ends when no write is outstanding. An
-    /// expired lease is only logged: the format is resumable, so the next open
-    /// recovers whatever the pass did not finish.
+    /// active tab first, then every open package is compacted, and the lease
+    /// ends when no write is outstanding. An expired lease is only logged: the
+    /// format is resumable, so the next open recovers whatever the pass did
+    /// not finish.
+    ///
+    /// Reclaim comes after the saves and never before them, because a save
+    /// that does not land loses work while a sweep that does not run only
+    /// costs disk. A compact the lease cuts short is safe: it removes one
+    /// file at a time, and the next pass sweeps the rest.
     private func flushUnderLease() async {
         let editors = orderedEditors
         guard !editors.isEmpty else { return }
@@ -250,6 +256,7 @@ final class Workspace {
         for editor in editors {
             await editor.flush()
         }
+        await library.compactOpenPackages()
         lease.end()
     }
 

@@ -12,7 +12,6 @@ typealias LibraryItem = TNLibrary.LibraryItem
 struct LibraryView: View {
     @Environment(Workspace.self) private var workspace
 
-    @State private var newFolderName = ""
     @State private var isNamingFolder = false
     @State private var isCreatingNotebook = false
     @State private var renameTarget: LibraryItem?
@@ -49,14 +48,18 @@ struct LibraryView: View {
         .onChange(of: browser.refusal) { _, refusal in
             if let refusal { workspace.banner = refusal }
         }
-        .alert("New folder", isPresented: $isNamingFolder) {
-            TextField("Name", text: $newFolderName)
-            Button("Cancel", role: .cancel) {}
-            Button("Create") { run { await browser.createFolder(named: newFolderName) } }
+        .sheet(isPresented: $isNamingFolder) {
+            NewFolderSheet { name in
+                run { await browser.createFolder(named: name) }
+            }
         }
         .sheet(isPresented: $isCreatingNotebook) {
             NewNotebookSheet(opensOn: browser.options.newNotebook) { name, geometry, paper in
-                run { await browser.createNotebook(named: name, geometry: geometry, paper: paper) }
+                // A notebook is made to be written in, so it opens as it lands.
+                run {
+                    guard let made = await browser.createNotebook(named: name, geometry: geometry, paper: paper) else { return }
+                    await workspace.open(path: made.relativePath, name: made.name)
+                }
             }
         }
         .alert("Rename", isPresented: isRenaming, presenting: renameTarget) { item in
@@ -144,7 +147,18 @@ struct LibraryView: View {
 
     // MARK: Toolbar
 
+    /// Portrait leaves the pane about 500pt for this row, and every label
+    /// wrapped letter by letter when the row was asked to hold more than
+    /// that. The sort caption is the one thing that can go, so it goes
+    /// first; the search field gives up width before anything else does.
     private var toolbarRow: some View {
+        ViewThatFits(in: .horizontal) {
+            toolbarItems(showingSort: true)
+            toolbarItems(showingSort: false)
+        }
+    }
+
+    private func toolbarItems(showingSort: Bool) -> some View {
         HStack(spacing: 12) {
             Menu {
                 Picker("Filter", selection: Bindable(browser).filter) {
@@ -155,27 +169,38 @@ struct LibraryView: View {
                 .pickerStyle(.inline)
             } label: {
                 Label(Self.name(of: browser.filter), systemImage: "line.3.horizontal.decrease")
+                    .fixedSize()
             }
 
-            Spacer()
+            if showingSort {
+                HStack(spacing: 4) {
+                    Text(Self.name(of: browser.options.sortKey))
+                    Image(systemName: browser.options.ascending ? "chevron.up" : "chevron.down")
+                        .font(.caption2)
+                }
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .fixedSize()
+            }
+
+            Spacer(minLength: 12)
 
             if browser.section == .documents {
-                Menu {
-                    Button {
-                        isCreatingNotebook = true
-                    } label: {
-                        Label("Notebook", systemImage: "book.closed")
-                    }
-                    Button {
-                        newFolderName = "New folder"
-                        isNamingFolder = true
-                    } label: {
-                        Label("Folder", systemImage: "folder.badge.plus")
-                    }
+                Button {
+                    isCreatingNotebook = true
                 } label: {
-                    Label("New", systemImage: "plus")
+                    Label("New Notebook", systemImage: "plus")
+                        .fixedSize()
                 }
                 .buttonStyle(.borderedProminent)
+
+                Button {
+                    isNamingFolder = true
+                } label: {
+                    Image(systemName: "folder.badge.plus")
+                }
+                .buttonStyle(.bordered)
+                .accessibilityLabel("New Folder")
             }
 
             viewOptionsMenu
@@ -282,10 +307,21 @@ struct LibraryView: View {
                 description: Text(message)
             )
         case .loaded(let items) where items.isEmpty:
-            ContentUnavailableView(
-                browser.section == .favorites ? "No favorites yet" : "This folder is empty",
-                systemImage: browser.section == .favorites ? "star" : "folder"
-            )
+            if browser.section == .documents && browser.searchText.isEmpty {
+                ContentUnavailableView {
+                    Label("This folder is empty", systemImage: "folder")
+                } description: {
+                    Text("Create your first notebook")
+                } actions: {
+                    Button("New Notebook") { isCreatingNotebook = true }
+                        .buttonStyle(.borderedProminent)
+                }
+            } else {
+                ContentUnavailableView(
+                    browser.section == .favorites ? "No favorites yet" : "This folder is empty",
+                    systemImage: browser.section == .favorites ? "star" : "folder"
+                )
+            }
         case .loaded:
             switch browser.options.layout {
             case .grid: grid
@@ -296,7 +332,12 @@ struct LibraryView: View {
 
     private var grid: some View {
         ScrollView {
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 160), spacing: 28, alignment: .top)], spacing: 28) {
+            // A ceiling as well as a floor: without one, a folder holding one
+            // notebook draws that cover the width of the pane.
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 160, maximum: 200), spacing: 28, alignment: .top)], spacing: 28) {
+                if offersCreation {
+                    NewNotebookTile(setup: browser.options.newNotebook, create: createWithLastSetup)
+                }
                 ForEach(browser.displayed) { item in
                     LibraryGridCell(item: item, browser: browser, drop: dropTarget(item)) { itemMenu(for: item) }
                         .onTapGesture { tap(item) }
@@ -309,6 +350,10 @@ struct LibraryView: View {
     private var list: some View {
         ScrollView {
             LazyVStack(spacing: 0) {
+                if offersCreation {
+                    NewNotebookRow(setup: browser.options.newNotebook, create: createWithLastSetup)
+                    Divider()
+                }
                 ForEach(browser.displayed) { item in
                     LibraryListRow(item: item, browser: browser, drop: dropTarget(item)) { itemMenu(for: item) }
                         .onTapGesture { tap(item) }
@@ -369,6 +414,21 @@ struct LibraryView: View {
         return String(browser.folder[..<slash])
     }
 
+    /// The leading tile stands for a creation, so it is out of the way while
+    /// items are being picked, and the other collections have nothing to
+    /// create into.
+    private var offersCreation: Bool {
+        browser.section == .documents && !browser.isSelecting
+    }
+
+    /// The same path the sheet takes, minus the asking.
+    private func createWithLastSetup() {
+        run {
+            guard let made = await browser.createNotebookWithLastSetup(named: "New notebook") else { return }
+            await workspace.open(path: made.relativePath, name: made.name)
+        }
+    }
+
     private func tap(_ item: LibraryItem) {
         if browser.isSelecting {
             browser.toggleSelected(item)
@@ -392,8 +452,24 @@ struct LibraryView: View {
         }
     }
 
+    /// The placeholder is the name until something else is typed; a field
+    /// left blank is not a refusal.
+    static func nameOrDefault(_ typed: String, _ fallback: String) -> String {
+        let trimmed = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? fallback : trimmed
+    }
+
     private var isRenaming: Binding<Bool> {
         Binding(get: { renameTarget != nil }, set: { if !$0 { renameTarget = nil } })
+    }
+
+    private static func name(of key: LibrarySortKey) -> String {
+        switch key {
+        case .dateCreated: "Date Created"
+        case .lastModified: "Last Modified"
+        case .name: "Name"
+        case .type: "Type"
+        }
     }
 
     private static func name(of filter: LibraryFilter) -> String {
@@ -402,6 +478,78 @@ struct LibraryView: View {
         case .notebooks: "Notebooks"
         case .folders: "Folders"
         }
+    }
+}
+
+/// The grid's leading tile: a cover-shaped dashed frame that creates on the
+/// setup named beneath it, with no sheet in the way.
+private struct NewNotebookTile: View {
+    let setup: NotebookSetup?
+    let create: () -> Void
+
+    var body: some View {
+        Button(action: create) {
+            VStack(spacing: 10) {
+                RoundedRectangle(cornerRadius: 6)
+                    .strokeBorder(
+                        Color.accentColor.opacity(0.6),
+                        style: StrokeStyle(lineWidth: 2, dash: [8, 6])
+                    )
+                    .aspectRatio(3.0 / 4.0, contentMode: .fit)
+                    .overlay {
+                        Image(systemName: "plus")
+                            .font(.title)
+                            .foregroundStyle(Color.accentColor)
+                    }
+
+                Text("New Notebook")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.accentColor)
+
+                Text(PageNames.setup(setup))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// The same creation as `NewNotebookTile`, on the list layout's row.
+private struct NewNotebookRow: View {
+    let setup: NotebookSetup?
+    let create: () -> Void
+
+    var body: some View {
+        Button(action: create) {
+            HStack(spacing: 14) {
+                RoundedRectangle(cornerRadius: 6)
+                    .strokeBorder(
+                        Color.accentColor.opacity(0.6),
+                        style: StrokeStyle(lineWidth: 2, dash: [6, 4])
+                    )
+                    .overlay {
+                        Image(systemName: "plus")
+                            .foregroundStyle(Color.accentColor)
+                    }
+                    .frame(width: 44, height: 58)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("New Notebook")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Color.accentColor)
+                    Text(PageNames.setup(setup))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer(minLength: 0)
+            }
+            .padding(.vertical, 8)
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -416,7 +564,7 @@ struct LibrarySearchField: View {
                 .foregroundStyle(.secondary)
             TextField("Search", text: $text)
                 .textFieldStyle(.plain)
-                .frame(width: 180)
+                .frame(minWidth: 90, maxWidth: 180)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)

@@ -243,13 +243,26 @@ package final class LibraryBrowser {
         await perform { _ = try await library.store.createFolder(named: name, in: folder) }
     }
 
-    package func createNotebook(named name: String, geometry: PageGeometry, paper: DrawnPaper) async {
-        await perform { _ = try await library.store.createNotebook(named: name, in: folder, geometry: geometry, paper: paper) }
+    /// The notebook made, for the caller to open, or nil when the store
+    /// refused; the refusal is in `refusal`.
+    @discardableResult
+    package func createNotebook(named name: String, geometry: PageGeometry, paper: DrawnPaper) async -> LibraryItem? {
+        var made: LibraryItem?
+        await perform { made = try await library.store.createNotebook(named: name, in: folder, geometry: geometry, paper: paper) }
         // Only a notebook that was actually made is a choice worth opening on
-        // next time; `perform` leaves `refusal` nil when it landed. The
-        // `didSet` on `options` is what writes it.
-        guard refusal == nil else { return }
+        // next time. The `didSet` on `options` is what writes it.
+        guard let made else { return nil }
         options.newNotebook = NotebookSetup(geometry: geometry, paper: paper)
+        return made
+    }
+
+    /// Creation without the sheet: the size and paper are the last made here,
+    /// and letter blank before there is one, which is what the sheet itself
+    /// opens on.
+    @discardableResult
+    package func createNotebookWithLastSetup(named name: String) async -> LibraryItem? {
+        let setup = options.newNotebook ?? NotebookSetup(geometry: .letter, paper: .blank)
+        return await createNotebook(named: name, geometry: setup.geometry, paper: setup.paper)
     }
 
     package func recover(_ entry: TrashEntry) async {
