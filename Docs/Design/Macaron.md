@@ -71,7 +71,7 @@ turns up that this document does not name, derive its treatment from these.
 | `secondary` | seat toggle, resize grip, dirty dot, rule lines |
 | `ink` | what every outline is mixed toward, and, unmixed, the colour of the words typed into a field, the tray knob's ring and the bar's shadow in flight |
 | `outlineMix` | two percentages, saturated and pale; defaults 42 / 55 |
-| `palette` | seven colours a line of handwriting can be read in, the ink's darkest first; the pen's four swatches are seeded from its first four (§4.1) |
+| `palette` | seven colours a line of handwriting can be read in, the theme's darkest first because that is what people write in; the pen's four swatches are seeded from its first four (§4.1) |
 | `dark` | the one flag that makes a theme dark: the mix target turns toward white, the escape runs to the ground, and the seat body and its current row follow (derived, §3.2; the seat, §4.3) |
 
 **The ink is what outlines mix toward, not what the hand writes in.** A
@@ -108,7 +108,7 @@ Default theme ("Macaron"):
 | `outlineMix` | 42% saturated / 55% pale |
 | `ink` | `#141414` |
 | `palette` | `#141414`, strawberry `#FF6A8C`, `#E9932B`, `#3E9B6B`, `#3B7FD4`, `#8A4FBF`, `#8C5A2B` |
-| `dark` | off; Macaron Dark is the same theme with it on, the cream and the ink trading places, the same palette |
+| `dark` | off; Macaron Dark sets it, with ground `#26211B`, chrome `#332C24` and ink `#F4EADA`, the day's cream, and keeps the accent, the secondary and the palette: the paper stays white after dark, so the row that reads on it does not change |
 
 The third Macaron colour, pistachio `#DFF3C8`, is the second notebook's tab
 colour in the mocks. It is a per-notebook preset, not a theme token.
@@ -195,9 +195,9 @@ Contract's (*The swatches are the palette's*); the bar draws the run it is
 given, in order, and derives nothing. A tap takes the swatch's colour into
 the hand, and the held swatch is sunk and drawn at 26. A hold of 450 ms
 opens the colour tray, a transient (§6), in a bubble whose tail points at
-the held swatch, the cap squashing toward 88% while the hold charges
-(motion, §7). A tool with no colour takes no tap and opens no tray, and
-the grab pill alone drags the bar, so a hold on a swatch never starts a
+the swatch the hold is on, the cap squashing toward 88% while the hold
+charges (motion, §7). A tool with no colour takes no tap and opens no tray,
+and the grab pill alone drags the bar, so a hold on a swatch never starts a
 drag. The colour picked in the tray goes into the hand and over that
 swatch, in that run and no other, and the one the tray closes on becomes
 a recent, once per session however many colours the wheel passed through;
