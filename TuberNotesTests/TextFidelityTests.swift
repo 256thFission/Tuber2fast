@@ -22,7 +22,7 @@ struct TextFidelityTests {
     private static let blue = RGBA8(red: 0, green: 0, blue: 200, alpha: 255)
 
     private static func style(_ size: Double, bold: Bool = false, italic: Bool = false, underline: Bool = false, color: RGBA8 = TextStyle.body.color) -> TextStyle {
-        TextStyle(font: "system", size: size, bold: bold, italic: italic, underline: underline, color: color)
+        TextStyle(font: .system, size: size, bold: bold, italic: italic, underline: underline, color: color)
     }
 
     private static let fixtures: [(name: String, layer: TextLayer)] = [

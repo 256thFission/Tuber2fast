@@ -178,9 +178,8 @@ package struct LinkLayer: Codable, Sendable, Equatable {
 
 /// One run of a text box: a string with its own style. Rich text as our
 /// own JSON, never an archived attributed string, so the bytes stay
-/// readable and the style vocabulary is ours to extend by version bump. The
-/// one font is `system`, so a run naming another is refused, not drawn in
-/// whatever face CoreText falls back to.
+/// readable and the style vocabulary is ours to extend by version bump. A
+/// run naming a face that is not a `TextFont` is refused.
 package struct TextRun: Codable, Sendable, Equatable {
     package let string: String
     package let font: String
@@ -202,7 +201,7 @@ package struct TextRun: Codable, Sendable, Equatable {
     }
 
     package var isValid: Bool {
-        size.isFinite && size > 0 && size <= 1024 && font == "system" && RGBA8(hex: color) != nil
+        size.isFinite && size > 0 && size <= 1024 && TextFont(rawValue: font) != nil && RGBA8(hex: color) != nil
     }
 }
 

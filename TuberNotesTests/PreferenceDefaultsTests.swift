@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+@testable import TNEditor
 @testable import TNModel
 @testable import TuberNotes
 
@@ -39,6 +40,31 @@ struct PreferenceDefaultsTests {
             defaults.set(Data([0x00, 0x01]), forKey: "tn.theme")
             #expect(themes.load() == nil)
         }
+    }
+
+    @Test("A saved palette whose text style names another face opens on the built-in")
+    @MainActor
+    func paletteNamingAnotherFace() throws {
+        let name = "tn.paletteTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defer { defaults.removePersistentDomain(forName: name) }
+        let palettes = PreferenceDefaults<ToolPaletteRecord>(key: "tn.toolPalette", defaults)
+        var saved = ToolPaletteRecord.builtIn
+        saved.lastKind = .text
+        palettes.save(saved)
+        #expect(ToolPalette(store: palettes).record == saved)
+
+        let bytes = try #require(defaults.data(forKey: "tn.toolPalette"))
+        var plist = try #require(try PropertyListSerialization.propertyList(from: bytes, format: nil) as? [String: Any])
+        var text = try #require(plist["text"] as? [String: Any])
+        var style = try #require(text["style"] as? [String: Any])
+        #expect(style["font"] as? String == "system")
+        style["font"] = "Georgia"
+        text["style"] = style
+        plist["text"] = text
+        defaults.set(try PropertyListSerialization.data(fromPropertyList: plist, format: .binary, options: 0), forKey: "tn.toolPalette")
+        #expect(palettes.load() == nil)
+        #expect(ToolPalette(store: palettes).record == .builtIn)
     }
 }
 

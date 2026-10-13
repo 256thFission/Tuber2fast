@@ -145,7 +145,7 @@ struct EditorToolTests {
 
     @Test("The text tool is a style to type with, not a PencilKit tool")
     func textIsAStyle() {
-        let bold = TextStyle(font: "system", size: 24, bold: true, italic: false, underline: false, color: TextStyle.body.color)
+        let bold = TextStyle(font: .system, size: 24, bold: true, italic: false, underline: false, color: TextStyle.body.color)
         guard case .text(let style, let alignment) = EditorTool.text(bold, .center).canvasTool else {
             Issue.record("the text tool became an ink tool"); return
         }
@@ -155,7 +155,7 @@ struct EditorToolTests {
 
     @Test("A tool restated is the same tool to the runtime, and any other tool is not")
     func aRestatedToolIsTheSameTool() {
-        let bold = TextStyle(font: "system", size: 24, bold: true, italic: false, underline: false, color: TextStyle.body.color)
+        let bold = TextStyle(font: .system, size: 24, bold: true, italic: false, underline: false, color: TextStyle.body.color)
         let tools: [EditorTool] = [
             .ink(.pen, InkPreset(color: .black, width: .medium)),
             .ink(.pen, InkPreset(color: .black, width: .thick)),
@@ -210,7 +210,7 @@ struct EditorToolTests {
             eraserMode: .pixel,
             pixelEraserWidth: .thick,
             recentColors: [ToolColor(rgba: RGBA8(red: 1, green: 2, blue: 3, alpha: 0xFF))],
-            text: TextPreset(style: TextStyle(font: "system", size: 32, bold: false, italic: true, underline: true, color: RGBA8(red: 9, green: 8, blue: 7, alpha: 0xFF)), alignment: .trailing),
+            text: TextPreset(style: TextStyle(font: .system, size: 32, bold: false, italic: true, underline: true, color: RGBA8(red: 9, green: 8, blue: 7, alpha: 0xFF)), alignment: .trailing),
             gestures: [.scribble: .erase],
             swatches: [
                 SwatchKey(.system, .pen): [.black, ToolColor(rgba: RGBA8(red: 1, green: 2, blue: 3, alpha: 0xFF))],

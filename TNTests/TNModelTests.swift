@@ -55,7 +55,7 @@ struct RGBA8Tests {
 
 @Suite("TNModel text")
 struct TextStyleTests {
-    private let red = TextStyle(font: "system", size: 16, bold: false, italic: false, underline: false, color: RGBA8(red: 255, green: 0, blue: 0, alpha: 255))
+    private let red = TextStyle(font: .system, size: 16, bold: false, italic: false, underline: false, color: RGBA8(red: 255, green: 0, blue: 0, alpha: 255))
 
     @Test("Adjacent runs of one style merge; unequal neighbours stay apart; an empty run merges away")
     func merging() {
@@ -75,19 +75,19 @@ struct TextStyleTests {
 
     @Test("A style changed in some fields keeps every other")
     func textStyleWithChangesOnlyNamedFields() {
-        let styled = TextStyle(font: "Georgia", size: 18, bold: true, italic: true, underline: true, color: red.color)
+        let styled = TextStyle(font: .system, size: 18, bold: true, italic: true, underline: true, color: red.color)
         #expect(styled.with() == styled)
-        #expect(styled.with(size: 32) == TextStyle(font: "Georgia", size: 32, bold: true, italic: true, underline: true, color: red.color))
-        #expect(styled.with(bold: false) == TextStyle(font: "Georgia", size: 18, bold: false, italic: true, underline: true, color: red.color))
-        #expect(styled.with(italic: false) == TextStyle(font: "Georgia", size: 18, bold: true, italic: false, underline: true, color: red.color))
-        #expect(styled.with(underline: false) == TextStyle(font: "Georgia", size: 18, bold: true, italic: true, underline: false, color: red.color))
-        #expect(styled.with(color: TextStyle.body.color) == TextStyle(font: "Georgia", size: 18, bold: true, italic: true, underline: true, color: TextStyle.body.color))
-        #expect(TextStyle.body.with(size: 24, bold: true) == TextStyle(font: "system", size: 24, bold: true, italic: false, underline: false, color: TextStyle.body.color))
+        #expect(styled.with(size: 32) == TextStyle(font: .system, size: 32, bold: true, italic: true, underline: true, color: red.color))
+        #expect(styled.with(bold: false) == TextStyle(font: .system, size: 18, bold: false, italic: true, underline: true, color: red.color))
+        #expect(styled.with(italic: false) == TextStyle(font: .system, size: 18, bold: true, italic: false, underline: true, color: red.color))
+        #expect(styled.with(underline: false) == TextStyle(font: .system, size: 18, bold: true, italic: true, underline: false, color: red.color))
+        #expect(styled.with(color: TextStyle.body.color) == TextStyle(font: .system, size: 18, bold: true, italic: true, underline: true, color: TextStyle.body.color))
+        #expect(TextStyle.body.with(size: 24, bold: true) == TextStyle(font: .system, size: 24, bold: true, italic: false, underline: false, color: TextStyle.body.color))
     }
 
     @Test("Equal styles resolve equal fonts")
     func equalStylesEqualFonts() {
-        let bold = TextStyle(font: "system", size: 20, bold: true, italic: false, underline: false, color: TextStyle.body.color)
+        let bold = TextStyle(font: .system, size: 20, bold: true, italic: false, underline: false, color: TextStyle.body.color)
         let a = TextTypesetting.resolve(bold), b = TextTypesetting.resolve(bold)
         #expect(CTFontCopyPostScriptName(a) == CTFontCopyPostScriptName(b))
         #expect(CTFontGetSize(a) == 20)

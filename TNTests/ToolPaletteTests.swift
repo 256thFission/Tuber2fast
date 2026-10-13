@@ -194,7 +194,7 @@ struct ToolPaletteTests {
         let store = MemoryPaletteStore()
         let palette = ToolPalette(store: store)
         palette.used(swatch(0x01))
-        let bold = TextStyle(font: "system", size: 24, bold: true, italic: false, underline: false, color: RGBA8(red: 9, green: 8, blue: 7, alpha: 0xFF))
+        let bold = TextStyle(font: .system, size: 24, bold: true, italic: false, underline: false, color: RGBA8(red: 9, green: 8, blue: 7, alpha: 0xFF))
 
         palette.remember(.text(bold, .center))
 

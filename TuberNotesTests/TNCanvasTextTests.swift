@@ -199,7 +199,7 @@ final class TNCanvasTextTests: HostingSuite {
     func styleMidSession() throws {
         let reporter = RecordingReporter()
         let (runtime, _, _, overlay) = try openSession(reporter, layers: [textLayer("hi", x: 100, y: 100)])
-        let bold = TextStyle(font: "system", size: 16, bold: true, italic: false, underline: false, color: TextStyle.body.color)
+        let bold = TextStyle(font: .system, size: 16, bold: true, italic: false, underline: false, color: TextStyle.body.color)
         runtime.apply(CanvasEnvironment(tool: .text(bold, .center), theme: .macaron))
         overlay.insertText("!")
         let runs = overlay.committedLayer.runs
@@ -212,7 +212,7 @@ final class TNCanvasTextTests: HostingSuite {
     func themeOnlyApplyKeepsTheSession() throws {
         let reporter = RecordingReporter()
         let (runtime, _, canvas, overlay) = try openSession(reporter, layers: [textLayer("hi", x: 100, y: 100)])
-        let bold = TextStyle(font: "system", size: 16, bold: true, italic: false, underline: false, color: TextStyle.body.color)
+        let bold = TextStyle(font: .system, size: 16, bold: true, italic: false, underline: false, color: TextStyle.body.color)
         // Bold is what the caret types with; the words already there stay
         // body, so a tool handed down again would visibly restyle them.
         overlay.selectedRange = NSRange(location: 2, length: 0)

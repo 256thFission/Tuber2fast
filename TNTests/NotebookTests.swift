@@ -150,7 +150,7 @@ func pixel(_ image: CGImage, x: Int, y: Int) -> (r: UInt8, g: UInt8, b: UInt8, a
 }
 
 func textLayer(_ string: String, rect: PageRect = PageRect(x: 10, y: 10, width: 200, height: 60), size: Double = 40) -> Layer {
-    let style = TextStyle(font: "system", size: size, bold: false, italic: false, underline: false, color: TextStyle.body.color)
+    let style = TextStyle(font: .system, size: size, bold: false, italic: false, underline: false, color: TextStyle.body.color)
     return Layer(id: LayerID(), transform: .identity, payload: .text(TextLayer(rect: rect, runs: [TextRun(string: string, style: style)], alignment: .leading)))
 }
 
