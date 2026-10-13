@@ -698,3 +698,11 @@ Not gaps — properties of the tooling that read as project defects when hit.
   so the bar swapping runs as the tool changes is reviewed by diff only.
   Owed: tap each swatch and the pen takes it; switch to the highlighter,
   and its four swatches are the highlighter row with the yellow held.
+- **The Aa bubble restyles a selection (U37, I3 line 14).** The editor
+  suite proves a size and an alignment reach the runtime, a hosted test
+  proves a choice made off the text tool does nothing, and screenshots show
+  the bubble under the band's text chip in Macaron and Macaron Dark. That
+  the selection keeps its range while the bubble is up, and that typing
+  goes on in the new style, needs a hand on a box. Owed: select words in a
+  text box, tap Aa, set size 24, bold, centre and a colour: the selection
+  changes, and new typing takes the style.
