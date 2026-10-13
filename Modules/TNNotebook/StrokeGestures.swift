@@ -74,13 +74,12 @@ extension GestureTrigger {
         log: (String) -> Void
     ) -> GestureMatch? {
         let scribble = ScribbleReading.measure(stroke: index, in: strokes)
-        let circle = DoubleCircleReading.measure(stroke: index, in: strokes)
-        // Both readings are taken whatever the outcome, because the log is
-        // the only way the thresholds get tuned and a second walk of one
-        // stroke is not worth a branch.
+        // Nothing can bind the double circle yet, so it is read only when
+        // bound: the scribble's binding is built in and runs on every stroke.
+        let circle = bindings[.doubleCircle] == nil ? nil : DoubleCircleReading.measure(stroke: index, in: strokes)
         let subjects: [(trigger: GestureTrigger, subject: IndexSet)] = [
             (GestureTrigger.scribble, scribble.subject),
-            (GestureTrigger.doubleCircle, circle.subject),
+            (GestureTrigger.doubleCircle, circle?.subject),
         ].compactMap { trigger, subject in subject.map { (trigger, $0) } }
         let match = subjects.lazy.compactMap { found -> GestureMatch? in
             bindings[found.trigger].map {
@@ -90,14 +89,21 @@ extension GestureTrigger {
         // `effect=off` is a subject that no binding claimed; `none` is no
         // subject anywhere. `trigger=` names the one that fired, or the
         // first that had a subject when none was bound.
+        // The thresholds are tuned from this line, which only a Debug build
+        // needs. A reading not taken is not printed.
+        #if DEBUG
+        let circleFields = circle.map {
+            "circle.closings=\($0.closings) "
+                + "circle.overlap=\(String(format: "%.2f", $0.overlap)) "
+                + "circle.hits=\($0.hits.map { String($0.count) } ?? "-") "
+        } ?? ""
         log("scribble.turns=\(scribble.turns) "
             + "scribble.folding=\(String(format: "%.2f", scribble.folding)) "
             + "scribble.hits=\(scribble.hits.map { String($0.count) } ?? "-") "
-            + "circle.closings=\(circle.closings) "
-            + "circle.overlap=\(String(format: "%.2f", circle.overlap)) "
-            + "circle.hits=\(circle.hits.map { String($0.count) } ?? "-") "
+            + circleFields
             + "trigger=\(match?.trigger.rawValue ?? subjects.first?.trigger.rawValue ?? "none") "
             + "effect=\(match?.effect.rawValue ?? (subjects.isEmpty ? "none" : "off"))")
+        #endif
         return match
     }
 }

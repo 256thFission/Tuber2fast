@@ -143,6 +143,23 @@ struct DoubleCircleGestureTests {
         #expect(scribble(strokes).subject == nil)
     }
 
+    @Test("With the double circle unbound its reading is not taken, and the log line leaves it out")
+    func anUnboundReadingIsNotTaken() {
+        let strokes = Self.threeLines() + [Ink.loops(around: Self.twoOfThem, count: 2)]
+        func line(_ bindings: GestureBindings) -> (GestureMatch?, String) {
+            var logged = ""
+            let match = GestureTrigger.recognise(stroke: strokes.count - 1, in: strokes, bindings: bindings) { logged = $0 }
+            return (match, logged)
+        }
+        let (unbound, unboundLine) = line([.scribble: .erase])
+        #expect(unbound == nil)
+        #expect(!unboundLine.contains("circle."))
+        #expect(unboundLine.contains("trigger=none effect=none"), "a reading not taken has no subject")
+        let (bound, boundLine) = line([.doubleCircle: .erase])
+        #expect(bound?.trigger == .doubleCircle)
+        #expect(boundLine.contains("circle.closings="))
+    }
+
     @Test("One loop is not a double circle: it closes once, and the containment test never runs")
     func oneLoop() {
         let read = reading(Self.threeLines() + [Ink.loops(around: Self.twoOfThem, count: 1)])
