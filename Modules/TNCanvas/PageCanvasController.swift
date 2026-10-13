@@ -94,7 +94,8 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
     /// Every layer of the installed snapshot, in stack order, hit by its
     /// placement. A tap that lands inside one is an intention, reported and
     /// never acted on here. A locked layer is still hit: the lasso raises a
-    /// frame with no handles and an Unlock action, which is the only way back.
+    /// frame with no handles and an Unlock action. That Unlock, or an Undo of
+    /// the lock, is the way back.
     private(set) var layers: [Layer] = []
 
     private var tool: CanvasTool
@@ -428,7 +429,8 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
     /// The committed composite has landed; the inert overlay comes down. An
     /// end for a layer with no overlay coming down answers a begin instead:
     /// the notebook refused it because the tap landed on a rect a restore
-    /// had already removed, and the session it never opened is over.
+    /// had already removed, or on a box an undo had relocked, and the
+    /// session it never opened is over.
     func endTextEditing(layer: LayerID) {
         if closing[layer] == nil, case .opening = phase { phase = .idle }
         closing.removeValue(forKey: layer)?.removeFromSuperview()
