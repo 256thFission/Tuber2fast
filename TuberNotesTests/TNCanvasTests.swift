@@ -242,6 +242,116 @@ struct TNCanvasTests {
         #expect(reporter.inkChanges.isEmpty)
     }
 
+    // MARK: - Turning the page
+
+    /// Six pages, page `i` installed holding `i + 1` strokes, on page 0: the
+    /// live window is pages 0 and 1, and the decoded window runs to page 2.
+    private func sixInstalledPages(_ reporter: RecordingReporter) -> (PagedCanvasController, [PageID]) {
+        let runtime = hosted(reporter)
+        let pages = descriptors(6)
+        runtime.setPages(pages, seq: StructureSeq(1), answering: nil)
+        for (index, page) in pages.enumerated() {
+            runtime.installContent(
+                .editable(id: page.id, ink: strokeDrawing(strokes: index + 1), layers: [], composite: nil, inkSeq: InkSeq(UInt64(index + 1)))
+            )
+        }
+        return (runtime, pages.map(\.id))
+    }
+
+    private func finalStrokeCounts(_ reporter: RecordingReporter) -> [PageID: Int?] {
+        Dictionary(reporter.retired.map { ($0.page, $0.finalInk?.strokes.count) }, uniquingKeysWith: { first, _ in first })
+    }
+
+    @Test("A turn retires the canvases that leave the live window, each with its own ink, and builds the ones that enter")
+    func aTurnRetiresWhatLeavesAndBuildsWhatEnters() {
+        let reporter = RecordingReporter()
+        let (runtime, ids) = sixInstalledPages(reporter)
+        #expect(Set(runtime.canvases.keys) == [ids[0], ids[1]])
+        #expect(reporter.retired.isEmpty)
+
+        settle(runtime, at: 3)
+
+        #expect(runtime.currentPageID == ids[3])
+        #expect(finalStrokeCounts(reporter) == [ids[0]: 1, ids[1]: 2])
+        #expect(Set(runtime.canvases.keys) == Set(ids[2...4]))
+        for index in 2...4 {
+            #expect(runtime.canvases[ids[index]]?.canvasView.drawing.strokes.count == index + 1)
+        }
+        #expect(reporter.windows.last == Array(ids[1...5]))
+        _ = runtime.retireAll()
+    }
+
+    @Test("Turning back retires the far canvases once each and rebuilds the near ones from their snapshots")
+    func aTurnBackRebuildsFromTheSnapshots() {
+        let reporter = RecordingReporter()
+        let (runtime, ids) = sixInstalledPages(reporter)
+        settle(runtime, at: 3)
+        reporter.retired.removeAll()
+
+        settle(runtime, at: 0)
+
+        #expect(finalStrokeCounts(reporter) == [ids[2]: 3, ids[3]: 4, ids[4]: 5])
+        #expect(reporter.retired.count == 3)
+        #expect(Set(runtime.canvases.keys) == [ids[0], ids[1]])
+        #expect(runtime.canvases[ids[0]]?.canvasView.drawing.strokes.count == 1)
+        #expect(runtime.canvases[ids[1]]?.canvasView.drawing.strokes.count == 2)
+        #expect(reporter.windows.last == Array(ids[0...2]))
+        _ = runtime.retireAll()
+    }
+
+    @Test("A page that leaves the live window and comes back is rebuilt holding the ink it left with")
+    func aReturningPageCarriesTheInkItLeftWith() async throws {
+        let reporter = RecordingReporter()
+        let (runtime, ids) = sixInstalledPages(reporter)
+        let canvas = try #require(runtime.canvases[ids[1]])
+        // The install's echo latch clears at the end of its turn, so the
+        // stroke below is reported as the edit it is.
+        await hop()
+
+        commitStroke(strokeDrawing(strokes: 5), on: canvas)
+        #expect(reporter.inkChanges.count == 1)
+        #expect(reporter.inkChanges.first?.echoOf == nil)
+
+        settle(runtime, at: 3)
+        #expect(finalStrokeCounts(reporter)[ids[1]] == 5)
+
+        settle(runtime, at: 0)
+        let rebuilt = try #require(runtime.canvases[ids[1]])
+        #expect(rebuilt !== canvas)
+        #expect(rebuilt.canvasView.drawing.strokes.count == 5, "the ink it left with, not the two strokes its install described")
+        _ = runtime.retireAll()
+    }
+
+    @Test("Outside the live window and inside the decoded one, a slot is a placeholder, and a refused page's says why")
+    func theDecodedWindowHoldsPlaceholders() {
+        let reporter = RecordingReporter()
+        let (runtime, ids) = sixInstalledPages(reporter)
+        runtime.installContent(.placeholder(id: ids[5], faults: [.missingInk]))
+
+        settle(runtime, at: 3)
+
+        #expect(Set(runtime.placeholders.keys) == [ids[1], ids[5]])
+        #expect(runtime.placeholders[ids[5]]?.text == PlaceholderCopy.text(for: .missingInk))
+        #expect(runtime.canvases[ids[5]] == nil)
+        _ = runtime.retireAll()
+    }
+
+    @Test("The decoded window is reported once per change, and a settle that changes nothing reports nothing")
+    func theWindowIsReportedOncePerChange() {
+        let reporter = RecordingReporter()
+        let (runtime, ids) = sixInstalledPages(reporter)
+        #expect(reporter.windows == [Array(ids[0...2])])
+
+        settle(runtime, at: 3)
+        settle(runtime, at: 5)
+        settle(runtime, at: 4)
+        settle(runtime, at: 4)
+
+        #expect(reporter.windows == [Array(ids[0...2]), Array(ids[1...5]), Array(ids[3...5]), Array(ids[2...5])])
+        #expect(reporter.becameCurrent == [ids[3], ids[5], ids[4]])
+        _ = runtime.retireAll()
+    }
+
     // MARK: - The end boundary
 
     @Test("A pull past the last page asks for one, and the answer lands on it")
@@ -485,30 +595,6 @@ struct TNCanvasTests {
         }
 
         _ = runtime.retireAll()
-    }
-
-    /// A laid-out runtime in a key window. The first layout is the first
-    /// viewport it has ever had, and the window is built there; the window is
-    /// what lets a text view become first responder.
-    private func hosted(_ reporter: RecordingReporter) -> PagedCanvasController {
-        let runtime = PagedCanvasController(reporter: reporter)
-        host(runtime)
-        return runtime
-    }
-
-    /// Gives a runtime its first viewport. Split out so a test can drive a
-    /// runtime that has been told things before any layout existed, which is
-    /// the state every tab opens in.
-    private func host(_ runtime: PagedCanvasController) {
-        // The host app's scene: these tests run inside it, and a window
-        // without a scene is not a key window.
-        let scene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first!
-        let window = UIWindow(windowScene: scene)
-        window.frame = CGRect(x: 0, y: 0, width: 820, height: 1180)
-        window.rootViewController = runtime
-        window.makeKeyAndVisible()
-        WindowKeeper.shared.windows.append(window)
-        runtime.view.layoutIfNeeded()
     }
 
     @Test("A scroll asked for before the first layout lands when the layout arrives, and reports the turn once")
@@ -1165,33 +1251,6 @@ struct TNCanvasTests {
         #expect(!selection.panRecognizer.isEnabled)
         #expect(selection.frame.origin == CGPoint(x: 100, y: 200))
         _ = runtime.retireAll()
-    }
-
-    private func descriptors(_ count: Int) -> [PageDescriptor] {
-        (0..<count).map { _ in
-            PageDescriptor(id: PageID(), geometry: .letter, paper: .known(.drawn(.blank)))
-        }
-    }
-
-    private func strokeDrawing(strokes: Int) -> PKDrawing {
-        let ink = PKInk(.pen, color: .black)
-        return PKDrawing(
-            strokes: (0..<strokes).map { index in
-                let y = Double(index) * 20 + 40
-                let points = (0..<8).map { step in
-                    PKStrokePoint(
-                        location: CGPoint(x: Double(step) * 40 + 40, y: y),
-                        timeOffset: Double(step) * 0.01,
-                        size: CGSize(width: 3, height: 3),
-                        opacity: 1,
-                        force: 1,
-                        azimuth: 0,
-                        altitude: .pi / 2
-                    )
-                }
-                return PKStroke(ink: ink, path: PKStrokePath(controlPoints: points, creationDate: Date()))
-            }
-        )
     }
 }
 

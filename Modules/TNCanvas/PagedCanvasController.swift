@@ -35,7 +35,7 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
     /// ask what the window built without a `…ForTesting` member existing in the
     /// build people hold.
     private(set) var canvases: [PageID: PageCanvasController] = [:]
-    private var placeholders: [PageID: PagePlaceholderView] = [:]
+    private(set) var placeholders: [PageID: PagePlaceholderView] = [:]
 
     /// A canvas whose retire was deferred by a stroke in flight, and whose page
     /// has already left the list. It is retired, and released, when the stroke
