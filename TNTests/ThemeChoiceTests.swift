@@ -18,15 +18,16 @@ struct ThemeChoiceTests {
         for preset in Theme.presets {
             #expect(Theme.preset(preset.id)?.theme == preset.theme)
         }
-        #expect(Theme.preset(ThemeID(rawValue: "nintendo64")) == nil)
+        #expect(Theme.preset(ThemeID(rawValue: "noSuchTheme")) == nil)
     }
 
     @Test("Following the system is the two Macarons; a preset is itself in either")
-    func resolve() {
+    func resolve() throws {
         #expect(ThemeChoice.system.resolve(dark: false) == .macaron)
         #expect(ThemeChoice.system.resolve(dark: true) == .macaronDark)
-        let boy = ThemeID(rawValue: "gameBoy")
-        #expect(ThemeChoice.preset(boy).resolve(dark: false) == .gameBoy)
-        #expect(ThemeChoice.preset(boy).resolve(dark: true) == .gameBoy)
+        let lime = ThemeID(rawValue: "lime")
+        let theme = try #require(Theme.preset(lime)).theme
+        #expect(ThemeChoice.preset(lime).resolve(dark: false) == theme)
+        #expect(ThemeChoice.preset(lime).resolve(dark: true) == theme)
     }
 }

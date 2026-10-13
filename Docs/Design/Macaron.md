@@ -107,8 +107,9 @@ colour in the mocks. It is a per-notebook preset, not a theme token.
 
 **The paper escape.** When `contrast(fill, ink) < 1.6` the mix target flips
 from `ink` to `paper` at the same percentage. This is how the ink swatch
-gets an outline at all, and how Game Boy's greens survive. Eight of thirty-six
-tokens across the six mocked themes take it; the rest take the plain rule.
+gets an outline at all, and how Lime's purple, nearly as dark as its ink,
+keeps one. Eight of thirty-six tokens across the six mocked themes take it;
+the rest take the plain rule.
 
 Default-theme results, for checking a build against the mocks:
 
@@ -301,8 +302,8 @@ Each step ends in something that can be looked at on the iPad.
 5. **Band** with keycap tabs (active sunk), flat everything else, dirty dot.
 6. **Seat**, flat, docked and floating, resize with the dashed target.
 7. **Lassos**: box with flat handles, magic loop at 28%.
-8. **Theme switching** with at least Switch and Game Boy from the Themes
-   board, to prove the derivation and the paper escape on real chrome.
+8. **Theme switching** with at least two presets beyond the Macarons, to
+   prove the derivation and the paper escape on real chrome.
 9. **Dark mode** (mix toward white).
 
 ## 11. Verification

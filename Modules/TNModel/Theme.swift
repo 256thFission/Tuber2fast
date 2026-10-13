@@ -203,104 +203,94 @@ package struct Theme: Equatable, Sendable {
         invertsMix: true
     )
 
-    /// The console's own white-grey shell, with the Joy-Cons' neon red and
-    /// neon blue on it.
-    package static let switchConsole = Theme(
-        ground: hex("#E7E9EC"),
-        chrome: hex("#F2F3F5"),
-        accent: hex("#FF3C28"),
-        secondary: hex("#0AB9E6"),
-        ink: hex("#1B1D21"),
-        // The two Joy-Cons first, then the neons the other pairs ship in,
-        // and the shell's own grey last.
-        palette: [
-            hex("#1B1D21"), hex("#FF3C28"), hex("#0AB9E6"), hex("#E0A400"),
-            hex("#17A34A"), hex("#8C33C2"), hex("#5A6270"),
-        ]
-    )
-
-    /// The DMG: its screen's lightest green is the ground, its darkest is
-    /// the ink, and the shell's grey-green is the chrome. The magenta and
-    /// the purple are the lettering printed around the screen, which is the
-    /// only part of a Game Boy that is not a green or a grey.
-    package static let gameBoy = Theme(
-        ground: hex("#9BBC0F"),
-        chrome: hex("#C6CBA5"),
-        accent: hex("#B0176B"),
-        secondary: hex("#5C2B8A"),
-        ink: hex("#0F380F"),
-        // The screen's four greens are only three here: the lightest is the
-        // ground and cannot be written with. The red is the power lamp, and
-        // the grey is the lettering on the shell.
-        palette: [
-            hex("#0F380F"), hex("#306230"), hex("#8BAC0F"), hex("#B0176B"),
-            hex("#5C2B8A"), hex("#C1272D"), hex("#4B5A67"),
-        ]
-    )
-
-    /// Paper and grass: a cream ground, a leaf green, the sky, and an ink
-    /// that is brown rather than black.
-    package static let animalCrossing = Theme(
-        ground: hex("#F3EAD6"),
-        chrome: hex("#FFFBF0"),
-        accent: hex("#8CC63F"),
-        secondary: hex("#7EC8E3"),
-        ink: hex("#7A6244"),
-        // The brown ink leads, since here that is the near-black. The leaf
-        // and the sky are the chrome's, deepened: both are pale enough on
-        // the chrome to sit behind a page, and neither can be read on one.
-        palette: [
-            hex("#7A6244"), hex("#5EA226"), hex("#3E9ECF"), hex("#D9A521"),
-            hex("#D2527C"), hex("#2E6DA4"), hex("#E1701E"),
-        ]
-    )
-
-    /// Pink on pink, with the sky for the second colour and a plum for the
-    /// ink.
-    package static let kirby = Theme(
-        ground: hex("#FFE9F1"),
-        chrome: hex("#FFFFFF"),
-        accent: hex("#FF8AB5"),
-        secondary: hex("#7FC8F0"),
-        ink: hex("#3A2233"),
-        // The plum, then the pink and the sky a shade down from the chrome's,
-        // then the reds and the star yellow that pink is always drawn against.
-        palette: [
-            hex("#3A2233"), hex("#F2669B"), hex("#4FA8DE"), hex("#D6335A"),
-            hex("#DBA00A"), hex("#5B4FC2"), hex("#57A65B"),
-        ]
-    )
-
-    /// Enamel on a grey shell: one orange, and a black that is the ink and
-    /// the second colour at once. It is the theme the paper escape exists
-    /// for, since a secondary that is the ink has nowhere darker to go.
-    package static let teenageEnamel = Theme(
-        ground: hex("#D9D9D6"),
-        chrome: hex("#EFEFEC"),
-        accent: hex("#FF5500"),
-        secondary: hex("#1A1A1A"),
-        ink: hex("#1A1A1A"),
-        // The black and the orange are the whole theme, and a palette of two
-        // is not a palette. The other five are the key colours off the
-        // instruments the shell is quoting, which is where its own colour
-        // budget goes when it spends any.
-        palette: [
-            hex("#1A1A1A"), hex("#FF5500"), hex("#6E6E6B"), hex("#0052CC"),
-            hex("#1F8A5B"), hex("#E02B20"), hex("#D8A100"),
-        ]
-    )
-
     /// Every theme this build ships, in the order the design board lays
     /// them out. A theme is a row of this table and nothing more: no view
     /// names one, and adding one is a row.
     package static let presets: [ThemePreset] = [
         ThemePreset(id: ThemeID(rawValue: "macaron"), name: "Macaron", theme: .macaron),
         ThemePreset(id: ThemeID(rawValue: "macaronDark"), name: "Macaron Dark", theme: .macaronDark),
-        ThemePreset(id: ThemeID(rawValue: "switch"), name: "Switch", theme: .switchConsole),
-        ThemePreset(id: ThemeID(rawValue: "gameBoy"), name: "Game Boy", theme: .gameBoy),
-        ThemePreset(id: ThemeID(rawValue: "animalCrossing"), name: "Animal Crossing", theme: .animalCrossing),
-        ThemePreset(id: ThemeID(rawValue: "kirby"), name: "Kirby", theme: .kirby),
-        ThemePreset(id: ThemeID(rawValue: "teenageEnamel"), name: "Teenage Enamel", theme: .teenageEnamel),
+        // A white-grey shell with a neon red and a neon blue on it.
+        ThemePreset(id: ThemeID(rawValue: "neon"), name: "Neon", theme: Theme(
+            ground: hex("#E7E9EC"),
+            chrome: hex("#F2F3F5"),
+            accent: hex("#FF3C28"),
+            secondary: hex("#0AB9E6"),
+            ink: hex("#1B1D21"),
+            // The ink, then the red and the blue, then three more neons, and
+            // the shell's own grey last.
+            palette: [
+                hex("#1B1D21"), hex("#FF3C28"), hex("#0AB9E6"), hex("#E0A400"),
+                hex("#17A34A"), hex("#8C33C2"), hex("#5A6270"),
+            ]
+        )),
+        // An old handheld: its screen's lightest green is the ground, its
+        // darkest is the ink, and the shell's grey-green is the chrome. The
+        // magenta and the purple are the lettering printed around the
+        // screen, the only part of the handheld that is not a green or a grey.
+        ThemePreset(id: ThemeID(rawValue: "lime"), name: "Lime", theme: Theme(
+            ground: hex("#9BBC0F"),
+            chrome: hex("#C6CBA5"),
+            accent: hex("#B0176B"),
+            secondary: hex("#5C2B8A"),
+            ink: hex("#0F380F"),
+            // The screen's four greens are only three here: the lightest is
+            // the ground and cannot be written with. The red is the power
+            // lamp, and the grey is the lettering on the shell.
+            palette: [
+                hex("#0F380F"), hex("#306230"), hex("#8BAC0F"), hex("#B0176B"),
+                hex("#5C2B8A"), hex("#C1272D"), hex("#4B5A67"),
+            ]
+        )),
+        // Paper and grass: a cream ground, a leaf green, the sky, and an ink
+        // that is brown rather than black.
+        ThemePreset(id: ThemeID(rawValue: "meadow"), name: "Meadow", theme: Theme(
+            ground: hex("#F3EAD6"),
+            chrome: hex("#FFFBF0"),
+            accent: hex("#8CC63F"),
+            secondary: hex("#7EC8E3"),
+            ink: hex("#7A6244"),
+            // The brown ink leads, since here that is the near-black. The leaf
+            // and the sky are the chrome's, deepened: both are pale enough on
+            // the chrome to sit behind a page, and neither can be read on one.
+            palette: [
+                hex("#7A6244"), hex("#5EA226"), hex("#3E9ECF"), hex("#D9A521"),
+                hex("#D2527C"), hex("#2E6DA4"), hex("#E1701E"),
+            ]
+        )),
+        // Pink on pink, with the sky for the second colour and a plum for the
+        // ink.
+        ThemePreset(id: ThemeID(rawValue: "bubblegum"), name: "Bubblegum", theme: Theme(
+            ground: hex("#FFE9F1"),
+            chrome: hex("#FFFFFF"),
+            accent: hex("#FF8AB5"),
+            secondary: hex("#7FC8F0"),
+            ink: hex("#3A2233"),
+            // The plum, then the pink and the sky a shade down from the
+            // chrome's, then the reds and the star yellow that pink is always
+            // drawn against.
+            palette: [
+                hex("#3A2233"), hex("#F2669B"), hex("#4FA8DE"), hex("#D6335A"),
+                hex("#DBA00A"), hex("#5B4FC2"), hex("#57A65B"),
+            ]
+        )),
+        // Enamel on a grey shell: one orange, and a black that is the ink and
+        // the second colour at once. It is the theme the paper escape exists
+        // for, since a secondary that is the ink has nowhere darker to go.
+        ThemePreset(id: ThemeID(rawValue: "enamel"), name: "Enamel", theme: Theme(
+            ground: hex("#D9D9D6"),
+            chrome: hex("#EFEFEC"),
+            accent: hex("#FF5500"),
+            secondary: hex("#1A1A1A"),
+            ink: hex("#1A1A1A"),
+            // The black and the orange are the whole theme, and a palette of
+            // two is not a palette. The other five are the key colours off the
+            // instruments the shell is quoting, which is where its own colour
+            // budget goes when it spends any.
+            palette: [
+                hex("#1A1A1A"), hex("#FF5500"), hex("#6E6E6B"), hex("#0052CC"),
+                hex("#1F8A5B"), hex("#E02B20"), hex("#D8A100"),
+            ]
+        )),
     ]
 
     /// `nil` for an id this build has no row for, which is how a preference

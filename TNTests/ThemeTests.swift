@@ -78,9 +78,9 @@ struct ThemeTests {
         #expect(Theme.luminance(theme.ground2) < Theme.luminance(theme.ground))
     }
 
-    @Test("Teenage Enamel's secondary is its ink, so it is the one token that escapes")
-    func teenageEnamelEscape() {
-        let enamel = Theme.teenageEnamel
+    @Test("Enamel's secondary is its ink, so it is the one token that escapes")
+    func enamelEscape() throws {
+        let enamel = try preset("enamel")
         #expect(enamel.secondary == enamel.ink)
         near(enamel.outline(of: enamel.secondary), "#7A7A7A", "enamel secondary")
         for token in [enamel.ground, enamel.chrome, enamel.accent] {
@@ -89,19 +89,36 @@ struct ThemeTests {
         near(enamel.outline(of: enamel.accent), "#9F3C0B", "enamel accent")
     }
 
-    @Test("Game Boy's purple escapes and its greens take the plain rule")
-    func gameBoyEscape() {
-        let boy = Theme.gameBoy
-        // The plan expected the escape on the chrome and the ground. The
-        // board's hexes put both greens well clear of the ink, so it fires
-        // on the purple secondary instead.
-        #expect(escapes(boy, boy.secondary))
-        near(boy.outline(of: boy.secondary), "#A084BB", "game boy secondary")
-        for token in [boy.ground, boy.chrome, boy.accent] {
-            #expect(!escapes(boy, token))
+    @Test("Lime's purple escapes and its greens take the plain rule")
+    func limeEscape() throws {
+        let lime = try preset("lime")
+        // Both greens sit well clear of the ink, so the escape fires on the
+        // purple secondary, which is nearly as dark as the ink is.
+        #expect(escapes(lime, lime.secondary))
+        near(lime.outline(of: lime.secondary), "#A084BB", "lime secondary")
+        for token in [lime.ground, lime.chrome, lime.accent] {
+            #expect(!escapes(lime, token))
         }
-        near(boy.outline(of: boy.ground), "#60850F", "game boy ground")
-        near(boy.outline(of: boy.chrome), "#798D66", "game boy chrome")
+        near(lime.outline(of: lime.ground), "#60850F", "lime ground")
+        near(lime.outline(of: lime.chrome), "#798D66", "lime chrome")
+    }
+
+    @Test("No preset is named or saved under someone else's mark")
+    func presetNamesAreNeutral() {
+        // Spelled in pieces, so that a search of the tree for these marks
+        // finds nothing but the names it is meant to catch.
+        let marks = [
+            "swi" + "tch", "game" + "boy", "animal" + "crossing",
+            "kir" + "by", "teen" + "age", "nin" + "tendo",
+        ]
+        for preset in Theme.presets {
+            for label in [preset.name, preset.id.rawValue] {
+                let folded = label.lowercased().filter { !$0.isWhitespace }
+                for mark in marks {
+                    #expect(!folded.contains(mark), "\(label) carries someone else's mark")
+                }
+            }
+        }
     }
 
     @Test("No preset ships a line its own fill can hide")
@@ -141,6 +158,10 @@ struct ThemeTests {
             let darkest = palette.min { Theme.luminance($0) < Theme.luminance($1) }
             #expect(palette.first == darkest, "\(preset.name) opens on a colour that is not its darkest")
         }
+    }
+
+    private func preset(_ id: String) throws -> Theme {
+        try #require(Theme.preset(ThemeID(rawValue: id))).theme
     }
 
     /// The escape is private, and what it does is public: an outline that
