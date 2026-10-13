@@ -679,5 +679,7 @@ Not gaps — properties of the tooling that read as project defects when hit.
   each mode's glyph on the cap. The simulator cannot tap the cap, or land
   two taps in one turn, so the bar re-reading the tool at a swatch or width
   tap is reviewed by diff only. Owed: tap the eraser twice and see the
-  glyph change; object erase takes whole strokes and pixel erase cuts; tap
-  a swatch and the band's Text chip with two fingers at once: no crash.
+  glyph change; object erase takes whole strokes and pixel erase cuts; with
+  two notebooks open, hold the pixel eraser in one and switch the other to
+  object, and the first still shows the pixel glyph; tap a swatch and the
+  band's Text chip with two fingers at once: no crash.
