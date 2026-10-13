@@ -45,6 +45,37 @@ struct LibraryTests {
         #expect(await library.store.folderID(of: "Math") != nil)
     }
 
+    @Test("Creating under a taken name lands on the first free Name (n); renaming onto one refuses")
+    func takenNames() async throws {
+        let (scratch, library) = try makeLibrary("lib-taken-names")
+        defer { withExtendedLifetime(scratch) {} }
+        _ = try await library.store.createNotebook(named: "New notebook", in: "")
+        let second = try await library.store.createNotebook(named: "New notebook", in: "")
+        let third = try await library.store.createNotebook(named: "New notebook", in: "")
+        #expect(second.relativePath == "New notebook (1).tubernotes")
+        #expect(third.relativePath == "New notebook (2).tubernotes")
+        _ = try await library.store.createFolder(named: "New folder", in: "")
+        let folder = try await library.store.createFolder(named: "New folder", in: "")
+        #expect(folder.relativePath == "New folder (1)")
+        await #expect(throws: LibraryError.alreadyExists("New notebook (1)")) {
+            try await library.rename(at: third.relativePath, to: "New notebook (1)")
+        }
+    }
+
+    @Test("Two creates in flight under one name land as two notebooks under two names")
+    func concurrentCreatesClaimDistinctNames() async throws {
+        let (scratch, library) = try makeLibrary("lib-concurrent-create")
+        defer { withExtendedLifetime(scratch) {} }
+        let store = library.store
+        async let first = store.createNotebook(named: "New notebook", in: "")
+        async let second = store.createNotebook(named: "New notebook", in: "")
+        let made = try await [first, second]
+        #expect(Set(made.map(\.relativePath)) == ["New notebook.tubernotes", "New notebook (1).tubernotes"])
+        let ids = made.compactMap(\.notebookID)
+        #expect(Set(ids).count == 2)
+        #expect(Set(try await store.list(folder: "").compactMap(\.notebookID)) == Set(ids))
+    }
+
     @Test("A move into the current parent returns the item and moves no files")
     func movingIntoTheCurrentParent() async throws {
         let (scratch, library) = try makeLibrary("lib-move-nowhere")
@@ -138,12 +169,33 @@ struct LibraryTests {
         // Collision: trash it, create another with the same name, recover.
         let again = try await library.trash(at: recovered.relativePath)
         _ = try await library.store.createNotebook(named: "Journal", in: "Old")
-        #expect(try await library.store.recover(again).relativePath == "Old/Journal 2.tubernotes")
+        #expect(try await library.store.recover(again).relativePath == "Old/Journal (1).tubernotes")
 
         // Vanished origin: trash the notebook, then trash its folder, recover the notebook.
-        let third = try await library.trash(at: "Old/Journal 2.tubernotes")
+        let third = try await library.trash(at: "Old/Journal (1).tubernotes")
         _ = try await library.trash(at: "Old")
-        #expect(try await library.store.recover(third).relativePath == "Journal 2.tubernotes")
+        #expect(try await library.store.recover(third).relativePath == "Journal (1).tubernotes")
+    }
+
+    @Test("A recovery and a duplicate land on the first free Name (n), as a create does")
+    func recoverUsesFreeName() async throws {
+        let (scratch, library) = try makeLibrary("lib-recover-free-name")
+        defer { withExtendedLifetime(scratch) {} }
+        let journal = try await library.store.createNotebook(named: "Journal", in: "")
+        let trashedNotebook = try await library.trash(at: journal.relativePath)
+        _ = try await library.store.createNotebook(named: "Journal", in: "")
+        _ = try await library.store.createNotebook(named: "Journal", in: "")
+        #expect(try await library.store.recover(trashedNotebook).relativePath == "Journal (2).tubernotes")
+
+        let term = try await library.store.createFolder(named: "Term", in: "")
+        let trashedFolder = try await library.trash(at: term.relativePath)
+        _ = try await library.store.createFolder(named: "Term", in: "")
+        let recovered = try await library.store.recover(trashedFolder)
+        #expect(recovered.relativePath == "Term (1)")
+        #expect(recovered.folderID == term.folderID)
+
+        #expect(try await library.duplicateNotebook(at: "Journal.tubernotes").relativePath == "Journal copy.tubernotes")
+        #expect(try await library.duplicateNotebook(at: "Journal.tubernotes").relativePath == "Journal copy (1).tubernotes")
     }
 
     @Test("Duplicate mints a new notebook identity, keeps page identities, and the copy's ink reads")
@@ -688,7 +740,7 @@ struct LibraryTests {
             // lands at the root, suffixed when the name is taken.
             _ = try await library.store.createNotebook(named: "Essay", in: "")
             let recovered = try await library.store.recover(refused)
-            #expect(recovered.relativePath == "Essay 2.tubernotes", "\(record)")
+            #expect(recovered.relativePath == "Essay (1).tubernotes", "\(record)")
             #expect(recovered.notebookID == item.notebookID)
             #expect(try await library.store.listTrash().isEmpty)
             #expect(try FileManager.default.contentsOfDirectory(atPath: library.store.trashRoot.path).isEmpty)
@@ -755,11 +807,23 @@ struct LibraryTests {
             let listed = try await library.store.list(folder: "")
             #expect(listed.map(\.name) == (published ? ["Essay"] : []), "\(fault)")
             #expect(listed.allSatisfy { $0.notebookID != nil }, "\(fault)")
+            let held = try FileManager.default.contentsOfDirectory(atPath: library.store.notebooksRoot.path)
+            #expect(held == (published ? ["Essay.tubernotes"] : []), "\(fault)")
             #expect(try FileManager.default.contentsOfDirectory(atPath: library.store.stagingRoot.path).isEmpty, "\(fault)")
             if !published {
                 #expect(try await library.store.createNotebook(named: "Essay", in: "").notebookID != nil, "\(fault)")
             }
         }
+
+        // Under a taken name the landing meets `Essay` and goes on to claim
+        // `Essay (1)`; failing that publish leaves the first notebook alone.
+        let (scratch, library) = try makeLibrary("lib-create-fault-taken")
+        defer { withExtendedLifetime(scratch) {} }
+        _ = try await library.store.createNotebook(named: "Essay", in: "")
+        let store = try faulting(scratch, .failPublish(nth: counts.publishes + 1))
+        await #expect(throws: LibraryError.self) { try await store.createNotebook(named: "Essay", in: "") }
+        #expect(try FileManager.default.contentsOfDirectory(atPath: library.store.notebooksRoot.path) == ["Essay.tubernotes"])
+        #expect(try stagingIsEmpty(library))
     }
 
     @Test("A landing whose directory sync fails throws, and leaves the item at its old path or its new one")

@@ -68,6 +68,23 @@ package struct FolderID: BrandedID {
 
 package enum ItemKind: String, Sendable, Codable {
     case folder, notebook
+
+    /// The directory an item of this kind named `name` is stored as: a
+    /// notebook is a package, a folder is its name.
+    package func fileName(for name: String) -> String {
+        self == .notebook ? "\(name).\(PackageLayout.packageExtension)" : name
+    }
+}
+
+/// Paths relative to `Notebooks/`, where the root is the empty string.
+package enum LibraryPath {
+    package static func join(_ folder: String, _ name: String) -> String {
+        folder.isEmpty ? name : "\(folder)/\(name)"
+    }
+
+    package static func parent(of path: String) -> String {
+        path.lastIndex(of: "/").map { String(path[..<$0]) } ?? ""
+    }
 }
 
 /// What an item is, whatever it is called and wherever it sits. A star, a
@@ -99,10 +116,7 @@ package struct LibraryItem: Sendable, Equatable, Identifiable {
     /// The folder this item sits in, empty at the root. Derived from the
     /// path rather than stored, because the path *is* the identity: a
     /// second copy could only disagree with it.
-    package var parentPath: String {
-        let parts = id.split(separator: "/")
-        return parts.dropLast().joined(separator: "/")
-    }
+    package var parentPath: String { LibraryPath.parent(of: id) }
 
     /// Nil when the sidecar that holds the identity is unreadable.
     package var identity: ItemIdentity? {
@@ -272,8 +286,6 @@ package actor LibraryStore {
         relativePath.isEmpty ? notebooksRoot : notebooksRoot.appendingPathComponent(relativePath)
     }
 
-    private static func packageName(_ name: String) -> String { "\(name).\(PackageLayout.packageExtension)" }
-
     private static func displayName(of fileName: String) -> String {
         let suffix = ".\(PackageLayout.packageExtension)"
         return fileName.hasSuffix(suffix) ? String(fileName.dropLast(suffix.count)) : fileName
@@ -379,6 +391,27 @@ package actor LibraryStore {
         }
     }
 
+    /// Lands `source` in `parent` as `name`, or as the first free `name (1)`,
+    /// `name (2)` and so on, and returns where it landed (*A taken name
+    /// becomes `Name (n)`*). Each candidate is claimed by the landing itself,
+    /// not checked before it, so two of these in flight land under two names.
+    private func freeName(
+        _ name: String, kind: ItemKind, in parent: URL, landing source: URL, doing action: String
+    ) throws(LibraryError) -> URL {
+        var candidate = name
+        var taken = 0
+        while true {
+            let target = parent.appendingPathComponent(kind.fileName(for: candidate), isDirectory: true)
+            do throws(LibraryError) {
+                try land(source, at: target, doing: action)
+                return target
+            } catch .alreadyExists {
+                taken += 1
+                candidate = "\(name) (\(taken))"
+            }
+        }
+    }
+
     // MARK: The tree
 
     package func list(folder relativePath: String) throws(LibraryError) -> [LibraryItem] {
@@ -389,8 +422,7 @@ package actor LibraryStore {
         return names.filter { !$0.hasPrefix(".") }.sorted().compactMap { name in
             let child = folderURL.appendingPathComponent(name)
             guard let kind = kind(at: child) else { return nil }
-            let childPath = relativePath.isEmpty ? name : "\(relativePath)/\(name)"
-            return item(at: childPath, url: child, kind: kind)
+            return item(at: LibraryPath.join(relativePath, name), url: child, kind: kind)
         }
     }
 
@@ -421,8 +453,6 @@ package actor LibraryStore {
         try Self.validate(name: name)
         let parent = url(of: folder)
         guard folder.isEmpty || kind(at: parent) == .folder else { throw .notAFolder(folder) }
-        let target = parent.appendingPathComponent(name, isDirectory: true)
-        guard kind(at: target) == nil else { throw .alreadyExists(name) }
         let staged = stagingRoot.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? fm.removeItem(at: staged) }
         do {
@@ -434,9 +464,8 @@ package actor LibraryStore {
         } catch {
             throw .io("create folder \(name): \(error)")
         }
-        try land(staged, at: target, doing: "create folder \(name)")
-        let path = folder.isEmpty ? name : "\(folder)/\(name)"
-        return item(at: path, url: target, kind: .folder)
+        let target = try freeName(name, kind: .folder, in: parent, landing: staged, doing: "create folder \(name)")
+        return item(at: LibraryPath.join(folder, target.lastPathComponent), url: target, kind: .folder)
     }
 
     /// The sidecar, or why it cannot be read: it is missing, at another
@@ -454,7 +483,8 @@ package actor LibraryStore {
 
     /// A new one-page notebook, committed whole in Staging before it is
     /// published. Its page is US Letter and blank paper unless told
-    /// otherwise. Returns its listing item.
+    /// otherwise. Returns its listing item, named as asked or with the first
+    /// free suffix after it.
     package func createNotebook(
         named name: String, in folder: String,
         geometry: PageGeometry = .letter, paper: DrawnPaper = .blank
@@ -462,8 +492,6 @@ package actor LibraryStore {
         try Self.validate(name: name)
         let parent = url(of: folder)
         guard folder.isEmpty || kind(at: parent) == .folder else { throw .notAFolder(folder) }
-        let target = parent.appendingPathComponent(Self.packageName(name), isDirectory: true)
-        guard kind(at: target) == nil else { throw .alreadyExists(name) }
         let index = NotebookIndex.new(
             notebookID: NotebookID(), firstPage: PageID(), createdAt: Date(),
             geometry: geometry, paper: paper
@@ -475,22 +503,19 @@ package actor LibraryStore {
         } catch {
             throw .format(error)
         }
-        try land(staged, at: target, doing: "create \(name)")
-        let path = folder.isEmpty ? target.lastPathComponent : "\(folder)/\(target.lastPathComponent)"
-        return item(at: path, url: target, kind: .notebook)
+        let target = try freeName(name, kind: .notebook, in: parent, landing: staged, doing: "create \(name)")
+        return item(at: LibraryPath.join(folder, target.lastPathComponent), url: target, kind: .notebook)
     }
 
     package func rename(at relativePath: String, to newName: String) throws(LibraryError) -> LibraryItem {
         try Self.validate(name: newName)
         let (source, kind) = try existing(relativePath)
-        let fileName = kind == .notebook ? Self.packageName(newName) : newName
+        let fileName = kind.fileName(for: newName)
         let target = source.deletingLastPathComponent().appendingPathComponent(fileName, isDirectory: true)
         guard target != source else { return item(at: relativePath, url: source, kind: kind) }
         guard self.kind(at: target) == nil else { throw .alreadyExists(newName) }
         try land(source, at: target, doing: "rename \(relativePath)")
-        let parent = relativePath.contains("/") ? String(relativePath[..<relativePath.lastIndex(of: "/")!]) : ""
-        let path = parent.isEmpty ? fileName : "\(parent)/\(fileName)"
-        return item(at: path, url: target, kind: kind)
+        return item(at: LibraryPath.join(LibraryPath.parent(of: relativePath), fileName), url: target, kind: kind)
     }
 
     package func move(at relativePath: String, toFolder folder: String) throws(LibraryError) -> LibraryItem {
@@ -506,8 +531,7 @@ package actor LibraryStore {
         guard target != source else { return item(at: relativePath, url: source, kind: kind) }
         guard self.kind(at: target) == nil else { throw .alreadyExists(source.lastPathComponent) }
         try land(source, at: target, doing: "move \(relativePath)")
-        let path = folder.isEmpty ? source.lastPathComponent : "\(folder)/\(source.lastPathComponent)"
-        return item(at: path, url: target, kind: kind)
+        return item(at: LibraryPath.join(folder, source.lastPathComponent), url: target, kind: kind)
     }
 
     // MARK: Covers
@@ -617,7 +641,7 @@ package actor LibraryStore {
 
     package func trash(at relativePath: String) throws(LibraryError) -> TrashEntry {
         let (source, kind) = try existing(relativePath)
-        let parentPath = relativePath.contains("/") ? String(relativePath[..<relativePath.lastIndex(of: "/")!]) : ""
+        let parentPath = LibraryPath.parent(of: relativePath)
         let notebookID = kind == .notebook ? notebookID(ofPackageAt: source) : nil
         let containerName = switch kind {
         case .notebook: notebookID?.description ?? UUID().uuidString
@@ -689,31 +713,23 @@ package actor LibraryStore {
         }
     }
 
-    /// Restores the original name. Suffixes only on a real collision; falls
-    /// back to the root when the origin folder is gone, or when the record
-    /// that says where it was could not be read.
+    /// Restores the original name, or the first free suffix after it when
+    /// that is taken; falls back to the root when the origin folder is gone,
+    /// or when the record that says where it was could not be read.
     package func recover(_ entry: TrashEntry) throws(LibraryError) -> LibraryItem {
         let container = trashRoot.appendingPathComponent(entry.id)
         guard let found = trashed(in: container) else { throw .itemNotFound(entry.id) }
         let source = container.appendingPathComponent(found.fileName)
-        let kind = found.kind
         var folder = ""
         if case .success(let record) = found.origin, self.kind(at: url(of: record.originPathHint)) == .folder {
             folder = record.originPathHint
         }
-        let parent = url(of: folder)
-        var fileName = found.fileName
-        var attempt = 2
-        while self.kind(at: parent.appendingPathComponent(fileName)) != nil {
-            let display = Self.displayName(of: found.fileName)
-            fileName = kind == .notebook ? Self.packageName("\(display) \(attempt)") : "\(display) \(attempt)"
-            attempt += 1
-        }
-        let target = parent.appendingPathComponent(fileName, isDirectory: true)
-        try land(source, at: target, doing: "recover \(entry.id)")
+        let target = try freeName(
+            Self.displayName(of: found.fileName), kind: found.kind, in: url(of: folder),
+            landing: source, doing: "recover \(entry.id)"
+        )
         do { try fm.removeItem(at: container) } catch { throw .io("recover \(entry.id): \(error)") }
-        let path = folder.isEmpty ? fileName : "\(folder)/\(fileName)"
-        return item(at: path, url: target, kind: kind)
+        return item(at: LibraryPath.join(folder, target.lastPathComponent), url: target, kind: found.kind)
     }
 
     /// Every container under `Trash/`. Each one that holds an item is listed,
@@ -748,19 +764,11 @@ package actor LibraryStore {
         } catch {
             throw .format(error)
         }
-        let display = Self.displayName(of: source.lastPathComponent)
-        let parent = source.deletingLastPathComponent()
-        var name = "\(display) copy"
-        var attempt = 2
-        while self.kind(at: parent.appendingPathComponent(Self.packageName(name))) != nil {
-            name = "\(display) copy \(attempt)"
-            attempt += 1
-        }
-        let target = parent.appendingPathComponent(Self.packageName(name), isDirectory: true)
-        try land(staged, at: target, doing: "land duplicate of \(relativePath)")
-        let parentPath = relativePath.contains("/") ? String(relativePath[..<relativePath.lastIndex(of: "/")!]) : ""
-        let path = parentPath.isEmpty ? target.lastPathComponent : "\(parentPath)/\(target.lastPathComponent)"
-        return item(at: path, url: target, kind: .notebook)
+        let target = try freeName(
+            "\(Self.displayName(of: source.lastPathComponent)) copy", kind: .notebook,
+            in: source.deletingLastPathComponent(), landing: staged, doing: "land duplicate of \(relativePath)"
+        )
+        return item(at: LibraryPath.join(LibraryPath.parent(of: relativePath), target.lastPathComponent), url: target, kind: .notebook)
     }
 
     // MARK: Migration

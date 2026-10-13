@@ -151,11 +151,47 @@ struct LibraryBrowserTests {
         #expect(browser.refusal == nil)
         #expect(browser.options.newNotebook == NotebookSetup(geometry: a5, paper: .lined))
 
-        // A name that already exists is refused, and a notebook that was not
-        // made is not a choice.
-        await browser.createNotebook(named: "Essay", geometry: .letter, paper: .grid)
+        // A taken name lands beside the first as "Essay (1)", and the caller
+        // gets the item to open.
+        let second = await browser.createNotebook(named: "Essay", geometry: .letter, paper: .grid)
+        #expect(second?.relativePath == "Essay (1).tubernotes")
+        #expect(browser.options.newNotebook == NotebookSetup(geometry: .letter, paper: .grid))
+
+        // A notebook that was not made is not a choice.
+        let refused = await browser.createNotebook(named: "bad/name", geometry: a5, paper: .lined)
+        #expect(refused == nil)
         #expect(browser.refusal != nil)
+        #expect(browser.options.newNotebook == NotebookSetup(geometry: .letter, paper: .grid))
+    }
+
+    @Test("Creating without the sheet takes the last setup, and names repeat beside each other")
+    func creatingOnTheLastSetup() async throws {
+        let (scratch, browser) = try makeBrowser("browser-last-setup")
+        defer { withExtendedLifetime(scratch) {} }
+
+        // Nothing made here yet, so letter blank, as the sheet would open.
+        let first = await browser.createNotebookWithLastSetup(named: "New notebook")
+        #expect(first?.relativePath == "New notebook.tubernotes")
+        #expect(browser.options.newNotebook == NotebookSetup(geometry: .letter, paper: .blank))
+
+        let a5 = PageGeometry(width: 420, height: 595)
+        await browser.createNotebook(named: "Essay", geometry: a5, paper: .lined)
+
+        let second = await browser.createNotebookWithLastSetup(named: "New notebook")
+        #expect(second?.relativePath == "New notebook (1).tubernotes")
         #expect(browser.options.newNotebook == NotebookSetup(geometry: a5, paper: .lined))
+    }
+
+    @Test("A new item's name is trimmed, and a blank one is New notebook or New folder")
+    func aBlankNameTakesTheDefault() async throws {
+        let (scratch, browser) = try makeBrowser("browser-blank-name")
+        defer { withExtendedLifetime(scratch) {} }
+        await browser.createFolder(named: "  ")
+        await browser.createFolder(named: " Term\n")
+        let made = await browser.createNotebook(named: "", geometry: .letter, paper: .blank)
+        #expect(made?.relativePath == "New notebook.tubernotes")
+        #expect(browser.refusal == nil)
+        #expect(browser.displayed.map(\.name).sorted() == ["New folder", "New notebook", "Term"])
     }
 
     @Test("A notebook made while the stars cannot be read is remembered, and the stars' line stays up")

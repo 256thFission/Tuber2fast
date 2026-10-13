@@ -145,8 +145,7 @@ package final class LibraryBrowser {
     }
 
     package func back() {
-        guard let slash = folder.lastIndex(of: "/") else { folder = ""; leaveListing(); return }
-        folder = String(folder[..<slash])
+        folder = LibraryPath.parent(of: folder)
         leaveListing()
     }
 
@@ -197,21 +196,21 @@ package final class LibraryBrowser {
 
     /// Untyped because a closure does not infer a typed throw; every call
     /// inside throws `LibraryError`, and the fallback names anything else.
-    /// True when the work landed, read before the reload can raise the
-    /// stars' fault.
+    /// What the work returned, or nil when it was refused, read before the
+    /// reload can raise the stars' fault.
     @discardableResult
-    private func perform(_ work: () async throws -> Void) async -> Bool {
+    private func perform<Made>(_ work: () async throws -> Made) async -> Made? {
+        var made: Made?
         do {
-            try await work()
+            made = try await work()
             refusal = nil
         } catch let error as LibraryError {
             refusal = error.description
         } catch {
             refusal = "\(error)"
         }
-        let landed = refusal == nil
         await reload()
-        return landed
+        return made
     }
 
     package func rename(_ item: LibraryItem, to name: String) async {
@@ -265,16 +264,39 @@ package final class LibraryBrowser {
     }
 
     package func createFolder(named name: String) async {
-        await perform { _ = try await library.store.createFolder(named: name, in: folder) }
+        await perform { _ = try await library.store.createFolder(named: Self.name(name, or: "New folder"), in: folder) }
     }
 
-    package func createNotebook(named name: String, geometry: PageGeometry, paper: DrawnPaper) async {
-        let made = await perform { _ = try await library.store.createNotebook(named: name, in: folder, geometry: geometry, paper: paper) }
+    /// The notebook made, for the caller to open, or nil when the store
+    /// refused; the refusal is in `refusal`.
+    @discardableResult
+    package func createNotebook(named name: String, geometry: PageGeometry, paper: DrawnPaper) async -> LibraryItem? {
+        let made = await perform {
+            try await library.store.createNotebook(named: Self.name(name, or: "New notebook"), in: folder, geometry: geometry, paper: paper)
+        }
         // Only a notebook that was actually made is a choice worth opening on
         // next time. `perform` says so, not `refusal`, which also carries the
         // stars' fault. The `didSet` on `options` is what writes it.
-        guard made else { return }
+        guard let made else { return nil }
         options.newNotebook = NotebookSetup(geometry: geometry, paper: paper)
+        return made
+    }
+
+    /// Creation without the sheet: the size and paper are the last made here,
+    /// and letter blank before there is one, which is what the sheet itself
+    /// opens on.
+    @discardableResult
+    package func createNotebookWithLastSetup(named name: String) async -> LibraryItem? {
+        let setup = options.newNotebook ?? NotebookSetup(geometry: .letter, paper: .blank)
+        return await createNotebook(named: name, geometry: setup.geometry, paper: setup.paper)
+    }
+
+    /// What a new item is called: the name asked for with its ends trimmed,
+    /// or `fallback` when that leaves nothing (*A taken name becomes
+    /// `Name (n)`*).
+    private static func name(_ asked: String, or fallback: String) -> String {
+        let trimmed = asked.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? fallback : trimmed
     }
 
     package func recover(_ entry: TrashEntry) async {

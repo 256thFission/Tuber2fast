@@ -58,7 +58,11 @@ struct LibraryView: View {
         }
         .sheet(isPresented: $isCreatingNotebook) {
             NewNotebookSheet(opensOn: browser.options.newNotebook) { name, geometry, paper in
-                run { await browser.createNotebook(named: name, geometry: geometry, paper: paper) }
+                // A notebook is made to be written in, so it opens as it lands.
+                run {
+                    guard let made = await browser.createNotebook(named: name, geometry: geometry, paper: paper) else { return }
+                    await workspace.open(path: made.relativePath, name: made.name)
+                }
             }
         }
         .alert("Rename", isPresented: isRenaming, presenting: renameTarget) { item in
