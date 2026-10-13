@@ -68,11 +68,19 @@ turns up that this document does not name, derive its treatment from these.
 | `ground` | the wallpaper behind the page |
 | `chrome` | band, writing bar, chips, readouts — one fill for all of them |
 | `accent` | held tool, active tab, seat title strip, lasso, page margin |
-| `secondary` | seat toggle, resize grip, dirty dot, rule lines |
+| `secondary` | seat toggle, resize grip, dirty dot |
 | `ink` | what every outline is mixed toward, and, unmixed, the colour of the words typed into a field, the tray knob's ring and the bar's shadow in flight |
 | `outlineMix` | two percentages, saturated and pale; defaults 42 / 55 |
 | `palette` | seven colours a line of handwriting can be read in, the theme's darkest first because that is what people write in; the pen's four swatches are seeded from its first four (§4.1) |
 | `dark` | the one flag that makes a theme dark: the mix target turns toward white, the escape runs to the ground, and the seat body and its current row follow (derived, §3.2; the seat, §4.3) |
+
+**No token reaches the paper's marks.** Every rule, grid line and dot
+is drawn in `DrawnPaper.markColor`, one fixed blue-grey that no theme
+sets, on the page and in the paper picker's preview alike, so the preview
+shows the paper you get and a page renders and exports the same wherever
+it is opened. The secondary once stood in for the rules in that preview
+while the page ruled in the fixed colour; it owns no rule anywhere now
+(decided doc drift; theme-08).
 
 **The ink is what outlines mix toward, not what the hand writes in.** A
 stroke keeps the colour it was drawn in, and no module the ink passes
