@@ -322,6 +322,27 @@ struct EditorViewModelContentTests {
         _ = await notebook.close()
     }
 
+    @Test("An image or a link asked for while the canvas is still opening a box is refused, so nothing lands before the session's entry")
+    func insertWhileABoxIsOpeningIsRefused() async throws {
+        let (scratch, notebook, surface, editor) = try await loaded("vm-insert-opening")
+        let page = notebook.pageIDs[0]
+        notebook.createTextBox(on: page, at: PagePoint(x: 40, y: 40), style: .body, alignment: .leading)
+        #expect(surface.openBox == nil, "the picture that leaves the box out has not landed")
+
+        await editor.importImage(try Fixture.imageData(width: 40, height: 30))
+        #expect(editor.lastContentError != nil)
+        await editor.addLink(to: .internalPage(page))
+        #expect(editor.lastContentError != nil)
+        #expect(notebook.state(of: page)?.content?.layers.count == 1, "only the box")
+        #expect(!notebook.canUndo, "nothing was recorded ahead of the session")
+
+        try await waitUntil { surface.openBox != nil }
+        editor.commitTextEditing()
+        #expect(!notebook.hasTextSession)
+        withExtendedLifetime(scratch) {}
+        _ = await notebook.close()
+    }
+
     @Test("A page added or deleted with a text box open commits the box first")
     func addOrDeletePageCommitsAnOpenTextBoxFirst() async throws {
         let (scratch, notebook, surface, editor) = try await loaded("vm-page-commits")
