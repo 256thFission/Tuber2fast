@@ -69,7 +69,7 @@ func textLayer(_ string: String, x: Double, y: Double, width: Double = 200, heig
 
 func linkLayer(x: Double, y: Double) -> Layer {
     Layer(id: LayerID(), transform: .identity, payload: .link(LinkLayer(
-        rect: PageRect(x: x, y: y, width: 100, height: 40), style: .button, target: .internalPage(PageID())
+        rect: PageRect(x: x, y: y, width: 100, height: 40), target: .internalPage(PageID())
     )))
 }
 

@@ -127,7 +127,10 @@ enum Fixture {
             transform: .identity,
             payload: .text(TextLayer(
                 rect: PageRect(x: 30, y: 30, width: 300, height: 80),
-                runs: [TextRun(string: "Hello, "), TextRun(string: "world", bold: true, color: "#1971C2FF")],
+                runs: [
+                    TextRun(string: "Hello, ", style: .body),
+                    TextRun(string: "world", style: .body.with(bold: true, color: RGBA8(red: 0x19, green: 0x71, blue: 0xC2, alpha: 0xFF))),
+                ],
                 alignment: .leading))
         )
     }
@@ -136,7 +139,7 @@ enum Fixture {
         Layer(
             id: LayerID(),
             transform: .identity,
-            payload: .link(LinkLayer(rect: PageRect(x: 40, y: 40, width: 160, height: 44), style: .button, target: .internalPage(page)))
+            payload: .link(LinkLayer(rect: PageRect(x: 40, y: 40, width: 160, height: 44), target: .internalPage(page)))
         )
     }
 

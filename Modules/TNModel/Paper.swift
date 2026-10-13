@@ -3,8 +3,7 @@ import Foundation
 /// What a drawn paper looks like: a name and nothing more. Spacing, colour,
 /// and margins are rendering constants of the build that draws them.
 package enum DrawnPaper: String, Codable, Sendable, Hashable, CaseIterable {
-    /// `none`: nothing is drawn at all, not even a white ground.
-    case none, blank, lined, grid, dotted
+    case blank, lined, grid, dotted
 }
 
 /// A page's paper: drawn procedurally, or an asset that fills the page.

@@ -45,7 +45,7 @@ struct KeySetPins {
         let cases: [(Layer, Set<String>)] = [
             (Fixture.imageLayer(), ["asset", "naturalSize"]),
             (Fixture.pdfLayer(), ["asset", "sourcePageIndex", "sourceExtent"]),
-            (Fixture.linkLayer(to: PageID()), ["rect", "style", "target"]),
+            (Fixture.linkLayer(to: PageID()), ["rect", "target"]),
             (Fixture.textLayer(), ["rect", "runs", "alignment"]),
         ]
         for (layer, payloadKeys) in cases {
@@ -279,7 +279,7 @@ struct StrictDecode {
     @Test("A link layer with a non-identity transform, or an external target, round-trips or refuses as specified")
     func linkShapes() throws {
         let external = Layer(id: LayerID(), transform: .identity, payload: .link(LinkLayer(
-            rect: PageRect(x: 1, y: 1, width: 10, height: 10), style: .button,
+            rect: PageRect(x: 1, y: 1, width: 10, height: 10),
             target: .externalPage(notebook: NotebookID(), page: PageID()))))
         #expect(LayerFile.decode(try LayerFile.encode(external), expecting: external.id) == .success(external))
         let skewed = Fixture.linkLayer(to: PageID()).withTransform(.scale(2))
@@ -291,7 +291,9 @@ struct StrictDecode {
         let text = Fixture.textLayer()
         #expect(LayerFile.decode(try LayerFile.encode(text), expecting: text.id) == .success(text))
         let bad = Layer(id: LayerID(), transform: .identity, payload: .text(TextLayer(
-            rect: PageRect(x: 0, y: 0, width: 10, height: 10), runs: [TextRun(string: "x", color: "red")], alignment: .center)))
+            rect: PageRect(x: 0, y: 0, width: 10, height: 10),
+            runs: [TextRun(string: "x", font: TextFont.system.rawValue, size: 16, bold: false, italic: false, underline: false, color: "red")],
+            alignment: .center)))
         #expect(LayerFile.decode(try LayerFile.encode(bad), expecting: bad.id) == .failure(.invalidText(bad.id)))
         let moved = text.withTransform(.translation(x: 1, y: 1))
         #expect(LayerFile.decode(try LayerFile.encode(moved), expecting: moved.id) == .failure(.textTransformNotIdentity(moved.id)))
@@ -321,7 +323,7 @@ private func everyShape() throws -> [(file: String, object: [String: Any], refus
          reading { _ = try Codecs.decodeStrict(ViewState.self, from: $0) }),
     ]
     let external = Layer(id: LayerID(), transform: .identity, payload: .link(LinkLayer(
-        rect: PageRect(x: 1, y: 1, width: 10, height: 10), style: .button,
+        rect: PageRect(x: 1, y: 1, width: 10, height: 10),
         target: .externalPage(notebook: NotebookID(), page: PageID()))))
     for layer in [Fixture.imageLayer(), Fixture.pdfLayer(), Fixture.linkLayer(to: PageID()), external, Fixture.textLayer()] {
         shapes.append(("\(layer.payload.kind) layer", try jsonObject(LayerFile.encode(layer)), { data in

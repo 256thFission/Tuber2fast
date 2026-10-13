@@ -162,7 +162,6 @@ package struct CoverSource: Sendable {
 /// `Trash/<container>/origin.json`.
 package struct TrashOrigin: Codable, Sendable, Equatable {
     package let formatVersion: UInt32
-    package let originFolderID: FolderID?
     package let originPathHint: String
     package let originName: String
     package let deletedAt: Date
@@ -645,7 +644,6 @@ package actor LibraryStore {
         if !held(in: container).isEmpty { throw .alreadyExists(containerName) }
         let origin = TrashOrigin(
             formatVersion: TrashOrigin.currentFormatVersion,
-            originFolderID: parentPath.isEmpty ? nil : folderID(of: parentPath),
             originPathHint: parentPath,
             originName: source.lastPathComponent,
             deletedAt: Date()

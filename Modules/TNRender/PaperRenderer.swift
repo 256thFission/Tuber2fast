@@ -16,21 +16,16 @@ package enum PaperRenderer {
     }
 
     private static let markColor = CGColor(srgbRed: 0.58, green: 0.65, blue: 0.75, alpha: 1)
-    private static let pageColor = CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1)
 
     /// The context is in page space: origin top-left, y down, one unit per
-    /// page point. `none` draws nothing at all; the source shows through.
+    /// page point. Only the marks: the page under them is already white.
     package static func draw(_ paper: DrawnPaper, geometry: PageGeometry, in context: CGContext) {
         let width = geometry.width, height = geometry.height
-        if paper != .none {
-            context.setFillColor(pageColor)
-            context.fill(CGRect(x: 0, y: 0, width: width, height: height))
-        }
         context.setStrokeColor(markColor)
         context.setFillColor(markColor)
         context.setLineWidth(Metrics.ruleWidth)
         switch paper {
-        case .none, .blank:
+        case .blank:
             break
         case .lined:
             var y = Metrics.topMargin

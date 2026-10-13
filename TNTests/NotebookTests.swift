@@ -2163,18 +2163,6 @@ struct NotebookTests {
         #expect(reopened.index.record(of: first)?.geometry == .letter)
     }
 
-    @Test("Inherited paper after a page that draws no paper at all is blank")
-    func inheritedPaperAfterNoneIsBlank() async throws {
-        let scratch = try Scratch("nb-inherit-none")
-        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
-        let first = notebook.pageIDs[0]
-        try await notebook.setPaper(.drawn(DrawnPaper.none), on: first)
-        #expect(notebook.paper(of: first) == .drawn(DrawnPaper.none))
-
-        let page = try await notebook.appendPage(after: first, geometry: .letter, paper: .inheritTemplate)
-        #expect(notebook.paper(of: page) == .drawn(.blank))
-    }
-
     @Test("Asset paper on a new page keeps the chosen width, takes the asset's aspect, and is one structure change")
     func appendWithAssetPaperIsOneChange() async throws {
         let scratch = try Scratch("nb-append-asset")

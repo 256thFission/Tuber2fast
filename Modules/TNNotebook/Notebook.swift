@@ -517,7 +517,7 @@ package final class Notebook {
     }
 
     /// A new page after `after` (or at the end), copying the current page's
-    /// geometry and paper (`none` becomes `blank`). Returns its identity.
+    /// geometry and paper. Returns its identity.
     ///
     /// Synchronous, and it must stay so: `EditorBinding.endBoundaryReached`
     /// answers a report in the same turn and cannot await.
@@ -535,12 +535,10 @@ package final class Notebook {
         return record
     }
 
-    /// The current page's drawn paper, `none` becoming `blank`. Asset paper
-    /// is not copied: it belongs to the page it was applied to, whose
-    /// geometry it set.
+    /// The current page's drawn paper. Asset paper is not copied: it
+    /// belongs to the page it was applied to, whose geometry it set.
     private func inheritedPaper() -> Paper {
-        let inherited = currentRecord.paper.drawn ?? .blank
-        return .drawn(inherited == .none ? .blank : inherited)
+        .drawn(currentRecord.paper.drawn ?? .blank)
     }
 
     /// A new page after `after` (or at the end), at a stated size and with a
@@ -558,8 +556,6 @@ package final class Notebook {
             sized = geometry
             resolved = inheritedPaper()
         case .drawn(let drawn):
-            // Taken as typed, `.none` included: the `none` to `blank` rule
-            // belongs to inheritance, not to a paper the user picked.
             sized = geometry
             resolved = .drawn(drawn)
         case .asset(let asset):
@@ -1056,7 +1052,7 @@ package final class Notebook {
     }
 
     package func addLinkLayer(on page: PageID, rect: PageRect, target: LinkTarget) throws(FormatFault) {
-        let layer = Layer(id: LayerID(), transform: .identity, payload: .link(LinkLayer(rect: rect, style: .button, target: target)))
+        let layer = Layer(id: LayerID(), transform: .identity, payload: .link(LinkLayer(rect: rect, target: target)))
         try insertLayer(layer, on: page)
     }
 
@@ -1213,7 +1209,7 @@ package final class Notebook {
         let layer = content.layers[position]
         let payload: LayerPayload
         switch layer.payload {
-        case .link(let link): payload = .link(LinkLayer(rect: link.rect.moved(to: origin), style: link.style, target: link.target))
+        case .link(let link): payload = .link(LinkLayer(rect: link.rect.moved(to: origin), target: link.target))
         case .text(let text): payload = .text(TextLayer(rect: text.rect.moved(to: origin), runs: text.runs, alignment: text.alignment))
         case .image, .pdf: return .refused(reason: "layer \(layerID) is placed by its transform")
         }
@@ -1472,9 +1468,9 @@ package final class Notebook {
 
 /// A new page's paper.
 package enum NewPagePaper: Sendable, Equatable {
-    /// The existing rule: the current page's drawn paper, `none` becomes
-    /// `blank`, asset becomes `blank`. Named for what it does, not for which
-    /// page: `after:` may not be the current page.
+    /// The existing rule: the current page's drawn paper, asset becomes
+    /// `blank`. Named for what it does, not for which page: `after:` may not
+    /// be the current page.
     case inheritTemplate
     case drawn(DrawnPaper)
     /// An asset already in the package. The page keeps the chosen width and

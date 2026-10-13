@@ -16,9 +16,13 @@ package struct PageSpaceTransform: Codable, Sendable, Equatable {
 
     package static let identity = PageSpaceTransform(a: 1, b: 0, c: 0, d: 1, tx: 0, ty: 0)
 
+    #if DEBUG
+    /// Only the tests build a transform this way, so it does not exist in
+    /// Release.
     package static func scale(_ factor: Double) -> PageSpaceTransform {
         PageSpaceTransform(a: factor, b: 0, c: 0, d: factor, tx: 0, ty: 0)
     }
+    #endif
 
     package static func translation(x: Double, y: Double) -> PageSpaceTransform {
         PageSpaceTransform(a: 1, b: 0, c: 0, d: 1, tx: x, ty: y)
@@ -72,6 +76,8 @@ package struct PageSpaceTransform: Codable, Sendable, Equatable {
         )
     }
 
+    #if DEBUG
+    /// Only the tests compose transforms, so this does not exist in Release.
     package func concatenating(_ later: PageSpaceTransform) -> PageSpaceTransform {
         PageSpaceTransform(
             a: a * later.a + b * later.c,
@@ -82,6 +88,7 @@ package struct PageSpaceTransform: Codable, Sendable, Equatable {
             ty: tx * later.b + ty * later.d + later.ty
         )
     }
+    #endif
 
     /// The transform that places a source of `sourceWidth × sourceHeight`
     /// at `origin` scaled uniformly by `scale`, mapping the unit square.

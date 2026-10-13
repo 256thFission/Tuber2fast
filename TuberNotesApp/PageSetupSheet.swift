@@ -30,7 +30,6 @@ enum PageNames {
 
     static func paper(_ paper: DrawnPaper) -> String {
         switch paper {
-        case .none: "None"
         case .blank: "Blank"
         case .lined: "Lined"
         case .grid: "Grid"
@@ -75,7 +74,7 @@ private struct PaperCap: View {
             let step = size.width / 4
             var path = Path()
             switch paper {
-            case .none, .blank:
+            case .blank:
                 break
             case .lined:
                 for row in 1..<4 {

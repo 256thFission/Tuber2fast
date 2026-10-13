@@ -389,7 +389,11 @@ package actor Renderer {
             context.addPath(path); context.fillPath()
             context.addPath(path); context.strokePath()
             context.restoreGState()
-            Self.drawText(TextLayer(rect: link.rect, runs: [TextRun(string: "Link", size: 13, color: "#2B70C2FF")], alignment: .center), in: context)
+            let label = TextStyle(
+                font: .system, size: 13, bold: false, italic: false, underline: false,
+                color: RGBA8(red: 0x2B, green: 0x70, blue: 0xC2, alpha: 0xFF)
+            )
+            Self.drawText(TextLayer(rect: link.rect, runs: [TextRun(string: "Link", style: label)], alignment: .center), in: context)
         case .text(let text):
             Self.drawText(text, in: context)
         }

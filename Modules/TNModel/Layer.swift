@@ -166,17 +166,11 @@ extension LinkTarget: Codable {
     }
 }
 
-package enum LinkStyle: String, Codable, Sendable, CaseIterable {
-    case button
-}
-
 package struct LinkLayer: Codable, Sendable, Equatable {
     package let rect: PageRect
-    package let style: LinkStyle
     package let target: LinkTarget
-    package init(rect: PageRect, style: LinkStyle, target: LinkTarget) {
+    package init(rect: PageRect, target: LinkTarget) {
         self.rect = rect
-        self.style = style
         self.target = target
     }
 }
@@ -195,7 +189,7 @@ package struct TextRun: Codable, Sendable, Equatable {
     /// `#RRGGBBAA`.
     package let color: String
 
-    package init(string: String, font: String = "system", size: Double = 16, bold: Bool = false, italic: Bool = false, underline: Bool = false, color: String = "#000000FF") {
+    package init(string: String, font: String, size: Double, bold: Bool, italic: Bool, underline: Bool, color: String) {
         self.string = string
         self.font = font
         self.size = size

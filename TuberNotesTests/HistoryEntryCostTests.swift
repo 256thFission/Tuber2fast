@@ -411,7 +411,7 @@ struct HistoryEntryCostTests {
 
     static func textLayer(runs: Int, charactersPerRun: Int) -> Layer {
         let text = (0..<runs).map { run in
-            TextRun(string: String(repeating: Character(UnicodeScalar(UInt8(97 + run % 26))), count: charactersPerRun))
+            TextRun(string: String(repeating: Character(UnicodeScalar(UInt8(97 + run % 26))), count: charactersPerRun), style: .body)
         }
         return Layer(
             id: LayerID(),

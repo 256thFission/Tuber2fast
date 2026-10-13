@@ -252,8 +252,6 @@ struct LibraryTests {
         let item = try await library.store.createNotebook(named: "Journal", in: "Old")
         let entry = try await library.trash(at: item.relativePath)
         #expect(entry.name == "Journal")
-        let oldID = await library.store.folderID(of: "Old")
-        #expect(try entry.origin.get().originFolderID == oldID)
         #expect(try await library.store.list(folder: "Old").isEmpty)
         let listed = try await library.store.listTrash()
         #expect(listed.map(\.id) == [entry.id])
@@ -653,10 +651,8 @@ struct LibraryTests {
             library.store.trashRoot.appendingPathComponent(entry.id).appendingPathComponent("origin.json")
         }
 
-        // The root has no folder, so its identity is left out, not written
-        // as null.
         let written = try jsonObject(Data(contentsOf: originURL(fromFolder)))
-        #expect(Set(written.keys) == ["formatVersion", "originFolderID", "originPathHint", "originName", "deletedAt"])
+        #expect(Set(written.keys) == ["formatVersion", "originPathHint", "originName", "deletedAt"])
         #expect(written["formatVersion"] as? Int == 1)
         #expect(Set(try jsonObject(Data(contentsOf: originURL(fromRoot))).keys) == ["formatVersion", "originPathHint", "originName", "deletedAt"])
 
@@ -665,7 +661,7 @@ struct LibraryTests {
         }
         let asWritten = try await listedOrigin()
         #expect(try asWritten.get().originName == "Essay.tubernotes")
-        for key in written.keys where key != "originFolderID" {
+        for key in written.keys {
             var short = written
             short.removeValue(forKey: key)
             try jsonData(short).write(to: originURL(fromFolder))

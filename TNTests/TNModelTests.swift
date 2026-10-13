@@ -42,14 +42,22 @@ struct RGBA8Tests {
 
     @Test("A text run is valid exactly when its colour parses")
     func textRunValidityFollowsTheParser() {
-        #expect(TextRun(string: "a").isValid)
-        #expect(TextRun(string: "a", color: "#ABCDEF01").isValid)
-        #expect(!TextRun(string: "a", color: "#ABCDEF").isValid)
-        #expect(!TextRun(string: "a", color: "ABCDEF01").isValid)
-        #expect(!TextRun(string: "a", color: "#ABCDEFGH").isValid)
-        #expect(!TextRun(string: "a", size: 0).isValid)
-        #expect(!TextRun(string: "a", font: "").isValid)
-        #expect(!TextRun(string: "a", font: "Georgia").isValid)
+        let body = TextRun(string: "a", style: .body)
+        // The body run with one stored field spelled as a file could spell it.
+        func run(font: String? = nil, size: Double? = nil, color: String? = nil) -> TextRun {
+            TextRun(
+                string: body.string, font: font ?? body.font, size: size ?? body.size,
+                bold: body.bold, italic: body.italic, underline: body.underline, color: color ?? body.color
+            )
+        }
+        #expect(body.isValid)
+        #expect(run(color: "#ABCDEF01").isValid)
+        #expect(!run(color: "#ABCDEF").isValid)
+        #expect(!run(color: "ABCDEF01").isValid)
+        #expect(!run(color: "#ABCDEFGH").isValid)
+        #expect(!run(size: 0).isValid)
+        #expect(!run(font: "").isValid)
+        #expect(!run(font: "Georgia").isValid)
     }
 }
 
@@ -70,7 +78,7 @@ struct TextStyleTests {
         let run = TextRun(string: "x", style: red)
         #expect(run.color == "#FF0000FF")
         #expect(run.style == red)
-        #expect(TextRun(string: "x", color: "#ff0000ff").style == red)
+        #expect(TextRun(string: "x", font: TextFont.system.rawValue, size: 16, bold: false, italic: false, underline: false, color: "#ff0000ff").style == red)
     }
 
     @Test("A style changed in some fields keeps every other")
