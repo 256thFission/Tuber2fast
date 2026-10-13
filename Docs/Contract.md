@@ -700,10 +700,8 @@ and a move refuse one.** A notebook or folder created under a name its
 folder already holds lands under the first free of `Name (1)`, `Name (2)`
 and so on; a recovery whose original name is taken lands the same way,
 and so does a duplicate, whose name is `Name copy`. One function,
-`freeName`, spells the suffix for all three, so the library has one answer
-to a taken name and not the three it had, recover's `Name 2` and
-duplicate's `Name copy 2` beside create's `Name (1)`. A rename or a move
-onto a taken name is refused with `.alreadyExists` and nothing moves: a
+`freeName`, spells the suffix for all three. A rename or a move onto a
+taken name is refused with `.alreadyExists` and nothing moves: a
 second "New notebook" is the ordinary case, not a mistake, and a rename
 onto a name in use is a mistake the user should see. The free name is not
 found before the publish, it is claimed by it. The item is built once in
