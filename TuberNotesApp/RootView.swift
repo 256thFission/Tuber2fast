@@ -213,8 +213,9 @@ private struct BannerView: View {
         .padding(Macaron.shellPadding)
         .background { shape.fill(theme.chrome.color) }
         .overlay { shape.strokeBorder(theme.outline(of: theme.chrome).color, lineWidth: Macaron.line) }
-        // It floats over whatever it interrupted, so it takes the hard
-        // offset the kit gives a floating shell.
+        // It floats over whatever it interrupted, so it takes a hard
+        // zero-blur offset. The offset is the ground's own outline: nothing is
+        // black but ink, and the chrome's outline would read as a second border.
         .shadow(color: theme.outline(of: theme.ground).color, radius: 0, x: 0, y: 6)
     }
 }
