@@ -301,8 +301,25 @@ identity transform and a rect in page space.
 any other; it refuses a transform and a delete, and says so.
 
 **Assets** are immutable. An asset is written at import, before any layer
-refers to it, and is limited to 64 MB and 16384 pixels on an edge. Images
-are converted to HEIC at import; PDFs are stored as received.
+refers to it, and is limited to 256 MB and 16384 pixels on an edge; an
+import past the limit is refused with the limit in megabytes. Images are
+converted to HEIC at import; PDFs are stored as received. The limit is
+independent of the renderer's asset cache, which stays at 48 MB: an asset
+larger than the cache is read again for each render, a cost accepted for
+the page turns of a big PDF (decided R2-10, I6).
+
+**An asset is read mapped, never copied into memory.** `readAsset` hands
+back the file's bytes mapped from the package, through `PosixFileSystem`
+like every other read, so a 256 MB PDF is never 256 MB of heap for each
+composite, thumbnail and export page that opens it. The index, page, layer
+and ink files are read as copies: each is decoded at once and only the
+decoded value is kept. A mapping is safe because an asset file is written
+once and never rewritten in place, so a mapping never sees its bytes
+change, and the unlink `compact()` runs leaves a live mapping valid (*Only
+`compact()` deletes from a package*). Every asset is mapped, not only one
+larger than the cache: `TNFormat` does not know the renderer's bound, and
+one rule with no threshold is as safe as one with (decided R2-10; critique
+C8).
 
 **Refuse at the narrowest scope, and say why.** A bad index refuses the
 notebook. A missing page file, a bad ink file, an unknown paper, or a bad
@@ -492,10 +509,28 @@ Nothing of ours is a subview of the `PKCanvasView`: PencilKit zooms only its
 own content view and paints its tiles opaquely over anything else. The renderer's asset cache (48 MB) and thumbnail cache
 (32 MB) each declare their owner, their limit, and what evicts from them,
 at the point they are declared. A cache that cannot state all three is
-forbidden. A thumbnail is 480 pixels on the long side and is rendered by
-the `Renderer` actor from the notebook's ink, or from the page's files
-when the page is not loaded; rendering one loads nothing into the
-notebook, marks nothing dirty, and is cancelled when nothing wants it.
+forbidden. A value larger than a cache's bound is not cached and evicts
+nothing for it: under the 256 MB asset limit a PDF larger than the cache
+is an ordinary case, and an insert that first emptied the cache would
+have every other asset on the page decoded again for every render
+(thermo-canvas-04, arch-canvas-03). A thumbnail is 480 pixels on the long
+side and is rendered by the `Renderer` actor from the notebook's ink, or
+from the page's files when the page is not loaded; rendering one loads
+nothing into the notebook, marks nothing dirty, and is cancelled when
+nothing wants it.
+
+**An asset is read and decoded once, at render size, for every render
+waiting on it.** A read in flight is recorded until it lands, and a render
+that misses the cache while one is in flight waits on that read instead of
+opening its own. The record is not a cache and declares no bound, because
+nothing stays in it once the read lands. The `Renderer` actor is reentrant
+across that read, so without the record the five window pages that open
+on a lecture PDF read it five times, each a whole copy (thermo-canvas-04).
+An image is decoded at no more than `maximumLongEdgePixels` on its long
+side, the most any render draws, so a 24 MP photo costs about 31 MB and
+stays cached instead of being decoded again on every layer change; an
+image's aspect comes from the file's own pixel size, never from a decode
+that may have rounded (arch-canvas-03).
 
 `Paper` is a value in `TNModel` and drawing code in `TNRender`, and appears
 nowhere else. Asset paper is decoded through the same cache as image and
@@ -504,11 +539,14 @@ PDF layers, and so is a page being flattened or exported.
 An export is one or more pages drawn by the `Renderer` into a PDF context,
 or one page into a PNG, by the code that draws a composite. Paper, text,
 and an imported PDF page are vector; ink and image assets are pixels, the
-ink at asset resolution. A ready page is drawn from custody, unsaved ink
-included; any other page from its files, decoded and discarded, installing
-nothing. Exporting marks nothing dirty, records nothing, and is cancelled
-between pages. The document is built in memory and handed to the system;
-no file is written.
+ink drawn at asset resolution and an image as it was decoded, at no more
+than `maximumLongEdgePixels` on its long side, so an exported or
+flattened photo is at most 2800 pixels there and a layer stretched past
+the page is drawn from that decode (arch-canvas-03). A ready page is drawn
+from custody, unsaved ink included; any other page from its files, decoded
+and discarded, installing nothing. Exporting marks nothing dirty, records
+nothing, and is cancelled between pages. The document is built in memory
+and handed to the system; no file is written.
 
 ## Library
 
