@@ -151,7 +151,7 @@ package struct FavoritesFile: Codable, Sendable, Equatable {
 package struct CoverSource: Sendable {
     package let pageID: PageID
     package let geometry: PageGeometry
-    package let paper: Paper?
+    package let paper: Paper
     package let bytes: PageBytes
     package let version: UInt64
 
@@ -557,7 +557,7 @@ package actor LibraryStore {
         return CoverSource(
             pageID: record.id,
             geometry: record.geometry,
-            paper: record.paper.paper,
+            paper: record.paper,
             bytes: bytes,
             version: CoverSource.version(at: modifiedAt(url, kind: .notebook))
         )

@@ -121,7 +121,7 @@ package actor Renderer {
     }
 
     /// Paper and layers at `scale` pixels per point, capped.
-    package func composite(geometry: PageGeometry, paper: Paper?, layers: [Layer], scale requested: CGFloat) async -> Composite? {
+    package func composite(geometry: PageGeometry, paper: Paper, layers: [Layer], scale requested: CGFloat) async -> Composite? {
         let scale = Self.cappedScale(for: geometry, requested: requested)
         let width = Int((geometry.width * scale).rounded(.up)), height = Int((geometry.height * scale).rounded(.up))
         guard let image = await compose(geometry: geometry, paper: paper, layers: layers, scale: scale, width: width, height: height) else { return nil }
@@ -131,7 +131,7 @@ package actor Renderer {
     /// Paper and layers into one bitmap of exactly `width` by `height`
     /// pixels, drawn at `scale`. A composite rounds the pixels up from its
     /// scale; a thumbnail picks its pixels first and derives the scale.
-    private func compose(geometry: PageGeometry, paper: Paper?, layers: [Layer], scale: CGFloat, width: Int, height: Int) async -> CGImage? {
+    private func compose(geometry: PageGeometry, paper: Paper, layers: [Layer], scale: CGFloat, width: Int, height: Int) async -> CGImage? {
         guard width > 0, height > 0, let context = Self.bitmap(width: width, height: height) else { return nil }
         // Page space: origin top-left, y down.
         context.translateBy(x: 0, y: CGFloat(height))
@@ -145,11 +145,11 @@ package actor Renderer {
     /// path, so a composite and an exported page cannot disagree — a
     /// composite passes no ink because the live canvas draws it, and an
     /// export passes the raster because a PDF page has no canvas over it.
-    private func drawPage(geometry: PageGeometry, paper: Paper?, layers: [Layer], ink: CGImage?, in context: CGContext) async {
+    private func drawPage(geometry: PageGeometry, paper: Paper, layers: [Layer], ink: CGImage?, in context: CGContext) async {
         let pageRect = CGRect(x: 0, y: 0, width: geometry.width, height: geometry.height)
         context.setFillColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1))
         context.fill(pageRect)
-        await draw(paper ?? .drawn(.blank), geometry: geometry, in: context)
+        await draw(paper, geometry: geometry, in: context)
         for layer in layers {
             await draw(layer, in: context)
         }
@@ -194,7 +194,7 @@ package actor Renderer {
     /// The page rendered small: the compose step, then the ink rasterized in
     /// the caller's task, so a cell that scrolls away cancels the work it
     /// asked for. A cancelled render caches nothing.
-    package func thumbnail(_ key: ThumbnailKey, geometry: PageGeometry, paper: Paper?, layers: [Layer], ink: PKDrawing) async -> CGImage? {
+    package func thumbnail(_ key: ThumbnailKey, geometry: PageGeometry, paper: Paper, layers: [Layer], ink: PKDrawing) async -> CGImage? {
         if let hit = thumbnails[key] { return hit }
         let (width, height) = Self.thumbnailPixels(for: geometry)
         let scale = CGFloat(max(width, height)) / max(geometry.width, geometry.height)
@@ -274,7 +274,7 @@ package actor Renderer {
     /// asset in the package, and `"public.png"` for a page exported as an
     /// image, which leaves the device lossless. One function, because the
     /// pixels are the same and only the encoder differs.
-    package func flattened(geometry: PageGeometry, paper: Paper?, layers: [Layer], ink: PKDrawing, as type: CFString) async -> Data? {
+    package func flattened(geometry: PageGeometry, paper: Paper, layers: [Layer], ink: PKDrawing, as type: CFString) async -> Data? {
         let scale = Self.cappedScale(for: geometry, requested: .greatestFiniteMagnitude)
         guard let composite = await composite(geometry: geometry, paper: paper, layers: layers, scale: scale) else { return nil }
         let pageRect = CGRect(x: 0, y: 0, width: geometry.width, height: geometry.height)
@@ -320,7 +320,7 @@ package actor Renderer {
     /// holds the number.
     package func pdf(
         pageCount: Int,
-        page: @MainActor (Int) async -> (geometry: PageGeometry, paper: Paper?, layers: [Layer], ink: PKDrawing)?
+        page: @MainActor (Int) async -> (geometry: PageGeometry, paper: Paper, layers: [Layer], ink: PKDrawing)?
     ) async -> Data? {
         guard pageCount > 0 else { return nil }
         let output = NSMutableData()

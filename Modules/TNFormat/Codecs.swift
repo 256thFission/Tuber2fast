@@ -39,7 +39,7 @@ package enum Codecs {
     }
 
     /// The parsed top-level object, for key checks that must run before a
-    /// typed decode (an unknown layer kind is seen here, not as corruption).
+    /// typed decode (a kind name is checked here, before its payload).
     package static func topLevelObject(of data: Data) throws(FormatFault) -> [String: Any] {
         let object: Any
         do {
@@ -77,13 +77,13 @@ package enum DurableKeys {
     package static let index: Set<String> = ["formatVersion", "notebookID", "createdAt", "pages", "bookmarks"]
     package static let pageRecord: Set<String> = ["id", "width", "height", "paper"]
     package static let bookmark: Set<String> = ["page", "title"]
-    /// Paper's keys depend on its kind; an unknown kind pins nothing,
-    /// because the page is refused before its payload is read.
-    package static func paper(kind: String) -> Set<String> {
+    /// Paper's keys depend on its kind. Nil for a kind this build does not
+    /// write, which has no keys to check because it is refused by name.
+    package static func paper(kind: String) -> Set<String>? {
         switch kind {
-        case PaperKind.imageKind: ["kind", "asset"]
-        case PaperKind.pdfKind: ["kind", "asset", "sourcePageIndex"]
-        default: ["kind"]
+        case Paper.imageKind: ["kind", "asset"]
+        case Paper.pdfKind: ["kind", "asset", "sourcePageIndex"]
+        default: DrawnPaper(rawValue: kind) == nil ? nil : ["kind"]
         }
     }
     package static let pageFile: Set<String> = ["pageID", "hasInk", "inkIndex", "layers"]

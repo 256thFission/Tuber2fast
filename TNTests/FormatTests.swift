@@ -146,14 +146,21 @@ struct StrictDecode {
         #expect(throws: FormatFault.newerFormat(found: current + 1)) { try IndexFile.steps(from: current + 1, in: [step]) }
     }
 
-    @Test("An unknown paper refuses the page only")
-    func unknownPaperRefusesThePageOnly() throws {
-        var object = try jsonObject(try Codecs.encode(Fixture.index(pages: 1)))
+    @Test("A paper kind this build does not write refuses the whole index at the current version, by its name before its keys")
+    func paperOfAnUnwrittenKindRefusesTheIndex() throws {
+        var object = try jsonObject(try Codecs.encode(Fixture.index(pages: 2)))
         var pages = try #require(object["pages"] as? [[String: Any]])
-        pages[0]["paper"] = ["kind": "parchment"]
-        object["pages"] = pages
-        let index = try IndexFile.decode(try jsonData(object)).validated()
-        #expect(index.pageFaults[index.pageIDs[0]] == .unknownPaper("parchment"))
+        let asset = AssetRef(id: AssetID(), format: .heic).fileName
+        for paper: [String: Any] in [["kind": "parchment"], ["kind": "parchment", "asset": asset]] {
+            pages[1]["paper"] = paper
+            object["pages"] = pages
+            let data = try jsonData(object)
+            #expect(throws: FormatFault.indexUnreadable("paper kind parchment is not one this build writes")) {
+                try IndexFile.decode(data)
+            }
+            // Paper's own decoder has no arm for it either.
+            #expect(throws: (any Error).self) { try Codecs.decode(NotebookIndex.self, from: data) }
+        }
     }
 
     @Test("A bookmark naming a page the index does not hold refuses the notebook")
@@ -211,12 +218,12 @@ struct StrictDecode {
         let data = try Codecs.encode(index)
         let decoded = try IndexFile.decode(data).validated()
         #expect(decoded == index)
-        #expect(decoded.pageFaults.isEmpty)
 
         let pages = try #require(try jsonObject(data)["pages"] as? [[String: Any]])
-        for (record, page) in zip(decoded.pages, pages) {
+        for page in pages {
             let paper = try #require(page["paper"] as? [String: Any])
-            #expect(Set(paper.keys) == DurableKeys.paper(kind: record.paper.rawKind))
+            let kind = try #require(paper["kind"] as? String)
+            #expect(Set(paper.keys) == DurableKeys.paper(kind: kind))
         }
         #expect(pages.last?["paper"] as? [String: Any] != nil)
     }
@@ -233,8 +240,8 @@ struct StrictDecode {
                 pages: [PageRecord(id: PageID(), geometry: .letter, paper: paper)],
                 bookmarks: [])
             let base = try jsonObject(try Codecs.encode(index))
-            let kind = PaperKind.known(paper).rawKind
             let paperObject = try #require((base["pages"] as? [[String: Any]])?[0]["paper"] as? [String: Any])
+            let kind = try #require(paperObject["kind"] as? String)
             func data(withPaper object: [String: Any]) throws -> Data {
                 var page = try #require((base["pages"] as? [[String: Any]])?[0])
                 page["paper"] = object
@@ -242,7 +249,7 @@ struct StrictDecode {
                 top["pages"] = [page]
                 return try jsonData(top)
             }
-            for key in DurableKeys.paper(kind: kind) {
+            for key in try #require(DurableKeys.paper(kind: kind)) {
                 var object = paperObject
                 object.removeValue(forKey: key)
                 #expect(throws: FormatFault.missingKey(key)) { try IndexFile.decode(try data(withPaper: object)) }
@@ -269,7 +276,7 @@ struct StrictDecode {
         }
     }
 
-    @Test("A layer file missing a key, or of unknown kind, refuses the layer and names why")
+    @Test("A layer file missing a key, or naming a kind this build does not write, is unreadable and says why")
     func layerFileRefusals() throws {
         for layer in [Fixture.imageLayer(), Fixture.pdfLayer(), Fixture.linkLayer(to: PageID()), Fixture.textLayer()] {
             let base = try jsonObject(try LayerFile.encode(layer))
@@ -288,7 +295,7 @@ struct StrictDecode {
         unknown["hologram"] = ["body": "hi"]
         unknown.removeValue(forKey: "image")
         let id = LayerID(raw: UUID(uuidString: unknown["layerID"] as! String)!)
-        #expect(LayerFile.decode(try jsonData(unknown), expecting: id) == .failure(.unknownKind(id, kind: "hologram")))
+        #expect(LayerFile.decode(try jsonData(unknown), expecting: id) == .failure(.fileUnreadable(id, "layer kind hologram is not one this build writes")))
     }
 
     @Test("A locked layer of every kind round-trips locked, and an unlocked one unlocked")
@@ -783,13 +790,12 @@ struct CompactTests {
     }
 
     @Test("A layer this build cannot open suspends asset reclamation for the whole notebook")
-    func unknownKindSuspends() async throws {
+    func unreadableLayerSuspends() async throws {
         let scratch = try Scratch("suspend")
         let (store, _, layer) = try await Fixture.populated(at: scratch.packageURL)
         let layout = store.layout
         var object = try jsonObject(try PosixFileSystem().read(layout.layerURL(layer.id)))
-        object["kind"] = "hologram"
-        object["hologram"] = object.removeValue(forKey: "image")
+        object.removeValue(forKey: "transform")
         try jsonData(object).write(to: layout.layerURL(layer.id))
         let orphanAsset = layout.assetURL(AssetRef(id: AssetID(), format: .heic))
         try Data([3]).write(to: orphanAsset)

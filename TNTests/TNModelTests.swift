@@ -49,6 +49,7 @@ struct RGBA8Tests {
         #expect(!TextRun(string: "a", color: "#ABCDEFGH").isValid)
         #expect(!TextRun(string: "a", size: 0).isValid)
         #expect(!TextRun(string: "a", font: "").isValid)
+        #expect(!TextRun(string: "a", font: "Georgia").isValid)
     }
 }
 

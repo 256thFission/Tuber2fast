@@ -35,7 +35,7 @@ func waitUntil(_ timeout: Duration = .seconds(5), _ condition: @MainActor () -> 
 
 func descriptors(_ count: Int) -> [PageDescriptor] {
     (0..<count).map { _ in
-        PageDescriptor(id: PageID(), geometry: .letter, paper: .known(.drawn(.blank)))
+        PageDescriptor(id: PageID(), geometry: .letter)
     }
 }
 

@@ -165,7 +165,7 @@ package actor PackageStore {
         } catch {
             throw .indexInvalid(error)
         }
-        var faults = validated.pageFaults.mapValues { [$0] }
+        var faults: [PageID: [PageFault]] = [:]
         for page in validated.pageIDs where !fs.exists(layout.pageURL(page)) {
             faults[page, default: []].append(.missingPageFile)
         }
@@ -571,11 +571,10 @@ package enum IndexFile {
             try Codecs.checkKeys(Set(page.keys), against: DurableKeys.pageRecord)
             guard let paper = page["paper"] as? [String: Any] else { throw .corruptJSON("paper is not an object") }
             guard let kind = paper["kind"] as? String else { throw .missingKey("kind") }
-            // An unknown kind is a page's fault, not the index's, so its keys
-            // are not pinned: this build cannot know what they should be.
-            if PaperKind.isKnownKind(kind) {
-                try Codecs.checkKeys(Set(paper.keys), against: DurableKeys.paper(kind: kind))
+            guard let keys = DurableKeys.paper(kind: kind) else {
+                throw .indexUnreadable("paper kind \(kind) is not one this build writes")
             }
+            try Codecs.checkKeys(Set(paper.keys), against: keys)
         }
         guard let bookmarks = top["bookmarks"] as? [[String: Any]] else {
             throw .corruptJSON("bookmarks is not an array of objects")

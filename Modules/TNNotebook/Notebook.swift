@@ -124,7 +124,7 @@ package final class Notebook {
     package var pageIDs: [PageID] { index.pageIDs }
 
     package var descriptors: [PageDescriptor] {
-        index.pages.map { PageDescriptor(id: $0.id, geometry: $0.geometry, paper: $0.paper) }
+        index.pages.map { PageDescriptor(id: $0.id, geometry: $0.geometry) }
     }
 
     package var isDirty: Bool { dirtyPageCount > 0 || indexSeq > savedIndexSeq }
@@ -194,7 +194,7 @@ package final class Notebook {
             case .ready(var content):
                 if Task.isCancelled { return }
                 if let record, let renderer = self?.renderer {
-                    content.composite = await renderer.composite(geometry: record.geometry, paper: record.paper.paper, layers: bytes.layers, scale: Notebook.baseCompositeScale)
+                    content.composite = await renderer.composite(geometry: record.geometry, paper: record.paper, layers: bytes.layers, scale: Notebook.baseCompositeScale)
                 }
                 self?.installLoaded(page, generation: generation, result: .ready(content))
             case .faults(let faults):
@@ -540,7 +540,7 @@ package final class Notebook {
     /// is not copied: it belongs to the page it was applied to, whose
     /// geometry it set.
     private func inheritedPaper() -> Paper {
-        let inherited = currentRecord.paper.paper?.drawn ?? .blank
+        let inherited = currentRecord.paper.drawn ?? .blank
         return .drawn(inherited == .none ? .blank : inherited)
     }
 
@@ -669,12 +669,6 @@ package final class Notebook {
     @discardableResult
     package func duplicatePage(_ source: PageID) async throws(FormatFault) -> PageID {
         guard let record = index.record(of: source) else { throw .invalidWrite("no such page \(source)") }
-        // Paper this build does not know is refused rather than copied as
-        // blank: a duplicate that quietly loses the paper is worse than one
-        // that did not happen.
-        guard let paper = record.paper.paper else {
-            throw .invalidWrite("page \(source) has paper this build does not know")
-        }
         let copied: PageContent
         switch states[source] {
         case .ready(let content):
@@ -701,7 +695,7 @@ package final class Notebook {
         // `setInk` rather than the initializer's flag, so the durable flag and
         // the ink sequence agree and the first save writes the container.
         if copied.hasInk { content.setInk(copied.ink) }
-        let copy = PageRecord(id: PageID(), geometry: record.geometry, paper: paper)
+        let copy = PageRecord(id: PageID(), geometry: record.geometry, paper: record.paper)
         return insertPages([(copy, content)], after: source, answering: nil)[0]
     }
 
@@ -789,7 +783,7 @@ package final class Notebook {
         guard content.ink.strokes.isEmpty, content.layers.isEmpty else { throw .pageNotEmpty }
     }
 
-    package func paper(of page: PageID) -> Paper? { index.record(of: page)?.paper.paper }
+    package func paper(of page: PageID) -> Paper? { index.record(of: page)?.paper }
 
     // MARK: Thumbnails
 
@@ -806,7 +800,7 @@ package final class Notebook {
         if let cached = await renderer.cachedThumbnail(key) { return cached }
         if case .loading = states[page] { return nil }
         guard let revision = await revision(of: page) else { return nil }
-        return await renderer.thumbnail(key, geometry: record.geometry, paper: record.paper.paper, layers: revision.layers, ink: revision.ink)
+        return await renderer.thumbnail(key, geometry: record.geometry, paper: record.paper, layers: revision.layers, ink: revision.ink)
     }
 
     /// What a page holds right now, whether or not it is loaded, for a render
@@ -858,7 +852,7 @@ package final class Notebook {
         let layers = content.layers.filter { $0.id != content.textEditing?.layer }
         let renderer = self.renderer
         Task { [weak self] in
-            let composite = await renderer.composite(geometry: record.geometry, paper: record.paper.paper, layers: layers, scale: Notebook.baseCompositeScale)
+            let composite = await renderer.composite(geometry: record.geometry, paper: record.paper, layers: layers, scale: Notebook.baseCompositeScale)
             guard let self, case .ready(var current) = self.states[page], current.renderGeneration == generation else { return }
             if let composite {
                 current.composite = composite
@@ -964,7 +958,7 @@ package final class Notebook {
     /// undone does not count (decided R3-03); `deletePage` takes its history
     /// with it. A page that is not loaded is not known to be blank, and stays.
     private func untouchedOnlyPage() -> PageID? {
-        guard index.pages.count == 1, let record = index.pages.first, record.paper.paper?.drawn != nil,
+        guard index.pages.count == 1, let record = index.pages.first, record.paper.drawn != nil,
               case .ready(let content) = states[record.id],
               content.ink.strokes.isEmpty, content.layers.isEmpty
         else { return nil }
@@ -1049,7 +1043,7 @@ package final class Notebook {
         guard case .ready(let content) = states[page] else { throw .invalidWrite("page \(page) is not ready") }
         guard content.textEditing == nil else { throw .invalidWrite("page \(page) has a text box open") }
         guard let heic = await renderer.flattened(
-            geometry: record.geometry, paper: record.paper.paper, layers: content.layers, ink: content.ink, as: "public.heic" as CFString
+            geometry: record.geometry, paper: record.paper, layers: content.layers, ink: content.ink, as: "public.heic" as CFString
         ) else { throw .invalidWrite("page \(page) could not be flattened") }
         let asset = AssetRef(id: AssetID(), format: .heic)
         try await writeAsset(heic, asset)

@@ -242,7 +242,7 @@ final class TNCanvasRuntimeTests: HostingSuite {
         runtime.setPages(pages, seq: StructureSeq(1), answering: nil)
 
         runtime.installContent(.placeholder(id: pages[0].id, faults: [.missingInk]))
-        runtime.installContent(.placeholder(id: pages[1].id, faults: [.unknownPaper("moleskine")]))
+        runtime.installContent(.placeholder(id: pages[1].id, faults: [.paperAssetMissing("moleskine.heic")]))
 
         // Both are inside the live window, and neither may take ink: an
         // editable canvas over bytes the notebook refused is ink written onto a
@@ -402,7 +402,7 @@ final class TNCanvasRuntimeTests: HostingSuite {
         // synchronous answer the seam allows: it finishes its own change and
         // pushes the new list back down before returning.
         reporter.onEndBoundary = { seq in
-            pages.append(PageDescriptor(id: PageID(), geometry: .letter, paper: .known(.drawn(.blank))))
+            pages.append(PageDescriptor(id: PageID(), geometry: .letter))
             runtime.setPages(pages, seq: StructureSeq(2), answering: seq)
         }
 

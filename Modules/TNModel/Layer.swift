@@ -1,8 +1,8 @@
 import Foundation
 
 /// A static layer beneath (or, by `inkIndex`, among) a page's ink. The set of
-/// kinds is closed in code and open on disk: an unknown kind refuses the
-/// layer, and the page carrying it is a placeholder.
+/// kinds is closed in code and on disk: a layer file naming any other kind is
+/// unreadable, and the page carrying it is a placeholder.
 package enum LayerKind: String, Codable, Sendable, CaseIterable {
     case image, pdf, link, text
 }
@@ -178,7 +178,9 @@ package struct LinkLayer: Codable, Sendable, Equatable {
 
 /// One run of a text box: a string with its own style. Rich text as our
 /// own JSON, never an archived attributed string, so the bytes stay
-/// readable and the style vocabulary is ours to extend by version bump.
+/// readable and the style vocabulary is ours to extend by version bump. The
+/// one font is `system`, so a run naming another is refused, not drawn in
+/// whatever face CoreText falls back to.
 package struct TextRun: Codable, Sendable, Equatable {
     package let string: String
     package let font: String
@@ -200,7 +202,7 @@ package struct TextRun: Codable, Sendable, Equatable {
     }
 
     package var isValid: Bool {
-        size.isFinite && size > 0 && size <= 1024 && !font.isEmpty && RGBA8(hex: color) != nil
+        size.isFinite && size > 0 && size <= 1024 && font == "system" && RGBA8(hex: color) != nil
     }
 }
 
@@ -297,7 +299,6 @@ package struct Layer: Sendable, Equatable, Identifiable {
 /// Why a layer was refused. Every case names its layer; the page carrying
 /// one is a placeholder.
 package enum LayerFault: Error, Sendable, Equatable {
-    case unknownKind(LayerID, kind: String)
     case fileMissing(LayerID)
     case fileUnreadable(LayerID, String)
     case idMismatch(expected: LayerID, found: LayerID)
@@ -314,7 +315,7 @@ package enum LayerFault: Error, Sendable, Equatable {
 
     package var layerID: LayerID {
         switch self {
-        case .unknownKind(let id, _), .fileMissing(let id), .fileUnreadable(let id, _),
+        case .fileMissing(let id), .fileUnreadable(let id, _),
              .invalidTransform(let id), .invalidNaturalSize(let id), .negativeSourcePageIndex(let id),
              .invalidSourceExtent(let id), .linkTransformNotIdentity(let id), .invalidLinkRect(let id),
              .danglingAsset(let id, _), .sourceExtentDisagrees(let id), .textTransformNotIdentity(let id),

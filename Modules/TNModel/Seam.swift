@@ -22,18 +22,15 @@ package struct ReportSeq: Hashable, Sendable, Comparable {
     package static func < (lhs: Self, rhs: Self) -> Bool { lhs.raw < rhs.raw }
 }
 
-/// What the runtime is told about a page's structure: identity, geometry,
-/// paper. Enough to lay out a slot and draw a placeholder.
+/// What the runtime is told about a page's structure: identity and
+/// geometry. Enough to lay out a slot and draw a placeholder.
 package struct PageDescriptor: Sendable, Equatable, Identifiable {
     package let id: PageID
     package let geometry: PageGeometry
-    /// `PaperKind`, not `Paper`: a placeholder for unknown paper names it.
-    package let paper: PaperKind
 
-    package init(id: PageID, geometry: PageGeometry, paper: PaperKind) {
+    package init(id: PageID, geometry: PageGeometry) {
         self.id = id
         self.geometry = geometry
-        self.paper = paper
     }
 }
 

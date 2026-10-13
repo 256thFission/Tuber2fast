@@ -3,9 +3,9 @@ import TNModel
 
 /// `layers/<LayerID>.json`: `{ layerID, kind, transform, locked, <kind>: payload }`.
 ///
-/// The payload object is keyed by the kind's name so an unknown kind is
-/// seen, and refused as a layer rather than as corruption, before its
-/// payload is parsed. One encoder and one decoder, both the format's.
+/// The payload object is keyed by the kind's name so the kind is checked
+/// before its payload is parsed. One encoder and one decoder, both the
+/// format's.
 package enum LayerFile {
     package static func encode(_ layer: Layer) throws(FormatFault) -> Data {
         switch layer.payload {
@@ -16,8 +16,9 @@ package enum LayerFile {
         }
     }
 
-    /// A layer, or why this file is not one. Corruption and unknown kinds
-    /// are both faults of the layer, never of the page file or the notebook.
+    /// A layer, or why this file is not one. Corruption, a kind this build
+    /// does not write among it, is the layer's fault, never the page file's
+    /// or the notebook's.
     package static func decode(_ data: Data, expecting expected: LayerID) -> Result<Layer, LayerFault> {
         let object: [String: Any]
         do {
@@ -34,7 +35,7 @@ package enum LayerFile {
             return .failure(.fileUnreadable(expected, "missing key kind"))
         }
         guard let kind = LayerKind(rawValue: kindName) else {
-            return .failure(.unknownKind(expected, kind: kindName))
+            return .failure(.fileUnreadable(expected, "layer kind \(kindName) is not one this build writes"))
         }
         do {
             try Codecs.checkKeys(Set(object.keys), against: DurableKeys.layerFile(kind: kind.rawValue))

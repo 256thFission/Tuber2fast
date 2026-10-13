@@ -65,8 +65,6 @@ enum PlaceholderCopy {
             "This page can't be read."
         case .missingInk, .inkContainerInvalid, .inkArchiveUndecodable:
             "This page's ink can't be read."
-        case .unknownPaper(let name):
-            "This page uses paper this version doesn't have: \(name)."
         case .paperAssetMissing(let name):
             "This page's paper is missing: \(name)."
         case .layerRefused:

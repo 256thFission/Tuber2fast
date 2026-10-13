@@ -28,48 +28,23 @@ package enum Paper: Sendable, Hashable {
     package var isAsset: Bool { asset != nil }
 }
 
-/// What the index carries: a known paper, or the name of a kind this build
-/// does not have. Unknown refuses the page, never the notebook.
-package enum PaperKind: Sendable, Equatable {
-    case known(Paper)
-    case unknown(String)
-
-    package var paper: Paper? {
-        if case .known(let paper) = self { return paper }
-        return nil
-    }
+/// The on-disk shape, keyed by kind so the kind is read before any payload
+/// key: `{ "kind": "lined" }`, `{ "kind": "image", "asset": "UUID.heic" }`,
+/// `{ "kind": "pdf", "asset": "UUID.pdf", "sourcePageIndex": 3 }`. A kind
+/// this build does not write is not a paper; the index naming it is refused.
+extension Paper: Codable {
+    private enum CodingKeys: String, CodingKey { case kind, asset, sourcePageIndex }
 
     /// The two kind names that are not a `DrawnPaper` case.
     package static let imageKind = "image"
     package static let pdfKind = "pdf"
-
-    package static func isKnownKind(_ name: String) -> Bool {
-        name == imageKind || name == pdfKind || DrawnPaper(rawValue: name) != nil
-    }
-
-    package var rawKind: String {
-        switch self {
-        case .known(.drawn(let drawn)): drawn.rawValue
-        case .known(.image): Self.imageKind
-        case .known(.pdf): Self.pdfKind
-        case .unknown(let name): name
-        }
-    }
-}
-
-/// The on-disk shape, keyed by kind so an unknown kind is seen before any
-/// payload key is looked at: `{ "kind": "lined" }`,
-/// `{ "kind": "image", "asset": "UUID.heic" }`,
-/// `{ "kind": "pdf", "asset": "UUID.pdf", "sourcePageIndex": 3 }`.
-extension PaperKind: Codable {
-    private enum CodingKeys: String, CodingKey { case kind, asset, sourcePageIndex }
 
     package init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let name = try container.decode(String.self, forKey: .kind)
         switch name {
         case Self.imageKind:
-            self = .known(.image(try Self.asset(.heic, from: container)))
+            self = .image(try Self.asset(.heic, from: container))
         case Self.pdfKind:
             let index = try container.decode(Int.self, forKey: .sourcePageIndex)
             guard index >= 0 else {
@@ -77,9 +52,14 @@ extension PaperKind: Codable {
                     forKey: .sourcePageIndex, in: container, debugDescription: "sourcePageIndex is negative: \(index)"
                 )
             }
-            self = .known(.pdf(try Self.asset(.pdf, from: container), sourcePageIndex: index))
+            self = .pdf(try Self.asset(.pdf, from: container), sourcePageIndex: index)
         default:
-            self = DrawnPaper(rawValue: name).map { .known(.drawn($0)) } ?? .unknown(name)
+            guard let drawn = DrawnPaper(rawValue: name) else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .kind, in: container, debugDescription: "paper kind \(name) is not one this build writes"
+                )
+            }
+            self = .drawn(drawn)
         }
     }
 
@@ -100,15 +80,16 @@ extension PaperKind: Codable {
 
     package func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(rawKind, forKey: .kind)
         switch self {
-        case .known(.image(let asset)):
+        case .drawn(let drawn):
+            try container.encode(drawn.rawValue, forKey: .kind)
+        case .image(let asset):
+            try container.encode(Self.imageKind, forKey: .kind)
             try container.encode(asset, forKey: .asset)
-        case .known(.pdf(let asset, let index)):
+        case .pdf(let asset, let index):
+            try container.encode(Self.pdfKind, forKey: .kind)
             try container.encode(asset, forKey: .asset)
             try container.encode(index, forKey: .sourcePageIndex)
-        case .known(.drawn), .unknown:
-            break
         }
     }
 }

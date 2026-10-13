@@ -602,7 +602,7 @@ package final class EditorViewModel {
                     self.lastContentError = .invalidWrite("page \(first + index) couldn't be read")
                     return nil
                 }
-                return (record.geometry, record.paper.paper, revision.layers, revision.ink)
+                return (record.geometry, record.paper, revision.layers, revision.ink)
             }
             self?.finishExport(data.map { ExportedFile(kind: .pdf, data: $0) }, total: selected.count)
         }
@@ -627,7 +627,7 @@ package final class EditorViewModel {
                 return
             }
             let data = await renderer.flattened(
-                geometry: record.geometry, paper: record.paper.paper,
+                geometry: record.geometry, paper: record.paper,
                 layers: revision.layers, ink: revision.ink, as: "public.png" as CFString)
             self?.finishExport(data.map { ExportedFile(kind: .png, data: $0) }, total: 1)
         }

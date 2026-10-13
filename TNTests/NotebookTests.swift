@@ -1146,14 +1146,14 @@ struct NotebookTests {
         #expect(notebook.currentPageID == second)
         let reopened = try await PackageStore(root: scratch.packageURL).load()
         #expect(reopened.index.pageIDs == [first, second])
-        #expect(reopened.index.pages[1].paper == .known(.drawn(.blank)))
+        #expect(reopened.index.pages[1].paper == .drawn(.blank))
 
         try await notebook.setPaper(.drawn(.grid), on: second)
         notebook.movePage(second, before: first)
         await notebook.flush()
         var again = try await PackageStore(root: scratch.packageURL).load()
         #expect(again.index.pageIDs == [second, first])
-        #expect(again.index.pages[0].paper == .known(.drawn(.grid)))
+        #expect(again.index.pages[0].paper == .drawn(.grid))
         notebook.deletePage(second)
         #expect(notebook.currentPageID == first)
         await notebook.flush()
@@ -1579,7 +1579,7 @@ struct NotebookTests {
         let imported = Array(notebook.pageIDs.dropFirst())
         for (offset, page) in imported.enumerated() {
             let record = try #require(notebook.index.record(of: page))
-            guard case .pdf(let asset, let sourcePageIndex) = try #require(record.paper.paper) else {
+            guard case .pdf(let asset, let sourcePageIndex) = record.paper else {
                 Issue.record("page \(page) is not PDF paper"); continue
             }
             #expect(asset.format == .pdf)
@@ -1715,13 +1715,13 @@ struct NotebookTests {
         let record = try #require(notebook.index.record(of: empty))
         // The aspect is the asset's pixels, which rounded when it was rendered.
         #expect(record.geometry.width == 612 && abs(record.geometry.height - 918) < 1)
-        #expect(record.paper == .known(.image(flattened)))
+        #expect(record.paper == .image(flattened))
 
         await notebook.flush()
         let reopened = try await PackageStore(root: scratch.packageURL).load()
         #expect(reopened.pageFaults.isEmpty)
         let saved = try #require(reopened.index.record(of: empty))
-        #expect(saved.paper == .known(.image(flattened)) && abs(saved.height - 918) < 1)
+        #expect(saved.paper == .image(flattened) && abs(saved.height - 918) < 1)
     }
 
     @Test("Flattening leaves the source page alone; a photo becomes paper and a new page after it is blank")
@@ -1756,8 +1756,8 @@ struct NotebookTests {
         await notebook.flush()
         let reopened = try await PackageStore(root: scratch.packageURL).load()
         #expect(reopened.pageFaults.isEmpty)
-        #expect(reopened.index.record(of: photoPage)?.paper == .known(.image(photo)))
-        #expect(reopened.index.record(of: after)?.paper == .known(.drawn(.blank)))
+        #expect(reopened.index.record(of: photoPage)?.paper == .image(photo))
+        #expect(reopened.index.record(of: after)?.paper == .drawn(.blank))
     }
 
     @Test("A duplicate follows its source, equals it, shares its assets, and records nothing")
@@ -2054,7 +2054,7 @@ struct NotebookTests {
         let a4Landscape = try #require(PageSize.a4.geometry(.landscape))
         let page = try await notebook.appendPage(after: first, geometry: a4Landscape, paper: .drawn(.grid))
         #expect(notebook.index.record(of: page)?.geometry == PageGeometry(width: 842, height: 595))
-        #expect(notebook.index.record(of: page)?.paper == .known(.drawn(.grid)))
+        #expect(notebook.index.record(of: page)?.paper == .drawn(.grid))
 
         await notebook.flush()
         let reopened = try await PackageStore(root: scratch.packageURL).load()
@@ -2062,7 +2062,7 @@ struct NotebookTests {
         #expect(reopened.index.pageIDs == [first, page])
         let saved = try #require(reopened.index.record(of: page))
         #expect(saved.width == 842 && saved.height == 595)
-        #expect(saved.paper == .known(.drawn(.grid)))
+        #expect(saved.paper == .drawn(.grid))
         // The first page kept the size it was created at.
         #expect(reopened.index.record(of: first)?.geometry == .letter)
     }
@@ -2091,7 +2091,7 @@ struct NotebookTests {
         let record = try #require(notebook.index.record(of: page))
         // Half as high as it is wide, at the width that was asked for.
         #expect(record.geometry == PageGeometry(width: 612, height: 306))
-        #expect(record.paper == .known(.image(asset)))
+        #expect(record.paper == .image(asset))
         let structures = notebook.drainChanges().filter { if case .structure = $0 { true } else { false } }
         #expect(structures.count == 1, "the size and the paper are one change, not an append and then a paper change")
 
@@ -2100,7 +2100,7 @@ struct NotebookTests {
         #expect(reopened.pageFaults.isEmpty)
         let saved = try #require(reopened.index.record(of: page))
         #expect(saved.geometry == PageGeometry(width: 612, height: 306))
-        #expect(saved.paper == .known(.image(asset)))
+        #expect(saved.paper == .image(asset))
     }
 
     @Test("An append whose asset paper names nothing in the package is refused and leaves no page behind")

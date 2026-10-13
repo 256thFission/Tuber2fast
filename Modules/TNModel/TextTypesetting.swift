@@ -17,12 +17,11 @@ package enum TextTypesetting {
     package static let styleKey = NSAttributedString.Key("tnStyle")
 
     package static func resolve(_ style: TextStyle) -> CTFont {
+        TNPrecondition.require(style.font == "system", "a text style's font \(style.font) is not one this build writes")
         var traits: CTFontSymbolicTraits = []
         if style.bold { traits.insert(.boldTrait) }
         if style.italic { traits.insert(.italicTrait) }
-        let base = style.font == "system"
-            ? CTFontCreateUIFontForLanguage(.system, style.size, nil)!
-            : CTFontCreateWithName(style.font as CFString, style.size, nil)
+        let base = CTFontCreateUIFontForLanguage(.system, style.size, nil)!
         return CTFontCreateCopyWithSymbolicTraits(base, style.size, nil, traits, traits) ?? base
     }
 

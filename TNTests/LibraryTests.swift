@@ -285,7 +285,7 @@ struct LibraryTests {
         #expect(loaded.index.pages.count == 1)
         let record = try #require(loaded.index.pages.first)
         #expect(record.geometry == a5)
-        #expect(record.paper == .known(.drawn(.lined)))
+        #expect(record.paper == .drawn(.lined))
     }
 
     @Test("A listed item carries its identity and when it was made")

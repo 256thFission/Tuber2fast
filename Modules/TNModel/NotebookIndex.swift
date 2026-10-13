@@ -7,19 +7,12 @@ package struct PageRecord: Codable, Sendable, Equatable, Identifiable {
     package let id: PageID
     package let width: Double
     package let height: Double
-    package let paper: PaperKind
+    package let paper: Paper
 
     package init(id: PageID, geometry: PageGeometry, paper: Paper) {
         self.id = id
         self.width = geometry.width
         self.height = geometry.height
-        self.paper = .known(paper)
-    }
-
-    package init(id: PageID, width: Double, height: Double, paper: PaperKind) {
-        self.id = id
-        self.width = width
-        self.height = height
         self.paper = paper
     }
 
@@ -30,7 +23,7 @@ package struct PageRecord: Codable, Sendable, Equatable, Identifiable {
     }
 
     /// The asset this record's paper names, if it names one.
-    package var paperAsset: AssetRef? { paper.paper?.asset }
+    package var paperAsset: AssetRef? { paper.asset }
 }
 
 /// One marked page and what it is called. Presence is the mark: there is no
@@ -116,8 +109,7 @@ package struct NotebookIndex: Codable, Sendable, Equatable {
         NotebookIndex(notebookID: notebookID, createdAt: createdAt, pages: pages, bookmarks: bookmarks)
     }
 
-    /// Notebook-scope rules, refused by name. Page-scope faults (unknown
-    /// paper) are not thrown here; `pageFaults` reports them.
+    /// Notebook-scope rules, refused by name.
     package func validated() throws(NotebookIndexFault) -> NotebookIndex {
         guard !pages.isEmpty else { throw .noPages }
         var seen = Set<PageID>()
@@ -136,15 +128,6 @@ package struct NotebookIndex: Codable, Sendable, Equatable {
             guard marked.insert(bookmark.page).inserted else { throw .duplicateBookmark(bookmark.page) }
         }
         return self
-    }
-
-    /// Faults the index states about individual pages.
-    package var pageFaults: [PageID: PageFault] {
-        var faults: [PageID: PageFault] = [:]
-        for page in pages {
-            if case .unknown(let name) = page.paper { faults[page.id] = .unknownPaper(name) }
-        }
-        return faults
     }
 }
 
