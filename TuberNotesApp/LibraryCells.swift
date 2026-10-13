@@ -199,6 +199,13 @@ struct LibraryGridCell<MenuContent: View>: View {
                 .font(Macaron.body(11))
                 .foregroundStyle(theme.outline(of: theme.ground).color)
 
+            if let fault = item.fault {
+                Text(fault.description)
+                    .font(Macaron.body(11))
+                    .foregroundStyle(theme.outline(of: theme.ground).color)
+                    .multilineTextAlignment(.center)
+            }
+
             if let parent = parentWhileSearching(item, browser) {
                 Text(parent)
                     .font(Macaron.body(10))
@@ -283,6 +290,12 @@ struct LibraryListRow<MenuContent: View>: View {
                     Text(LibraryStyle.itemDate.string(from: item.modifiedAt))
                         .font(Macaron.body(11))
 
+                    if let fault = item.fault {
+                        Text(fault.description)
+                            .font(Macaron.body(11))
+                            .lineLimit(2)
+                    }
+
                     if let parent = parentWhileSearching(item, browser) {
                         Text(parent)
                             .font(Macaron.body(10))
@@ -351,8 +364,8 @@ struct LibraryCover: View {
 
 struct LibraryFolderGlyph: View {
     /// Nil when the sidecar holding it could not be read. Such a folder has
-    /// already lost its identity and its star; it draws as it drew before
-    /// decoration existed rather than as nothing at all.
+    /// lost its identity and its star and shows the fault; it draws as it
+    /// drew before decoration existed rather than as nothing at all.
     let decoration: FolderDecoration?
 
     private var shown: FolderDecoration { decoration ?? .plain }
@@ -376,21 +389,25 @@ struct LibraryFavoriteStar: View {
     private var starred: Bool { browser.isFavorite(item) }
 
     var body: some View {
-        // Favoured is the cap sunk, not a second colour: the filled star is
-        // the word on the cap, not the state of it.
-        Keycap(
-            fill: theme.chrome,
-            size: CGSize(width: Macaron.chip, height: Macaron.chip),
-            isHeld: starred
-        ) {
-            browser.refusal = nil
-            Task { await browser.toggleFavorite(item) }
-        } label: {
-            Image(systemName: starred ? "star.fill" : "star")
-                .font(Macaron.body(14))
+        // A star names an identity, so an item whose identity could not be
+        // read has none to show.
+        if item.identity != nil {
+            // Favoured is the cap sunk, not a second colour: the filled star
+            // is the word on the cap, not the state of it.
+            Keycap(
+                fill: theme.chrome,
+                size: CGSize(width: Macaron.chip, height: Macaron.chip),
+                isHeld: starred
+            ) {
+                browser.refusal = nil
+                Task { await browser.toggleFavorite(item) }
+            } label: {
+                Image(systemName: starred ? "star.fill" : "star")
+                    .font(Macaron.body(14))
+            }
+            .accessibilityAddTraits(.isButton)
+            .accessibilityLabel(starred ? "Remove \(item.name) from Favorites" : "Add \(item.name) to Favorites")
         }
-        .accessibilityAddTraits(.isButton)
-        .accessibilityLabel(starred ? "Remove \(item.name) from Favorites" : "Add \(item.name) to Favorites")
     }
 }
 

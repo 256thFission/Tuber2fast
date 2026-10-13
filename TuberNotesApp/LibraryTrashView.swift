@@ -90,7 +90,7 @@ struct LibraryTrashView: View {
                 Text(entry.name)
                     .font(Macaron.title(14))
                     .foregroundStyle(theme.outline(of: theme.chrome).color)
-                Text(verbatim: "Deleted \(LibraryStyle.itemDate.string(from: entry.origin.deletedAt))")
+                Text(verbatim: caption(of: entry))
                     .font(Macaron.body(11))
                     .foregroundStyle(theme.outline(of: theme.chrome).color)
             }
@@ -109,6 +109,14 @@ struct LibraryTrashView: View {
             }
         }
         .padding(.vertical, 8)
+    }
+
+    /// When it was deleted, or, in its place, why its record could not say.
+    private func caption(of entry: TrashEntry) -> String {
+        switch entry.origin {
+        case .success(let origin): "Deleted \(LibraryStyle.itemDate.string(from: origin.deletedAt))"
+        case .failure(let fault): fault.description
+        }
     }
 
     private var isDeleting: Binding<Bool> {

@@ -99,8 +99,17 @@ package final class LibraryBrowser {
     // MARK: Reading
 
     package func reload() async {
+        // The stars refuse alone (*An unreadable sidecar refuses only the
+        // item it describes*): none shows, the Favorites section refuses
+        // through its own read of the file, and everything else lists. The
+        // line is raised unless an intention's own refusal is showing.
         do {
             favorites = try await library.store.favorites()
+        } catch {
+            favorites = []
+            if refusal == nil { refusal = error.description }
+        }
+        do {
             switch section {
             // A search reads the whole tree from the root, wherever the
             // reader is standing: searching is looking for something you
@@ -159,11 +168,16 @@ package final class LibraryBrowser {
     }
 
     /// Folders under `folder` a move could land in, minus the moved
-    /// folders and everything inside them.
-    package func destinations(in parent: String, excluding moved: Set<String>) async -> [LibraryItem] {
-        let folders = (try? await library.store.listFolders(in: parent)) ?? []
-        return folders.filter { candidate in
-            !moved.contains { $0 == candidate.relativePath || candidate.relativePath.hasPrefix($0 + "/") }
+    /// folders and everything inside them. A level that cannot be read is
+    /// refused, never shown as one with no folders in it.
+    package func destinations(in parent: String, excluding moved: Set<String>) async -> Listing {
+        do {
+            let folders = try await library.store.listFolders(in: parent)
+            return .loaded(folders.filter { candidate in
+                !moved.contains { $0 == candidate.relativePath || candidate.relativePath.hasPrefix($0 + "/") }
+            })
+        } catch {
+            return .refused(error.description)
         }
     }
 

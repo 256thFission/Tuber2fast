@@ -128,7 +128,7 @@ struct LibraryTests {
         let entry = try await library.trash(at: item.relativePath)
         #expect(entry.name == "Journal")
         let oldID = await library.store.folderID(of: "Old")
-        #expect(entry.origin.originFolderID == oldID)
+        #expect(try entry.origin.get().originFolderID == oldID)
         #expect(try await library.store.list(folder: "Old").isEmpty)
         let listed = try await library.store.listTrash()
         #expect(listed.map(\.id) == [entry.id])
@@ -352,7 +352,7 @@ struct LibraryTests {
         #expect(recovered.decoration == chosen)
     }
 
-    @Test("A colour name this build does not know refuses the sidecar, so the folder loses its identity")
+    @Test("A colour name this build does not know refuses the sidecar loudly: the folder lists with the fault and no identity")
     func anUnknownColourRefusesTheSidecar() async throws {
         let (scratch, library) = try makeLibrary("lib-decoration-unknown")
         defer { withExtendedLifetime(scratch) {} }
@@ -365,15 +365,54 @@ struct LibraryTests {
         object["color"] = "chartreuse"
         try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]).write(to: sidecar)
 
-        // This is the cost of a strict sidecar, pinned rather than argued
-        // away: an unreadable sidecar is a folder with no identity, and a
-        // folder with no identity has no star, though the file still holds it.
+        // The cost of a strict sidecar, said where the folder is rather than
+        // swallowed: a folder with no identity has no star, though the file
+        // still holds it.
         let listed = try #require(try await library.store.list(folder: "").first)
+        #expect(listed.name == "Term")
         #expect(listed.decoration == nil)
         #expect(listed.folderID == nil)
         #expect(listed.identity == nil)
+        let fault = try #require(listed.fault)
+        #expect(fault.description.hasPrefix(".folder.json cannot be read: "))
+        #expect(fault.description.contains("chartreuse"))
         #expect(try await library.store.listFavorites().isEmpty)
         #expect(try await library.store.favorites() == [identity])
+    }
+
+    @Test("An unreadable .folder.json lists the folder with its fault, lists what it holds, and refuses a decoration with that fault")
+    func anUnreadableFolderFileIsListedLoudly() async throws {
+        let (scratch, library) = try makeLibrary("lib-folder-unreadable")
+        defer { withExtendedLifetime(scratch) {} }
+        _ = try await library.store.createFolder(named: "Term", in: "")
+        _ = try await library.store.createNotebook(named: "Essay", in: "Term")
+        let sidecar = library.store.url(of: "Term").appendingPathComponent(".folder.json")
+        let written = try Data(contentsOf: sidecar)
+        // A newer sidecar with a key this build does not know is refused by
+        // its number, not by the key: the version is read first.
+        var newer = try jsonObject(written)
+        newer["formatVersion"] = FolderFile.currentFormatVersion + 1
+        newer["tint"] = "blue"
+        let newerBytes = try jsonData(newer)
+
+        for (bytes, reason) in [
+            (Data(), "corrupt JSON"),
+            (newerBytes, FormatFault.newerFormat(found: FolderFile.currentFormatVersion + 1).description),
+        ] {
+            try bytes.write(to: sidecar)
+            let listed = try await library.store.list(folder: "")
+            #expect(listed.map(\.name) == ["Term"])
+            let fault = try #require(listed.first?.fault, "\(reason)")
+            #expect(fault.description.hasPrefix(".folder.json cannot be read: \(reason)"))
+            #expect(listed.first?.identity == nil)
+            #expect(listed.first?.decoration == nil)
+            #expect(try await library.store.list(folder: "Term").map(\.name) == ["Essay"])
+
+            await #expect(throws: fault) {
+                try await library.store.setDecoration(FolderDecoration(color: .red, symbol: .star), at: "Term")
+            }
+            #expect(try Data(contentsOf: sidecar) == bytes, "a refused decoration writes nothing")
+        }
     }
 
     @Test("`.folder.json` carries exactly its keys, and losing or gaining one refuses it")
@@ -390,16 +429,95 @@ struct LibraryTests {
             var short = written
             short.removeValue(forKey: key)
             try JSONSerialization.data(withJSONObject: short, options: [.sortedKeys]).write(to: sidecar)
-            #expect(await library.store.folderFile(of: "Term") == nil, "a sidecar without \(key) must be refused")
+            await #expect(throws: LibraryError.unreadable(file: ".folder.json", reason: "missing key \(key)")) {
+                try await library.store.folderFile(of: "Term")
+            }
         }
 
         var extra = written
         extra["tint"] = "blue"
         try JSONSerialization.data(withJSONObject: extra, options: [.sortedKeys]).write(to: sidecar)
-        #expect(await library.store.folderFile(of: "Term") == nil, "an unknown key must be refused")
+        await #expect(throws: LibraryError.unreadable(file: ".folder.json", reason: "unknown key tint")) {
+            try await library.store.folderFile(of: "Term")
+        }
 
         try JSONSerialization.data(withJSONObject: written, options: [.sortedKeys]).write(to: sidecar)
-        #expect(await library.store.folderFile(of: "Term") != nil, "the file as written must read back")
+        _ = try await library.store.folderFile(of: "Term")
+    }
+
+    @Test("`Favorites.json` carries exactly its keys, is read version first, and losing or gaining a key refuses it")
+    func favoritesKeyPin() async throws {
+        let (scratch, library) = try makeLibrary("lib-favorites-keys")
+        defer { withExtendedLifetime(scratch) {} }
+        let made = try await library.store.createNotebook(named: "Essay", in: "")
+        try await library.store.setFavorite(try #require(made.identity), true)
+        let url = library.store.favoritesURL
+        let written = try jsonObject(Data(contentsOf: url))
+        #expect(Set(written.keys) == ["formatVersion", "notebooks", "folders"])
+        #expect(written["formatVersion"] as? Int == 1)
+
+        for key in written.keys {
+            var short = written
+            short.removeValue(forKey: key)
+            try jsonData(short).write(to: url)
+            await #expect(throws: LibraryError.unreadable(file: "Favorites.json", reason: "missing key \(key)")) {
+                try await library.store.favorites()
+            }
+        }
+        var extra = written
+        extra["pinned"] = "x"
+        try jsonData(extra).write(to: url)
+        await #expect(throws: LibraryError.unreadable(file: "Favorites.json", reason: "unknown key pinned")) {
+            try await library.store.favorites()
+        }
+        extra["formatVersion"] = 2
+        try jsonData(extra).write(to: url)
+        await #expect(throws: LibraryError.unreadable(file: "Favorites.json", reason: FormatFault.newerFormat(found: 2).description)) {
+            try await library.store.favorites()
+        }
+    }
+
+    @Test("`origin.json` carries exactly its keys, is read version first, and losing or gaining a key refuses it")
+    func trashOriginKeyPin() async throws {
+        let (scratch, library) = try makeLibrary("lib-origin-keys")
+        defer { withExtendedLifetime(scratch) {} }
+        _ = try await library.store.createFolder(named: "Term", in: "")
+        let nested = try await library.store.createNotebook(named: "Essay", in: "Term")
+        let loose = try await library.store.createNotebook(named: "Loose", in: "")
+        let fromFolder = try await library.trash(at: nested.relativePath)
+        let fromRoot = try await library.trash(at: loose.relativePath)
+        func originURL(_ entry: TrashEntry) -> URL {
+            library.store.trashRoot.appendingPathComponent(entry.id).appendingPathComponent("origin.json")
+        }
+
+        // The root has no folder, so its identity is left out, not written
+        // as null.
+        let written = try jsonObject(Data(contentsOf: originURL(fromFolder)))
+        #expect(Set(written.keys) == ["formatVersion", "originFolderID", "originPathHint", "originName", "deletedAt"])
+        #expect(written["formatVersion"] as? Int == 1)
+        #expect(Set(try jsonObject(Data(contentsOf: originURL(fromRoot))).keys) == ["formatVersion", "originPathHint", "originName", "deletedAt"])
+
+        func listedOrigin() async throws -> Result<TrashOrigin, LibraryError> {
+            try #require(try await library.store.listTrash().first { $0.id == fromFolder.id }).origin
+        }
+        let asWritten = try await listedOrigin()
+        #expect(try asWritten.get().originName == "Essay.tubernotes")
+        for key in written.keys where key != "originFolderID" {
+            var short = written
+            short.removeValue(forKey: key)
+            try jsonData(short).write(to: originURL(fromFolder))
+            #expect(try await listedOrigin() == .failure(.unreadable(file: "origin.json", reason: "missing key \(key)")))
+        }
+        var extra = written
+        extra["note"] = "x"
+        try jsonData(extra).write(to: originURL(fromFolder))
+        #expect(try await listedOrigin() == .failure(.unreadable(file: "origin.json", reason: "unknown key note")))
+        extra["formatVersion"] = 2
+        try jsonData(extra).write(to: originURL(fromFolder))
+        #expect(try await listedOrigin() == .failure(.unreadable(file: "origin.json", reason: FormatFault.newerFormat(found: 2).description)))
+
+        try jsonData(written).write(to: originURL(fromFolder))
+        #expect(try await listedOrigin() == asWritten)
     }
 
     @Test("A notebook at a newer version lists as itself and refuses to open by its version")
@@ -473,7 +591,7 @@ struct LibraryTests {
 
             let store = try faulting(scratch, fault)
             await #expect(throws: LibraryError.self, "\(fault)") { try await store.setDecoration(chosen, at: "Term") }
-            let sidecar = try #require(await library.store.folderFile(of: "Term"), "\(fault)")
+            let sidecar = try await library.store.folderFile(of: "Term")
             #expect(sidecar.folderID == made.folderID, "\(fault)")
             #expect(sidecar.decoration == (keepsOld ? .plain : chosen), "\(fault)")
         }
@@ -525,7 +643,7 @@ struct LibraryTests {
         // container: the container keeps `origin.json` and nothing else.
         let container = library.store.trashRoot.appendingPathComponent(first.id)
         try FileManager.default.moveItem(
-            at: container.appendingPathComponent(first.origin.originName),
+            at: container.appendingPathComponent(try first.origin.get().originName),
             to: library.store.url(of: item.relativePath)
         )
         #expect(try await library.store.listTrash().isEmpty)
@@ -534,6 +652,47 @@ struct LibraryTests {
         #expect(second.id == first.id)
         #expect(try await library.store.listTrash().map(\.id) == [first.id])
         #expect(try await library.store.list(folder: "").isEmpty)
+    }
+
+    @Test("A trash record that does not read lists its item with the fault, enables Empty, and recovers to the root")
+    func anUnreadableTrashRecordIsListedAndRecoverable() async throws {
+        for record in ["zero bytes", "another version"] {
+            let (scratch, library) = try makeLibrary("lib-trash-record")
+            defer { withExtendedLifetime(scratch) {} }
+            _ = try await library.store.createFolder(named: "Term", in: "")
+            let item = try await library.store.createNotebook(named: "Essay", in: "Term")
+            let entry = try await library.trash(at: item.relativePath)
+            let origin = library.store.trashRoot.appendingPathComponent(entry.id).appendingPathComponent("origin.json")
+            if record == "zero bytes" {
+                try Data().write(to: origin)
+            } else {
+                var object = try jsonObject(Data(contentsOf: origin))
+                object["formatVersion"] = TrashOrigin.currentFormatVersion + 1
+                try jsonData(object).write(to: origin)
+            }
+
+            // Alone in the trash, so the listing is all that Empty counts.
+            let listed = try await library.store.listTrash()
+            #expect(listed.map(\.id) == [entry.id], "\(record)")
+            let refused = try #require(listed.first)
+            #expect(refused.name == "Essay")
+            #expect(refused.kind == .notebook)
+            #expect(refused.notebookID == item.notebookID)
+            guard case .failure(let fault) = refused.origin else {
+                Issue.record("\(record): an unreadable record must be the entry's fault")
+                continue
+            }
+            #expect(fault.description.hasPrefix("origin.json cannot be read: "), "\(record)")
+
+            // Where it came from is what the record could not say, so it
+            // lands at the root, suffixed when the name is taken.
+            _ = try await library.store.createNotebook(named: "Essay", in: "")
+            let recovered = try await library.store.recover(refused)
+            #expect(recovered.relativePath == "Essay 2.tubernotes", "\(record)")
+            #expect(recovered.notebookID == item.notebookID)
+            #expect(try await library.store.listTrash().isEmpty)
+            #expect(try FileManager.default.contentsOfDirectory(atPath: library.store.trashRoot.path).isEmpty)
+        }
     }
 
     @Test("A notebook whose index cannot be read is trashed under a fresh name, with no identity invented")

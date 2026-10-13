@@ -28,7 +28,7 @@ package enum FolderSymbol: String, Codable, Sendable, CaseIterable {
 }
 
 /// The pair a cell draws with. Not `Codable`: the two durable keys are flat
-/// on `FolderFile`, so the flat `decodeStrict` below pins them with no nested
+/// on `FolderFile`, so the flat key check below pins them with no nested
 /// check of its own.
 package struct FolderDecoration: Sendable, Equatable {
     package let color: FolderColor
@@ -88,6 +88,9 @@ package struct LibraryItem: Sendable, Equatable, Identifiable {
     /// Nil for a notebook, which has no sidecar to hold one, and for a folder
     /// whose sidecar is unreadable — the same nil that drops `folderID`.
     package let decoration: FolderDecoration?
+    /// Why a folder's sidecar could not be read, shown beside the folder.
+    /// Nil when it was read, and for a notebook.
+    package let fault: LibraryError?
     package let createdAt: Date
     package let modifiedAt: Date
 
@@ -156,9 +159,12 @@ package struct TrashOrigin: Codable, Sendable, Equatable {
 package struct TrashEntry: Sendable, Equatable, Identifiable {
     /// The container directory name under `Trash/`.
     package let id: String
+    /// The item's, from the item the container holds.
     package let name: String
     package let kind: ItemKind
-    package let origin: TrashOrigin
+    /// Where the item came from and when, or why `origin.json` could not
+    /// say, shown in place of the date.
+    package let origin: Result<TrashOrigin, LibraryError>
     package let notebookID: NotebookID?
 }
 
@@ -170,6 +176,9 @@ package enum LibraryError: Error, Sendable, Equatable, CustomStringConvertible {
     case alreadyExists(String)
     case destinationInsideSource
     case notebookIsOpen(name: String)
+    /// A sidecar this build cannot read, named by its file (*An unreadable
+    /// sidecar refuses only the item it describes*).
+    case unreadable(file: String, reason: String)
     case format(FormatFault)
     case io(String)
 
@@ -182,6 +191,7 @@ package enum LibraryError: Error, Sendable, Equatable, CustomStringConvertible {
         case .alreadyExists(let path): "already exists: \(path)"
         case .destinationInsideSource: "a folder cannot move into itself"
         case .notebookIsOpen(let name): "close \(name) first"
+        case .unreadable(let file, let reason): "\(file) cannot be read: \(reason)"
         case .format(let fault): fault.description
         case .io(let detail): detail
         }
@@ -208,6 +218,9 @@ package actor LibraryStore {
     private static let folderSidecar = ".folder.json"
     private static let originSidecar = "origin.json"
     private static let favoritesKeys: Set<String> = ["formatVersion", "notebooks", "folders"]
+    private static let folderKeys: Set<String> = ["formatVersion", "folderID", "color", "symbol"]
+    /// `originFolderID` is left out when the item came from the root.
+    private static let originKeys: Set<String> = ["formatVersion", "originPathHint", "originName", "deletedAt"]
 
     package init(
         base: URL,
@@ -303,12 +316,37 @@ package actor LibraryStore {
         indexHeader(ofPackageAt: url)?.notebookID
     }
 
+    /// A sidecar read strictly, its version before any key, as the index's
+    /// is. A sidecar has no ladder, so another version is refused by its
+    /// number. `optional` names a key the encoder leaves out for a nil.
+    private static func readSidecar<T: Decodable>(
+        _ type: T.Type, at url: URL, version: UInt32, keys: Set<String>, optional: Set<String> = []
+    ) throws(LibraryError) -> T {
+        let file = url.lastPathComponent
+        let data: Data
+        do { data = try Data(contentsOf: url) } catch { throw .unreadable(file: file, reason: error.localizedDescription) }
+        do throws(FormatFault) {
+            let top = try Codecs.topLevelObject(of: data)
+            guard let found = top["formatVersion"] as? UInt32 else { throw .missingKey("formatVersion") }
+            if found > version { throw .newerFormat(found: found) }
+            if found < version { throw .olderFormat(found: found) }
+            try Codecs.checkKeys(Set(top.keys).subtracting(optional), against: keys)
+            return try Codecs.decode(type, from: data)
+        } catch {
+            throw .unreadable(file: file, reason: error.description)
+        }
+    }
+
     private func item(at relativePath: String, url: URL, kind: ItemKind) -> LibraryItem {
         let header = kind == .notebook ? indexHeader(ofPackageAt: url) : nil
         // One read of the sidecar, for both the identity and the decoration:
         // the listing opened it for the identity already, so two more keys in
         // it cost nothing.
-        let sidecar = kind == .folder ? folderFile(of: relativePath) : nil
+        var sidecar: FolderFile?
+        var fault: LibraryError?
+        if kind == .folder {
+            do { sidecar = try folderFile(of: relativePath) } catch { fault = error }
+        }
         return LibraryItem(
             id: relativePath,
             name: Self.displayName(of: url.lastPathComponent),
@@ -316,6 +354,7 @@ package actor LibraryStore {
             notebookID: header?.notebookID,
             folderID: sidecar?.folderID,
             decoration: sidecar?.decoration,
+            fault: fault,
             createdAt: header?.createdAt ?? createdAt(url),
             modifiedAt: modifiedAt(url, kind: kind)
         )
@@ -400,22 +439,18 @@ package actor LibraryStore {
         return item(at: path, url: target, kind: .folder)
     }
 
-    /// The sidecar, or nil when it is missing, at another version, or names a
-    /// colour or symbol this build does not ship. Nil costs the folder its
-    /// identity, which costs it its star and its trash container name.
-    package func folderFile(of folder: String) -> FolderFile? {
-        let sidecar = url(of: folder).appendingPathComponent(Self.folderSidecar)
-        guard let data = try? Data(contentsOf: sidecar),
-              let file = try? Codecs.decodeStrict(
-                  FolderFile.self, from: data,
-                  expectedKeys: ["formatVersion", "folderID", "color", "symbol"]
-              ),
-              file.formatVersion == FolderFile.currentFormatVersion
-        else { return nil }
-        return file
+    /// The sidecar, or why it cannot be read: it is missing, at another
+    /// version, or names a colour or symbol this build does not ship. The
+    /// fault costs the folder its identity, which costs it its star and its
+    /// trash container name, and its decoration, and nothing else.
+    package func folderFile(of folder: String) throws(LibraryError) -> FolderFile {
+        try Self.readSidecar(
+            FolderFile.self, at: url(of: folder).appendingPathComponent(Self.folderSidecar),
+            version: FolderFile.currentFormatVersion, keys: Self.folderKeys
+        )
     }
 
-    package func folderID(of folder: String) -> FolderID? { folderFile(of: folder)?.folderID }
+    package func folderID(of folder: String) -> FolderID? { try? folderFile(of: folder).folderID }
 
     /// A new one-page notebook, committed whole in Staging before it is
     /// published. Its page is US Letter and blank paper unless told
@@ -504,22 +539,16 @@ package actor LibraryStore {
     /// The starred identities. No file means nothing is starred.
     package func favorites() throws(LibraryError) -> Set<ItemIdentity> {
         guard fm.fileExists(atPath: favoritesURL.path) else { return [] }
-        let data: Data
-        do { data = try Data(contentsOf: favoritesURL) } catch { throw .io("read favorites: \(error)") }
-        let file: FavoritesFile
-        do {
-            file = try Codecs.decodeStrict(FavoritesFile.self, from: data, expectedKeys: Self.favoritesKeys)
-        } catch {
-            throw .format(error)
-        }
-        guard file.formatVersion == FavoritesFile.currentFormatVersion else {
-            throw .format(.corruptJSON("Favorites.json is version \(file.formatVersion)"))
-        }
+        let file = try Self.readSidecar(
+            FavoritesFile.self, at: favoritesURL,
+            version: FavoritesFile.currentFormatVersion, keys: Self.favoritesKeys
+        )
         return Set(file.notebooks.map(ItemIdentity.notebook) + file.folders.map(ItemIdentity.folder))
     }
 
     /// Reads the set, changes one identity, writes the whole file. A set has
     /// no partial state worth recovering, so the write is atomic and total.
+    /// A file that does not read refuses the change and is not written over.
     package func setFavorite(_ identity: ItemIdentity, _ starred: Bool) throws(LibraryError) {
         var set = try favorites()
         if starred { set.insert(identity) } else { set.remove(identity) }
@@ -573,9 +602,7 @@ package actor LibraryStore {
     package func setDecoration(_ decoration: FolderDecoration, at relativePath: String) throws(LibraryError) {
         let (url, kind) = try existing(relativePath)
         guard kind == .folder else { throw .notAFolder(relativePath) }
-        guard let current = folderFile(of: relativePath) else {
-            throw .format(.corruptJSON("\(Self.folderSidecar) of \(relativePath) cannot be read"))
-        }
+        let current = try folderFile(of: relativePath)
         let file = FolderFile(folderID: current.folderID, decoration: decoration)
         do {
             try fileSystem.writeAtomically(Codecs.encode(file), to: url.appendingPathComponent(Self.folderSidecar), syncing: url)
@@ -600,10 +627,7 @@ package actor LibraryStore {
         // A container that holds an item is a second item under this identity.
         // One that holds only its sidecar is an interrupted trash or recovery,
         // and is cleared below.
-        let held = (try? fm.contentsOfDirectory(atPath: container.path)) ?? []
-        if held.contains(where: { self.kind(at: container.appendingPathComponent($0)) != nil }) {
-            throw .alreadyExists(containerName)
-        }
+        if !held(in: container).isEmpty { throw .alreadyExists(containerName) }
         let origin = TrashOrigin(
             formatVersion: TrashOrigin.currentFormatVersion,
             originFolderID: parentPath.isEmpty ? nil : folderID(of: parentPath),
@@ -621,37 +645,67 @@ package actor LibraryStore {
             throw .io("trash \(relativePath): \(error)")
         }
         try land(source, at: container.appendingPathComponent(source.lastPathComponent, isDirectory: true), doing: "trash \(relativePath)")
-        return TrashEntry(id: containerName, name: Self.displayName(of: origin.originName), kind: kind, origin: origin, notebookID: notebookID)
+        return TrashEntry(
+            id: containerName, name: Self.displayName(of: origin.originName), kind: kind,
+            origin: .success(origin), notebookID: notebookID
+        )
     }
 
+    /// The items a trash container holds, by file name: its directories.
+    /// `origin.json`, and a temp file a crash left beside it, are not items.
+    private func held(in container: URL) -> [(fileName: String, kind: ItemKind)] {
+        ((try? fm.contentsOfDirectory(atPath: container.path)) ?? []).sorted().compactMap { name in
+            kind(at: container.appendingPathComponent(name)).map { (name, $0) }
+        }
+    }
+
+    /// The item a trash container holds and where it came from, or nil when
+    /// it holds none. The entry is the item, not its record, so a record
+    /// that does not read is the entry's fault and hides nothing.
+    private func trashed(in container: URL) -> (fileName: String, kind: ItemKind, origin: Result<TrashOrigin, LibraryError>)? {
+        guard let item = held(in: container).first else { return nil }
+        let origin = Result { () throws(LibraryError) -> TrashOrigin in
+            try Self.readSidecar(
+                TrashOrigin.self, at: container.appendingPathComponent(Self.originSidecar),
+                version: TrashOrigin.currentFormatVersion, keys: Self.originKeys, optional: ["originFolderID"]
+            )
+        }
+        return (item.fileName, item.kind, origin)
+    }
+
+    /// Every container that holds an item, including one whose `origin.json`
+    /// does not read: that entry carries the fault in place of its record.
     package func listTrash() throws(LibraryError) -> [TrashEntry] {
         let names: [String]
         do { names = try fm.contentsOfDirectory(atPath: trashRoot.path) } catch { throw .io("list trash: \(error)") }
         return names.filter { !$0.hasPrefix(".") }.sorted().compactMap { containerName in
             let container = trashRoot.appendingPathComponent(containerName)
-            guard let data = try? Data(contentsOf: container.appendingPathComponent(Self.originSidecar)),
-                  let origin = try? Codecs.decode(TrashOrigin.self, from: data),
-                  origin.formatVersion == TrashOrigin.currentFormatVersion,
-                  let kind = kind(at: container.appendingPathComponent(origin.originName))
-            else { return nil }
-            let notebookID = kind == .notebook ? notebookID(ofPackageAt: container.appendingPathComponent(origin.originName)) : nil
-            return TrashEntry(id: containerName, name: Self.displayName(of: origin.originName), kind: kind, origin: origin, notebookID: notebookID)
+            guard let found = trashed(in: container) else { return nil }
+            let item = container.appendingPathComponent(found.fileName)
+            return TrashEntry(
+                id: containerName, name: Self.displayName(of: found.fileName), kind: found.kind,
+                origin: found.origin, notebookID: found.kind == .notebook ? notebookID(ofPackageAt: item) : nil
+            )
         }
     }
 
     /// Restores the original name. Suffixes only on a real collision; falls
-    /// back to the root when the origin folder is gone.
+    /// back to the root when the origin folder is gone, or when the record
+    /// that says where it was could not be read.
     package func recover(_ entry: TrashEntry) throws(LibraryError) -> LibraryItem {
         let container = trashRoot.appendingPathComponent(entry.id)
-        let source = container.appendingPathComponent(entry.origin.originName)
-        guard let kind = kind(at: source) else { throw .itemNotFound(entry.id) }
-        var folder = entry.origin.originPathHint
-        if !folder.isEmpty, self.kind(at: url(of: folder)) != .folder { folder = "" }
+        guard let found = trashed(in: container) else { throw .itemNotFound(entry.id) }
+        let source = container.appendingPathComponent(found.fileName)
+        let kind = found.kind
+        var folder = ""
+        if case .success(let record) = found.origin, self.kind(at: url(of: record.originPathHint)) == .folder {
+            folder = record.originPathHint
+        }
         let parent = url(of: folder)
-        var fileName = entry.origin.originName
+        var fileName = found.fileName
         var attempt = 2
         while self.kind(at: parent.appendingPathComponent(fileName)) != nil {
-            let display = Self.displayName(of: entry.origin.originName)
+            let display = Self.displayName(of: found.fileName)
             fileName = kind == .notebook ? Self.packageName("\(display) \(attempt)") : "\(display) \(attempt)"
             attempt += 1
         }
@@ -662,8 +716,8 @@ package actor LibraryStore {
         return item(at: path, url: target, kind: kind)
     }
 
-    /// Every container under `Trash/`, including one whose `origin.json` no
-    /// listing could read: emptying is about the bytes, not the entries.
+    /// Every container under `Trash/`. Each one that holds an item is listed,
+    /// so this takes what the listing shows and containers holding nothing.
     package func emptyTrash() throws(LibraryError) {
         let names: [String]
         do { names = try fm.contentsOfDirectory(atPath: trashRoot.path) } catch { throw .io("list trash: \(error)") }

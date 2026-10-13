@@ -304,7 +304,7 @@ struct LibraryView: View {
             // A refusal has a body: it is a thing that happened, and it
             // stays until the folder changes.
             placeholder(
-                "This folder could not be shown",
+                browser.section == .favorites ? "Favorites could not be shown" : "This folder could not be shown",
                 symbol: "exclamationmark.triangle",
                 detail: message,
                 isEmptySlot: false

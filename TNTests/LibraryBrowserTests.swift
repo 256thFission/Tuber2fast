@@ -319,9 +319,19 @@ struct LibraryBrowserTests {
         _ = try await browser.library.store.createFolder(named: "Other", in: "")
         await browser.reload()
 
-        #expect(await browser.destinations(in: "", excluding: []).map(\.name) == ["Other", "Outer"])
-        #expect(await browser.destinations(in: "", excluding: ["Outer"]).map(\.name) == ["Other"])
-        #expect(await browser.destinations(in: "Outer", excluding: ["Outer"]).isEmpty)
+        #expect(await browser.destinations(in: "", excluding: []).items.map(\.name) == ["Other", "Outer"])
+        #expect(await browser.destinations(in: "", excluding: ["Outer"]).items.map(\.name) == ["Other"])
+        #expect(await browser.destinations(in: "Outer", excluding: ["Outer"]) == .loaded([]))
+    }
+
+    @Test("A level the move picker cannot read is refused, never shown as one with no folders")
+    func destinationsRefuse() async throws {
+        let (scratch, browser) = try makeBrowser("browser-destinations-refused")
+        defer { withExtendedLifetime(scratch) {} }
+        _ = try await browser.library.store.createFolder(named: "Outer", in: "")
+        try FileManager.default.removeItem(at: browser.library.store.url(of: "Outer"))
+
+        #expect(await browser.destinations(in: "Outer", excluding: []) == .refused(LibraryError.notAFolder("Outer").description))
     }
 
     @Test("The favorites section lists what is starred, and a tap there unstars it")
@@ -342,6 +352,60 @@ struct LibraryBrowserTests {
         await browser.toggleFavorite(try #require(browser.displayed.first))
         #expect(browser.displayed.isEmpty)
         #expect(browser.favorites.isEmpty)
+    }
+
+    @Test("A bad Favorites.json refuses only the stars: Documents, search and Trash list, and starring writes nothing")
+    func aBadFavoritesFileRefusesOnlyTheStars() async throws {
+        for bad in ["truncated", "version 2"] {
+            let (scratch, browser) = try makeBrowser("browser-bad-favorites")
+            defer { withExtendedLifetime(scratch) {} }
+            let store = browser.library.store
+            _ = try await store.createFolder(named: "Term", in: "")
+            let essay = try await store.createNotebook(named: "Essay", in: "")
+            let gone = try await store.createNotebook(named: "Gone", in: "")
+            try await store.setFavorite(try #require(essay.identity), true)
+            _ = try await browser.library.trash(at: gone.relativePath)
+            let written = try Data(contentsOf: store.favoritesURL)
+            let bytes: Data
+            if bad == "truncated" {
+                bytes = written.prefix(written.count / 2)
+            } else {
+                var object = try jsonObject(written)
+                object["formatVersion"] = FavoritesFile.currentFormatVersion + 1
+                bytes = try jsonData(object)
+            }
+            try bytes.write(to: store.favoritesURL)
+
+            await browser.reload()
+            #expect(browser.listing.items.map(\.name) == ["Essay", "Term"], "\(bad)")
+            #expect(browser.favorites.isEmpty)
+            let refusal = try #require(browser.refusal, "\(bad): the stars' fault is a line, not a log")
+            #expect(refusal.hasPrefix("Favorites.json cannot be read: "))
+
+            browser.searchText = "ess"
+            await browser.reload()
+            #expect(browser.displayed.map(\.name) == ["Essay"], "\(bad)")
+            browser.searchText = ""
+
+            browser.section = .favorites
+            await browser.reload()
+            guard case .refused(let message) = browser.listing else {
+                Issue.record("\(bad): the Favorites section must refuse")
+                continue
+            }
+            #expect(message == refusal)
+
+            browser.section = .trash
+            await browser.reload()
+            #expect(browser.trash.map(\.name) == ["Gone"], "\(bad)")
+
+            browser.section = .documents
+            await browser.reload()
+            browser.refusal = nil
+            await browser.toggleFavorite(try #require(browser.displayed.first { $0.name == "Essay" }))
+            #expect(browser.refusal == refusal)
+            #expect(try Data(contentsOf: store.favoritesURL) == bytes, "\(bad): a file that does not read is not written over")
+        }
     }
 
     @Test("Setting a decoration reloads the listing and the item carries it")

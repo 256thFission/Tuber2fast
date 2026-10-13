@@ -47,7 +47,7 @@ private struct LibraryMoveLevel: View {
     let confirm: (String) -> Void
 
     @Environment(\.macaron) private var theme
-    @State private var folders: [LibraryItem] = []
+    @State private var folders = Listing.loading
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -58,12 +58,15 @@ private struct LibraryMoveLevel: View {
             }
 
             MacaronHeading(text: "Folders")
-            if folders.isEmpty {
-                Text("No folders here")
-                    .font(Macaron.body(13))
-                    .foregroundStyle(theme.outline(of: theme.chrome).color)
-            } else {
-                ForEach(folders) { item in
+            switch folders {
+            case .loading:
+                EmptyView()
+            case .refused(let message):
+                readout("These folders could not be shown: \(message)")
+            case .loaded(let items) where items.isEmpty:
+                readout("No folders here")
+            case .loaded(let items):
+                ForEach(items) { item in
                     MacaronButton(title: item.name, icon: "folder") { enter(item.relativePath) }
                 }
             }
@@ -78,5 +81,11 @@ private struct LibraryMoveLevel: View {
         .task(id: folder) {
             folders = await browser.destinations(in: folder, excluding: paths)
         }
+    }
+
+    private func readout(_ text: String) -> some View {
+        Text(text)
+            .font(Macaron.body(13))
+            .foregroundStyle(theme.outline(of: theme.chrome).color)
     }
 }
