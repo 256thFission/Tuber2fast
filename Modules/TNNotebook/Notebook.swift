@@ -818,9 +818,12 @@ package final class Notebook {
     /// Validates and inserts a layer beneath the ink, synchronously: the tap
     /// that makes a text box gets its layer in the same pass. `recording`
     /// is false for a text box, whose session records the insert as part
-    /// of one step at its end.
+    /// of one step at its end. A recorded insert under an open session is
+    /// refused: the session's entry restores the revision it opened on, so
+    /// one undo would take the insert with the box.
     package func insertLayer(_ layer: Layer, on page: PageID, recording: Bool = true) throws(FormatFault) {
         guard case .ready(var content) = states[page] else { throw .invalidWrite("page \(page) is not ready") }
+        if recording, content.textEditing != nil { throw .invalidWrite("page \(page) has a text box open") }
         do { _ = try layer.validated() } catch { throw .invalidWrite("layer invalid: \(error)") }
         let captured = content.revision
         content.layers.insert(layer, at: content.inkIndex)

@@ -329,9 +329,11 @@ struct EditorViewModelContentTests {
         notebook.createTextBox(on: page, at: PagePoint(x: 40, y: 40), style: .body, alignment: .leading)
         #expect(surface.openBox == nil, "the picture that leaves the box out has not landed")
 
-        await editor.importImage(try Fixture.imageData(width: 40, height: 30))
-        #expect(editor.lastContentError != nil)
+        // The link goes first: the box can come up during the image's
+        // awaits, and a commit after that ends the session and lets a link land.
         await editor.addLink(to: .internalPage(page))
+        #expect(editor.lastContentError != nil)
+        await editor.importImage(try Fixture.imageData(width: 40, height: 30))
         #expect(editor.lastContentError != nil)
         #expect(notebook.state(of: page)?.content?.layers.count == 1, "only the box")
         #expect(!notebook.canUndo, "nothing was recorded ahead of the session")

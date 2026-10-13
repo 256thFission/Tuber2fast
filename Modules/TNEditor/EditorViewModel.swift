@@ -466,7 +466,6 @@ package final class EditorViewModel {
         let page = notebook.currentPageID
         lastContentError = nil
         commitTextEditing()
-        guard !notebook.hasTextSession(on: page) else { lastContentError = .invalidWrite("page \(page) is still opening a text box"); return }
         do { try await notebook.importImage(data, on: page) } catch { lastContentError = error }
         binding.drain()
     }
@@ -496,7 +495,6 @@ package final class EditorViewModel {
         let rect = Self.defaultRect(width: 160, height: 44, on: notebook.index.record(of: page)?.geometry)
         lastContentError = nil
         commitTextEditing()
-        guard !notebook.hasTextSession(on: page) else { lastContentError = .invalidWrite("page \(page) is still opening a text box"); return }
         do { try notebook.addLinkLayer(on: page, rect: rect, target: target) } catch { lastContentError = error }
         binding.drain()
     }
@@ -505,11 +503,7 @@ package final class EditorViewModel {
     /// duplicated or deleted, or an export read, so the session's entry
     /// lands before the insert's and an export has what was typed. Called
     /// inside each method rather than by the row that asks, because the
-    /// navigator reaches the same methods as the band. A canvas still
-    /// opening its box, from the tap until the picture that leaves the box
-    /// out lands, has nothing to commit and the notebook's session stays
-    /// open, so the two inserts that record an entry, an image and a link,
-    /// refuse until it ends: theirs would land before the session's.
+    /// navigator reaches the same methods as the band.
     package func commitTextEditing() { binding.commitTextEditing() }
 
     /// The inset is a page point count, not a fraction: a new box sits the

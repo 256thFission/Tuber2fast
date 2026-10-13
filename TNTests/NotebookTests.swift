@@ -1615,6 +1615,19 @@ struct NotebookTests {
         #expect(notebook.pageCount == 1, "a refused duplicate inserts nothing")
     }
 
+    @Test("An image or a link on a page with a text box open is refused, and nothing is recorded")
+    func recordedInsertRefusesAnOpenTextBox() async throws {
+        let (scratch, notebook, page) = try await readyPage("nb-insert-text")
+        notebook.createTextBox(on: page, at: PagePoint(x: 40, y: 40), style: .body, alignment: .leading)
+
+        await #expect(throws: FormatFault.self) { try await notebook.importImage(try Fixture.imageData(width: 40, height: 30), on: page) }
+        #expect(throws: FormatFault.self) { try notebook.addLinkLayer(on: page, rect: PageRect(x: 10, y: 10, width: 160, height: 44), target: .internalPage(page)) }
+        #expect(notebook.state(of: page)?.content?.layers.count == 1, "only the box")
+        #expect(!notebook.canUndo)
+        _ = await notebook.close()
+        _ = scratch
+    }
+
     @Test("A link moves by its rect, undoes, redoes; a bad rect and a text layer are refused")
     func movingALink() async throws {
         let scratch = try Scratch("nb-move-link")
