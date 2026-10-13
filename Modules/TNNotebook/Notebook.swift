@@ -140,8 +140,14 @@ package final class Notebook {
 
     // MARK: The window
 
-    /// The complete decoded window. Pages entering it load; loads for pages
-    /// leaving it are cancelled and their results dropped on arrival.
+    /// The complete decoded window. Pages entering it load, or are pushed if
+    /// the notebook holds them already; loads for pages leaving it are
+    /// cancelled and their results dropped on arrival.
+    ///
+    /// A page held ready is pushed with a composite, rendered here if it has
+    /// none: an import's pages wait for this, so the only composites a long
+    /// PDF holds are the window's. A refused page is pushed too, so its
+    /// placeholder says why instead of "Loading…".
     package func windowChanged(to pages: [PageID]) {
         let newWanted = Set(pages)
         for page in wanted.subtracting(newWanted) {
@@ -149,9 +155,21 @@ package final class Notebook {
             loads[page] = nil
             if case .loading = states[page] { states[page] = .unloaded }
         }
+        let entering = newWanted.subtracting(wanted)
         wanted = newWanted
         for page in pages {
-            if case .unloaded = states[page] { startLoad(page) }
+            switch states[page] {
+            case .unloaded:
+                startLoad(page)
+            case .ready(let content) where entering.contains(page):
+                withContent(page) { $0.retired = false }
+                emitContent(page)
+                if content.composite == nil { rerenderComposite(of: page) }
+            case .unreadable where entering.contains(page):
+                emitContent(page)
+            default:
+                break
+            }
         }
     }
 
@@ -556,7 +574,14 @@ package final class Notebook {
     /// a caller that suspended since it chose `after` refuses for itself
     /// when that page is gone. Each starts with its own content: empty for
     /// every caller but a duplicate, which starts with the source's.
-    private func insertPages(_ pages: [(record: PageRecord, content: PageContent)], after: PageID?, answering: ReportSeq?) -> [PageID] {
+    ///
+    /// An import's pages are not pushed (`pushing` false). They start
+    /// retired, as if the runtime had let them go, and the window report
+    /// that answers the structure push names the ones it shows, which
+    /// `windowChanged(to:)` pushes. The rest hold no composite, and once
+    /// saved they are pruned like any page outside the window: a 100-page
+    /// lecture PDF would otherwise hold a full-page bitmap per page.
+    private func insertPages(_ pages: [(record: PageRecord, content: PageContent)], after: PageID?, answering: ReportSeq?, pushing: Bool = true) -> [PageID] {
         var records = index.pages
         var position = records.endIndex
         if let after {
@@ -572,13 +597,14 @@ package final class Notebook {
             // A page that has just been inserted owes the disk its page file
             // whatever is on it.
             content.edited()
+            content.retired = !pushing
             states[record.id] = .ready(content)
-            wanted.insert(record.id)
+            if pushing { wanted.insert(record.id) }
             bumpContentVersion(of: record.id)
         }
         indexSeq += 1
         emitStructure(answering: answering)
-        for (record, _) in pages {
+        for (record, _) in pages where pushing {
             emitContent(record.id)
             rerenderComposite(of: record.id)
         }
@@ -914,7 +940,7 @@ package final class Notebook {
         }
         try await store.writeAsset(data, asset)
         let replaced = untouchedOnlyPage()
-        let created = insertPages(pages, after: currentPageID, answering: nil)
+        let created = insertPages(pages, after: currentPageID, answering: nil, pushing: false)
         if let replaced { deletePage(replaced) }
         return created
     }
@@ -976,7 +1002,7 @@ package final class Notebook {
             made.append((PageRecord(id: PageID(), geometry: geometry, paper: .image(asset)), .empty))
         }
         guard index.record(of: after) != nil else { throw .invalidWrite("the page the scan would follow is gone") }
-        let created = made.isEmpty ? [] : insertPages(made, after: after, answering: nil)
+        let created = made.isEmpty ? [] : insertPages(made, after: after, answering: nil, pushing: false)
         if let stopped { throw stopped }
         return created
     }

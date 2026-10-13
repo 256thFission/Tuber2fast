@@ -3,6 +3,7 @@ import PencilKit
 import Testing
 @testable import TNCanvas
 @testable import TNEditor
+@testable import TNFormat
 @testable import TNModel
 @testable import TNNotebook
 import UIKit
@@ -32,14 +33,21 @@ final class CanvasLifecycleTests: HostingSuite {
         }
     }
 
-    /// A new notebook of `pages` pages, saved, with its editor open on the
-    /// first page.
-    private func open(pages: Int) async throws -> Editor {
+    /// A new notebook of `pages` pages, saved and opened again the way the
+    /// app opens one, so no page is loaded, with its editor open on the
+    /// first page. The pages at `missing` have lost their file.
+    private func open(pages: Int, missing: [Int] = []) async throws -> Editor {
         let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let notebook = try await Notebook.create(at: directory.appending(path: "Scratch.tubernotes"), schedule: fast)
-        for _ in 1..<pages { notebook.appendPage() }
-        await notebook.flush()
+        let package = directory.appending(path: "Scratch.tubernotes")
+        let created = try await Notebook.create(at: package, schedule: fast)
+        for _ in 1..<pages { created.appendPage() }
+        #expect(await created.close() == .clean)
+        let store = PackageStore(root: package)
+        for index in missing {
+            try FileManager.default.removeItem(at: store.layout.pageURL(created.pageIDs[index]))
+        }
+        let notebook = try await Notebook.open(store: store, schedule: fast)
         let binding = EditorBinding(notebook: notebook, environment: testEnvironment, onLinkActivated: { _ in })
         let runtime = binding.host as! PagedCanvasController
         let window = host(runtime)
@@ -125,6 +133,43 @@ final class CanvasLifecycleTests: HostingSuite {
 
         try await waitUntil { runtime.canvases[ids[0]] != nil }
         #expect(notebook.state(of: ids[0])?.content != nil)
+        await editor.close()
+    }
+
+    @Test("Paging through a notebook holds a snapshot only inside the decoded window, a page only ever in its outer ring included")
+    func pagingHoldsAtMostFiveSnapshots() async throws {
+        let editor = try await open(pages: 20)
+        let (notebook, runtime) = (editor.notebook, editor.runtime)
+        let ids = notebook.pageIDs
+        // A fling settles once, so the page two past each stop is only ever
+        // a placeholder in the outer ring, and never has a canvas to retire.
+        for index in [0, 4, 8, 12, 16, 19] {
+            settle(runtime, at: index)
+            let decoded = try #require(runtime.currentLayout.decodedWindow(around: index))
+            try await waitUntil { decoded.allSatisfy { runtime.snapshots[ids[$0]] != nil } }
+            #expect(runtime.snapshots.count <= 5, "on page \(index + 1) the runtime holds \(runtime.snapshots.count) snapshots")
+        }
+        for (index, page) in ids.enumerated() where index < 17 {
+            #expect(isUnloaded(notebook.state(of: page)), "page \(index + 1) is outside the window")
+        }
+        await editor.close()
+    }
+
+    @Test("A refused page that leaves the window and comes back says why, not that it is loading")
+    func anUnreadablePageReturnsWithItsFault() async throws {
+        let editor = try await open(pages: 6, missing: [1])
+        let (notebook, runtime) = (editor.notebook, editor.runtime)
+        let ids = notebook.pageIDs
+        let fault = PlaceholderCopy.text(for: .missingPageFile)
+        try await waitUntil { runtime.canvases[ids[0]] != nil }
+        #expect(runtime.placeholders[ids[1]]?.text == fault)
+
+        settle(runtime, at: 5)
+        #expect(runtime.placeholders[ids[1]] == nil)
+
+        settle(runtime, at: 0)
+        #expect(runtime.placeholders[ids[1]]?.text == fault)
+        #expect(runtime.canvases[ids[1]] == nil)
         await editor.close()
     }
 }

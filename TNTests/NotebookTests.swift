@@ -1520,6 +1520,36 @@ struct NotebookTests {
         _ = scratch
     }
 
+    @Test("A PDF's pages are pushed only when the window names them: after a save and one window change, only the window's pages hold a composite")
+    func importHoldsCompositesOnlyForTheWindow() async throws {
+        let (scratch, notebook, _) = try await readyPage("nb-pdf-window")
+        _ = notebook.drainChanges()
+
+        let created = try await notebook.importPDF(try Fixture.pdfData(pages: 30))
+
+        #expect(notebook.pageIDs == created)
+        let changes = notebook.drainChanges()
+        #expect(changes.allSatisfy { if case .structure = $0 { true } else { false } }, "\(changes)")
+        #expect(created.allSatisfy { notebook.state(of: $0)?.content?.composite == nil })
+
+        await notebook.flush()
+        // What the runtime reports once it lands on the first page.
+        let window = Array(created.prefix(3))
+        notebook.windowChanged(to: window)
+        notebook.prune()
+
+        try await waitUntil { window.allSatisfy { notebook.state(of: $0)?.content?.composite != nil } }
+        let pushed = notebook.drainChanges().compactMap { if case .content(let snapshot) = $0 { snapshot.id } else { nil } }
+        #expect(pushed == window)
+        for page in created.dropFirst(window.count) {
+            guard case .unloaded = notebook.state(of: page) else {
+                Issue.record("page \(page) outside the window is \(String(describing: notebook.state(of: page)))"); continue
+            }
+        }
+        _ = await notebook.close()
+        _ = scratch
+    }
+
     @Test("Asset paper needs an empty page, takes the asset's aspect, and dirties the index")
     func assetPaperRules() async throws {
         let scratch = try Scratch("nb-asset-paper")

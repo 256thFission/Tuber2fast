@@ -255,7 +255,10 @@ final class RecordingReporter: CanvasReporting {
     }
 
     func pageBecameCurrent(_ page: PageID) { becameCurrent.append(page) }
-    func windowChanged(to pages: [PageID]) { windows.append(pages) }
+    func windowChanged(to pages: [PageID]) {
+        windows.append(pages)
+        sequence.append("windowChanged")
+    }
     func endBoundaryReached(seq: ReportSeq) {
         boundaries.append(seq)
         onEndBoundary?(seq)

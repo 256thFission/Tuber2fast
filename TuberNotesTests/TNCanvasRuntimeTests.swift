@@ -290,7 +290,7 @@ final class TNCanvasRuntimeTests: HostingSuite {
         _ = runtime.retireAll()
     }
 
-    @Test("Turning back retires the far canvases once each and rebuilds the near ones from their snapshots")
+    @Test("Turning back retires each page that leaves once, a canvas with its ink and an outer-ring placeholder with none, and rebuilds the near ones from their snapshots")
     func aTurnBackRebuildsFromTheSnapshots() {
         let reporter = RecordingReporter()
         let (runtime, ids) = sixInstalledPages(reporter)
@@ -299,8 +299,11 @@ final class TNCanvasRuntimeTests: HostingSuite {
 
         settle(runtime, at: 0)
 
-        #expect(finalStrokeCounts(reporter) == [ids[2]: 3, ids[3]: 4, ids[4]: 5])
-        #expect(reporter.retired.count == 3)
+        // Page 6 was only ever in the outer ring: it had no canvas to retire.
+        #expect(finalStrokeCounts(reporter) == [ids[2]: 3, ids[3]: 4, ids[4]: 5, ids[5]: nil])
+        #expect(reporter.retired.count == 4)
+        #expect(reporter.retired.last?.page == ids[5])
+        #expect(reporter.sequence.suffix(2) == ["retired", "windowChanged"], "reported before the window, whose handler prunes")
         #expect(Set(runtime.canvases.keys) == [ids[0], ids[1]])
         #expect(runtime.canvases[ids[0]]?.canvasView.drawing.strokes.count == 1)
         #expect(runtime.canvases[ids[1]]?.canvasView.drawing.strokes.count == 2)

@@ -622,6 +622,13 @@ Not gaps — properties of the tooling that read as project defects when hit.
   each render (R2-10). Owed: import a lecture PDF, over 64 MB if one is at
   hand; read the memory gauge at page 5 and again after flipping to page
   35: less than 100 MB more, and no jetsam.
+- **Only the window's pages hold a composite (U16, I3 lines 3 and 9).** The
+  simulator shows a 30-page import render composites for the window's pages
+  only, the rest unloaded after a save, and a hosted runtime hold at most
+  five snapshots while flinging through 20 pages. The memory that buys on a
+  device, and that a page pushed again as it re-enters the window keeps its
+  ink, are unproven. Owed: the page-35 gauge reading above, and on a page
+  written on and left three or more pages back, jump to it and see its ink.
 - **A typed answer survives going to the background (U11, I3 lines 7 and
   10).** A hosted test shows a commit puts the typed words in the notebook
   before it returns, and the recorder suites show an export, an insert, and

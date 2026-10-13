@@ -39,7 +39,8 @@ package struct PageContent: Sendable {
     package var pendingLayerFiles: Set<LayerID>
     /// The sequence of the last ink pushed down, whose echo is not an edit.
     package var pendingEcho: InkSeq?
-    /// The runtime has retired this page's canvas; it may be pruned.
+    /// The runtime has reported this page's final ink, or was never given
+    /// the page; it may be pruned.
     package var retired: Bool
     /// The live text session, if one is open. Never saved; it is what
     /// `rerenderComposite` reads to leave that layer out of the picture.

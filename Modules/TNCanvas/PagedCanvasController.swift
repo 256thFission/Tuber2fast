@@ -36,8 +36,8 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
     /// What the notebook has pushed down for a page, kept whether or not the
     /// page currently has a canvas, until the notebook unloads the page: a
     /// page outside the live window keeps its snapshot and builds a canvas
-    /// when it enters.
-    private var snapshots: [PageID: PageSnapshot] = [:]
+    /// when it enters. Readable for the same reason `canvases` is.
+    private(set) var snapshots: [PageID: PageSnapshot] = [:]
 
     /// The live canvases, by page. Internal rather than private so a test can
     /// ask what the window built without a `…ForTesting` member existing in the
@@ -581,7 +581,14 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
         reportWindow(decodedIDs)
     }
 
+    /// Tells the notebook the decoded window when it changed. A page outside
+    /// it with no canvas reports its retire first, with no ink: one only ever
+    /// in the outer ring never had a canvas to retire, and the notebook
+    /// prunes, in the handler of this very report, only what has reported.
     private func reportWindow(_ pages: [PageID]) {
+        for page in pagesAwaitingRetireReport where canvases[page] == nil && !pages.contains(page) {
+            _ = retire(page)
+        }
         guard pages != reportedWindow else { return }
         reportedWindow = pages
         TNLog.event(.canvas, "window \(pages.count) pages")
