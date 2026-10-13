@@ -445,6 +445,7 @@ struct StoreTests {
         let report = try await store.save(batch)
         #expect(report.refusals[newPage.id] == .danglingAsset(dangling.id, dangling.payload.asset!))
         #expect(report.indexWritten)
+        #expect(report.omitted == [newPage.id], "the report names the page the written index left out")
         #expect(report.committed.contains(index.pageIDs[2]))
         let loaded = try await PackageStore(root: scratch.packageURL).load()
         #expect(loaded.index.pageIDs == index.pageIDs)

@@ -1345,7 +1345,13 @@ package final class Notebook {
             for (page, refusal) in report.refusals {
                 TNLog.event(.notebook, "page \(page) refused: \(refusal)")
             }
-            if report.indexWritten { savedIndexSeq = max(savedIndexSeq, capturedIndexSeq) }
+            // An index that left out a page this pass captured stays owed, so
+            // the pass that lands the page's file rewrites the index to name
+            // it. A placeholder is never captured, so it never holds it
+            // (`Docs/Contract.md` — One save).
+            if report.indexWritten, report.omitted.isDisjoint(with: captured.map(\.page)) {
+                savedIndexSeq = max(savedIndexSeq, capturedIndexSeq)
+            }
             if report.indexWithheld {
                 lastSaveError = .indexWithheld
             } else if !report.refusals.isEmpty {
