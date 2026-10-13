@@ -41,7 +41,7 @@ commit subject starts with `CONTRACT:`.
 A **library** is a tree of folders and **notebooks** under one root. A
 notebook is a package of ordered **pages**. A page has **paper**, a stack
 of **layers**, and **ink**. Ink is a `PKDrawing` in page coordinates. It is
-not a layer, but it has a position in the layer stack. A **composite** is
+not a layer, and it is drawn above every layer. A **composite** is
 the paper and every layer rendered to one image. A **thumbnail** is a
 page's composite and ink rendered small. It is derived, never saved in the
 package.
@@ -294,7 +294,7 @@ app traps.
 <Name>.tubernotes/
   notebook.json           the index: order, geometry, paper, bookmarks
   view.json               currentPageID; disposable
-  pages/<PageID>.json     hasInk, inkIndex, the layer list
+  pages/<PageID>.json     hasInk, the layer list
   ink/<PageID>.tnink      a PKDrawing archive inside the TNIK container
   layers/<LayerID>.json   one layer, keyed by its kind
   assets/<AssetID>.heic | .pdf
@@ -367,12 +367,26 @@ the fault instead. A kind carried unknown is a shim for a shape this
 build never wrote (*Forbidden*) (decided F3, R2; format-05,
 deepen-notebook-06, arch-canvas-06).
 
-**Ink is not a layer.** `inkIndex` is the ink's position in the stack. An
-import inserts at `inkIndex` and increments it, so ink stays above imported
-content. `hasInk` never goes back to false. Once it is true, the ink file
-is written whenever the ink changes, an empty drawing included, and is
-deleted only with the page. A save that changes only layers does not
-rewrite the ink file.
+**Ink is not a layer, and it is drawn above every layer.** The layer list
+is the stack, bottom to top, and the ink sits over the whole of it: an
+insert appends to the list, and a composite, a thumbnail and an export
+draw every layer and then the ink. No file records where the ink sits,
+because there is one place it can be. `hasInk` never goes back to false.
+Once it is true, the ink file is written whenever the ink changes, an
+empty drawing included, and is deleted only with the page. A save that
+changes only layers does not rewrite the ink file. The reason no position
+is stored is what the stored one did. The page file carried `inkIndex`,
+the ink's position in the stack; every save wrote it as the layer count
+and nothing that draws read it, so it was a field reserved for a future
+feature (*Forbidden*), and a page file that put a layer above the ink
+would have loaded and drawn it below, so the field could only disagree
+with the picture. It goes at the reset of every version to 1, while *Burn
+things down with permission* still lets a key leave a file under the
+number the file carries; once that permission ends, a key removed is a
+bump and a step. An AI that one day writes on a layer of its own writes
+below the human's ink as every layer does, so the future the field was
+kept for costs nothing (decided R2, W4; round-two call: inkIndex goes at
+the reset; ext-01).
 
 **Bookmarks** are a list on the index, at most one per page, each naming
 a page the index holds and carrying a title that may be empty. The outline
@@ -627,7 +641,7 @@ files or none.
 
 Undo belongs to the notebook. There is one stack per notebook of
 `HistoryEntry` values: the page, and its revision before and after one
-edit, where a revision is the ink, the layer list, and the ink's index.
+edit, where a revision is the ink and the layer list.
 Every edit of a page's ink or layers records one entry, a committed text
 session included, and only when the revision moved; undo applies the
 difference. It survives page turns. An undo restores the
