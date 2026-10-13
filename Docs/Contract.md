@@ -416,6 +416,18 @@ that fit and the maximum is `ZoomCap`. A page turn is possible at fit zoom
 or when the page is panned to its own horizontal edge; zoomed in and away
 from an edge, a horizontal drag pans instead.
 
+**Only a finger or a pointer turns a page; the Pencil never does.** The
+paging scroll view's pan takes a direct touch and the indirect pointer, a
+trackpad or a mouse, and no other touch type. A `UIScrollView`'s pan takes
+the Pencil by default, so a Pencil drag PencilKit did not claim, one that
+began at a page's edge, or one under the text tool, which turns the
+drawing gesture off, turned the page under the Pencil. A pan inside a
+zoomed page is not a turn: under the text tool `PKCanvasView`'s own pan
+takes the Pencil, and that moves the view within the page's slot, never
+past it. Finger navigates, Pencil writes, which is the design law in
+`Docs/Design/Macaron.md` (*The finger never draws. The Pencil never drags
+chrome*) at the page (decided M3 S2).
+
 The set of loaded pages follows the scroll position: pages within one slot
 of the current page get a `PKCanvasView`; pages within two get a decoded
 placeholder. Every page has a slot; only the near ones have a canvas, so
