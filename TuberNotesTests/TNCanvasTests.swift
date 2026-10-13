@@ -751,6 +751,57 @@ struct TNCanvasTests {
         _ = runtime.retireAll()
     }
 
+    // MARK: - Teardown
+
+    @Test("After retireAll no canvas is built: not for an install, a turn, or a stroke's end")
+    func aTornDownRuntimeBuildsNothing() throws {
+        let reporter = RecordingReporter()
+        let runtime = hosted(reporter)
+        let pages = descriptors(2)
+        runtime.setPages(pages, seq: StructureSeq(1), answering: nil)
+        for page in pages {
+            runtime.installContent(.editable(id: page.id, ink: PKDrawing(), layers: [], composite: nil, inkSeq: InkSeq(1)))
+        }
+        let (a, b) = (pages[0].id, pages[1].id)
+        let canvas = try #require(runtime.canvases[a])
+        canvas.canvasViewDidBeginUsingTool(canvas.canvasView)
+
+        #expect(runtime.retireAll() == [a], "a stroke on screen is waited for")
+        #expect(Set(runtime.canvases.keys) == [a])
+
+        runtime.installContent(.editable(id: b, ink: PKDrawing(), layers: [], composite: nil, inkSeq: InkSeq(2)))
+        draw(strokeDrawing(strokes: 1), on: canvas)
+        canvas.canvasViewDidEndUsingTool(canvas.canvasView)
+        canvas.canvasViewDrawingDidChange(canvas.canvasView)
+
+        #expect(runtime.canvases.isEmpty, "the stroke's end rebuilt nothing")
+        #expect(reporter.retired.filter { $0.page == a }.map { $0.finalInk?.strokes.count } == [1])
+        #expect(!runtime.scrollView.isScrollEnabled)
+
+        settle(runtime, at: 1)
+        #expect(runtime.canvases.isEmpty, "a turn builds nothing either")
+    }
+
+    @Test("Close does not wait on a use nothing can touch: one still drawing outside the window ends in the teardown")
+    func retireAllEndsAToolUseOutsideTheWindow() throws {
+        let reporter = RecordingReporter()
+        let runtime = PagedCanvasController(reporter: reporter)
+        let window = host(runtime)
+        let pages = descriptors(2)
+        runtime.setPages(pages, seq: StructureSeq(1), answering: nil)
+        for page in pages {
+            runtime.installContent(.editable(id: page.id, ink: PKDrawing(), layers: [], composite: nil, inkSeq: InkSeq(1)))
+        }
+        let canvas = try #require(runtime.canvases[pages[0].id])
+        canvas.canvasViewDidBeginUsingTool(canvas.canvasView)
+
+        // In one turn: the window door's hop has not run yet.
+        window.rootViewController = UIViewController()
+        #expect(runtime.retireAll().isEmpty)
+        #expect(runtime.canvases.isEmpty)
+        #expect(reporter.retired.filter { $0.page == pages[0].id }.count == 1)
+    }
+
     private func backdrop(of canvas: PageCanvasController) -> UIImage? {
         canvas.paperView.subviews.compactMap { $0 as? UIImageView }.first?.image
     }

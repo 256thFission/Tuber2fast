@@ -76,6 +76,12 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
     /// A window refresh that arrived while a stroke was in flight.
     private var windowRefreshDeferred = false
 
+    /// Set by `retireAll` and never cleared. A canvas built after the
+    /// teardown would go out with the tab without its final report and trap,
+    /// so from here on every page is a placeholder, whatever install, settle,
+    /// layout pass or stroke end arrives.
+    private var isTornDown = false
+
     /// The bounds the slots were laid out for.
     private var layoutBounds: CGSize = .zero
 
@@ -391,10 +397,18 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
         return .retired
     }
 
-    /// Retires every live page, delivering final reports. Returns the pages
-    /// whose retire was deferred because a stroke is in flight; the notebook
-    /// defers its own check by exactly those.
+    /// Tears the runtime down and retires every live page, delivering final
+    /// reports. Returns the pages whose retire was deferred because a stroke
+    /// is in flight; the notebook defers its own check by exactly those.
     package func retireAll() -> [PageID] {
+        isTornDown = true
+        scrollView.isScrollEnabled = false
+        // Close is reached from the library, where no canvas is in a window. A
+        // use still drawing there is one PencilKit never ended, and nothing can
+        // touch it now: it ends here, so close does not wait on it.
+        for canvas in Array(canvases.values) + Array(retiring.values) where canvas.view.window == nil {
+            canvas.endUntouchableToolUseNow("closed outside the window")
+        }
         var deferred: [PageID] = []
         for page in order where canvases[page] != nil || pagesAwaitingRetireReport.contains(page) {
             if retire(page) == .deferred { deferred.append(page) }
@@ -614,7 +628,8 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
     }
 
     private func isLive(_ page: PageID) -> Bool {
-        guard let index = currentIndex,
+        guard !isTornDown,
+              let index = currentIndex,
               let live = currentLayout.liveWindow(around: index),
               let position = order.firstIndex(of: page)
         else { return false }

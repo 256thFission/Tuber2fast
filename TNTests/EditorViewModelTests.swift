@@ -548,6 +548,52 @@ struct EditorViewModelLifecycleTests {
         return (scratch, notebook, surface, binding, editor)
     }
 
+    /// The page's stroke count as a fresh open reads it from disk.
+    private func strokesOnDisk(_ scratch: Scratch, _ page: PageID) async throws -> Int? {
+        let reopened = try await Notebook.open(store: PackageStore(root: scratch.packageURL), schedule: fast)
+        reopened.windowChanged(to: [page])
+        try await waitUntil { reopened.state(of: page)?.content != nil }
+        let count = reopened.state(of: page)?.content?.ink.strokes.count
+        _ = await reopened.close()
+        return count
+    }
+
+    @Test("Close waits for a deferred retire, however long, and saves the ink it carries")
+    func closeWaitsForTheStroke() async throws {
+        let (scratch, notebook, surface, binding, editor) = try await opened("vm-close-stroke")
+        let page = notebook.pageIDs[0]
+        surface.deferring = [page]
+
+        let closing = Task { await editor.close() }
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(!notebook.isClosed, "the stroke is not in custody yet")
+
+        binding.retired(page, finalInk: Ink.drawing(strokes: 2))
+        #expect(await closing.value == .clean)
+        #expect(try await strokesOnDisk(scratch, page) == 2)
+    }
+
+    @Test("A page retired earlier in the session and deferred at close is waited for again")
+    func closeWaitsForAPageRetiredEarlier() async throws {
+        let (scratch, notebook, surface, binding, editor) = try await opened("vm-close-earlier")
+        let page = notebook.pageIDs[0]
+        // A turn away retires the page and drops it; the turn back loads it
+        // again, and its canvas is new.
+        binding.retired(page, finalInk: nil)
+        binding.windowChanged(to: [])
+        binding.windowChanged(to: [page])
+        try await waitUntil { notebook.state(of: page)?.content != nil }
+        surface.deferring = [page]
+
+        let closing = Task { await editor.close() }
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(!notebook.isClosed, "the earlier retire is not this close's")
+
+        binding.retired(page, finalInk: Ink.drawing(strokes: 2))
+        #expect(await closing.value == .clean)
+        #expect(try await strokesOnDisk(scratch, page) == 2)
+    }
+
     @Test("Leaving the foreground tells the runtime to end the tool uses nothing can touch")
     func leavingTheForegroundEndsToolUses() async throws {
         let (scratch, notebook, surface, _, editor) = try await opened("vm-foreground")

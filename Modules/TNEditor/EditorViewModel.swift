@@ -651,21 +651,18 @@ package final class EditorViewModel {
     /// The app left the foreground.
     package func endToolUses() { binding.endToolUses() }
 
-    /// Close: the runtime lets go of every page first, then the notebook
-    /// runs its final pass. A retire deferred by a stroke in flight is
-    /// waited for, because the ink that stroke carries is not in custody
-    /// until its report arrives.
+    /// Close: the runtime is torn down and lets go of every page first,
+    /// then the notebook runs its final pass. A refused close leaves the
+    /// runtime torn down until the close is retried or the notebook
+    /// discarded.
     package func close() async -> CloseOutcome {
         let deferred = binding.retireAll()
-        if !deferred.isEmpty {
-            let deadline = ContinuousClock.now.advanced(by: .seconds(2))
-            while !binding.hasRetired(deferred), ContinuousClock.now < deadline {
-                try? await Task.sleep(for: .milliseconds(10))
-            }
-            if !binding.hasRetired(deferred) {
-                TNLog.violation("close: \(deferred.count) deferred retire(s) never reported; their last strokes may be lost")
-            }
-        }
+        // However long the Pencil stays down: that stroke is not in custody
+        // until its report arrives, and the torn-down runtime builds nothing
+        // while this waits. A use nothing can touch was already ended by the
+        // teardown, and a pen's commit is bounded, so only a stroke on screen
+        // is waited for. A 10 ms poll, only during a close.
+        while !binding.hasRetired(deferred) { try? await Task.sleep(for: .milliseconds(10)) }
         binding.drain()
         return await notebook.close()
     }

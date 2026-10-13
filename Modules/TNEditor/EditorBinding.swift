@@ -17,8 +17,10 @@ import UIKit
 /// in `CanvasRuntime.swift`, the one file in this target that names
 /// `TNCanvas`.
 @MainActor package protocol CanvasRuntime: CanvasSurface {
-    /// Retires every live page. Returns the pages whose retire was
-    /// deferred by a stroke in flight; each of those reports later.
+    /// Tears the runtime down, which is terminal: it builds no canvas
+    /// after this. Retires every live page and returns the pages whose
+    /// retire was deferred by a stroke in flight; each of those reports
+    /// later.
     func retireAll() -> [PageID]
     func setUndoAvailability(canUndo: Bool, canRedo: Bool)
     /// Whether any canvas, a departing one included, has a tool use open.
@@ -222,7 +224,10 @@ import UIKit
     /// Retires every live canvas. Returns the pages whose retire the
     /// runtime deferred; each of those reports its final ink later.
     package func retireAll() -> [PageID] {
-        surface.retireAll()
+        // `hasRetired` answers for this close only: a page retired earlier
+        // in the session and deferred now has not reported this stroke's ink.
+        retirementsReported.removeAll()
+        return surface.retireAll()
     }
 
     /// Whether every one of `pages` has since reported its retirement.
