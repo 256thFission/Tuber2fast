@@ -509,6 +509,20 @@ page it happened on, whichever page is showing, and scrolls to it. If that
 page has been unloaded, the restore waits as a pending revision and is
 adopted when the scroll loads it.
 
+**A pending revision is unsaved work.** The forced save, `flush()`,
+settles every pending revision before it judges what is dirty: it cancels
+the page's load if one is in flight, reads the page itself, adopts the
+revision, holds the page ready and marks it dirty, and pushes the content
+to the runtime as any load does, so the pass that follows writes the
+revision and the runtime's snapshot of the page is the restored one. A
+page is dirty by its counter and nothing else (*No dirty flag*), and a
+revision parked for a page not in custody moves no counter, so until it is
+adopted the notebook reports clean with an undo unsaved. That is what
+happened: an undo into a page outside the decoded window, then a close or
+a kill before that page's load landed, reported clean and lost the undone
+ink, and a page that left the window before its load landed kept the
+revision parked for good (decided I2; arch-data-02).
+
 **Undo waits for the stroke.** An undo or redo that arrives while any
 canvas has a stroke in flight is ignored, whichever way it came, the bar
 or the system gesture. `EditorBinding` asks the runtime `isStrokeInFlight`
@@ -1002,7 +1016,8 @@ shows; the runtime stays torn down, placeholders and no scrolling, until
 the close is retried or the notebook discarded, because more ink would not
 save either. The only way past the banner is "discard unsaved and close",
 which finds the runtime already empty, so it has nothing to retire. Only a
-clean close releases the checkout. The reasons are two crashes. A canvas
+closed notebook is released, by a clean close or a discard (*A closed
+notebook writes nothing more*). The reasons are two crashes. A canvas
 built after the teardown, by a load landing during the final save or a
 page turn after a refused close, went out with the tab without its final
 report and trapped in `deinit`. And the two seconds close once gave a
@@ -1013,6 +1028,35 @@ never ended, and a wait on it would never finish (decided I2, card 09 C4;
 round-two calls: close waits for the lift, a refused close leaves the tab
 torn down; arch-canvas-02, arch-app-01, thermo-canvas-01, contract-04,
 ink-02).
+
+**A closed notebook writes nothing more, and only a closed notebook is
+released.** A notebook closes one of two ways: the clean close above, or a
+discard. `isClosed` is the latch, set at the end of a clean close and by a
+discard, and never unset; a refused close leaves it unset, because that
+notebook is still open. From the latch on, nothing of the notebook's
+reaches the disk: no save is armed, the `view.json` write is cancelled,
+and a load that lands is dropped where it lands, as a result from an old
+generation is, so it installs nothing, marks nothing dirty and starts no
+save. That is a drop, not a trap: a load the close did not wait for is a
+result arriving late, not an invalid state, and a trap on it would be a
+crash reachable from an ordinary close. A discard is the close without its
+final pass: `Notebook.discard()` cancels the debounce, every load and the
+view write, then latches, and the unsaved pages are abandoned on purpose;
+`Library.discard` calls it and drops the checkout, and "discard unsaved
+and close" is that call. `Library.release` closes nothing: it requires
+`isClosed`, traps when a notebook still open reaches it, and drops the
+checkout. So a close is decided in one place, the editor's `close`, whose
+outcome `Workspace` acts on, and the library runs no second final pass
+whose outcome nobody reads. The reasons: `release` once ran `close()`
+again and threw the outcome away, so closing was decided in three places;
+a discard went through that same release, which ran one more save on the
+notebook being abandoned and, when it failed, re-armed the debounce before
+the checkout was dropped, so whether the notebook wrote again into a
+package the library no longer held, or met a second `Notebook` on the same
+package at a reopen, depended on what still held it in memory and on
+nothing the rules said; and a load that landed after a clean close marked
+its page dirty and saved past the checkout for the same reason (decided
+I2; arch-data-09, arch-data-02, contract-04).
 
 Open reads the index and `view.json`, and no pages. A page's ink loads when
 the window reaches it, tagged with a generation. A result from an old
