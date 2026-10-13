@@ -31,8 +31,9 @@ Four levers separate the two, and this design pulls all four:
 4. **Density.** Chips nearly touch; the shell hugs them.
 
 Everything else is deliberately held at the earlier kit (Lilita One and
-Nunito, 10–16pt radii, hard offset shadow on floating things) so that a
-theme, not a redesign, is what changes the look.
+Nunito, which the build stands in with the system's rounded face, §3.3;
+10–16pt radii; hard offset shadow on floating things) so that a theme, not
+a redesign, is what changes the look.
 
 ## 2. Principles
 
@@ -53,20 +54,35 @@ turns up that this document does not name, derive its treatment from these.
 - **The finger never draws. The Pencil never drags chrome.** Both may tap.
   Carried over from the proposal; unchanged.
 - **One tenant in the seat.** Unchanged from the proposal.
-- **A theme is six hexes.** It cannot reach a number.
+- **A theme is five hexes, two mix percentages, a row of seven drawing
+  colours and a dark flag, and it carries its ground tile.** It cannot
+  reach a number: the tile it carries is the design's grid 34, the one
+  tile there is (§5).
 
 ## 3. Tokens
 
-### 3.1 Set by a theme (exactly six)
+### 3.1 Set by a theme
 
 | token | reaches |
 |---|---|
 | `ground` | the wallpaper behind the page |
 | `chrome` | band, writing bar, chips, readouts — one fill for all of them |
 | `accent` | held tool, active tab, seat title strip, lasso, page margin |
-| `secondary` | seat toggle, resize grip, dirty dot, rule lines, highlighter |
+| `secondary` | seat toggle, resize grip, dirty dot, rule lines |
+| `ink` | what every outline is mixed toward, and the one colour the chrome uses straight: the words typed into a field, the tray knob's ring, the bar's shadow in flight |
 | `outlineMix` | two percentages, saturated and pale; defaults 42 / 55 |
-| `ink` | what handwriting is, and what every outline is mixed toward |
+| `palette` | seven colours a line of handwriting can be read in, the ink's darkest first; the pen's four swatches are seeded from its first four (§4.1) |
+| `dark` | the one flag that makes a theme dark: the mix target turns toward white, the escape runs to the ground, and the seat body and its current row follow (§3.2, §4.3) |
+
+**The ink is what outlines mix toward, not what the hand writes in.** A
+stroke keeps the colour it was drawn in, and no module the ink passes
+through can name a theme. What a theme offers for writing is its palette
+row; the swatches seeded from it are the palette's to keep (*The swatches
+are the palette's*, in the Contract); and a theme change changes what the
+bar offers and nothing on the page. The row above once said the ink was
+the handwriting's colour, and it never was: left standing, the sentence
+was an invitation to wire the token up and repaint work somebody already
+did (decided U3; docs-04).
 
 **No two of the five colours a theme sets are the same hex.** `ground`,
 `chrome`, `accent`, `secondary` and `ink` differ in every preset, and a
@@ -91,6 +107,8 @@ Default theme ("Macaron"):
 | `secondary` | `#FFB347` vanilla |
 | `outlineMix` | 42% saturated / 55% pale |
 | `ink` | `#141414` |
+| `palette` | `#141414`, strawberry `#FF6A8C`, `#E9932B`, `#3E9B6B`, `#3B7FD4`, `#8A4FBF`, `#8C5A2B` |
+| `dark` | off; Macaron Dark is the same theme with it on, the cream and the ink trading places, the same palette |
 
 The third Macaron colour, pistachio `#DFF3C8`, is the second notebook's tab
 colour in the mocks. It is a per-notebook preset, not a theme token.
@@ -142,7 +160,7 @@ would land on itself, and the line would not be there at all.
 | keycap wall | 4pt under chips, 3pt under swatches; no lip |
 | radii | shell 16, chip 10, swatch 6, page 10, seat 14 |
 | dashes | 9 on / 7 off, in the accent |
-| type | Lilita One for labels and callsigns, Nunito for body |
+| type | Lilita One for labels and callsigns, Nunito for body. Neither face is in the repository, so the build stands both in with the system's rounded face, heavy for a label and semibold for body, at the sizes of one type scale |
 
 Width chips and the grab pill are the same size class as chips (34).
 
@@ -150,13 +168,43 @@ Width chips and the grab pill are the same size class as chips (34).
 
 ### 4.1 The writing bar
 
-Contents, in order, and nothing else:
+The default row, in order:
 
 > grab pill · pen · pencil · highlighter · eraser · divider · widths · divider · four swatches
 
-No undo, no redo, no lasso, no text, no shapes, no fifth instrument. Four
-swatches, always in **one run**. Undo lives in the band and on the Pencil
-double-tap.
+**The bar is one run drawn from an ordered row of entries, and the default
+row is the only row there is.** The layout container is what changes
+between the snap states, never the entries or their order, and a bar laid
+out another way is another row, not another view: that is the seam a
+configurable bar arrives through, and until one is built nothing else is
+on the bar. The four instruments were once a ban on a fifth; they are the
+default row instead, because the bar is an open set of tools and pinned
+colours, and a ban would have made every future entry a redesign (decided
+W3; round-two call; docs-04). No undo, no redo, no lasso, no text, no
+shapes: undo lives in the band, and nothing on the bar undoes. Four
+swatches, always in **one run**.
+
+**The four swatches are the palette's run for the theme choice and the
+tool in hand, and a hold on one opens the colour tray off it.** The pen,
+the pencil and the text tool show the pen's run, seeded from the first
+four of the theme's row; the highlighter shows its own, seeded from one
+fixed row of four that is the same in every theme, because a highlight is
+a wash over writing and the theme's row is colours handwriting is read
+in. Which run a key names, and what a run nobody changed reads as, is the
+Contract's (*The swatches are the palette's*); the bar draws the run it is
+given, in order, and derives nothing. A tap takes the swatch's colour into
+the hand, and the held swatch is sunk and drawn at 26. A hold of 450 ms
+opens the colour tray (§6) in a bubble whose tail points at the held
+swatch, the cap squashing toward 88% while the hold charges (§7). A tool
+with no colour takes no tap and opens no tray, and the grab pill alone
+drags the bar, so a hold on a swatch never starts a drag. The colour
+picked in the tray goes into the hand and over that swatch, in that run
+and no other, and the one the tray closes on becomes a recent, once per
+session however many colours the wheel passed through; a recent is
+otherwise any colour a stroke landed in. Ink is never recoloured: a stroke
+keeps its colour, and a theme change changes what the bar offers and
+nothing on the page (decided U2, U3, R2-04, R2-05; round-two call: a pick
+is recorded once, when the tray closes; tray-a.md).
 
 Two snap states, not a continuum:
 
@@ -173,9 +221,12 @@ Depth: every chip and swatch is a keycap on a wall in its own outline
 colour; the shell itself is flat. The held tool, held width and held swatch
 are sunk (no wall). The grab pill is flat.
 
-Eight snap points remain from the previous build: four corners and four edge
-midpoints, nearest by predicted end location, saved per orientation. The
-default position follows the slack rule from the proposal.
+Eight snap points: four corners and four edge midpoints, nearest by
+predicted end location. The bar starts at the top edge each time an editor
+opens, and where it is thrown to is the bar's own state, not saved: the
+Contract names the three preferences there are (*A preference is one
+value under one key*), and the bar's parking place is not one of them
+(decided: doc drift; docs-04).
 
 ### 4.2 The band
 
@@ -222,12 +273,20 @@ the paper except ink and the transients in §6.
 Grounds are **two-colour inline SVG `<pattern>` tiles**, data-driven by
 `ground` and `ground2`. No raster, no gradient, no texture, no third colour.
 
-Default: **grid 34**, a 34 × 34 tile with 1.5pt lines in `ground2`. The
-catalogue on the *Two-colour SVG grounds* board has twelve tiles (plain,
-grid, checkerboard, dots, half-drop dots, hatch, isometric, cross-stitch,
-plus signs, scallops, brick, waves); a theme may pick any. Known behaviours:
-grid has a register problem under a floating bar (accept it, or snap travel
-to 34); dots have none; brick's joints read as rules under a hovering bar.
+**Grid 34 is the one ground drawn, and a theme carries its tile.** The
+tile is a 34 × 34 square of `ground` ruled along its top and left edges at
+1.5pt in `ground2`, so where tiles meet each rule is one line wide and not
+two. It is a value on the theme, `GroundTile`, and every preset carries
+the same one: the canvas is told the whole theme, so a tile a theme chose
+would reach the ground as its colours do, which is the seam a per-theme
+ground arrives through. The catalogue on the *Two-colour SVG grounds*
+board has twelve tiles (plain, grid, checkerboard, dots, half-drop dots,
+hatch, isometric, cross-stitch, plus signs, scallops, brick, waves); none
+but the grid is built, and a second kind of tile is a field on the tile
+when it exists, not an enum of kinds before (decided W2; arch-data-11;
+docs-04). Known behaviours: grid has a register problem under a floating
+bar (accept it, or snap travel to 34); dots have none; brick's joints read
+as rules under a hovering bar.
 
 Cream was chosen over the grey grid because it is one value wherever the bar
 parks. Measured contrast of the white chip's `#7C7C7C` outline against cream
@@ -238,6 +297,7 @@ is 3.5:1.
 | thing | treatment |
 |---|---|
 | width popover | **speech bubble with a tail** pointing at the width chip that owns it; body radius 19, three round 34pt selectors, 3pt line in the chrome's outline, no wall; vertical snap only |
+| colour tray | the same bubble, its tail at the swatch a hold opened it from (§4.1); 214 across; a COLOUR heading with the hex in tabular figures, a hue and saturation wheel ringed in 3pt with a 22pt knob ringed in the ink, a 16pt value slider from black to the full value, a 3pt rule in the outline at 35%, then RECENTLY USED: up to eight recents, the one in hand at 26, or "Nothing yet. Draw something."; nothing in it stands on a wall |
 | lasso box | 3pt dashed box in the accent over a 10% accent fill; four **plain flat squares** r5, 15pt, no walls |
 | magic lasso | the loop you drew, filled **28% of the accent**, dashed accent outline, 8pt anchor dot; never borrows the ink colour |
 | bar mid-drag | **lifted peel, solid line**: keeps its outline, tips −4°, lifts 5pt, casts a real blurred shadow (0 12 18 at 42%) |
@@ -252,10 +312,20 @@ d22)`, `out-quint`, `in-out-sine`, `out-elastic(.35)`, `steps(n)`.
 
 | gesture | dialect | keys |
 |---|---|---|
-| tap a chip | **squash** | 1.14 × 0.82 at 60ms (out-quint) → 0.86 × 1.24 at 130ms (out-back 2.6) → spring to 1.0 by 260ms; volume conserved; fill commits on the stretch, not on contact |
+| tap a chip | **squash** | 1.14 × 0.82 at 60ms (out-quint) → 0.86 × 1.24 at 130ms (out-back 2.6) → spring to 1.0 by 260ms; volume conserved; the press acts on lift, at once, and the squash plays after it |
+| hold a swatch | **charge** | squash toward 88% over the 450ms hold (in-out-sine), landing as the hold fires and the tray opens |
 | a tool becomes held | **trampoline** | squash to 86%, throw the cap 7pt above rest leaving an 11pt wall behind, settle sunk |
 | grab the bar or seat | **sticker peel** | −4° tilt, 5pt lift, shadow grows from hard to blurred; lands on one rebound |
 | release a drag | snap | nearest of eight points, `out-back(1.7)` |
+
+**A keycap acts on lift, and the squash plays after it.** An action held
+back for the stretch lands on whatever the tool has become meanwhile: a
+swatch and the band's Text chip tapped together, or the eraser cap and a
+swatch, turned a colour tap into a colour set on a tool that has none,
+and the editor traps on that. The press used to commit on the stretch,
+60 ms after touch-up; now the action runs at touch-up and the dialect
+follows it, and Reduce Motion takes the same path without the animation
+(decided I4; policy-02).
 
 Budget rules: nothing animates while a Pencil touch is down; nothing touches
 the ink layer; Reduce Motion collapses every dialect to a 120ms cross-fade.
@@ -263,14 +333,18 @@ the ink layer; Reduce Motion collapses every dialect to a 120ms cross-fade.
 ## 8. Additive rules and optional settings
 
 - **Outline follows ink** — a theme setting, off by default: outlines and
-  walls take the current ink colour instead of the derived tint.
+  walls take the current ink colour instead of the derived tint. Not built:
+  no theme field and no preference carries it, and every outline is the
+  derived tint of §3.2 (docs-04).
 - **Dashed = transient** — already in force above; listed here because it
   was chosen as a rule that rides on top of the main line, not as the line.
 
 ## 9. What was cut, so it stays cut
 
 - Black outlines on anything but ink.
-- Undo/redo, lasso, text, or any fifth instrument on the writing bar.
+- Undo/redo, lasso, text, or shapes on the writing bar. A fifth instrument
+  is not cut: the four are the default row, and the bar is an open set
+  (§4.1).
 - Seven swatches; any 2-wide swatch grid; a vertical swatch column in a
   horizontal bar.
 - Rings, halos, or glows for selection.
@@ -290,8 +364,8 @@ Nunito) and the seat's panel chrome.
 
 Each step ends in something that can be looked at on the iPad.
 
-1. **Theme record and derivation.** A `Theme` value with the six tokens and
-   the derived outline, wall, `ground2`, seat body, and the paper escape.
+1. **Theme record and derivation.** A `Theme` value with the tokens of §3.1
+   and the derived outline, wall, `ground2`, seat body, and the paper escape.
    Unit-testable: the default-theme table in §3.2 is the fixture.
 2. **Ground.** Cream + grid-34 SVG pattern from `ground`/`ground2`, behind
    the page. Page frame outline in the derived white outline.
