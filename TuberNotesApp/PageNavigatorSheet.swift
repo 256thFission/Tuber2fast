@@ -99,7 +99,7 @@ struct PageNavigatorSheet: View {
                 VStack(alignment: .leading, spacing: Macaron.rowGap) {
                     MacaronHeading(text: "No marked pages")
                     Text("Mark a page from its menu here.")
-                        .font(Macaron.body(13))
+                        .font(Macaron.body(.text))
                         .foregroundStyle(theme.outline(of: theme.chrome).color)
                 }
                 .padding(.vertical, 20)
@@ -160,6 +160,7 @@ struct PageNavigatorSheet: View {
                 size: thumbnail,
                 radius: Macaron.chipRadius,
                 isHeld: page.isCurrent,
+                name: "Page \(number)",
                 action: {
                     dismiss()
                     editor.scroll(toPageIndex: number - 1)
@@ -170,7 +171,7 @@ struct PageNavigatorSheet: View {
             .overlay(alignment: .topTrailing) {
                 if page.bookmark != nil {
                     Image(systemName: "bookmark.fill")
-                        .font(Macaron.body(13))
+                        .font(Macaron.body(.text))
                         .foregroundStyle(theme.outlineOnPaper(of: theme.secondary).color)
                         .padding(5)
                         .accessibilityLabel("Marked")
@@ -179,25 +180,20 @@ struct PageNavigatorSheet: View {
 
             HStack(spacing: Macaron.columnGap) {
                 Text(verbatim: "\(number)")
-                    .font(Macaron.title(13))
+                    .font(Macaron.title(.text))
                     .monospacedDigit()
                     .foregroundStyle(theme.outline(of: theme.chrome).color)
                 Spacer()
-                Keycap(
-                    fill: theme.chrome,
-                    isEnabled: page.isDeletable,
-                    action: { pageToDelete = page.id }
-                ) {
-                    Image(systemName: "trash").font(Macaron.body(14))
+                Keycap("Delete page", systemImage: "trash", fill: theme.chrome, isEnabled: page.isDeletable) {
+                    pageToDelete = page.id
                 }
-                .accessibilityLabel("Delete page")
             }
             .frame(height: Self.caption)
             // A mark nobody named shows nothing here: the ordinal above is
             // already what it is called.
             if let title = page.bookmark, !title.isEmpty {
                 Text(title)
-                    .font(Macaron.body(11))
+                    .font(Macaron.body(.caption))
                     .foregroundStyle(theme.outline(of: theme.chrome).color)
                     .lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -251,12 +247,12 @@ struct PageNavigatorSheet: View {
         } label: {
             VStack(spacing: Macaron.rowGap) {
                 Image(systemName: "plus")
-                    .font(Macaron.title(22))
+                    .font(Macaron.title(.large))
                 Text(Self.addAfterLabel)
-                    .font(Macaron.body(11))
+                    .font(Macaron.body(.caption))
                     .multilineTextAlignment(.center)
             }
-            .foregroundStyle(theme.outline(of: theme.accent).color)
+            .foregroundStyle(theme.outline(of: theme.chrome).color)
             .padding(8)
             .frame(width: thumbnail.width, height: thumbnail.height)
             .overlay {

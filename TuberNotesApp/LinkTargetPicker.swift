@@ -28,9 +28,9 @@ struct LinkTargetPicker: View {
                         action: { choose(tab, page) }
                     ) {
                         HStack(spacing: 8) {
-                            Text(verbatim: "Page \(position + 1)").font(Macaron.title(15))
+                            Text(verbatim: "Page \(position + 1)").font(Macaron.title(.button))
                             if page.isCurrent {
-                                Text("current").font(Macaron.body(11))
+                                Text("current").font(Macaron.body(.caption))
                             }
                         }
                         .padding(.horizontal, 14)

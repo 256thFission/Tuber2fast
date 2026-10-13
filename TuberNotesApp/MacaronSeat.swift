@@ -88,17 +88,17 @@ struct MacaronSeat: View {
                 // a docked seat has nowhere to be dragged to.
                 if isFloating {
                     Image(systemName: "line.3.horizontal")
-                        .font(Macaron.body(12))
+                        .font(Macaron.body(.small))
                         .foregroundStyle(theme.outline(of: theme.accent).color)
                 }
                 Text("Pages")
-                    .font(Macaron.title(14))
+                    .font(Macaron.title(.label))
                     .foregroundStyle(theme.outline(of: theme.accent).color)
                 Spacer()
                 badge
                 Button { isOpen = false } label: {
                     Image(systemName: "xmark")
-                        .font(Macaron.body(13))
+                        .font(Macaron.body(.text))
                         .foregroundStyle(theme.outline(of: theme.accent).color)
                 }
                 .buttonStyle(.plain)
@@ -115,7 +115,7 @@ struct MacaronSeat: View {
     @ViewBuilder private var badge: some View {
         if editor.isSaving {
             Text(verbatim: "SAVING")
-                .font(Macaron.body(9))
+                .font(Macaron.body(.badge))
                 .foregroundStyle(theme.outline(of: theme.accent).color)
                 .padding(.horizontal, 5)
                 .padding(.vertical, 2)
@@ -134,9 +134,9 @@ struct MacaronSeat: View {
                     Button { editor.scroll(toPageIndex: index) } label: {
                         HStack {
                             Text(verbatim: "\(index + 1)")
-                                .font(Macaron.title(13))
+                                .font(Macaron.title(.text))
                             if let mark = page.bookmark {
-                                Text(mark).font(Macaron.body(12)).lineLimit(1)
+                                Text(mark).font(Macaron.body(.small)).lineLimit(1)
                             }
                             Spacer()
                         }

@@ -62,7 +62,7 @@ private struct PaperCap: View {
                 marks
             }
             Text(PageNames.paper(paper))
-                .font(Macaron.body(11))
+                .font(Macaron.body(.caption))
                 .foregroundStyle(theme.outline(of: theme.chrome).color)
         }
         .accessibilityElement(children: .combine)
@@ -169,7 +169,7 @@ struct PageSetupControls: View {
                         edge("Height", text: $customHeight)
                     }
                     Text("Each edge is \(Self.bounds) points.")
-                        .font(Macaron.body(11))
+                        .font(Macaron.body(.caption))
                         .foregroundStyle(theme.outline(of: theme.chrome).color)
                 }
             }

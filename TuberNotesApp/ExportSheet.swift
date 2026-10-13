@@ -131,30 +131,24 @@ struct ExportSheet: View {
         let bounds = 1...max(1, editor.pageCount)
         return HStack(spacing: Macaron.rowGap) {
             Text(label)
-                .font(Macaron.body(13))
+                .font(Macaron.body(.text))
                 .foregroundStyle(theme.outline(of: theme.chrome).color)
-            Keycap(fill: theme.chrome, isEnabled: value.wrappedValue > bounds.lowerBound) {
+            Keycap("\(label): one fewer", systemImage: "minus", fill: theme.chrome, isEnabled: value.wrappedValue > bounds.lowerBound) {
                 value.wrappedValue = max(bounds.lowerBound, value.wrappedValue - 1)
-            } label: {
-                Image(systemName: "minus").font(Macaron.body(14))
             }
-            .accessibilityLabel(Text(verbatim: "\(label): one fewer"))
             Text(verbatim: "\(value.wrappedValue)")
-                .font(Macaron.title(15))
+                .font(Macaron.title(.button))
                 .foregroundStyle(theme.outline(of: theme.chrome).color)
                 .frame(minWidth: 28)
-            Keycap(fill: theme.chrome, isEnabled: value.wrappedValue < bounds.upperBound) {
+            Keycap("\(label): one more", systemImage: "plus", fill: theme.chrome, isEnabled: value.wrappedValue < bounds.upperBound) {
                 value.wrappedValue = min(bounds.upperBound, value.wrappedValue + 1)
-            } label: {
-                Image(systemName: "plus").font(Macaron.body(14))
             }
-            .accessibilityLabel(Text(verbatim: "\(label): one more"))
         }
     }
 
     private func footer(_ text: String) -> some View {
         Text(text)
-            .font(Macaron.body(12))
+            .font(Macaron.body(.small))
             .foregroundStyle(theme.outline(of: theme.chrome).color)
             .fixedSize(horizontal: false, vertical: true)
     }
@@ -174,7 +168,7 @@ struct ExportSheet: View {
     @ViewBuilder private func walk(_ progress: EditorViewModel.ExportProgress) -> some View {
         MacaronHeading(text: "Exporting")
         Text(verbatim: "Page \(min(progress.done + 1, progress.total)) of \(progress.total)")
-            .font(Macaron.body(13))
+            .font(Macaron.body(.text))
             .foregroundStyle(theme.outline(of: theme.chrome).color)
         // A readout, so it is flat: a track in the chrome's outline with the
         // accent filling it, and no wall under either.
@@ -213,29 +207,19 @@ struct ExportSheet: View {
 
     private func share(_ item: some Transferable, _ kind: EditorViewModel.ExportedFile.Kind, named fileName: String, symbol: String) -> some View {
         let title = "Share \(kind.title)"
+        // A `ShareLink` owns its own tap, so its label is a keycap's face
+        // and not a `MacaronButton`, which would take the tap away from it.
         return ShareLink(item: item, preview: SharePreview(fileName, image: Image(systemName: symbol))) {
-            cap(title, icon: "square.and.arrow.up", fill: theme.accent)
+            HStack(spacing: 6) {
+                Image(systemName: "square.and.arrow.up").font(Macaron.body(.label))
+                Text(title).font(Macaron.title(.button))
+            }
+            .padding(.horizontal, 14)
+            .frame(height: Macaron.chip + 6)
+            .modifier(KeycapFace(fill: theme.accent, sunk: false))
+            .padding(.bottom, Macaron.chipWall)
         }
         .accessibilityLabel(title)
-    }
-
-    /// A `ShareLink` owns its own tap, so its label is drawn as the cap a
-    /// `MacaronButton` would be rather than built from one, which would take
-    /// the tap away from it.
-    private func cap(_ title: String, icon: String, fill: RGBA8) -> some View {
-        let outline = theme.outline(of: fill)
-        let shape = RoundedRectangle(cornerRadius: Macaron.chipRadius, style: .continuous)
-        return HStack(spacing: 6) {
-            Image(systemName: icon).font(Macaron.body(14))
-            Text(title).font(Macaron.title(15))
-        }
-        .foregroundStyle(outline.color)
-        .padding(.horizontal, 14)
-        .frame(height: Macaron.chip + 6)
-        .background { shape.fill(fill.color) }
-        .overlay { shape.strokeBorder(outline.color, lineWidth: Macaron.line) }
-        .background { shape.fill(outline.color).offset(y: Macaron.chipWall) }
-        .padding(.bottom, Macaron.chipWall)
     }
 
     /// The same bytes the share sheet would carry, handed to the print
