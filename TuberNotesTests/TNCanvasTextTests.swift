@@ -49,7 +49,6 @@ final class TNCanvasTextTests: HostingSuite {
         #expect(overlay.spellCheckingType == .yes)
         #expect(overlay.autocorrectionType == .yes)
         let interaction = try #require(overlay.interactions.first { $0 is UIScribbleInteraction } as? UIScribbleInteraction)
-        #expect(interaction === overlay.scribbleInteraction)
         #expect(interaction.delegate === overlay)
         // Inside the box, in the view's own coordinates, is Scribble's.
         #expect(overlay.scribbleInteraction(interaction, shouldBeginAt: CGPoint(x: 10, y: 10)))

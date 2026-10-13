@@ -27,11 +27,6 @@ final class TextEditingView: UITextView, UITextViewDelegate, UIScribbleInteracti
     let moveRecognizer = UIPanGestureRecognizer()
     let resizeRecognizer = UIPanGestureRecognizer()
 
-    /// The one place that says where Scribble may begin: inside the box.
-    /// UIKit would otherwise let a stroke that starts a little outside the
-    /// rect write into it, and outside the rect the Pencil is the canvas's.
-    private(set) var scribbleInteraction: UIScribbleInteraction!
-
     /// Drawn in page space, so they scale with zoom and are large at 10x.
     /// Accepted.
     private let moveHandle = UIView()
@@ -71,8 +66,7 @@ final class TextEditingView: UITextView, UITextViewDelegate, UIScribbleInteracti
         // the hosted test reads.
         spellCheckingType = .yes
         autocorrectionType = .yes
-        scribbleInteraction = UIScribbleInteraction(delegate: self)
-        addInteraction(scribbleInteraction)
+        addInteraction(UIScribbleInteraction(delegate: self))
 
         for handle in [moveHandle, resizeHandle] {
             handle.layer.cornerRadius = 3
@@ -99,13 +93,15 @@ final class TextEditingView: UITextView, UITextViewDelegate, UIScribbleInteracti
         resizeHandle.backgroundColor = accent
     }
 
+    #if DEBUG
     /// The fidelity test snapshots the text alone; the border and handles
     /// are not part of what the renderer draws.
-    func hideChrome() {
+    func hideChromeForTesting() {
         layer.borderWidth = 0
         moveHandle.isHidden = true
         resizeHandle.isHidden = true
     }
+    #endif
 
     /// One line of the typing style: the floor for width and height, and
     /// the unit the box grows by.
@@ -183,6 +179,9 @@ final class TextEditingView: UITextView, UITextViewDelegate, UIScribbleInteracti
 
     // MARK: - UIScribbleInteractionDelegate
 
+    /// The one place that says where Scribble may begin: inside the box.
+    /// UIKit would otherwise let a stroke that starts a little outside the
+    /// rect write into it, and outside the rect the Pencil is the canvas's.
     /// `location` is in this view's coordinates. The handles lie outside
     /// the bounds and are not writing surfaces.
     func scribbleInteraction(_ interaction: UIScribbleInteraction, shouldBeginAt location: CGPoint) -> Bool {
