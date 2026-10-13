@@ -1708,7 +1708,27 @@ struct NotebookTests {
         _ = scratch
     }
 
-    @Test("Asset paper needs an empty page, takes the asset's aspect, and dirties the index")
+    @Test("Setting the paper a page already has writes nothing and pushes nothing")
+    func settingTheSamePaperWritesNothing() async throws {
+        let scratch = try Scratch("nb-same-paper")
+        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        let page = notebook.pageIDs[0]
+        let paper = try #require(notebook.paper(of: page))
+        await notebook.flush()
+        _ = notebook.drainChanges()
+        #expect(!notebook.isDirty)
+        let version = notebook.contentVersion(of: page)
+
+        try await notebook.setPaper(paper, on: page)
+
+        #expect(!notebook.isDirty, "the index is not owed a write")
+        #expect(notebook.contentVersion(of: page) == version)
+        #expect(notebook.drainChanges().isEmpty)
+        _ = await notebook.close()
+        withExtendedLifetime(scratch) {}
+    }
+
+    @Test("Asset paper needs an empty page, takes the asset's aspect, and dirties the index; a PDF page keeps its paper")
     func assetPaperRules() async throws {
         let scratch = try Scratch("nb-asset-paper")
         let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
@@ -1719,6 +1739,10 @@ struct NotebookTests {
         try await waitUntil { notebook.state(of: letter)?.content != nil }
         let flattened = try await notebook.flatten(source)
         #expect(flattened.format == .heic)
+        let pdf = try #require(notebook.paper(of: source))
+        await #expect(throws: PaperRefusal.pageHasAssetPaper) { try await notebook.setPaper(.drawn(.lined), on: source) }
+        await #expect(throws: PaperRefusal.pageHasAssetPaper) { try await notebook.setPaper(.image(flattened), on: source) }
+        #expect(notebook.paper(of: source) == pdf)
 
         notebook.inkChanged(on: letter, Ink.drawing(strokes: 1), echoOf: nil)
         await #expect(throws: PaperRefusal.pageNotEmpty) { try await notebook.setPaper(.image(flattened), on: letter) }

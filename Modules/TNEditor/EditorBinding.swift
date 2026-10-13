@@ -210,13 +210,6 @@ import UIKit
         drain()
     }
 
-    /// The same, for a mutation that must leave the main actor — an
-    /// import writes an asset before the layer exists.
-    package func intention(_ body: () async -> Void) async {
-        await body()
-        drain()
-    }
-
     /// Delivers the tool and the theme to the runtime.
     package func apply(_ environment: CanvasEnvironment) {
         surface.apply(environment)

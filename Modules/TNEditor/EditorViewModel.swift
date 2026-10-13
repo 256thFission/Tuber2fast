@@ -381,12 +381,22 @@ package final class EditorViewModel {
         binding.surface.scroll(to: created)
     }
 
-    /// The only page cannot be deleted; the notebook refuses it, silently,
-    /// because a notebook with no pages has no state to return to.
+    /// The only page cannot be deleted, because a notebook with no pages has
+    /// no state to return to. The notebook ignores the request; the refusal
+    /// is said here, in `lastContentError`, and changes nothing, an open
+    /// text box included.
     package func deletePage(_ page: PageID) {
+        lastContentError = nil
+        guard notebook.pageCount > 1 else {
+            lastContentError = .invalidWrite("the only page can't be deleted")
+            return
+        }
         commitTextEditing()
         binding.intention { notebook.deletePage(page) }
     }
+
+    /// False when the notebook has one page, the one `deletePage` refuses.
+    package var canDeleteCurrentPage: Bool { pageCount > 1 }
 
     package func deleteCurrentPage() { deletePage(notebook.currentPageID) }
 
@@ -451,11 +461,22 @@ package final class EditorViewModel {
         PageSize.matching(notebook.currentRecord.geometry)
     }
 
-    /// Drawn paper only: the two asset papers are intentions of their own,
-    /// and neither is a menu item the user picks from a list.
+    /// Drawn paper on the current page; a photo is `setPaper(photo:)`. A
+    /// page whose paper is a PDF page or a photo keeps it, and the refusal
+    /// is in `lastContentError`. The notebook refuses drawn paper for no
+    /// other reason than a page it does not hold, which the current page
+    /// cannot be.
     package func setPaper(_ paper: DrawnPaper) async {
-        commitTextEditing()
-        await binding.intention { try? await notebook.setPaper(.drawn(paper), on: notebook.currentPageID) }
+        await contentChange { () async throws(FormatFault) in
+            do throws(PaperRefusal) {
+                try await notebook.setPaper(.drawn(paper), on: notebook.currentPageID)
+            } catch {
+                guard error == .pageHasAssetPaper else {
+                    TNPrecondition.fail("drawn paper on the current page was refused: \(error)")
+                }
+                throw .invalidWrite("paper refused: \(error)")
+            }
+        }
     }
 
     package func scroll(toPageIndex index: Int) {

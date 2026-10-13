@@ -783,6 +783,72 @@ struct EditorViewModelContentTests {
         _ = await notebook.close()
     }
 
+    @Test("Drawn paper on a PDF page is refused, and the index is as it was")
+    func drawnPaperOnAPDFPageIsRefused() async throws {
+        let (scratch, notebook, _, editor) = try await loaded("vm-paper-pdf-drawn")
+        await editor.importPDF(try Fixture.pdfData(pages: 1))
+        let page = notebook.currentPageID
+        guard case .pdf = try #require(notebook.paper(of: page)) else {
+            Issue.record("the current page is not PDF paper"); return
+        }
+        await notebook.flush()
+        let before = notebook.index
+
+        await editor.setPaper(.lined)
+
+        #expect(editor.lastContentError == .invalidWrite("paper refused: pageHasAssetPaper"))
+        #expect(notebook.index == before)
+        #expect(!notebook.isDirty)
+
+        withExtendedLifetime(scratch) {}
+        _ = await notebook.close()
+    }
+
+    @Test("A photo on an empty PDF page is refused, and nothing is written")
+    func photoPaperOnAPDFPageIsRefused() async throws {
+        let (scratch, notebook, _, editor) = try await loaded("vm-paper-pdf-photo")
+        await editor.importPDF(try Fixture.pdfData(pages: 1))
+        let page = notebook.currentPageID
+        // Loaded and empty, so its paper is the one reason left to refuse.
+        notebook.windowChanged(to: [page])
+        try await waitUntil { notebook.state(of: page)?.content != nil }
+        let paper = try #require(notebook.paper(of: page))
+        let assets = scratch.packageURL.appendingPathComponent("assets").path
+        let assetsBefore = Set(try FileManager.default.contentsOfDirectory(atPath: assets))
+
+        await editor.setPaper(photo: try Fixture.imageData(width: 200, height: 100))
+
+        #expect(editor.lastContentError == .invalidWrite("paper refused: pageHasAssetPaper"))
+        #expect(notebook.paper(of: page) == paper)
+        #expect(Set(try FileManager.default.contentsOfDirectory(atPath: assets)) == assetsBefore)
+
+        withExtendedLifetime(scratch) {}
+        _ = await notebook.close()
+    }
+
+    @Test("Deleting the only page is refused with a reason and changes nothing; the next delete clears it")
+    func deletingTheOnlyPageSaysWhy() async throws {
+        let (scratch, notebook, surface, editor) = try await loaded("vm-delete-only")
+        let page = notebook.pageIDs[0]
+        #expect(!editor.canDeleteCurrentPage)
+        let callsBefore = surface.calls.count
+
+        editor.deleteCurrentPage()
+
+        #expect(editor.lastContentError == .invalidWrite("the only page can't be deleted"))
+        #expect(notebook.pageIDs == [page])
+        #expect(surface.calls.count == callsBefore, "nothing was committed or pushed")
+
+        await editor.addPage(size: .letter, orientation: .portrait)
+        #expect(editor.canDeleteCurrentPage)
+        editor.deleteCurrentPage()
+        #expect(editor.lastContentError == nil)
+        #expect(notebook.pageCount == 1)
+
+        withExtendedLifetime(scratch) {}
+        _ = await notebook.close()
+    }
+
     @Test("A page with ink refuses a photo as its paper, and nothing is written")
     func photoIsRefusedOnAPageWithInk() async throws {
         let (scratch, notebook, _, editor) = try await loaded("vm-paper-photo-refused")

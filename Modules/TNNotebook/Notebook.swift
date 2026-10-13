@@ -748,11 +748,18 @@ package final class Notebook {
         markDirty()
     }
 
-    /// Drawn paper applies to any page. Asset paper applies only to a page
-    /// that is loaded and empty, and takes the page's geometry with it: the
-    /// asset fills the page rectangle, so the rectangle is the asset's shape.
+    /// Drawn paper applies to any page whose paper is drawn. Asset paper
+    /// applies only to a page that is loaded and empty, and takes the page's
+    /// geometry with it: the asset fills the page rectangle, so the rectangle
+    /// is the asset's shape. A page whose paper is an asset keeps it: a paper
+    /// change records no history, so Undo could not bring the PDF page or
+    /// the photo back.
     package func setPaper(_ paper: Paper, on page: PageID) async throws(PaperRefusal) {
         guard let record = index.record(of: page) else { throw .pageNotLoaded }
+        // An unchanged paper writes nothing: an index rewritten for no change
+        // is a bug (`Docs/Contract.md` — One save).
+        guard record.paper != paper else { return }
+        guard !record.paper.isAsset else { throw .pageHasAssetPaper }
         var geometry = record.geometry
         if paper.isAsset {
             try checkAssetPaperTarget(page)
@@ -772,8 +779,10 @@ package final class Notebook {
     }
 
     /// Asset paper covers the whole page, so a page with anything on it
-    /// would lose it behind the paper.
+    /// would lose it behind the paper, and a PDF page or a photo would lose
+    /// its own.
     private func checkAssetPaperTarget(_ page: PageID) throws(PaperRefusal) {
+        guard paper(of: page)?.isAsset != true else { throw .pageHasAssetPaper }
         guard case .ready(let content) = states[page] else { throw .pageNotLoaded }
         guard content.ink.strokes.isEmpty, content.layers.isEmpty else { throw .pageNotEmpty }
     }
@@ -1488,10 +1497,11 @@ package enum NewPageRefusal: Error, Sendable, Equatable {
     case pageGone(PageID)
 }
 
-/// Why a paper change was refused. Drawn paper is never refused on a page
-/// that exists; every case here is about asset paper.
+/// Why a paper change was refused. Drawn paper is refused only on a page
+/// whose paper is an asset; the other cases are about asset paper.
 package enum PaperRefusal: Error, Sendable, Equatable {
     case pageNotLoaded
+    case pageHasAssetPaper
     case pageNotEmpty
     case geometryOutOfBounds
     case assetUnreadable
