@@ -159,6 +159,11 @@ package struct TextPreset: Equatable, Sendable, Codable {
     }
 
     package static let body = TextPreset(style: .body, alignment: .leading)
+
+    /// The sizes the text tool offers, in points. Taste, like the ink
+    /// widths; `Docs/Unproven.md` holds it. Each must pass
+    /// `TextRun.isValid`, or the box typed in it traps at commit.
+    package static let sizes: [Double] = [12, 14, 16, 18, 24, 32, 48]
 }
 
 /// What the editor is doing with the Pencil. The app picks one and the

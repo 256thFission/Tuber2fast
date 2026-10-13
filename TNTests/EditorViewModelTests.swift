@@ -9,9 +9,9 @@ import Testing
 /// The view model's half of the tool: which one a tab opens on, and what
 /// each intention does to it.
 ///
-/// These assert `editor.tool`, never the environment the runtime saw. That
-/// the runtime is told, and that every live canvas hears it, is the hosted
-/// suite's job.
+/// These assert `editor.tool`, and at most the environment a recording
+/// surface was told. That every live canvas hears it is the hosted suite's
+/// job.
 @Suite("Editor view model: the tool")
 @MainActor
 struct EditorViewModelTests {
@@ -55,6 +55,33 @@ struct EditorViewModelTests {
         #expect(editor.tool == .text(red, .trailing))
         #expect(editor.palette.text == TextPreset(style: red, alignment: .trailing))
         #expect(editor.palette.recentColors.isEmpty, "a colour typed with is never a recent")
+        withExtendedLifetime(scratch) {}
+    }
+
+    @Test("Every size the text tool offers is one a run may be committed at")
+    func textSizesAreValid() {
+        #expect(!TextPreset.sizes.isEmpty)
+        for size in TextPreset.sizes {
+            #expect(TextRun(string: "x", style: TextStyle.body.with(size: size)).isValid, "\(size)")
+        }
+    }
+
+    @Test("A size and an alignment chosen for the text tool reach the runtime")
+    func aStyleChoiceReachesTheCanvas() async throws {
+        let (scratch, book) = try await notebook("vm-text-choice")
+        let surface = RecordingSurface()
+        let editor = EditorViewModel(
+            binding: EditorBinding(notebook: book, surface: surface),
+            palette: ToolPalette(store: MemoryPaletteStore()),
+            theme: .macaron
+        )
+        editor.selectText()
+        let large = TextStyle.body.with(size: 24)
+
+        editor.setTextStyle(large)
+        #expect(surface.environments.last?.tool == .text(large, .leading))
+        editor.setTextAlignment(.center)
+        #expect(surface.environments.last?.tool == .text(large, .center))
         withExtendedLifetime(scratch) {}
     }
 

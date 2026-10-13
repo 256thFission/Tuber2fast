@@ -72,6 +72,18 @@ struct TextStyleTests {
         #expect(TextRun(string: "x", color: "#ff0000ff").style == red)
     }
 
+    @Test("A style changed in some fields keeps every other")
+    func textStyleWithChangesOnlyNamedFields() {
+        let styled = TextStyle(font: "Georgia", size: 18, bold: true, italic: true, underline: true, color: red.color)
+        #expect(styled.with() == styled)
+        #expect(styled.with(size: 32) == TextStyle(font: "Georgia", size: 32, bold: true, italic: true, underline: true, color: red.color))
+        #expect(styled.with(bold: false) == TextStyle(font: "Georgia", size: 18, bold: false, italic: true, underline: true, color: red.color))
+        #expect(styled.with(italic: false) == TextStyle(font: "Georgia", size: 18, bold: true, italic: false, underline: true, color: red.color))
+        #expect(styled.with(underline: false) == TextStyle(font: "Georgia", size: 18, bold: true, italic: true, underline: false, color: red.color))
+        #expect(styled.with(color: TextStyle.body.color) == TextStyle(font: "Georgia", size: 18, bold: true, italic: true, underline: true, color: TextStyle.body.color))
+        #expect(TextStyle.body.with(size: 24, bold: true) == TextStyle(font: "system", size: 24, bold: true, italic: false, underline: false, color: TextStyle.body.color))
+    }
+
     @Test("Equal styles resolve equal fonts")
     func equalStylesEqualFonts() {
         let bold = TextStyle(font: "system", size: 20, bold: true, italic: false, underline: false, color: TextStyle.body.color)

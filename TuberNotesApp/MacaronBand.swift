@@ -14,6 +14,8 @@ struct MacaronBand: View {
     let editor: EditorViewModel
     let action: (BandAction) -> Void
 
+    @State private var isStylingText = false
+
     /// How much of the top the band takes, so nothing else parks under it.
     static let slack: CGFloat = 56 + 32
 
@@ -197,8 +199,26 @@ struct MacaronBand: View {
         }
     }
 
-    private func chip(_ action: BandAction) -> some View {
-        flatChip(action.symbol, action.label, tint: action.tint(theme)) { self.action(action) }
+    @ViewBuilder private func chip(_ action: BandAction) -> some View {
+        let chip = flatChip(action.symbol, action.label, tint: action.tint(theme)) { tap(action) }
+        if action == .text {
+            chip.macaronBubble(isPresented: $isStylingText) {
+                TextStylePopover(editor: editor)
+            }
+        } else {
+            chip
+        }
+    }
+
+    /// The text chip takes the text tool, and with it already in hand opens
+    /// what it types with. The tool is read at the tap, not trusted from
+    /// the last body pass.
+    private func tap(_ action: BandAction) {
+        if action == .text, case .text = editor.tool {
+            isStylingText = true
+        } else {
+            self.action(action)
+        }
     }
 
     private func flatChip(

@@ -26,6 +26,16 @@ package struct TextStyle: Sendable, Equatable, Codable {
         font: "system", size: 16, bold: false, italic: false, underline: false,
         color: RGBA8(red: 0, green: 0, blue: 0, alpha: 255)
     )
+
+    /// This style with the named fields changed and every other kept.
+    package func with(
+        size: Double? = nil, bold: Bool? = nil, italic: Bool? = nil, underline: Bool? = nil, color: RGBA8? = nil
+    ) -> TextStyle {
+        TextStyle(
+            font: font, size: size ?? self.size, bold: bold ?? self.bold, italic: italic ?? self.italic,
+            underline: underline ?? self.underline, color: color ?? self.color
+        )
+    }
 }
 
 extension TextRun {
