@@ -151,17 +151,16 @@ struct Keycap<Label: View>: View {
         }
     }
 
-    /// The fill commits on the stretch, not on contact.
+    /// The press acts on lift, and the squash plays after it. An action
+    /// held back for the animation lands on whatever the tool has become
+    /// meanwhile, and the editor traps on a request the tool cannot take.
     private func press() {
-        guard !reduceMotion else {
-            action()
-            return
-        }
+        action()
+        guard !reduceMotion else { return }
         withAnimation(MacaronCurve.outQuint) { phase = 1 }
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(60))
             withAnimation(MacaronCurve.outBack) { phase = 2 }
-            action()
             try? await Task.sleep(for: .milliseconds(130))
             withAnimation(MacaronCurve.settle) { phase = 0 }
         }
