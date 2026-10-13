@@ -76,6 +76,7 @@ enum ContractChecker {
                 if c == "\n" { inLineComment = false; out.append(c) }
             } else if inBlockComment {
                 if c == "*", next == "/" { inBlockComment = false; i += 1 }
+                else if c == "\n" { out.append(c) }   // so a line of code is the same line of source
             } else if inString {
                 if c == "\\" { i += 1 }            // skip the escaped character
                 else if c == "\"" { inString = false }
@@ -500,6 +501,51 @@ enum ContractChecker {
     /// One path per assignment of the canvas's tool.
     static func toolAssignmentSites(in sources: [CheckedSource]) -> [String] {
         sources.flatMap { Array(repeating: $0.path, count: toolAssignmentCount(in: $0.code)) }
+    }
+
+    // MARK: Rule — literal styles
+
+    private static let namedColours =
+        "red|orange|yellow|green|mint|teal|cyan|blue|indigo|purple|pink|brown|white|gray|black"
+        + "|primary|secondary|tertiary|quaternary|label|secondaryLabel|tertiaryLabel|separator"
+    private static let textStyles =
+        "largeTitle|title|title2|title3|headline|subheadline|body|callout|footnote|caption|caption2"
+
+    /// A colour or font written in place rather than taken from the kit
+    /// (decided U5). Matched against the code with its quotes gone, so a hex
+    /// string reads `Color(hex: #FF8800)`, and `\s` spans the line breaks of a
+    /// wrapped initialiser.
+    static var literalStylePatterns: [Regex<AnyRegexOutput>] {
+        [
+            #"\b(?:UI)?Color\(\s*(?:red:|white:|hex:|\.sRGB\b|\.displayP3\b|#[0-9A-Fa-f]{3,8}\b|0x[0-9A-Fa-f]{6,8}\b)"#,
+            #"\.system(?:Red|Orange|Yellow|Green|Mint|Teal|Cyan|Blue|Indigo|Purple|Pink|Brown|Gray\d?|\w*Background|\w*Fill)\b"#,
+            #"\baccentColor\b"#,
+            #"\b(?:UI)?Color\.(?:\#(namedColours))\b"#,
+            #"\.(?:foregroundStyle|foregroundColor|background|fill|tint|stroke|strokeBorder|border|shadow)\(\s*(?:color:\s*)?\.(?:\#(namedColours))\b"#,
+            #"[cC]olor\s*=\s*\.(?:\#(namedColours))\b"#,
+            #"\.font\(\s*\.(?:\#(textStyles)|system)\b"#,
+            #"\bFont\.(?:system|custom|\#(textStyles))\b"#,
+            #"\.system\(size:"#,
+            #"preferredFont\(forTextStyle:"#,
+        ].map { try! Regex($0) }
+    }
+
+    /// What excuses a literal on its own line or the line below: the marker
+    /// and a reason after it.
+    static var oneOffMarker: Regex<AnyRegexOutput> { try! Regex(#"// macaron: one-off[.,:;]?\s+\S"#) }
+
+    /// The 1-based lines where `code` names a literal style that neither its
+    /// line nor the line above in `raw` marks as a one-off. The marker is read
+    /// from `raw` because it is a comment, which `code` no longer holds.
+    static func unmarkedLiteralStyleLines(code: String, raw: String) -> [Int] {
+        let rawLines = raw.split(separator: "\n", omittingEmptySubsequences: false)
+        let marked = { (line: Int) in
+            rawLines.indices.contains(line - 1) && rawLines[line - 1].contains(oneOffMarker)
+        }
+        let lines = literalStylePatterns.flatMap { pattern in
+            code.matches(of: pattern).map { code[..<$0.range.lowerBound].filter { $0 == "\n" }.count + 1 }
+        }
+        return Set(lines).filter { !marked($0) && !marked($0 - 1) }.sorted()
     }
 }
 
@@ -1023,6 +1069,35 @@ struct ContractStructureTests {
         )
     }
 
+    /// Decided U5: a colour or font in the chrome comes from the kit, so a
+    /// theme reaches all of it. The kit itself is where the literals live.
+    /// TNRender is out of scope: its page and export colours are the
+    /// document's, the same in every theme.
+    static let literalStyleScope: Set<String> = ["TuberNotesApp", "TNCanvas"]
+    static let styleKit = "TuberNotesApp/MacaronKit.swift"
+
+    @Test("No literal colour or font outside the kit, unless marked a one-off with its reason")
+    func noLiteralStylesOutsideTheKit() throws {
+        var sites: [String] = []
+        var bareMarkers: [String] = []
+        for source in try Self.appSources()
+        where Self.literalStyleScope.contains(Self.module(of: source.path)) && source.path != Self.styleKit {
+            let raw = try String(contentsOf: Self.repoRoot.appendingPathComponent(source.path), encoding: .utf8)
+            sites += ContractChecker.unmarkedLiteralStyleLines(code: source.code, raw: raw).map { "\(source.path):\($0)" }
+            bareMarkers += raw.split(separator: "\n", omittingEmptySubsequences: false).enumerated()
+                .filter { $0.element.contains("macaron: one-off") && !$0.element.contains(ContractChecker.oneOffMarker) }
+                .map { "\(source.path):\($0.offset + 1)" }
+        }
+        #expect(bareMarkers.isEmpty, "\(bareMarkers.joined(separator: ", ")) marks a one-off without saying why.")
+        #expect(
+            sites.isEmpty,
+            """
+            \(sites.joined(separator: ", ")) writes a colour or font in place. Take it from \(Self.styleKit), \
+            or put `// macaron: one-off <reason>` on that line or the line above.
+            """
+        )
+    }
+
     /// Nothing written for the tests exists in the build people hold.
     ///
     /// The allowlist is empty and stays empty: a `…ForTesting` member that
@@ -1312,6 +1387,22 @@ struct ContractCheckerOwnTests {
                 in: ContractChecker.withoutComments("// \(current) is gone.\nlet x = 1\n")
             )
         )
+    }
+
+    @Test("A literal colour or font is caught unless marked with a reason, and prose is not")
+    func literalStylesAreCaught() {
+        func unmarked(_ raw: String) -> [Int] {
+            ContractChecker.unmarkedLiteralStyleLines(code: ContractChecker.withoutComments(raw), raw: raw)
+        }
+        #expect(unmarked("Text(t)\n    .font(.footnote)\n    .background(Color.red)\n") == [2, 3])
+        #expect(unmarked("let c = UIColor(\n    red: 1, green: 0, blue: 0, alpha: 1)\n") == [1])
+        #expect(unmarked("let c = Color(hex: \"#FF8800\")\nview.tintColor = .systemBlue\n") == [1, 2])
+        #expect(unmarked("label.font = .preferredFont(forTextStyle: .body)\nx.foregroundStyle(.secondary)\n") == [1, 2])
+        #expect(unmarked("// macaron: one-off the save bar steps outside the theme.\nText(t).font(.footnote)\n").isEmpty)
+        #expect(unmarked("Text(t).font(.system(size: 9)) // macaron: one-off. A weight the kit lacks.\n").isEmpty)
+        #expect(unmarked("// macaron: one-off\nText(t).font(.footnote)\n") == [2])
+        #expect(unmarked("/* a block\n comment */\nText(t).font(.footnote)\n") == [3])
+        #expect(unmarked("// Color.red is not used.\nText(t).font(Macaron.body(.label)).foregroundStyle(theme.ink.color)\n").isEmpty)
     }
 
     @Test("A file placed by design is judged by its own row, not its module's")

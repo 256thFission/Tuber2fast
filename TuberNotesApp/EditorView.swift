@@ -297,11 +297,12 @@ private struct RefusalBar: View {
 
     var body: some View {
         Text(message)
-            .font(.footnote)
-            .foregroundStyle(.white)
+            // macaron: one-off. The save-failure bar is the kit's one documented exception.
+            .font(.footnote).foregroundStyle(.white)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 16)
             .padding(.vertical, 6)
+            // macaron: one-off. Red is no theme's colour; see above.
             .background(Color.red)
     }
 }

@@ -3,6 +3,7 @@ import UIKit
 
 extension RGBA8 {
     var uiColor: UIColor {
+        // macaron: one-off. This converts a theme role's own components; it names no colour.
         UIColor(
             red: CGFloat(red) / 255,
             green: CGFloat(green) / 255,

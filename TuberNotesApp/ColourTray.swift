@@ -95,8 +95,8 @@ struct ColourTray: View {
 
     private func heading(_ text: String) -> some View {
         Text(verbatim: text.uppercased())
-            // macaron: one-off. The tray's mock sets its headings at 900, a
-            // weight neither of the kit's faces has.
+            // The tray's mock sets its headings at 900.
+            // macaron: one-off. A weight neither of the kit's faces has.
             .font(.system(size: TypeScale.detail.rawValue, weight: .black, design: .rounded))
             .tracking(1.5)
             .foregroundStyle(outline)
