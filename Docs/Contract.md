@@ -369,12 +369,17 @@ report     which pages were refused, and which intended pages the written
   its saved counter, the notebook stays dirty, and the next pass rewrites
   the index, so the page is named by the first index written after its
   file lands; the index on disk is not the intended one, so that rewrite
-  is not a rewrite of an unchanged file. Only captured pages count: a page
-  the notebook holds as a placeholder, one whose file is missing for
-  instance, is never captured and is left out of every index written, and
-  it neither keeps the index dirty nor blocks a clean close. The reason is
-  the retry. A refused page stays dirty and its file lands on a later
-  pass; had the partial index counted as saved, that pass would carry
+  is not a rewrite of an unchanged file. Only captured pages count. A page
+  the notebook holds as a placeholder is never captured, so it neither
+  keeps the index owed nor blocks a clean close; an index that waited for
+  a page no pass will write would never count as saved, and the notebook
+  would never close clean. Of the placeholders, only one whose page file
+  is missing is left out of the indexes written: a page refused for its
+  ink, a layer, or its paper keeps its page file on disk, and publish 3
+  keeps every intended page whose page file is present (*Refuse at the
+  narrowest scope*: nothing is dropped). The reason is the retry. A
+  refused page stays dirty and its file lands on a later pass; had the
+  partial index counted as saved, that pass would carry
   `indexChanged: false`, the page would commit and go clean, close would
   report clean, and the reopened notebook would list neither the page nor
   its ink (decided I2; contract-03, durability-01).
