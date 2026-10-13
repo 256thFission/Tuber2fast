@@ -424,12 +424,21 @@ any other asset and named from the page's record in the index:
 Paper is not a layer: it cannot be selected, moved, or deleted, it always
 fills the page, and a new page copies the current page's drawn paper
 unless its creation specified a paper; after asset paper a new page is
-`blank`. Asset paper
-is drawn to fill the page rectangle exactly and is never stretched: the
-page's geometry is set from the asset's aspect when the paper is applied,
-and asset paper can only be applied to a page with no ink and no layers.
-Applying it to a drawn page is refused. Drawn paper can be applied to any
-page.
+`blank`. Asset paper is drawn to fill the page rectangle exactly and is
+never stretched: the page's geometry is set from the asset's aspect when
+the paper is applied, and asset paper can only be applied to a page with
+no ink and no layers; a page with either is refused. Drawn paper can be
+applied to any page whose paper is drawn, whatever ink and layers it
+holds. **A page whose paper is an asset keeps it.** Every paper change on
+a PDF page or a photo, drawn or asset, is refused, and a photo is refused
+before its asset is written, so the refusal publishes nothing. The reason
+is Undo: a paper change records no entry (*Undo*), so one tap on a
+lecture slide would take the slide with nothing to bring it back. An
+undoable paper change is a Queue item; until it lands the page keeps what
+it has. The paper a page already has is no change: setting it again
+writes nothing and refuses nothing (*One save*) (decided U1; round-two
+call: a paper change on a PDF or photo page is refused, and undoable
+paper changes are a Queue item; policy-01).
 
 Asset paper comes from three places, and each is an asset import followed
 by a paper change on an empty page: a photo, a page of a PDF, or a
@@ -743,7 +752,10 @@ typing. It dies with the session and holds nothing durable.
 
 The stack holds at most 100 entries. Turning, adding, reordering, and
 deleting pages are navigation, not edits, and cannot be undone; deleting a
-page forgets its entries.
+page forgets its entries. A paper change is not an edit either: it moves
+the index, not the revision, records no entry, and cannot be undone,
+which is why a PDF page or a photo keeps its paper (*A page whose paper
+is an asset keeps it*).
 
 ## Navigation and the window
 
