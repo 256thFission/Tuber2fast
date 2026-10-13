@@ -3,9 +3,9 @@ import Synchronization
 import TNCore
 
 /// The file primitives the package store is built on, and the ones the
-/// library commits its sidecars through. Not every file API goes through it:
-/// `LibraryStore` still reads, lists, moves, copies and deletes with
-/// `FileManager`.
+/// library commits its sidecars and its moves through. Not every file API
+/// goes through it: `LibraryStore` still reads, lists, copies and deletes
+/// with `FileManager`.
 ///
 /// A seam rather than a concrete type so a test can fail call N, truncate a
 /// staged write, or discard a published file's bytes after its rename: the
@@ -20,6 +20,10 @@ package protocol PackageFileSystem: Sendable {
     func stage(_ data: Data, at temp: URL) throws
     /// `rename(temp, final)`: atomic replacement.
     func publish(_ temp: URL, to final: URL) throws
+    /// `renamex_np(staged, final, RENAME_EXCL)`: a file or a whole directory
+    /// takes a name nothing holds, or fails with `EEXIST` and moves nothing.
+    /// `publish` would replace an empty directory there.
+    func publishExclusive(_ staged: URL, to final: URL) throws
     /// `fsync` on the directory so the renames it holds are durable.
     func syncDirectory(_ url: URL) throws
     func read(_ url: URL) throws -> Data
@@ -126,6 +130,12 @@ package struct PosixFileSystem: PackageFileSystem {
         }
     }
 
+    package func publishExclusive(_ staged: URL, to final: URL) throws {
+        if renamex_np(staged.path, final.path, UInt32(RENAME_EXCL)) != 0 {
+            throw FileSystemError(.rename, final.path, code: errno)
+        }
+    }
+
     package func syncDirectory(_ url: URL) throws {
         let path = url.path
         let fd = Darwin.open(path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
@@ -211,10 +221,12 @@ package final class FaultingFileSystem: PackageFileSystem {
         /// The Nth `stage` writes only `bytes` bytes of its payload, then
         /// returns as if it succeeded: a torn write.
         case truncateStage(nth: Int, bytes: Int)
-        /// The Nth `publish` throws.
+        /// The Nth `publish` or `publishExclusive` throws.
         case failPublish(nth: Int)
         /// The Nth `publish` succeeds and the file's bytes are then lost:
-        /// the name reached the directory, the data never reached media.
+        /// the name reached the directory, the data never reached media. A
+        /// `publishExclusive` counts toward N but moves a directory, whose
+        /// files were each published before it, so it loses nothing.
         case discardAfterPublish(nth: Int)
         /// The Nth `syncDirectory` throws.
         case failSync(nth: Int)
@@ -283,6 +295,15 @@ package final class FaultingFileSystem: PackageFileSystem {
             }
         }
         try base.publish(temp, to: final)
+    }
+
+    package func publishExclusive(_ staged: URL, to final: URL) throws {
+        let (nth, faults) = state.withLock { s -> (Int, [Fault]) in
+            s.counts.publishes += 1
+            return (s.counts.publishes, s.faults)
+        }
+        if faults.contains(.failPublish(nth: nth)) { throw InjectedFault(fault: .failPublish(nth: nth)) }
+        try base.publishExclusive(staged, to: final)
     }
 
     package func syncDirectory(_ url: URL) throws {

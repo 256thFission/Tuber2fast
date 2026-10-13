@@ -538,4 +538,94 @@ struct LibraryTests {
         #expect(entry.id != id.description)
         #expect(try await library.store.listTrash().map(\.notebookID) == [nil])
     }
+
+    /// Every fault a dry run of `act` reaches: the Nth stage, publish or
+    /// directory sync failing, for each N it counted.
+    static func faultsReached(
+        by act: (LibraryStore) async throws -> Void
+    ) async throws -> (faults: [FaultingFileSystem.Fault], counts: FaultingFileSystem.Counts) {
+        let scratch = try Scratch("lib-dry-run")
+        let dry = FaultingFileSystem(faults: [])
+        try await act(LibraryStore(base: scratch.root, fileSystem: dry))
+        let counts = dry.counts
+        let faults: [FaultingFileSystem.Fault] = (1...counts.stages).map { .failStage(nth: $0) }
+            + (1...counts.publishes).map { .failPublish(nth: $0) }
+            + (1...counts.syncs).map { .failSync(nth: $0) }
+        return (faults, counts)
+    }
+
+    @Test("A folder create failing at any stage, publish or sync leaves no folder, or the folder with its sidecar")
+    func folderAppearsOnlyWithItsSidecar() async throws {
+        let (faults, counts) = try await Self.faultsReached { _ = try await $0.createFolder(named: "Term", in: "") }
+        for fault in faults {
+            let (scratch, library) = try makeLibrary("lib-folder-fault")
+            defer { withExtendedLifetime(scratch) {} }
+
+            let store = try faulting(scratch, fault)
+            await #expect(throws: LibraryError.self, "\(fault)") { try await store.createFolder(named: "Term", in: "") }
+            // Only the sync after the publish meets a folder already listed.
+            let published = fault == .failSync(nth: counts.syncs)
+            let listed = try await library.store.list(folder: "")
+            #expect(listed.map(\.name) == (published ? ["Term"] : []), "\(fault)")
+            #expect(listed.allSatisfy { $0.folderID != nil }, "\(fault)")
+            #expect(try FileManager.default.contentsOfDirectory(atPath: library.store.stagingRoot.path).isEmpty, "\(fault)")
+        }
+    }
+
+    @Test("A notebook create interrupted before its publish leaves nothing listed and the name free")
+    func createInterruptedLeavesNothingListed() async throws {
+        let (faults, counts) = try await Self.faultsReached { _ = try await $0.createNotebook(named: "Essay", in: "") }
+        for fault in faults {
+            let (scratch, library) = try makeLibrary("lib-create-fault")
+            defer { withExtendedLifetime(scratch) {} }
+
+            let store = try faulting(scratch, fault)
+            await #expect(throws: LibraryError.self, "\(fault)") { try await store.createNotebook(named: "Essay", in: "") }
+            let published = fault == .failSync(nth: counts.syncs)
+            let listed = try await library.store.list(folder: "")
+            #expect(listed.map(\.name) == (published ? ["Essay"] : []), "\(fault)")
+            #expect(listed.allSatisfy { $0.notebookID != nil }, "\(fault)")
+            #expect(try FileManager.default.contentsOfDirectory(atPath: library.store.stagingRoot.path).isEmpty, "\(fault)")
+            if !published {
+                #expect(try await library.store.createNotebook(named: "Essay", in: "").notebookID != nil, "\(fault)")
+            }
+        }
+    }
+
+    @Test("A landing whose directory sync fails throws, and leaves the item at its old path or its new one")
+    func aLandingThatFailsToSyncThrows() async throws {
+        // A rename syncs the one directory it stays in. A move and a recovery
+        // sync the one they leave, then the one they enter; a trash does too,
+        // after the sync that commits its origin.json.
+        let landings = [("rename", 1), ("move", 1), ("move", 2), ("recover", 1), ("recover", 2), ("trash", 2), ("trash", 3)]
+        for (landing, nth) in landings {
+            let (scratch, library) = try makeLibrary("lib-landing-sync")
+            defer { withExtendedLifetime(scratch) {} }
+            _ = try await library.store.createFolder(named: "Term", in: "")
+            let made = try await library.store.createNotebook(named: "Essay", in: "")
+            let id = try #require(made.notebookID)
+
+            let store = try faulting(scratch, .failSync(nth: nth))
+            let ends: [String]
+            switch landing {
+            case "rename":
+                ends = [made.relativePath, "Draft.tubernotes"]
+                await #expect(throws: LibraryError.self) { try await store.rename(at: made.relativePath, to: "Draft") }
+            case "move":
+                ends = [made.relativePath, "Term/Essay.tubernotes"]
+                await #expect(throws: LibraryError.self) { try await store.move(at: made.relativePath, toFolder: "Term") }
+            case "recover":
+                let entry = try await library.trash(at: made.relativePath)
+                ends = ["Trash/\(entry.id)", made.relativePath]
+                await #expect(throws: LibraryError.self) { try await store.recover(entry) }
+            default:
+                ends = [made.relativePath, "Trash/\(id)"]
+                await #expect(throws: LibraryError.self) { try await store.trash(at: made.relativePath) }
+            }
+            let live = try await library.store.listTree(under: "").filter { $0.notebookID == id }.map(\.relativePath)
+            let trashed = try await library.store.listTrash().filter { $0.notebookID == id }.map { "Trash/\($0.id)" }
+            let places = live + trashed
+            #expect(places.count == 1 && ends.contains(places[0]), "\(landing), sync \(nth): \(places)")
+        }
+    }
 }

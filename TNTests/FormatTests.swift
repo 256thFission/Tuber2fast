@@ -517,6 +517,34 @@ struct StoreTests {
         #expect(await store.readView() == nil)
     }
 
+    @Test("An exclusive publish onto an existing directory, full or empty, fails with EEXIST and changes neither")
+    func publishExclusiveNeverReplaces() throws {
+        let scratch = try Scratch("exclusive")
+        let fs = PosixFileSystem()
+        func directory(_ name: String, holding contents: String?) throws -> URL {
+            let url = scratch.root.appendingPathComponent(name, isDirectory: true)
+            try fs.createDirectory(url)
+            if let contents { try fs.writeAtomically(Data(contents.utf8), to: url.appendingPathComponent("a"), syncing: nil) }
+            return url
+        }
+        let staged = try directory("staged", holding: "new")
+        let full = try directory("full", holding: "old")
+        // An empty directory is what plain `rename(2)` would silently replace.
+        let empty = try directory("empty", holding: nil)
+
+        for target in [full, empty] {
+            #expect(throws: FileSystemError(.rename, target.path, code: EEXIST)) { try fs.publishExclusive(staged, to: target) }
+        }
+        #expect(try fs.read(staged.appendingPathComponent("a")) == Data("new".utf8))
+        #expect(try fs.read(full.appendingPathComponent("a")) == Data("old".utf8))
+        #expect(try fs.list(empty).isEmpty)
+
+        let free = scratch.root.appendingPathComponent("free", isDirectory: true)
+        try fs.publishExclusive(staged, to: free)
+        #expect(!fs.exists(staged))
+        #expect(try fs.read(free.appendingPathComponent("a")) == Data("new".utf8))
+    }
+
     @Test("Duplicate's rewrite changes the notebook identity everywhere and keeps page identities")
     func rewriteNotebookID() async throws {
         let scratch = try Scratch("rewrite")
