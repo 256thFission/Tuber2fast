@@ -1173,8 +1173,8 @@ package final class Notebook {
         rerenderComposite(of: page)
     }
 
-    /// A locked layer refuses a transform and a delete, and says so. Not a
-    /// trap: the runtime is told the lock through the composite's layer
+    /// A locked layer refuses a transform, a move and a delete, and says so.
+    /// Not a trap: the runtime is told the lock through the composite's layer
     /// list, but an undo can relock a layer while a drag on it is in
     /// flight, and the drag's end reports anyway. The refusal is answered
     /// like any other, by restating the placement the notebook holds.
@@ -1189,26 +1189,29 @@ package final class Notebook {
         return .accepted
     }
 
-    /// Moves a link. A link's placement is its rect and its transform is the
-    /// identity — `validated()` refuses any other — so a move is a rect edit
-    /// and `transformLayer` refuses every one of them. This is that method's
-    /// body with a new rect in place of a new transform, recorded through
-    /// the revision like any other layer edit, and rerendered so the hit
-    /// rects follow the picture.
+    /// Moves a link or a text box to `origin`, at the size it had. Its
+    /// placement is its rect and its transform is the identity —
+    /// `validated()` refuses any other — so a move is a rect edit and
+    /// `transformLayer` refuses every one of them. This is that method's body
+    /// with a new origin in place of a new transform, recorded through the
+    /// revision like any other layer edit, and rerendered so the hit rects
+    /// follow the picture. There is no size to pass: a text box resized
+    /// would reflow its words.
     ///
-    /// It answers a `TransformOutcome` so an overlay's report can be answered
+    /// It answers a `TransformOutcome` so the frame's report can be answered
     /// the way `layerTransformed` is.
-    package func moveLinkLayer(on page: PageID, layer layerID: LayerID, to rect: PageRect) -> TransformOutcome {
+    package func moveRectLayer(on page: PageID, layer layerID: LayerID, to origin: PagePoint) -> TransformOutcome {
         guard case .ready(var content) = states[page] else { return .refused(reason: "page is not ready") }
         guard let position = content.layers.firstIndex(where: { $0.id == layerID }) else { return .refused(reason: "no such layer") }
-        guard case .link(let link) = content.layers[position].payload else { return .refused(reason: "layer \(layerID) is not a link") }
-        guard !content.layers[position].locked else { return .refused(reason: "layer \(layerID) is locked") }
-        let moved = Layer(
-            id: layerID,
-            transform: content.layers[position].transform,
-            payload: .link(LinkLayer(rect: rect, style: link.style, target: link.target)),
-            locked: content.layers[position].locked
-        )
+        let layer = content.layers[position]
+        let payload: LayerPayload
+        switch layer.payload {
+        case .link(let link): payload = .link(LinkLayer(rect: link.rect.moved(to: origin), style: link.style, target: link.target))
+        case .text(let text): payload = .text(TextLayer(rect: text.rect.moved(to: origin), runs: text.runs, alignment: text.alignment))
+        case .image, .pdf: return .refused(reason: "layer \(layerID) is placed by its transform")
+        }
+        guard !layer.locked else { return .refused(reason: "layer \(layerID) is locked") }
+        let moved = Layer(id: layerID, transform: layer.transform, payload: payload, locked: layer.locked)
         do { _ = try moved.validated() } catch { return .refused(reason: "\(error)") }
         content.replaceLayer(at: position, with: moved)
         commitLayerEdit(content, on: page)

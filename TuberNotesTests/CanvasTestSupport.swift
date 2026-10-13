@@ -191,7 +191,7 @@ func frame(on canvas: PageCanvasController) -> LayerSelectionView? {
 
 /// The middle of a layer's placement, in page points.
 func centre(of layer: Layer) -> CGPoint {
-    let point = layer.transform.apply(x: 0.5, y: 0.5)
+    let point = layer.placement.apply(x: 0.5, y: 0.5)
     return CGPoint(x: point.x, y: point.y)
 }
 
@@ -231,14 +231,21 @@ final class RecordingReporter: CanvasReporting {
     }
 
     var transforms: [(page: PageID, layer: LayerID, transform: PageSpaceTransform)] = []
+    var moves: [(page: PageID, layer: LayerID, origin: PagePoint)] = []
     var deletes: [(page: PageID, layer: LayerID)] = []
-    /// What the notebook answers a transform with. `.refused` is what a
-    /// drag past the page's tenth edge would get.
+    /// What the notebook answers a transform or a move with. `.refused` is
+    /// what a drag past the page's tenth edge would get.
     var transformOutcome: TransformOutcome = .accepted
 
     func layerTransformed(on page: PageID, layer: LayerID, to transform: PageSpaceTransform) -> TransformOutcome {
         transforms.append((page, layer, transform))
         sequence.append("layerTransformed")
+        return transformOutcome
+    }
+
+    func layerMoved(on page: PageID, layer: LayerID, to origin: PagePoint) -> TransformOutcome {
+        moves.append((page, layer, origin))
+        sequence.append("layerMoved")
         return transformOutcome
     }
 

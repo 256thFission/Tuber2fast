@@ -399,6 +399,34 @@ struct EditorBindingTests {
         _ = scratch
     }
 
+    @Test("A text box's new origin reaches the notebook at the size it had, the composite carries it, Undo puts it back, and a locked box is refused")
+    func rectChangeReachesTheNotebook() async throws {
+        let scratch = try Scratch("editor-move-rect")
+        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        let surface = RecordingSurface()
+        let binding = EditorBinding(notebook: notebook, surface: surface)
+        let page = notebook.pageIDs[0]
+
+        binding.windowChanged(to: [page])
+        try await waitUntil { surface.installed.contains(page) }
+        let box = textLayer("hi", rect: PageRect(x: 10, y: 10, width: 200, height: 60))
+        try notebook.insertLayer(box, on: page)
+        binding.drain()
+        try await waitUntil { surface.layersSeen[page]?.map(\.id) == [box.id] }
+
+        #expect(binding.layerMoved(on: page, layer: box.id, to: PagePoint(x: 300, y: 500)) == .accepted)
+        try await waitUntil { surface.layersSeen[page]?.first?.rect == PageRect(x: 300, y: 500, width: 200, height: 60) }
+
+        binding.undoRequested()
+        try await waitUntil { surface.layersSeen[page]?.first?.rect == PageRect(x: 10, y: 10, width: 200, height: 60) }
+
+        #expect(notebook.setLayerLock(box.id, on: page, locked: true) == .accepted)
+        #expect(binding.layerMoved(on: page, layer: box.id, to: PagePoint(x: 0, y: 0)) == .refused(reason: "layer \(box.id) is locked"))
+        #expect(notebook.state(of: page)?.content?.layers.first?.rect == PageRect(x: 10, y: 10, width: 200, height: 60))
+        _ = await notebook.close()
+        _ = scratch
+    }
+
     @Test("A move pushes one page order; a self-drop, a next-neighbour drop, and the last page onto the end push nothing")
     func movePageGuards() async throws {
         let (scratch, notebook) = try await reopened("editor-move", pages: 3)

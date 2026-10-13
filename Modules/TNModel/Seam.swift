@@ -173,6 +173,10 @@ package enum TransformOutcome: Sendable, Equatable {
 @MainActor package protocol CanvasReporting: AnyObject {
     func inkChanged(on page: PageID, _ ink: PKDrawing, echoOf: InkSeq?)
     func layerTransformed(on page: PageID, layer: LayerID, to transform: PageSpaceTransform) -> TransformOutcome
+    /// A link's or a text box's new origin, from a drag of its frame, and
+    /// nothing else: its size and rotation are not the runtime's to change.
+    /// Answered the way a transform is.
+    func layerMoved(on page: PageID, layer: LayerID, to origin: PagePoint) -> TransformOutcome
     /// Delete from the selected object's menu. Answered by an
     /// `updateComposite` that omits the layer, which is also what takes the
     /// selection frame down.

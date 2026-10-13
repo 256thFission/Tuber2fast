@@ -1927,8 +1927,8 @@ struct NotebookTests {
         _ = scratch
     }
 
-    @Test("A link moves by its rect, undoes, redoes; a bad rect and a text layer are refused")
-    func movingALink() async throws {
+    @Test("A link moves to an origin at its size, undoes, redoes; an image, a bad origin and a locked link are refused")
+    func movingALinkIsUndoable() async throws {
         let scratch = try Scratch("nb-move-link")
         defer { withExtendedLifetime(scratch) {} }
         let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
@@ -1937,12 +1937,12 @@ struct NotebookTests {
         try await waitUntil { notebook.state(of: page)?.content != nil }
         let link = Fixture.linkLayer(to: page)
         try notebook.insertLayer(link, on: page)
-        let text = Fixture.textLayer()
-        try notebook.insertLayer(text, on: page)
+        let image = Fixture.imageLayer()
+        try await notebook.addLayer(image, assetData: Fixture.archive(1, count: 128), on: page)
         await notebook.flush()
 
-        let moved = PageRect(x: 300, y: 500, width: 120, height: 40)
-        #expect(notebook.moveLinkLayer(on: page, layer: link.id, to: moved) == .accepted)
+        let moved = PageRect(x: 300, y: 500, width: 160, height: 44)
+        #expect(notebook.moveRectLayer(on: page, layer: link.id, to: PagePoint(x: 300, y: 500)) == .accepted)
         guard case .link(let after) = try #require(notebook.state(of: page)?.content?.layers.first { $0.id == link.id }).payload else {
             Issue.record("the layer stopped being a link"); return
         }
@@ -1962,15 +1962,68 @@ struct NotebookTests {
         }
         #expect(redone.rect == moved)
 
-        // A rect that is not a rect, and a layer that is not a link.
+        // A layer its transform places, an origin that makes no rect, and a
+        // locked link.
         let couldUndo = notebook.canUndo
-        #expect(notebook.moveLinkLayer(on: page, layer: link.id, to: PageRect(x: 10, y: 10, width: 0, height: 40)) != .accepted)
-        #expect(notebook.moveLinkLayer(on: page, layer: text.id, to: moved) != .accepted)
+        #expect(notebook.moveRectLayer(on: page, layer: image.id, to: PagePoint(x: 300, y: 500)) == .refused(reason: "layer \(image.id) is placed by its transform"))
+        #expect(notebook.moveRectLayer(on: page, layer: link.id, to: PagePoint(x: .nan, y: 10)) != .accepted)
         #expect(notebook.canUndo == couldUndo, "a refusal records nothing")
+        #expect(notebook.setLayerLock(link.id, on: page, locked: true) == .accepted)
+        #expect(notebook.moveRectLayer(on: page, layer: link.id, to: PagePoint(x: 0, y: 0)) == .refused(reason: "layer \(link.id) is locked"))
         guard case .link(let unchanged) = try #require(notebook.state(of: page)?.content?.layers.first { $0.id == link.id }).payload else {
             Issue.record("the layer stopped being a link"); return
         }
         #expect(unchanged.rect == moved)
+    }
+
+    @Test("A text box moves to an origin at its size with its words, undoes and redoes")
+    func movingATextBoxIsUndoable() async throws {
+        let scratch = try Scratch("nb-move-text")
+        defer { withExtendedLifetime(scratch) {} }
+        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        let page = notebook.pageIDs[0]
+        notebook.windowChanged(to: [page])
+        try await waitUntil { notebook.state(of: page)?.content != nil }
+        let text = Fixture.textLayer()
+        try notebook.insertLayer(text, on: page)
+        await notebook.flush()
+
+        #expect(notebook.moveRectLayer(on: page, layer: text.id, to: PagePoint(x: 120, y: 400)) == .accepted)
+        let after = try #require(notebook.state(of: page)?.content?.layers.first { $0.id == text.id })
+        guard case .text(let typed) = text.payload, case .text(let moved) = after.payload else {
+            Issue.record("the layer stopped being text"); return
+        }
+        #expect(moved.rect == PageRect(x: 120, y: 400, width: 300, height: 80))
+        #expect(moved.runs == typed.runs && moved.alignment == typed.alignment, "only the rect moves")
+        #expect(after.transform == .identity)
+        #expect(notebook.isDirty)
+
+        #expect(notebook.undo() == page)
+        #expect(notebook.state(of: page)?.content?.layers == [text])
+        #expect(notebook.redo() == page)
+        #expect(notebook.state(of: page)?.content?.layers == [after])
+    }
+
+    @Test("A link deleted from its frame goes in one entry, and Undo brings it back whole")
+    func deletingASelectedLinkIsUndoable() async throws {
+        let scratch = try Scratch("nb-delete-link")
+        defer { withExtendedLifetime(scratch) {} }
+        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        let page = notebook.pageIDs[0]
+        notebook.windowChanged(to: [page])
+        try await waitUntil { notebook.state(of: page)?.content != nil }
+        let link = Fixture.linkLayer(to: page)
+        try notebook.insertLayer(link, on: page)
+        await notebook.flush()
+
+        #expect(notebook.deleteLayer(link.id, on: page) == .accepted)
+        #expect(notebook.state(of: page)?.content?.layers.isEmpty == true)
+        #expect(notebook.isDirty)
+
+        #expect(notebook.undo() == page)
+        #expect(notebook.state(of: page)?.content?.layers == [link])
+        #expect(notebook.redo() == page)
+        #expect(notebook.state(of: page)?.content?.layers.isEmpty == true)
     }
 
     @Test("A layer import publishes the asset first, sits beneath the ink, and round-trips")
@@ -2295,7 +2348,9 @@ struct NotebookTests {
         case .delete:
             #expect(notebook.deleteLayer(image.id, on: page) == .accepted)
         case .moveLink:
-            #expect(notebook.moveLinkLayer(on: page, layer: link.id, to: PageRect(x: 300, y: 500, width: 120, height: 40)) == .accepted)
+            #expect(notebook.moveRectLayer(on: page, layer: link.id, to: PagePoint(x: 300, y: 500)) == .accepted)
+        case .moveText:
+            #expect(notebook.moveRectLayer(on: page, layer: text.id, to: PagePoint(x: 300, y: 500)) == .accepted)
         case .commitText:
             notebook.beginTextEditing(on: page, layer: text.id)
             notebook.endTextEditing(on: page, layer: text.id, TextLayer(rect: typed.rect, runs: [TextRun(string: "ho", style: .body)], alignment: .leading))
@@ -2324,7 +2379,8 @@ struct NotebookTests {
 
         #expect(notebook.setLayerLock(image.id, on: page, locked: false) == .accepted)
         #expect(notebook.transformLayer(on: page, layer: image.id, to: image.transform) == .accepted)
-        #expect(notebook.moveLinkLayer(on: page, layer: link.id, to: placed.rect) == .accepted)
+        #expect(notebook.moveRectLayer(on: page, layer: link.id, to: PagePoint(x: placed.rect.x, y: placed.rect.y)) == .accepted)
+        #expect(notebook.moveRectLayer(on: page, layer: text.id, to: PagePoint(x: typed.rect.x, y: typed.rect.y)) == .accepted)
         notebook.beginTextEditing(on: page, layer: text.id)
         notebook.endTextEditing(on: page, layer: text.id, typed)
 
@@ -2458,7 +2514,7 @@ struct NotebookTests {
 
 /// One row per layer edit the notebook offers: a new edit is a new case.
 enum LayerEdit: String, CaseIterable, Sendable {
-    case insert, transform, lock, delete, moveLink, commitText, emptyText
+    case insert, transform, lock, delete, moveLink, moveText, commitText, emptyText
 }
 
 extension Notebook {

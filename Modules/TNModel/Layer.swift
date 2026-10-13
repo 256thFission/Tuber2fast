@@ -75,6 +75,11 @@ package struct PageRect: Codable, Sendable, Equatable {
     package var isValid: Bool {
         x.isFinite && y.isFinite && width.isFinite && height.isFinite && width > 0 && height > 0
     }
+
+    /// The same size at `origin`.
+    package func moved(to origin: PagePoint) -> PageRect {
+        PageRect(x: origin.x, y: origin.y, width: width, height: height)
+    }
 }
 
 package struct ImageLayer: Codable, Sendable, Equatable {
@@ -250,10 +255,11 @@ package enum LayerPayload: Sendable, Equatable {
 /// One static layer: identity, placement, a kind-specific payload, and
 /// whether it is locked.
 ///
-/// A locked layer still renders and exports; what it refuses is a transform
-/// and a delete, at the notebook, and the runtime shows it without handles.
-/// The flag is durable and undoable like the placement, because a lock the
-/// user set is part of the page and a reopen must not quietly drop it.
+/// A locked layer still renders and exports; what it refuses is a transform,
+/// a move and a delete, at the notebook, and the runtime shows it without
+/// handles. The flag is durable and undoable like the placement, because a
+/// lock the user set is part of the page and a reopen must not quietly drop
+/// it.
 package struct Layer: Sendable, Equatable, Identifiable {
     package let id: LayerID
     package let transform: PageSpaceTransform
@@ -284,6 +290,23 @@ package struct Layer: Sendable, Equatable, Identifiable {
             guard text.rect.isValid, text.runs.allSatisfy(\.isValid) else { throw .invalidText(id) }
         }
         return self
+    }
+
+    /// The rect a link or a text box is placed by, and nil for an image or a
+    /// PDF clipping, which the transform places. A layer with a rect moves
+    /// and never resizes or rotates.
+    package var rect: PageRect? {
+        switch payload {
+        case .link(let link): link.rect
+        case .text(let text): text.rect
+        case .image, .pdf: nil
+        }
+    }
+
+    /// Where the layer's unit square lands on the page, whichever of the two
+    /// places it: what the canvas hit-tests and frames, for every kind.
+    package var placement: PageSpaceTransform {
+        rect.map(PageSpaceTransform.unitSquare(to:)) ?? transform
     }
 
     package func withTransform(_ transform: PageSpaceTransform) -> Layer {

@@ -55,6 +55,11 @@ import UIKit
         return binding.layerTransformed(on: page, layer: layer, to: transform)
     }
 
+    package func layerMoved(on page: PageID, layer: LayerID, to origin: PagePoint) -> TransformOutcome {
+        guard let binding else { return .refused(reason: "the editor is gone") }
+        return binding.layerMoved(on: page, layer: layer, to: origin)
+    }
+
     package func layerDeleteRequested(on page: PageID, layer: LayerID) {
         binding?.layerDeleteRequested(on: page, layer: layer)
     }
@@ -261,6 +266,12 @@ import UIKit
 
     package func layerTransformed(on page: PageID, layer: LayerID, to transform: PageSpaceTransform) -> TransformOutcome {
         let outcome = notebook.transformLayer(on: page, layer: layer, to: transform)
+        drain()
+        return outcome
+    }
+
+    package func layerMoved(on page: PageID, layer: LayerID, to origin: PagePoint) -> TransformOutcome {
+        let outcome = notebook.moveRectLayer(on: page, layer: layer, to: origin)
         drain()
         return outcome
     }

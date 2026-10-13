@@ -771,6 +771,11 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
         return reporter.layerTransformed(on: page, layer: layer, to: transform)
     }
 
+    func pageDidMoveLayer(_ page: PageID, layer: LayerID, to origin: PagePoint) -> TransformOutcome {
+        guard retiring[page] == nil else { return .refused(reason: "page \(page) is retiring") }
+        return reporter.layerMoved(on: page, layer: layer, to: origin)
+    }
+
     func pageDidRequestLayerDelete(_ page: PageID, layer: LayerID) {
         guard retiring[page] == nil else { return }
         reporter.layerDeleteRequested(on: page, layer: layer)

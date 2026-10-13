@@ -4,7 +4,8 @@ import UIKit
 /// The selected object's frame: a border, four corner handles, a rotate knob
 /// above the top edge, and one pan recognizer whose mode is decided at
 /// `.began` by where it landed. Locked, it is the border and a lock badge:
-/// no handles, no drag, and the menu offers Unlock and nothing else.
+/// no handles, no drag, and the menu offers Unlock and nothing else. Around
+/// a link or a text box it is the border alone, and every drag moves.
 ///
 /// It has no pixels of its own. The object the frame surrounds is the
 /// composite beneath it, which the notebook re-renders only when a drag ends,
@@ -74,6 +75,10 @@ final class LayerSelectionView: UIView {
     /// The flag the notebook holds, restated by every `setLayers`.
     private(set) var isLocked: Bool
 
+    /// The layer is placed by a rect, which moves and never resizes or
+    /// rotates, so the frame has no handle and no knob.
+    let movesOnly: Bool
+
     /// The theme the frame draws in, restated by every theme change.
     private(set) var theme: Theme
 
@@ -99,11 +104,12 @@ final class LayerSelectionView: UIView {
     private lazy var editMenu = UIEditMenuInteraction(delegate: self)
     private var drag: DragMode?
 
-    init(layer: LayerID, transform: PageSpaceTransform, locked: Bool, theme: Theme) {
+    init(layer: LayerID, transform: PageSpaceTransform, locked: Bool, movesOnly: Bool, theme: Theme) {
         self.layerID = layer
         self.accepted = transform
         self.working = transform
         self.isLocked = locked
+        self.movesOnly = movesOnly
         self.theme = theme
         super.init(frame: .zero)
 
@@ -197,11 +203,11 @@ final class LayerSelectionView: UIView {
     }
 
     /// The handles and the knob lie outside the bounds; without this a touch
-    /// on one never reaches the view at all. Locked, there is nothing outside
-    /// the bounds to reach.
+    /// on one never reaches the view at all. Locked, or moving only, there is
+    /// nothing outside the bounds to reach.
     override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
         if bounds.contains(point) { return true }
-        if isLocked { return false }
+        if isLocked || movesOnly { return false }
         if knob.frame.contains(point) { return true }
         return handles.values.contains { $0.frame.contains(point) }
     }
@@ -219,8 +225,8 @@ final class LayerSelectionView: UIView {
     }
 
     private func applyLock() {
-        for handle in handles.values { handle.isHidden = isLocked }
-        knob.isHidden = isLocked
+        for handle in handles.values { handle.isHidden = isLocked || movesOnly }
+        knob.isHidden = isLocked || movesOnly
         badge.isHidden = !isLocked
         panRecognizer.isEnabled = !isLocked
         applyTheme()
@@ -413,6 +419,7 @@ final class LayerSelectionView: UIView {
     /// object small enough for its handles to overlap still answers the same
     /// way every time.
     private func mode(forTouchAt local: CGPoint) -> DragMode {
+        if movesOnly { return .move }
         for corner in Corner.allCases where handles[corner]?.frame.contains(local) == true {
             return .scale(corner)
         }

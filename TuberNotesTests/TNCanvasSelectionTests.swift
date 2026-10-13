@@ -10,20 +10,18 @@ import UIKit
 @Suite("Canvas selection")
 @MainActor
 final class TNCanvasSelectionTests: HostingSuite {
-    @Test("Hit-testing: topmost wins, a link is nothing, paper is a box")
+    @Test("Hit-testing by each layer's placement: topmost wins, a link is nothing, paper is a box")
     func textHitTesting() {
-        let a = LayerID(), b = LayerID(), link = LayerID()
-        let rects = [
-            HitTarget(id: a, kind: .text, transform: .unitSquare(to: PageRect(x: 0, y: 0, width: 100, height: 100)), locked: false),
-            HitTarget(id: b, kind: .text, transform: .unitSquare(to: PageRect(x: 50, y: 50, width: 100, height: 100)), locked: false),
-            HitTarget(id: link, kind: .link, transform: .unitSquare(to: PageRect(x: 300, y: 300, width: 50, height: 50)), locked: false),
-        ]
-        #expect(PageCanvasController.textHit(at: CGPoint(x: 10, y: 10), targets: rects) == .edit(a))
-        #expect(PageCanvasController.textHit(at: CGPoint(x: 75, y: 75), targets: rects) == .edit(b))
-        #expect(PageCanvasController.textHit(at: CGPoint(x: 310, y: 310), targets: rects) == nil)
-        #expect(PageCanvasController.textHit(at: CGPoint(x: 500, y: 500), targets: rects) == .create(PagePoint(x: 500, y: 500)))
-        #expect(PageCanvasController.linkHit(at: CGPoint(x: 310, y: 310), targets: rects) == link)
-        #expect(PageCanvasController.linkHit(at: CGPoint(x: 10, y: 10), targets: rects) == nil)
+        let a = textLayer("a", x: 0, y: 0, width: 100, height: 100)
+        let b = textLayer("b", x: 50, y: 50, width: 100, height: 100)
+        let link = linkLayer(x: 300, y: 300)
+        let layers = [a, b, link]
+        #expect(PageCanvasController.textHit(at: CGPoint(x: 10, y: 10), layers: layers) == .edit(a.id))
+        #expect(PageCanvasController.textHit(at: CGPoint(x: 75, y: 75), layers: layers) == .edit(b.id))
+        #expect(PageCanvasController.textHit(at: CGPoint(x: 310, y: 310), layers: layers) == nil)
+        #expect(PageCanvasController.textHit(at: CGPoint(x: 500, y: 500), layers: layers) == .create(PagePoint(x: 500, y: 500)))
+        #expect(PageCanvasController.linkHit(at: CGPoint(x: 310, y: 310), layers: layers) == link.id)
+        #expect(PageCanvasController.linkHit(at: CGPoint(x: 10, y: 10), layers: layers) == nil)
     }
 
     @Test("A tap on an image with the lasso raises one frame at the layer's placement")
@@ -42,6 +40,102 @@ final class TNCanvasSelectionTests: HostingSuite {
         #expect(canvas.overlayView.subviews.filter { $0 is LayerSelectionView }.count == 1)
         #expect(selection.frame.origin == CGPoint(x: image.transform.tx, y: image.transform.ty))
         #expect(selection.bounds.size == CGSize(width: 120, height: 80))
+        _ = runtime.retireAll()
+    }
+
+    @Test("A tap on a text box with the lasso raises the same frame, on its rect, and does not open it")
+    func lassoSelectsATextBox() throws {
+        let reporter = RecordingReporter()
+        let box = textLayer("hi", x: 100, y: 200)
+        let (runtime, _, canvas) = try livePage(reporter, layers: [box])
+
+        canvas.tapped(at: centre(of: box))
+        let selection = try #require(frame(on: canvas))
+        #expect(selection.layerID == box.id)
+        #expect(canvas.overlayView.subviews.filter { $0 is LayerSelectionView }.count == 1)
+        #expect(selection.frame.origin == CGPoint(x: 100, y: 200))
+        #expect(selection.bounds.size == CGSize(width: 200, height: 60))
+        #expect(selection.menuActions().map(\.title) == ["Lock", "Delete"])
+        #expect(reporter.textEditRequests.isEmpty)
+        _ = runtime.retireAll()
+    }
+
+    @Test("A tap on a link with the lasso raises the same frame, on its rect, and does not follow it")
+    func lassoSelectsALink() throws {
+        let reporter = RecordingReporter()
+        let link = linkLayer(x: 100, y: 200)
+        let (runtime, _, canvas) = try livePage(reporter, layers: [link])
+
+        canvas.tapped(at: centre(of: link))
+        let selection = try #require(frame(on: canvas))
+        #expect(selection.layerID == link.id)
+        #expect(selection.frame.origin == CGPoint(x: 100, y: 200))
+        #expect(selection.bounds.size == CGSize(width: 100, height: 40))
+        #expect(selection.menuActions().map(\.title) == ["Lock", "Delete"])
+        #expect(reporter.links.isEmpty)
+        _ = runtime.retireAll()
+    }
+
+    @Test("Dragging a text box reports its new origin once, at the end, and the composite that answers places the frame there")
+    func draggingATextBoxReportsItsNewOrigin() throws {
+        let reporter = RecordingReporter()
+        let box = textLayer("hi", x: 100, y: 200)
+        let (runtime, page, canvas) = try livePage(reporter, layers: [box])
+        canvas.tapped(at: centre(of: box))
+        let selection = try #require(frame(on: canvas))
+
+        selection.beginDrag(at: CGPoint(x: 100, y: 30))
+        selection.continueDrag(to: CGPoint(x: 130, y: 70), by: CGPoint(x: 30, y: 40))
+        #expect(reporter.moves.isEmpty, "nothing is reported while the finger is down")
+        selection.endDrag()
+
+        #expect(reporter.moves.count == 1)
+        let move = try #require(reporter.moves.first)
+        #expect(move.page == page && move.layer == box.id)
+        #expect(move.origin == PagePoint(x: 130, y: 240))
+        #expect(reporter.transforms.isEmpty, "a rect-placed layer reports no transform")
+
+        let moved = Layer(id: box.id, transform: .identity, payload: .text(TextLayer(
+            rect: PageRect(x: 130, y: 240, width: 200, height: 60),
+            runs: [TextRun(string: "hi", style: .body)], alignment: .leading
+        )))
+        canvas.setLayers([moved])
+        #expect(selection.frame.origin == CGPoint(x: 130, y: 240))
+        #expect(selection.bounds.size == CGSize(width: 200, height: 60))
+        _ = runtime.retireAll()
+    }
+
+    @Test("A text box's or a link's frame has no handle and no knob, and a drag from its corner moves it whole")
+    func rectPlacedSelectionsShowNoResizeHandles() throws {
+        let reporter = RecordingReporter()
+        let box = textLayer("hi", x: 100, y: 100), link = linkLayer(x: 100, y: 400), image = imageLayer(x: 300, y: 600)
+        let (runtime, _, canvas) = try livePage(reporter, layers: [box, link, image])
+
+        canvas.tapped(at: centre(of: image))
+        #expect(frame(on: canvas)?.subviews.contains { !$0.isHidden } == true, "an image's frame has its handles")
+
+        for layer in [box, link] {
+            canvas.tapped(at: centre(of: layer))
+            let selection = try #require(frame(on: canvas))
+            #expect(selection.layerID == layer.id)
+            canvas.view.layoutIfNeeded()
+            #expect(selection.subviews.filter { !$0.isHidden }.isEmpty, "no handle, no knob")
+            let size = selection.bounds.size
+            #expect(!selection.point(inside: CGPoint(x: size.width + 5, y: size.height + 5), with: nil), "no corner handle")
+            #expect(!selection.point(inside: CGPoint(x: size.width / 2, y: -31), with: nil), "no rotate knob")
+
+            // The bottom-right corner, where an image's handle would scale it.
+            selection.beginDrag(at: CGPoint(x: size.width, y: size.height))
+            selection.continueDrag(to: CGPoint(x: size.width - 60, y: size.height - 40), by: CGPoint(x: -60, y: -40))
+            selection.endDrag()
+            let extents = selection.working.unitExtents
+            #expect(extents.width == size.width && extents.height == size.height, "the size is kept")
+            let rect = try #require(layer.rect)
+            #expect(reporter.moves.last?.layer == layer.id)
+            #expect(reporter.moves.last?.origin == PagePoint(x: rect.x - 60, y: rect.y - 40))
+        }
+        #expect(reporter.moves.count == 2)
+        #expect(reporter.transforms.isEmpty)
         _ = runtime.retireAll()
     }
 
