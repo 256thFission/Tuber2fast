@@ -9,10 +9,10 @@ import UIKit
 
 /// The editor's three pieces as production wires them: a notebook on disk,
 /// the binding, and the runtime the binding builds, hosted in a window. What
-/// the canvas suite proves against a recorder, this proves across the seam.
+/// the canvas suites prove against a recorder, this proves across the seam.
 @Suite("Canvas lifecycle: the notebook, the binding and the runtime together")
 @MainActor
-struct CanvasLifecycleTests {
+final class CanvasLifecycleTests: HostingSuite {
     @MainActor
     private struct Editor {
         let notebook: Notebook
