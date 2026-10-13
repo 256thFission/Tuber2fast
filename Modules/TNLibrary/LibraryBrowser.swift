@@ -144,8 +144,12 @@ package final class LibraryBrowser {
         leaveListing()
     }
 
+    /// One level up from the folder showing: where `back()` goes, and so
+    /// where a drop on the way back lands.
+    package var parentFolder: String { LibraryPath.parent(of: folder) }
+
     package func back() {
-        folder = LibraryPath.parent(of: folder)
+        folder = parentFolder
         leaveListing()
     }
 

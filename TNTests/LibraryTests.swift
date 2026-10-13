@@ -129,8 +129,8 @@ struct LibraryTests {
         guard case .opened(let notebook) = await library.checkout(item.relativePath) else { Issue.record("open failed"); return }
         guard case .alreadyOpen(let id) = await library.checkout(item.relativePath) else { Issue.record("second checkout opened"); return }
         #expect(id == notebook.notebookID)
-        await #expect(throws: LibraryError.notebookIsOpen(name: "Notes.tubernotes")) { try await library.rename(at: item.relativePath, to: "Other") }
-        await #expect(throws: LibraryError.notebookIsOpen(name: "Notes.tubernotes")) { try await library.trash(at: item.relativePath) }
+        await #expect(throws: LibraryError.notebookIsOpen(name: "Notes")) { try await library.rename(at: item.relativePath, to: "Other") }
+        await #expect(throws: LibraryError.notebookIsOpen(name: "Notes")) { try await library.trash(at: item.relativePath) }
         #expect(library.openCount == 1)
         #expect(await library.release(item.relativePath) == .clean)
         #expect(library.openCount == 0)
@@ -145,7 +145,7 @@ struct LibraryTests {
         let item = try await library.store.createNotebook(named: "Plan", in: "Work")
         guard case .opened = await library.checkout(item.relativePath) else { Issue.record("open failed"); return }
         #expect(library.isLocked("Work"))
-        await #expect(throws: LibraryError.notebookIsOpen(name: "Plan.tubernotes")) { try await library.rename(at: "Work", to: "Play") }
+        await #expect(throws: LibraryError.notebookIsOpen(name: "Plan")) { try await library.rename(at: "Work", to: "Play") }
         _ = await library.release(item.relativePath)
         #expect(!library.isLocked("Work"))
     }

@@ -41,7 +41,7 @@ struct LibraryTrashView: View {
             "Delete permanently?", isPresented: isDeleting, titleVisibility: .visible, presenting: deleting
         ) { entry in
             Button("Delete \(entry.name)", role: .destructive) {
-                run { await browser.deletePermanently(entry) }
+                workspace.changeLibrary { await browser.deletePermanently(entry) }
             }
             Button("Cancel", role: .cancel) {}
         } message: { _ in
@@ -49,7 +49,7 @@ struct LibraryTrashView: View {
         }
         .confirmationDialog("Empty the trash?", isPresented: $isEmptying, titleVisibility: .visible) {
             Button("Delete \(browser.trash.count) items", role: .destructive) {
-                run { await browser.emptyTrash() }
+                workspace.changeLibrary { await browser.emptyTrash() }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
@@ -99,7 +99,7 @@ struct LibraryTrashView: View {
             Spacer(minLength: 0)
             LibraryChevronMenu(name: entry.name) {
                 Button {
-                    run { await browser.recover(entry) }
+                    workspace.changeLibrary { await browser.recover(entry) }
                 } label: {
                     Label("Recover", systemImage: "arrow.uturn.backward")
                 }
@@ -123,15 +123,5 @@ struct LibraryTrashView: View {
 
     private var isDeleting: Binding<Bool> {
         Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })
-    }
-
-    /// Recovering and deleting move an identity in or out of the tree, so the
-    /// index a link resolves through is rebuilt after each.
-    private func run(_ work: @escaping () async -> Void) {
-        browser.refusal = nil
-        Task {
-            await work()
-            await workspace.refreshIdentities()
-        }
     }
 }

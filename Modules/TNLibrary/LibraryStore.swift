@@ -290,9 +290,12 @@ package actor LibraryStore {
         relativePath.isEmpty ? notebooksRoot : notebooksRoot.appendingPathComponent(relativePath)
     }
 
-    private static func displayName(of fileName: String) -> String {
+    /// What the item at `path` is called: its last component, without the
+    /// extension a notebook's package carries. A file name is a path of one.
+    package static func displayName(ofPath path: String) -> String {
+        let last = path.split(separator: "/").last.map(String.init) ?? path
         let suffix = ".\(PackageLayout.packageExtension)"
-        return fileName.hasSuffix(suffix) ? String(fileName.dropLast(suffix.count)) : fileName
+        return last.hasSuffix(suffix) ? String(last.dropLast(suffix.count)) : last
     }
 
     private func kind(at url: URL) -> ItemKind? {
@@ -365,7 +368,7 @@ package actor LibraryStore {
         }
         return LibraryItem(
             id: relativePath,
-            name: Self.displayName(of: url.lastPathComponent),
+            name: Self.displayName(ofPath: url.lastPathComponent),
             kind: kind,
             notebookID: header?.notebookID,
             folderID: sidecar?.folderID,
@@ -389,7 +392,7 @@ package actor LibraryStore {
             try fileSystem.publishExclusive(source, to: target)
             for directory in directories { try fileSystem.syncDirectory(directory) }
         } catch let error as FileSystemError where error.code == EEXIST {
-            throw .alreadyExists(Self.displayName(of: target.lastPathComponent))
+            throw .alreadyExists(Self.displayName(ofPath: target.lastPathComponent))
         } catch {
             throw .io("\(action): \(error)")
         }
@@ -666,7 +669,7 @@ package actor LibraryStore {
         }
         try land(source, at: container.appendingPathComponent(source.lastPathComponent, isDirectory: true), doing: "trash \(relativePath)")
         return TrashEntry(
-            id: containerName, name: Self.displayName(of: origin.originName), kind: kind,
+            id: containerName, name: Self.displayName(ofPath: origin.originName), kind: kind,
             origin: .success(origin), notebookID: notebookID
         )
     }
@@ -703,7 +706,7 @@ package actor LibraryStore {
             guard let found = trashed(in: container) else { return nil }
             let item = container.appendingPathComponent(found.fileName)
             return TrashEntry(
-                id: containerName, name: Self.displayName(of: found.fileName), kind: found.kind,
+                id: containerName, name: Self.displayName(ofPath: found.fileName), kind: found.kind,
                 origin: found.origin, notebookID: found.kind == .notebook ? notebookID(ofPackageAt: item) : nil
             )
         }
@@ -721,7 +724,7 @@ package actor LibraryStore {
             folder = record.originPathHint
         }
         let target = try freeName(
-            Self.displayName(of: found.fileName), kind: found.kind, in: url(of: folder),
+            Self.displayName(ofPath: found.fileName), kind: found.kind, in: url(of: folder),
             landing: source, doing: "recover \(entry.id)"
         )
         do { try fm.removeItem(at: container) } catch { throw .io("recover \(entry.id): \(error)") }
@@ -761,7 +764,7 @@ package actor LibraryStore {
             throw .format(error)
         }
         let target = try freeName(
-            "\(Self.displayName(of: source.lastPathComponent)) copy", kind: .notebook,
+            "\(Self.displayName(ofPath: source.lastPathComponent)) copy", kind: .notebook,
             in: source.deletingLastPathComponent(), landing: staged, doing: "land duplicate of \(relativePath)"
         )
         return item(at: LibraryPath.join(LibraryPath.parent(of: relativePath), target.lastPathComponent), url: target, kind: .notebook)

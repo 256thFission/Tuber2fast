@@ -55,12 +55,12 @@ struct LibraryView: View {
         .alert("New folder", isPresented: $isNamingFolder) {
             TextField("Name", text: $newFolderName)
             Button("Cancel", role: .cancel) {}
-            Button("Create") { run { await browser.createFolder(named: newFolderName) } }
+            Button("Create") { workspace.changeLibrary { await browser.createFolder(named: newFolderName) } }
         }
         .sheet(isPresented: $isCreatingNotebook) {
             NewNotebookSheet(opensOn: browser.options.newNotebook) { name, geometry, paper in
                 // A notebook is made to be written in, so it opens as it lands.
-                run {
+                workspace.changeLibrary {
                     guard let made = await browser.createNotebook(named: name, geometry: geometry, paper: paper) else { return }
                     await workspace.open(path: made.relativePath, name: made.name)
                 }
@@ -69,16 +69,16 @@ struct LibraryView: View {
         .alert("Rename", isPresented: isRenaming, presenting: renameTarget) { item in
             TextField("Name", text: $renameText)
             Button("Cancel", role: .cancel) {}
-            Button("Rename") { run { await browser.rename(item, to: renameText) } }
+            Button("Rename") { workspace.changeLibrary { await browser.rename(item, to: renameText) } }
         }
         .sheet(item: $moveRequest) { request in
             LibraryMovePicker(browser: browser, paths: request.paths) { destination in
-                run { await browser.move(request.paths, toFolder: destination) }
+                workspace.changeLibrary { await browser.move(request.paths, toFolder: destination) }
             }
         }
         .sheet(item: $styleTarget) { item in
             FolderStyleSheet(name: item.name, decoration: item.decoration) { decoration in
-                run { await browser.setDecoration(decoration, on: item) }
+                workspace.changeLibrary { await browser.setDecoration(decoration, on: item) }
             }
         }
         .sheet(isPresented: $isShowingSettings) {
@@ -151,8 +151,8 @@ struct LibraryView: View {
                 // for the parent to drop onto.
                 .dropDestination(for: DraggedLibraryItems.self) { dropped, _ in
                     guard let dragged = dropped.first else { return false }
-                    let destination = parentFolder
-                    run { await browser.move(Set(dragged.paths), toFolder: destination) }
+                    let destination = browser.parentFolder
+                    workspace.changeLibrary { await browser.move(Set(dragged.paths), toFolder: destination) }
                     return true
                 } isTargeted: { isDroppingOnBack = $0 }
             }
@@ -286,11 +286,11 @@ struct LibraryView: View {
                     icon: "plus.square.on.square",
                     isEnabled: !selection.isEmpty
                 ) {
-                    run { await browser.duplicate(selection) }
+                    workspace.changeLibrary { await browser.duplicate(selection) }
                 }
                 // No colour of its own: the word is what says it destroys.
                 MacaronButton(title: "Trash", icon: "trash", isEnabled: !selection.isEmpty) {
-                    run { await browser.trash(selection) }
+                    workspace.changeLibrary { await browser.trash(selection) }
                 }
                 Spacer()
             }
@@ -407,7 +407,7 @@ struct LibraryView: View {
         }
         if item.kind == .notebook {
             Button {
-                run { await browser.duplicate([item.relativePath]) }
+                workspace.changeLibrary { await browser.duplicate([item.relativePath]) }
             } label: {
                 Label("Duplicate", systemImage: "plus.square.on.square")
             }
@@ -425,7 +425,7 @@ struct LibraryView: View {
             Label("Move", systemImage: "folder")
         }
         Button(role: .destructive) {
-            run { await browser.trash([item.relativePath]) }
+            workspace.changeLibrary { await browser.trash([item.relativePath]) }
         } label: {
             Label("Move to Trash", systemImage: "trash")
         }
@@ -437,14 +437,7 @@ struct LibraryView: View {
     /// refusal — a folder into itself, a folder above an open notebook — is
     /// the store's or the ledger's and lands in the banner.
     private func dropTarget(_ item: LibraryItem) -> (Set<String>) -> Void {
-        { paths in run { await browser.move(paths, toFolder: item.relativePath) } }
-    }
-
-    /// One level up from the folder showing, which is where `browser.back()`
-    /// goes and so where a drop on the back chevron lands.
-    private var parentFolder: String {
-        guard let slash = browser.folder.lastIndex(of: "/") else { return "" }
-        return String(browser.folder[..<slash])
+        { paths in workspace.changeLibrary { await browser.move(paths, toFolder: item.relativePath) } }
     }
 
     private func tap(_ item: LibraryItem) {
@@ -455,18 +448,6 @@ struct LibraryView: View {
         switch item.kind {
         case .folder: browser.enter(item)
         case .notebook: Task { await workspace.open(path: item.relativePath, name: item.name) }
-        }
-    }
-
-    /// Every mutation here moves an identity within the tree or adds one, so
-    /// the index a link resolves through is rebuilt after each. The refusal
-    /// is cleared first: twice refused with the same words is a value that
-    /// never changes, and the banner watches for a change.
-    private func run(_ work: @escaping () async -> Void) {
-        browser.refusal = nil
-        Task {
-            await work()
-            await workspace.refreshIdentities()
         }
     }
 

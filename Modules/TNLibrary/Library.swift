@@ -121,7 +121,7 @@ package final class Library {
     /// reader has to close (`Docs/Contract.md`, Library).
     private func requireUnlocked(_ relativePath: String) throws(LibraryError) {
         if let open = openPath(under: relativePath) {
-            throw .notebookIsOpen(name: (open as NSString).lastPathComponent)
+            throw .notebookIsOpen(name: LibraryStore.displayName(ofPath: open))
         }
     }
 

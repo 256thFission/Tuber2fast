@@ -18,7 +18,7 @@ struct LibraryMovePicker: View {
 
     var body: some View {
         MacaronPanel(
-            title: folder.isEmpty ? "Documents" : Workspace.displayName(ofPath: folder),
+            title: folder.isEmpty ? "Documents" : LibraryStore.displayName(ofPath: folder),
             onClose: { dismiss() }
         ) {
             LibraryMoveLevel(

@@ -2,7 +2,6 @@ import Observation
 import SwiftUI
 import TNCore
 import TNEditor
-import TNFormat
 import TNLibrary
 import TNModel
 import TNNotebook
@@ -183,6 +182,19 @@ final class Workspace {
         }
     }
 
+    /// Every change to the library goes through here. A change can move an
+    /// identity within the tree or add one, so the index a link resolves
+    /// through is rebuilt after it. The refusal is cleared first: twice
+    /// refused with the same words is a value that never changes, and the
+    /// banner watches for a change.
+    func changeLibrary(_ work: @escaping () async -> Void) {
+        browser.refusal = nil
+        Task {
+            await work()
+            await refreshIdentities()
+        }
+    }
+
     // MARK: Tabs
 
     func showLibrary() {
@@ -264,7 +276,7 @@ final class Workspace {
             switch library.identities.resolve(notebookID) {
             case .live(let path):
                 Task {
-                    await self.open(path: path, name: Self.displayName(ofPath: path))
+                    await self.open(path: path, name: LibraryStore.displayName(ofPath: path))
                     self.scrollActiveEditor(to: page)
                 }
             case .trashed:
@@ -284,12 +296,6 @@ final class Workspace {
             return
         }
         editor.scroll(toPageIndex: index)
-    }
-
-    static func displayName(ofPath path: String) -> String {
-        let last = path.split(separator: "/").last.map(String.init) ?? path
-        let suffix = ".\(PackageLayout.packageExtension)"
-        return last.hasSuffix(suffix) ? String(last.dropLast(suffix.count)) : last
     }
 
     // MARK: The lease

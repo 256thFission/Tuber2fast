@@ -154,8 +154,8 @@ struct LibraryGridCell<MenuContent: View>: View {
     let item: LibraryItem
     let browser: LibraryBrowser
     /// Where a drop on this cell goes. A closure, not a browser call, because
-    /// the move has to run through `LibraryView.run`, which clears the last
-    /// refusal first and rebuilds the identity index after.
+    /// the move has to run through `Workspace.changeLibrary`, which clears
+    /// the last refusal first and rebuilds the identity index after.
     let drop: (Set<String>) -> Void
     @ViewBuilder let menu: () -> MenuContent
 
@@ -384,6 +384,7 @@ struct LibraryFavoriteStar: View {
     let item: LibraryItem
     let browser: LibraryBrowser
 
+    @Environment(Workspace.self) private var workspace
     @Environment(\.macaron) private var theme
 
     private var starred: Bool { browser.isFavorite(item) }
@@ -399,8 +400,7 @@ struct LibraryFavoriteStar: View {
                 size: CGSize(width: Macaron.chip, height: Macaron.chip),
                 isHeld: starred
             ) {
-                browser.refusal = nil
-                Task { await browser.toggleFavorite(item) }
+                workspace.changeLibrary { await browser.toggleFavorite(item) }
             } label: {
                 Image(systemName: starred ? "star.fill" : "star")
                     .font(Macaron.body(14))

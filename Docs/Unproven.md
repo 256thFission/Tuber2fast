@@ -665,3 +665,11 @@ Not gaps — properties of the tooling that read as project defects when hit.
   the simulator cannot author a stroke a screenshot captures. Owed: set
   the iPad to Dark with theme System and write in black, then pick a light
   preset and open a menu; the ink is black and the menu is light.
+- **A library change still rebuilds the links (U40, I3 line 16).** Every
+  change the library's views send now runs through
+  `Workspace.changeLibrary`, which clears the last refusal, acts, and
+  rebuilds the identity index; the views' own copies are gone. The library
+  suites prove each intention and the refusal's name, and no seam drives
+  the workspace, so the route is reviewed by diff only. Owed: open, move
+  and trash a notebook from the library; with Notes open, moving its folder
+  says "close Notes first"; a link into a moved notebook opens.

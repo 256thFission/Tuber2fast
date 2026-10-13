@@ -237,6 +237,25 @@ struct LibraryBrowserTests {
         #expect(browser.folder == "")
     }
 
+    @Test("A nested folder's parent is one level up, where back goes and a drop on the way back lands")
+    func parentFolderOfANestedFolder() async throws {
+        let (scratch, browser) = try makeBrowser("browser-parent")
+        defer { withExtendedLifetime(scratch) {} }
+        _ = try await browser.library.store.createFolder(named: "Term", in: "")
+        _ = try await browser.library.store.createFolder(named: "Week 1", in: "Term")
+        #expect(browser.parentFolder == "")
+
+        await browser.reload()
+        browser.enter(try #require(browser.displayed.first))
+        await browser.reload()
+        browser.enter(try #require(browser.displayed.first))
+        #expect(browser.parentFolder == "Term")
+
+        browser.back()
+        #expect(browser.folder == "Term")
+        #expect(browser.parentFolder == "")
+    }
+
     @Test("Selection begins empty, toggles, takes all of what is displayed, and ends with the section")
     func selecting() async throws {
         let (scratch, browser) = try makeBrowser("browser-select")
@@ -311,7 +330,7 @@ struct LibraryBrowserTests {
         // open notebook is refused, and the refusal names the notebook the
         // reader has to close, not the folder that was dragged.
         await browser.move(["Term"], toFolder: "Archive")
-        #expect(browser.refusal == "close Open.tubernotes first")
+        #expect(browser.refusal == "close Open first")
         #expect(try await browser.library.store.list(folder: "Archive").isEmpty)
         #expect(try await browser.library.store.list(folder: "Term").map(\.name) == ["Open"])
 
@@ -335,7 +354,7 @@ struct LibraryBrowserTests {
         // "One" sorts before "Open", so the refusal lands in the middle of the
         // loop: gathering, not stopping, is what leaves "Two" moved as well.
         await browser.move(["One.tubernotes", "Open.tubernotes", "Two.tubernotes"], toFolder: "Done")
-        #expect(browser.refusal == "close Open.tubernotes first")
+        #expect(browser.refusal == "close Open first")
         #expect(browser.selection == nil)
         #expect(try await browser.library.store.list(folder: "Done").map(\.name) == ["One", "Two"])
         #expect(try await browser.library.store.list(folder: "").map(\.name) == ["Done", "Open"])
@@ -355,7 +374,7 @@ struct LibraryBrowserTests {
         }
 
         await browser.trash([item.relativePath])
-        #expect(browser.refusal == "close Open.tubernotes first")
+        #expect(browser.refusal == "close Open first")
         #expect(browser.displayed.map(\.name) == ["Open"])
 
         _ = await browser.library.release(item.relativePath)
