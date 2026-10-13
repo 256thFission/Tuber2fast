@@ -136,6 +136,39 @@ final class CanvasLifecycleTests: HostingSuite {
         await editor.close()
     }
 
+    @Test("A page jumped back to before its save is built from the runtime's snapshot, and the window push that restates its ink is no edit")
+    func aKeptPageJumpedBackToKeepsItsInkAndHistory() async throws {
+        let editor = try await open(pages: 6)
+        let (notebook, binding, runtime) = (editor.notebook, editor.binding, editor.runtime)
+        let ids = notebook.pageIDs
+        try await waitUntil { runtime.canvases[ids[0]] != nil }
+        let first = try #require(runtime.canvases[ids[0]])
+        await hop()
+        commitStroke(strokeDrawing(strokes: 1), on: first)
+
+        // One turn, so the page is still dirty when it leaves: the notebook
+        // keeps it, and the runtime keeps the snapshot it retired with.
+        let edits = try #require(notebook.state(of: ids[0])?.content?.editSeq)
+        settle(runtime, at: 5)
+        let retiredSeq = try #require(runtime.snapshots[ids[0]]?.inkSeq)
+        settle(runtime, at: 0)
+
+        let canvas = try #require(runtime.canvases[ids[0]])
+        #expect(runtime.snapshots[ids[0]]?.inkSeq != retiredSeq, "the window push restated the page")
+        #expect(canvas.inkSeq == runtime.snapshots[ids[0]]?.inkSeq, "and the live canvas took it")
+        #expect(canvas.canvasView.drawing.strokes.count == 1)
+        #expect(notebook.state(of: ids[0])?.content?.ink.strokes.count == 1)
+        // An equal value records no entry whether or not its echo is
+        // swallowed; the edit sequence is what an unswallowed echo moves.
+        #expect(notebook.state(of: ids[0])?.content?.editSeq == edits, "the restate owes no save")
+
+        binding.undoRequested()
+        #expect(canvas.canvasView.drawing.strokes.count == 0)
+        #expect(notebook.state(of: ids[0])?.content?.ink.strokes.count == 0)
+        #expect(!notebook.canUndo, "the restate left no entry behind the stroke")
+        await editor.close()
+    }
+
     @Test("Paging through a notebook holds a snapshot only inside the decoded window, a page only ever in its outer ring included")
     func pagingHoldsAtMostFiveSnapshots() async throws {
         let editor = try await open(pages: 20)
