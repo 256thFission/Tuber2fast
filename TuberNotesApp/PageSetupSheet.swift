@@ -36,12 +36,21 @@ enum PageNames {
         case .dotted: "Dotted"
         }
     }
+
+    /// What creating without the sheet would make. Portrait is left unsaid,
+    /// as the sizes are stated portrait; landscape would otherwise be a
+    /// caption that disagrees with the page it names.
+    static func setup(_ setup: NotebookSetup?) -> String {
+        let matched = PageSize.matching(setup?.geometry ?? .letter)
+        let turned = matched.orientation == .landscape ? " \(orientation(.landscape))" : ""
+        return "\(size(matched.size))\(turned), \(paper(setup?.paper ?? .blank))"
+    }
 }
 
 /// One paper, shown as the page it makes: white paper, radius 10, the 3pt
 /// derived outline, and its rules drawn small in the token that owns rule
 /// lines. Held is sunk, which is the whole of the chosen state.
-private struct PaperCap: View {
+struct PaperCap: View {
     let paper: DrawnPaper
     let isHeld: Bool
     var isEnabled = true
@@ -245,64 +254,6 @@ struct PageSetupControls: View {
     private static let bounds = String(format: "%g to %g", PageBounds.minEdge, PageBounds.maxEdge)
 
     private static func typed(_ edge: Double) -> String { String(format: "%g", edge) }
-}
-
-/// A name, a first page, and the paper it is drawn with. The sheet chooses;
-/// the library creates.
-struct NewNotebookSheet: View {
-    @Environment(\.dismiss) private var dismiss
-    @Environment(\.macaron) private var theme
-
-    let create: (String, PageGeometry, DrawnPaper) -> Void
-
-    @State private var name = "New notebook"
-    @State private var size: PageSize
-    @State private var orientation: PageOrientation
-    @State private var paper: DrawnPaper
-
-    /// Opens on the last notebook made here, or on Letter, portrait, blank
-    /// the first time. The size is stored as a geometry, so the catalogue
-    /// name is recovered from the two numbers rather than kept twice.
-    init(opensOn setup: NotebookSetup?, create: @escaping (String, PageGeometry, DrawnPaper) -> Void) {
-        self.create = create
-        let opened = setup.map { PageSize.matching($0.geometry) } ?? (size: .letter, orientation: .portrait)
-        _size = State(initialValue: opened.size)
-        _orientation = State(initialValue: opened.orientation)
-        _paper = State(initialValue: setup?.paper ?? .blank)
-    }
-
-    var body: some View {
-        MacaronPanel(title: "New notebook", onClose: { dismiss() }) {
-            VStack(alignment: .leading, spacing: 10) {
-                MacaronHeading(text: "Name")
-                MacaronField(prompt: "Name", text: $name)
-            }
-
-            PageSetupControls(size: $size, orientation: $orientation)
-
-            VStack(alignment: .leading, spacing: 10) {
-                MacaronHeading(text: "Paper")
-                HStack(alignment: .top, spacing: Macaron.columnGap) {
-                    ForEach(DrawnPaper.allCases, id: \.self) { candidate in
-                        PaperCap(paper: candidate, isHeld: paper == candidate) { paper = candidate }
-                    }
-                }
-            }
-
-            // An out-of-bounds custom size is refused here, before anything
-            // is created.
-            MacaronButton(
-                title: "Create",
-                fill: theme.accent,
-                isEnabled: !name.isEmpty && geometry != nil
-            ) {
-                if let geometry { create(name, geometry, paper) }
-                dismiss()
-            }
-        }
-    }
-
-    private var geometry: PageGeometry? { size.geometry(orientation) }
 }
 
 /// Where a new page's paper comes from. One choice rather than a paper, a

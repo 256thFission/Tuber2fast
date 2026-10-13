@@ -13,9 +13,9 @@ struct LibraryView: View {
     @Environment(Workspace.self) private var workspace
     @Environment(\.macaron) private var theme
 
-    @State private var newFolderName = ""
     @State private var isNamingFolder = false
     @State private var isCreatingNotebook = false
+    @State private var isMakingNotebook = false
     @State private var renameTarget: LibraryItem?
     @State private var renameText = ""
     @State private var moveRequest: MoveRequest?
@@ -52,10 +52,10 @@ struct LibraryView: View {
         .onChange(of: browser.refusal) { _, refusal in
             if let refusal { workspace.banner = refusal }
         }
-        .alert("New folder", isPresented: $isNamingFolder) {
-            TextField("Name", text: $newFolderName)
-            Button("Cancel", role: .cancel) {}
-            Button("Create") { workspace.changeLibrary { await browser.createFolder(named: newFolderName) } }
+        .sheet(isPresented: $isNamingFolder) {
+            NewFolderSheet { name in
+                workspace.changeLibrary { await browser.createFolder(named: name) }
+            }
         }
         .sheet(isPresented: $isCreatingNotebook) {
             NewNotebookSheet(opensOn: browser.options.newNotebook) { name, geometry, paper in
@@ -98,16 +98,21 @@ struct LibraryView: View {
                     } else {
                         // One line while the name and the tray both fit on
                         // it. A truncated collection name is not a trade
-                        // worth making for a shorter page.
+                        // worth making for a shorter page. Under its name,
+                        // the search field is what gives up width.
                         ViewThatFits(in: .horizontal) {
                             HStack(alignment: .center, spacing: Macaron.columnGap) {
                                 header
                                 Spacer(minLength: Macaron.inset)
-                                toolbarRow
+                                toolbarRow(searchWidth: 180)
                             }
                             VStack(alignment: .leading, spacing: Macaron.columnGap) {
                                 header
-                                toolbarRow
+                                toolbarRow(searchWidth: 180)
+                            }
+                            VStack(alignment: .leading, spacing: Macaron.columnGap) {
+                                header
+                                toolbarRow(searchWidth: 90)
                             }
                         }
                     }
@@ -156,7 +161,7 @@ struct LibraryView: View {
 
     // MARK: Toolbar
 
-    private var toolbarRow: some View {
+    private func toolbarRow(searchWidth: CGFloat) -> some View {
         MacaronShell {
             HStack(spacing: Macaron.columnGap) {
                 MacaronMenuCap {
@@ -173,20 +178,14 @@ struct LibraryView: View {
                 if browser.section == .documents {
                     // The accent, because making a notebook is the one thing
                     // the library exists to do that nothing else in it can.
-                    MacaronMenuCap(fill: theme.accent) {
-                        Button {
-                            isCreatingNotebook = true
-                        } label: {
-                            Label("Notebook", systemImage: "book.closed")
-                        }
-                        Button {
-                            newFolderName = "New folder"
-                            isNamingFolder = true
-                        } label: {
-                            Label("Folder", systemImage: "folder.badge.plus")
-                        }
+                    // A chip's height, so it stands level with the menu caps.
+                    Keycap(fill: theme.accent, size: CGSize(width: 0, height: Macaron.chip)) {
+                        isCreatingNotebook = true
                     } label: {
-                        capLabel("New", "plus")
+                        capLabel("New Notebook", "plus").padding(.horizontal, 14)
+                    }
+                    Keycap("New Folder", systemImage: "folder.badge.plus", fill: theme.chrome) {
+                        isNamingFolder = true
                     }
                 }
 
@@ -195,7 +194,7 @@ struct LibraryView: View {
                 MacaronDivider()
 
                 MacaronField(prompt: "Search", text: Bindable(browser).searchText)
-                    .frame(width: 180)
+                    .frame(width: searchWidth)
             }
             .fixedSize(horizontal: true, vertical: false)
         }
@@ -307,14 +306,17 @@ struct LibraryView: View {
                 browser.section == .favorites ? "Favorites could not be shown" : "This folder could not be shown",
                 symbol: "exclamationmark.triangle",
                 detail: message,
-                isEmptySlot: false
+                isEmptySlot: false,
+                offersCreation: false
             )
         case .loaded(let items) where items.isEmpty:
             placeholder(
                 browser.section == .favorites ? "No favorites yet" : "This folder is empty",
                 symbol: browser.section == .favorites ? "star" : "folder",
-                detail: nil,
-                isEmptySlot: true
+                // Only the root's emptiness is the whole library's.
+                detail: offersCreation && browser.folder.isEmpty ? "Create your first notebook" : nil,
+                isEmptySlot: true,
+                offersCreation: offersCreation
             )
         case .loaded:
             switch browser.options.layout {
@@ -331,7 +333,8 @@ struct LibraryView: View {
         _ title: String,
         symbol: String,
         detail: String?,
-        isEmptySlot: Bool
+        isEmptySlot: Bool,
+        offersCreation: Bool
     ) -> some View {
         let shape = RoundedRectangle(cornerRadius: Macaron.shellRadius, style: .continuous)
         return VStack(spacing: Macaron.columnGap) {
@@ -341,6 +344,9 @@ struct LibraryView: View {
                 Text(detail)
                     .font(Macaron.body(.text))
                     .multilineTextAlignment(.center)
+            }
+            if offersCreation {
+                MacaronButton(title: "New Notebook", icon: "plus", fill: theme.accent) { isCreatingNotebook = true }
             }
         }
         .foregroundStyle(theme.outline(of: isEmptySlot ? theme.ground : theme.chrome).color)
@@ -364,7 +370,16 @@ struct LibraryView: View {
 
     private var grid: some View {
         ScrollView {
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 160), spacing: Macaron.inset, alignment: .top)], spacing: Macaron.inset) {
+            // A ceiling as well as a floor: without one, a folder holding one
+            // notebook draws that cover the width of the pane.
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 160, maximum: 200), spacing: Macaron.inset, alignment: .top)],
+                spacing: Macaron.inset
+            ) {
+                if offersCreation {
+                    NewNotebookTile(setup: browser.options.newNotebook, isEnabled: !isMakingNotebook)
+                        .onTapGesture { createWithLastSetup() }
+                }
                 ForEach(browser.displayed) { item in
                     LibraryGridCell(item: item, browser: browser, drop: dropTarget(item)) { itemMenu(for: item) }
                         .onTapGesture { tap(item) }
@@ -380,6 +395,10 @@ struct LibraryView: View {
             // Each row is its own card with its own line, so there is no
             // divider left to draw between them.
             LazyVStack(spacing: Macaron.rowGap) {
+                if offersCreation {
+                    NewNotebookRow(setup: browser.options.newNotebook, isEnabled: !isMakingNotebook)
+                        .onTapGesture { createWithLastSetup() }
+                }
                 ForEach(browser.displayed) { item in
                     LibraryListRow(item: item, browser: browser, drop: dropTarget(item)) { itemMenu(for: item) }
                         .onTapGesture { tap(item) }
@@ -430,6 +449,26 @@ struct LibraryView: View {
     /// the store's or the ledger's and lands in the banner.
     private func dropTarget(_ item: LibraryItem) -> (Set<String>) -> Void {
         { paths in workspace.changeLibrary { await browser.move(paths, toFolder: item.relativePath) } }
+    }
+
+    /// Creation is out of the way while items are being picked, the other
+    /// collections have nothing to create into, and a search's results span
+    /// the whole library rather than the folder a notebook would land in.
+    private var offersCreation: Bool {
+        browser.section == .documents && !browser.isSelecting && browser.searchText.isEmpty
+    }
+
+    /// The sheet's path, minus the asking: the last setup, and the name the
+    /// browser gives a blank one. One at a time, so a double tap is one
+    /// notebook.
+    private func createWithLastSetup() {
+        guard !isMakingNotebook else { return }
+        isMakingNotebook = true
+        workspace.changeLibrary {
+            defer { isMakingNotebook = false }
+            guard let made = await browser.createNotebookWithLastSetup(named: "") else { return }
+            await workspace.open(path: made.relativePath, name: made.name)
+        }
     }
 
     private func tap(_ item: LibraryItem) {

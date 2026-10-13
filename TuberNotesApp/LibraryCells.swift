@@ -12,6 +12,12 @@ import UniformTypeIdentifiers
     return item.parentPath
 }
 
+/// The date a cell shows is the one the listing is ordered by, so a listing
+/// sorted by creation date does not read as out of order.
+@MainActor private func shownDate(_ item: LibraryItem, _ browser: LibraryBrowser) -> Date {
+    browser.options.sortKey == .dateCreated ? item.createdAt : item.modifiedAt
+}
+
 /// The drag payload: relative paths, because a path is what a move takes and
 /// what a selection already holds. Declared beside the cells that carry it
 /// and not `private`, because `LibraryView` names the type too.
@@ -170,7 +176,7 @@ struct LibraryGridCell<MenuContent: View>: View {
                     LibraryChevronMenu(name: item.name, menu: menu)
                 }
 
-            Text(LibraryStyle.itemDate.string(from: item.modifiedAt))
+            Text(LibraryStyle.itemDate.string(from: shownDate(item, browser)))
                 .font(Macaron.body(.caption))
                 .foregroundStyle(theme.outline(of: theme.ground).color)
 
@@ -262,7 +268,7 @@ struct LibraryListRow<MenuContent: View>: View {
                                 .accessibilityLabel("Open")
                         }
                     }
-                    Text(LibraryStyle.itemDate.string(from: item.modifiedAt))
+                    Text(LibraryStyle.itemDate.string(from: shownDate(item, browser)))
                         .font(Macaron.body(.caption))
 
                     if let fault = item.fault {
@@ -297,6 +303,77 @@ struct LibraryListRow<MenuContent: View>: View {
         .draggable(dragged(item, browser))
         .modifier(LibraryFolderDrop(item: item, drop: drop))
         .accessibilityAddTraits(isChosen ? .isSelected : [])
+    }
+}
+
+/// The listing's first cell: an empty slot that creates on the setup named
+/// beneath it, with no sheet in the way. A cell and not a `Keycap`, because
+/// its height follows the grid's width, and its tap is the listing's.
+struct NewNotebookTile: View {
+    let setup: NotebookSetup?
+    let isEnabled: Bool
+
+    @Environment(\.macaron) private var theme
+
+    var body: some View {
+        VStack(spacing: Macaron.rowGap) {
+            // The ground, as a folder's cap is: its wall says push me.
+            LibraryCap(fill: theme.ground) {
+                NewNotebookSlot(symbol: .display)
+                    .aspectRatio(3.0 / 4.0, contentMode: .fit)
+                    .padding(Macaron.shellPadding)
+            }
+            Text("New Notebook").font(Macaron.title(.label))
+            Text(PageNames.setup(setup)).font(Macaron.body(.caption))
+        }
+        .foregroundStyle(theme.outline(of: theme.ground).color)
+        .opacity(isEnabled ? 1 : 0.4)
+        .contentShape(.rect)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("New Notebook, \(PageNames.setup(setup))")
+        .accessibilityAddTraits(.isButton)
+    }
+}
+
+/// `NewNotebookTile` on the list layout's row.
+struct NewNotebookRow: View {
+    let setup: NotebookSetup?
+    let isEnabled: Bool
+
+    @Environment(\.macaron) private var theme
+
+    var body: some View {
+        LibraryCap(fill: theme.chrome) {
+            HStack(spacing: Macaron.columnGap) {
+                NewNotebookSlot(symbol: .large)
+                    .frame(width: 44, height: 58)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("New Notebook").font(Macaron.title(.label))
+                    Text(PageNames.setup(setup)).font(Macaron.body(.caption))
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, Macaron.shellPadding)
+            .padding(.vertical, Macaron.rowGap)
+        }
+        .opacity(isEnabled ? 1 : 0.4)
+        .contentShape(.rect)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("New Notebook, \(PageNames.setup(setup))")
+        .accessibilityAddTraits(.isButton)
+    }
+}
+
+/// Dashed, because the notebook it stands for has no body yet.
+private struct NewNotebookSlot: View {
+    let symbol: TypeScale
+
+    @Environment(\.macaron) private var theme
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: Macaron.chipRadius, style: .continuous)
+            .strokeBorder(theme.accent.color, style: StrokeStyle(lineWidth: Macaron.line, dash: Macaron.dash))
+            .overlay { Image(systemName: "plus").font(Macaron.title(symbol)) }
     }
 }
 
