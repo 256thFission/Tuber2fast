@@ -44,10 +44,11 @@ there are several; set `TN_DEVICE_NAME` in `Local.xcconfig` if that is you.
 
 It renders no verdict about your branch, deliberately. Ink is judged by a human.
 
-## CI and review decide when work is done
+## CI decides when work is done
 
-Open a pull request. CI builds the app and runs the tests on a pinned
-simulator; a reviewer approves. Both, and the item is done.
+Phillip pushes to `main`, and CI builds the app and runs the tests on a
+pinned simulator. Green on the pushed commit, and the item is done. There are
+no pull requests.
 
 Run the same thing locally before you push:
 
@@ -65,7 +66,7 @@ different device.
 **Green CI means it compiled and the tests passed. That is all it means.** The
 simulator has no Apple Pencil, so ink, pressure, and palm rejection cannot be
 proven off-device at all. Changes to the canvas runtime need evidence from a
-real iPad — the pull request template says which files and asks for it.
+real iPad — `AGENTS.md`, under **Definition of done**, says which.
 [`CONTRIBUTING.md`](CONTRIBUTING.md) explains the loop around it.
 
 ## Reading order
@@ -97,8 +98,8 @@ Two rules keep this from rotting:
 
 - **The contract carries no history.** When a rule changes, that file is
   rewritten and `git log -p` is the record. Nothing is marked superseded.
-- **Done-ness is never a word in a document.** Work is done when CI is green
-  and a reviewer has approved the pull request. `Queue.md` gets updated to
+- **Done-ness is never a word in a document.** Work is done when Phillip has
+  pushed it and CI is green on that commit. `Queue.md` gets updated to
   match, as a courtesy to whoever reads it next — it's evidence of nothing on
   its own.
 

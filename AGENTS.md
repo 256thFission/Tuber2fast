@@ -48,14 +48,15 @@ not number, and where this index and that file differ, that file wins:
   with `CONTRACT:`.
 
 One rule's home is this file: **smallest change that proves the queue item.**
-No future notebook, PDF, AI, Pin, collaboration, or sync abstractions early.
+No future notebook, PDF, AI, collaboration, or sync abstractions early.
 
 ## Definition of done
 
-Done means CI is green and a reviewer has approved the pull request — never
-that it compiled. Green CI means it built and the tests passed; **it is
-silent about ink**, because the simulator has no Apple Pencil. A change to
-`TNCanvas`, `TNEditor`, or `Workspace` needs evidence from a physical
-iPad — the pull request template names the files. Pencil feel, stroke
-fidelity, and visual taste are a maintainer's verdict: record the evidence,
-leave the verdict.
+Done means Phillip has pushed the commit to `main` and CI is green on it —
+never that it compiled. There are no pull requests. Green CI means it built
+and the tests passed; **it is silent about ink**, because the simulator has
+no Apple Pencil. This is the one home of the device rule: a change to the
+`TNCanvas` or `TNEditor` module, or to `TuberNotesApp/Workspace.swift`,
+names in its commit message the one-line check a person must try on a
+physical iPad. Pencil feel, stroke fidelity, and visual taste are Phillip's
+verdict: record the evidence, leave the verdict.

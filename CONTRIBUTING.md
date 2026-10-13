@@ -20,23 +20,23 @@ not by claiming a numbered slot.
 2. Before editing, state: acceptance evidence, files in scope, non-goals,
    stopping condition.
 3. Edit.
-4. Build and test locally. Push, open a pull request, and read what CI says.
-5. On green and approved, put in the description what evidence you actually
-   have — and what you don't. Anything found and not fixed is recorded
-   before you stop — see "Where a fact goes" below. If your change resolves
-   or changes the state of something written in `Docs/Queue.md`, update or
-   remove that entry in the same pull request so Phillip's notes stay true —
-   but the queue entry is a courtesy update, not the gate that decides
-   whether the PR merges.
+4. Build and test locally, with the commands CI runs.
+5. Commit. Say in the message what evidence you actually have — and what you
+   don't. Anything found and not fixed is recorded before you stop — see
+   "Where a fact goes" below. If your change resolves or changes the state of
+   something written in `Docs/Queue.md`, update or remove that entry in the
+   same commit so Phillip's notes stay true — a courtesy update, not a gate.
+6. Phillip pushes to `main`, and CI runs on the push. There are no pull
+   requests.
 
-You are not done when the code compiles. You are done when CI is green, a
-reviewer has approved, and the item's human-only checks have been handed to a
-maintainer.
+You are not done when the code compiles. You are done when Phillip has pushed
+it, CI is green on that commit, and the item's human-only checks have been
+handed to Phillip.
 
 **Do not write a progress document.** There is no status board, no session log,
 and no milestone file, deliberately — the same fact in two places is the same
-fact that will disagree with itself. Commit messages and pull requests carry
-the narrative, CI carries the evidence, and `Docs/Queue.md` shrinks. If you
+fact that will disagree with itself. Commit messages carry the narrative, CI
+carries the evidence, and `Docs/Queue.md` shrinks. If you
 catch yourself wanting to record that something is complete, delete it instead.
 
 If a rule itself changed, rewrite `Docs/Contract.md` in place — present tense,
@@ -66,14 +66,13 @@ force; a defect list pinned to line numbers must be re-verified against source
 on a schedule. Both structures rot by design, not through neglect — which is
 why neither exists.
 
-## CI and review are the arbiter
+## CI is the arbiter
 
 The generate/build/test commands live in `AGENTS.md`, under **Build** — their
-one home. `.github/workflows/ci.yml` runs exactly those on every pull request and on
-pushes to `main`. On failure it writes the compile errors and failed assertions
-onto the run page and emits them as annotations on the pull request diff, then
-uploads the logs — so a contributor reads the verdict in a browser rather than
-inside a downloaded zip.
+one home. `.github/workflows/ci.yml` runs exactly those on pushes to `main`.
+On failure it writes the compile errors and failed assertions onto the run
+page and emits them as annotations, then uploads the logs — so a contributor
+reads the verdict in a browser rather than inside a downloaded zip.
 
 The default gate never runs the benchmarks in `HistoryEntryCostTests`; it
 reports them as skipped. They read the wall clock and process-wide memory, so
@@ -107,42 +106,19 @@ shell to `source`. There is no fallback anywhere: a missing pin fails the run
 naming the file, per the contract's rule that nothing is silently defaulted.
 
 **Green CI means it compiled and the tests passed. That is all it means.** It
-is not evidence about ink, and saying otherwise in a pull request is lying
+is not evidence about ink, and saying otherwise in a commit message is lying
 about the state of the project.
 
 ## Device evidence
 
 The simulator has no Apple Pencil. Drawing, erasing, palm rejection, and
 pressure cannot be proven off-device at all, so some changes are not finishable
-by CI no matter how green it is.
+by CI no matter how green it is. Which changes need evidence from a physical
+iPad is stated once, in `AGENTS.md` under **Definition of done**.
 
-Evidence from a physical iPad is **required** when a pull request touches the
-canvas runtime, the editor binding, or the workspace:
-
-| File | Why |
-|---|---|
-| `Modules/TNCanvas/PageCanvasController.swift` | the live PencilKit canvas — ink, pan, zoom, the undo manager |
-| `Modules/TNCanvas/PagedCanvasController.swift` | paging, the live window, gesture arbitration |
-| `Modules/TNEditor/EditorBinding.swift` | every report and every push between notebook and canvas |
-| `TuberNotesApp/Workspace.swift` | the background-execution lease and flush |
-| `Modules/TNCore/TNLog.swift` | the stderr mirror ships in Release and is the only sink a person can read without a Mac |
-
-`TNLog` is on that list for one reason: its stderr mirror is not compiled out
-of Release, and a diagnostic path is worth nothing until the build that ships
-has been seen to emit through it. A change there is finished when a Release
-build on an iPad, launched with `TN_TRACE`, produced a readable capture — not
-when the simulator suite passed.
-
-Device evidence is **not** required for `TNFormat`, `TNLibrary`, `TNModel`,
-tests, docs, or tooling. Correctness there is settled by a test.
-
-The pull request template asks which case you are in. Answering "required but
-not done" is a legitimate answer; add it to `Docs/Unproven.md` and say so.
-Quietly skipping it is not.
-
-Pencil feel, stroke fidelity, palm rejection, and pan/zoom quality remain a
-maintainer's verdict. Record the journey, produce the evidence, and leave the
-verdict alone.
+When a change needs it and it was not done, say so in the commit message and
+add it to `Docs/Unproven.md`. That is a legitimate answer; quietly skipping it
+is not.
 
 ## Device work
 
