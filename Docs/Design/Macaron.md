@@ -68,6 +68,19 @@ turns up that this document does not name, derive its treatment from these.
 | `outlineMix` | two percentages, saturated and pale; defaults 42 / 55 |
 | `ink` | what handwriting is, and what every outline is mixed toward |
 
+**No two of the five colours a theme sets are the same hex.** `ground`,
+`chrome`, `accent`, `secondary` and `ink` differ in every preset, and a
+test over the presets says so by those five names. Each role is a
+different thing on screen, and this design tells them apart by colour
+alone: there is no ring, no label and no second line weight to fall back
+on. A secondary that is the ink makes the seat toggle, the grip and the
+dirty dot read as ink, and the derivation cannot rescue it, because an
+identical pair takes an identical outline. Two roles may sit close enough
+that one takes the paper escape; they may not coincide. The rule stops at
+the five set colours: the derived `paper` is white whatever the chrome is,
+so a white chrome meets it, and the palette repeats a role on purpose, the
+ink first of all (decided T3; theme-06).
+
 Default theme ("Macaron"):
 
 | token | value |
@@ -90,7 +103,7 @@ colour in the mocks. It is a per-notebook preset, not a theme token.
 | `ground2` | `ground` mixed toward `ink`; the grid line and the second colour of every ground pattern |
 | outline of anything | `fill` mixed toward `ink` at `outlineMix` — 42% if the fill is saturated, 55% if pale |
 | keycap wall colour | the element's own outline colour (same hex) |
-| seat body | `accent` taken 80% toward `paper` |
+| seat body | `accent` taken 80% toward `paper`; in a dark theme, 80% toward `ground` (§4.3) |
 
 **The paper escape.** When `contrast(fill, ink) < 1.6` the mix target flips
 from `ink` to `paper` at the same percentage. This is how the ink swatch
@@ -184,6 +197,17 @@ bottom-trailing. Docked to the right edge it drops its right border and right
 radius and casts no shadow. Floating, it takes the 6pt hard offset shadow and
 shows the grab bar in its title strip. `LOCKED` and similar badges are flat
 because they are readouts.
+
+**In a dark theme the seat body is the accent taken 80% toward the ground,
+not toward the paper.** By day the seat is the accent let most of the way
+to white. The paper stays white after dark, so the same mix would make the
+seat the one near-white panel on a dark chrome; toward the ground it stays
+a dark panel with the accent still in it, about `#513032` in Macaron Dark.
+The mix turns with the outlines, on the one flag that makes a theme dark,
+and no theme sets it separately. The seat's rows letter in the seat body's
+outline, which after dark comes up toward white, so the current page's
+row, filled with the paper by day, is filled with the chrome after dark:
+on white that lettering would not be there (decided T4; theme-03).
 
 ### 4.4 The page
 
