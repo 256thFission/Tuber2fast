@@ -18,10 +18,10 @@ package enum CheckoutOutcome: Sendable {
 /// The library on the main actor: the checkout ledger, the identity index,
 /// and every mutation gated by the ledger. All I/O is `LibraryStore`'s.
 ///
-/// One `Notebook` per package. A checkout claims its entry before its first
-/// await, so a second tap during the open waits on that open's task and
-/// reports what it reported rather than making a second writer
-/// (`Docs/Contract.md`, Library).
+/// One `Notebook` per package. A checkout claims its entry in the main-actor
+/// turn that finds its path free, with no await between, so a second tap
+/// during the open waits on that open's task and reports what it reported
+/// rather than making a second writer (`Docs/Contract.md`, Library).
 @MainActor @Observable
 package final class Library {
     private enum Checkout {
@@ -61,7 +61,7 @@ package final class Library {
     package func isLocked(_ relativePath: String) -> Bool { openPath(under: relativePath) != nil }
 
     /// The path checked out at `relativePath` or below it, or nil. A
-    /// checkout still opening counts: the path is held from the tap on.
+    /// checkout still opening counts: the path is held from its claim on.
     private func openPath(under relativePath: String) -> String? {
         if isCheckedOut(relativePath) { return relativePath }
         guard !relativePath.isEmpty else { return nil }

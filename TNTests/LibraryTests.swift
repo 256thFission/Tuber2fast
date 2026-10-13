@@ -164,10 +164,23 @@ struct LibraryTests {
         #expect(!library.isCheckedOut(item.relativePath))
     }
 
-    @Test("A checkout racing a trash of its path never opens a package the trash moved away")
+    @Test("A checkout waits behind a trash of its path, and racing one never opens a package the trash moved away")
     func checkoutWaitsForAnInFlightTrash() async throws {
         let (scratch, library) = try makeLibrary("lib-trash-race")
         defer { withExtendedLifetime(scratch) {} }
+        // The trash holds its path and suspends on the store; the checkout
+        // runs next on the main actor, so without the wait it would claim.
+        let held = try await library.store.createNotebook(named: "Notes", in: "").relativePath
+        let trash = Task { try await library.trash(at: held) }
+        let checkout = Task { await library.checkout(held) }
+        await Task.yield()
+        #expect(!library.isCheckedOut(held), "the checkout waits behind the trash's hold")
+        guard case .failed(.format(.noPackage)) = await checkout.value else {
+            Issue.record("the waiting checkout must find no package"); return
+        }
+        let trashed = await trash.result
+        #expect(throws: Never.self) { try trashed.get() }
+
         for round in 0..<50 {
             let path = try await library.store.createNotebook(named: "Notes", in: "").relativePath
             let trash = Task { try await library.trash(at: path) }
