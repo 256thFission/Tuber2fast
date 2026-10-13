@@ -809,11 +809,11 @@ package final class Notebook {
 
     /// What a page holds right now, whether or not it is loaded, for a render
     /// that must not disturb it. A ready page answers from custody, unsaved
-    /// ink included. Any other page is read from its files and decoded in the
-    /// caller's task, so a cancelled render stops mid-decode; nothing is
-    /// installed, nothing is marked dirty, and the state does not move. A
-    /// pending restore is preferred over the ink on disk, because it is the
-    /// ink the page will have. A page with no record, one the notebook
+    /// ink included. An unloaded or loading page is read from its files and
+    /// decoded in the caller's task, so a cancelled render stops mid-decode;
+    /// nothing is installed, nothing is marked dirty, and the state does not
+    /// move. A pending restore is preferred over the ink on disk, because it
+    /// is the ink the page will have. A page with no record, one the notebook
     /// refused, or one whose files do not decode, is nil: a page refused for
     /// its paper asset has page files that decode, and drawn from them it
     /// would be ink on blank paper.
