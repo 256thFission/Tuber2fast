@@ -83,7 +83,7 @@ final class RefusingNewPagesStore: ForwardingStore, @unchecked Sendable {
         let report = try await base.save(filtered)
         var refusals = report.refusals
         for id in refusedIDs { refusals[id] = .encodeFailed("refused by the test") }
-        return SaveReport(committed: report.committed, refusals: refusals, indexWritten: report.indexWritten, indexWithheld: report.indexWithheld)
+        return SaveReport(committed: report.committed, refusals: refusals, indexWritten: report.indexWritten, omitted: report.omitted, indexWithheld: report.indexWithheld)
     }
 }
 
@@ -924,6 +924,41 @@ struct NotebookTests {
         #expect(onDisk.index.pageIDs == [first], "the index names only what is present")
         #expect(onDisk.pageFaults.isEmpty)
         #expect(notebook.pageIDs == [first, refusedPage], "the intent survives in memory")
+    }
+
+    @Test("A page the written index left out is named by the index the pass that lands its file writes")
+    func aPageLeftOutOfTheIndexIsWrittenOnTheRetry() async throws {
+        let scratch = try Scratch("nb-omitted")
+        let index = Fixture.index(pages: 1)
+        _ = try await PackageStore.create(root: scratch.packageURL, index: index)
+        // The first file this store stages is the new page's ink container.
+        let store = PackageStore(root: scratch.packageURL, fileSystem: FaultingFileSystem(faults: [.failStage(nth: 1)]))
+        // The default debounce is long, so only the two flushes run passes.
+        let notebook = try await Notebook.open(store: store)
+        let page = notebook.appendPage()
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 3), echoOf: nil)
+        await notebook.flush()
+        if case .pagesRefused(let refused) = notebook.lastSaveError { #expect(refused.keys.contains(page)) } else { Issue.record("expected pagesRefused, got \(String(describing: notebook.lastSaveError))") }
+        #expect(try await PackageStore(root: scratch.packageURL).load().index.pageIDs == index.pageIDs, "the first index left the page out")
+        await notebook.flush()
+        let onDisk = PackageStore(root: scratch.packageURL)
+        #expect(try await onDisk.load().index.pageIDs == index.pageIDs + [page])
+        #expect(try PKDrawing(data: try #require(try await onDisk.loadPage(page).inkArchive)).strokes.count == 3)
+        #expect(await notebook.close() == .clean)
+    }
+
+    @Test("A page whose file is missing never holds the index owed")
+    func aMissingPageFileDoesNotWedgeTheIndex() async throws {
+        let scratch = try Scratch("nb-missing-page")
+        let index = Fixture.index(pages: 2)
+        let store = try await PackageStore.create(root: scratch.packageURL, index: index)
+        try FileManager.default.removeItem(at: store.layout.pageURL(index.pageIDs[1]))
+        let notebook = try await Notebook.open(store: store, schedule: fast)
+        if case .unreadable = notebook.state(of: index.pageIDs[1])! {} else { Issue.record("expected a placeholder, got \(String(describing: notebook.state(of: index.pageIDs[1])))") }
+        notebook.bookmark(index.pageIDs[0], titled: "Week one")
+        await notebook.flush()
+        #expect(try await PackageStore(root: scratch.packageURL).load().index.bookmarks.map(\.page) == [index.pageIDs[0]])
+        #expect(await notebook.close() == .clean)
     }
 
     @Test("Prune drops only pages that are retired, outside the window, and clean")

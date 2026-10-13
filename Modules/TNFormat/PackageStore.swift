@@ -67,6 +67,9 @@ package struct SaveReport: Sendable, Equatable {
     package let committed: Set<PageID>
     package let refusals: [PageID: PageRefusal]
     package let indexWritten: Bool
+    /// The intended pages the written index left out because their files
+    /// are not present. Empty when no index was written.
+    package let omitted: Set<PageID>
     /// The intended index intersected with present pages was empty, so the
     /// index was withheld. Every page in the batch stays dirty.
     package let indexWithheld: Bool
@@ -350,6 +353,7 @@ package actor PackageStore {
         // ---- publish 3: the index, if it changed, naming only present pages
         let committed = Set(staged.map(\.page)).union(unchanged)
         var indexWritten = false
+        var omitted = Set<PageID>()
         var indexWithheld = false
         if let indexData {
             let present = intended.pages.filter { committed.contains($0.id) || fs.exists(layout.pageURL($0.id)) }
@@ -361,9 +365,10 @@ package actor PackageStore {
                 do { try fs.writeAtomically(data, to: layout.indexURL, syncing: layout.root) } catch { throw Self.ioFault(error) }
                 knownNotebookID = intended.notebookID
                 indexWritten = true
+                omitted = Set(intended.pageIDs).subtracting(present.map(\.id))
             }
         }
-        return SaveReport(committed: committed, refusals: refusals, indexWritten: indexWritten, indexWithheld: indexWithheld)
+        return SaveReport(committed: committed, refusals: refusals, indexWritten: indexWritten, omitted: omitted, indexWithheld: indexWithheld)
     }
 
     private func plan(_ write: PageWrite) -> Result<PagePlan, PageRefusal> {
