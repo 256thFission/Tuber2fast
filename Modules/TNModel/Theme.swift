@@ -250,9 +250,10 @@ package struct Theme: Equatable, Sendable {
     )
 
     /// Every theme this build ships, in the order the design canvas's
-    /// *Six themes* board lays them out (`Docs/Design/Macaron.md` §12), with
-    /// Macaron Dark beside its day theme. A theme is a row of this table and
-    /// nothing more: no view names one, and adding one is a row.
+    /// *Six themes* board lays them out (`Docs/Design/Macaron.md`
+    /// §12, Sources), with Macaron Dark beside its day theme. A theme is a
+    /// row of this table and nothing more: no view names one, and adding one
+    /// is a row.
     package static let presets: [ThemePreset] = [
         ThemePreset(id: ThemeID(rawValue: "macaron"), name: "Macaron", theme: .macaron),
         ThemePreset(id: ThemeID(rawValue: "macaronDark"), name: "Macaron Dark", theme: .macaronDark),

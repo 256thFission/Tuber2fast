@@ -3,7 +3,7 @@ import Testing
 @testable import TNModel
 
 /// The derivation, against the default-theme results in
-/// `Docs/Design/Macaron.md` §3.2.
+/// `Docs/Design/Macaron.md` §3.2, Derived.
 ///
 /// The table is a transcription of the design canvas, and no single mix
 /// reproduces it to the byte: several of its rows are not internally
