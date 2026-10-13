@@ -329,9 +329,76 @@ tell what it holds before it reads anything else. Adding or removing a
 key changes the key-set pins, in `TNTests/FormatTests.swift` for the
 package and in `TNTests/LibraryTests.swift` for a sidecar, which fail
 until every file that carries the key round-trips, and once *Burn things
-down with permission* has ended it bumps the version too; a new kind
-bumps it in either regime (*Kinds are closed on disk*) (decided R2, F1,
-F2, F3; tests-hostless-01).
+down with permission* has ended it bumps the version too, with its step.
+The pins cannot see a bump left out, because they compare this build's
+writer to this build's test; the golden corpus can, because an earlier
+build wrote it: a key changed under an unchanged number refuses the
+corpus of that number by the key, and the test fails until the number
+moves and the step lands (*A golden corpus pins every version the format
+has written*). A new kind bumps it in either regime (*Kinds are closed
+on disk*) (decided R2, F1, F2, F3; tests-hostless-01).
+
+**A golden corpus pins every version the format has written.**
+`Fixtures/Golden/v1/` holds what a build at version 1 writes, as it
+reaches the disk: the notebooks the three flows make, one on blank paper
+with ink from the pen, the pencil and the highlighter at every width,
+text in every style, links and bookmarks, one from a lecture PDF with
+highlights, a clipping and a photo, and one worksheet written on and
+flattened, each written by the real APIs, a create, an import, a stroke,
+a text session, a flatten; the leftovers a crash can leave beside them,
+which no writer writes on purpose and the generator places by hand; and
+the library's sidecars, a decorated folder with a default one inside it,
+the stars, and two trash records. The directory sits at the root of the
+repository and belongs to no target: the tests find it from `#filePath`,
+as the structure checker finds the sources, because `project.yml` sweeps
+a test directory whole into its target, so two packages' `notebook.json`
+would collide as resources of one bundle, and an `excludes:` that kept
+it out is what the checker refuses, since the files on disk must be the
+files compiled (*Structure*).
+
+The generator is a test in `TNTests/GoldenCorpusTests.swift`, inside
+`#if DEBUG`, that runs only when `TN_WRITE_GOLDEN` is set, and the
+checked-in corpus is its output from one run, edited by nothing after. A
+SHA-256 manifest beside the files names each one and its digest, written
+by that run and by nothing else, and a test checks it on every run, so a
+byte changed in any file is a failure, not a corpus. The rest of the
+suite runs in the gate and proves, of the corpus at the current version,
+that every file reads through the production readers, `PackageStore.load`
+and `loadPage`, `LayerFile.decode`, the ink container and `readView`, and
+the library's sidecar readers, to the values that were written; that
+every JSON file encodes again byte for byte, since JSON is written with
+sorted keys and ISO-8601 dates; that every ink file's header and checksum
+hold and every drawing decodes; that the corpus carries every file the
+format writes, every kind of layer and paper, and every key the pins
+name and no other, the pins and the corpus agreeing in both directions,
+so no key is tested only on a file the test itself wrote; and that a copy
+of a package carried to one version up, with a key this build does not
+write, is refused by its number, in the words that say the notebook needs
+a newer TuberNotes, with the package and `Staging/` untouched.
+
+A version's corpus is captured from the shape that ships at that number,
+after the last change to it: the capture is the last format change of
+its version, never an earlier one. While *Burn things down with
+permission* holds, a shape may still change under the number it has, and
+the corpus follows in the same commit, generated again and never patched,
+because a corpus of a shape no build writes pins nothing. Once the
+permission has ended, a version's corpus is never rewritten: a change to
+the shape is a new number, captured in its own directory beside the old,
+`v2` beside `v1`, and the old corpus stays as the input of the step that
+leaves its version, read by that step and by no decoder (*An older
+notebook is migrated on open*). The reason is what the pins cannot see.
+A key-set pin compares what this build writes to what this build's test
+says, so a key added to the writer, the reader and the pin together, with
+the number left alone, keeps every test green; the first build in a
+friend's hands then writes a shape the next build refuses by a missing
+key, with no step to carry it, and nothing in the tree says so, because
+every notebook there was written by the build that is running. The
+corpus is the one thing on disk an earlier build wrote that the present
+build must still open, so it is the one test of the format across
+builds. And a corpus captured before the last change to its version pins
+a shape no build ever shipped, so the first real step would be written
+against the wrong input (decided F1, R2; format-09, tests-hostless-01;
+simple-tooling notes: the corpus sits outside `TNTests/`).
 
 **Kinds are closed on disk as they are in code.** Layer kinds are
 `image`, `pdf`, `link`, `text`, and nothing else; paper kinds are
@@ -1180,9 +1247,10 @@ it would be on any open and does not refuse the migration: a step carries
 a page's fault forward and does not mend it, and a notebook that held a
 refused page before an update still opens after one (*Refuse at the
 narrowest scope*). Verification is for a step that broke what it did not
-mean to touch; what a step means to do is proved against a package
-written at the version it leaves (decided F1, R2; format-02, format-03,
-durability-07).
+mean to touch; what a step means to do is proved against the golden
+corpus of the version it leaves, a package an earlier build wrote at
+that number (*A golden corpus pins every version the format has
+written*) (decided F1, R2; format-02, format-03, durability-07).
 
 **A `NotebookID` is minted once and never rewritten; a collision is
 refused.** The library mints a notebook's identity when it makes the
