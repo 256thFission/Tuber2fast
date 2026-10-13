@@ -222,6 +222,14 @@ struct ThemeTests {
         #expect(dark.outlineOnPaper(of: dark.paper) == dark.outline(of: dark.paper))
     }
 
+    @Test("Every preset repeats the one ground tile, grid 34")
+    func groundTileHasOneDefault() {
+        #expect(GroundTile.grid == GroundTile(size: 34, lineWidth: 1.5))
+        for preset in Theme.presets {
+            #expect(preset.theme.groundTile == .grid, "\(preset.name) has a tile of its own")
+        }
+    }
+
     private func preset(_ id: String) throws -> Theme {
         try #require(Theme.preset(ThemeID(rawValue: id))).theme
     }

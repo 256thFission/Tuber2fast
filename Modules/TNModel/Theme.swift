@@ -24,14 +24,34 @@ package struct ThemePreset: Equatable, Sendable {
     }
 }
 
+/// The tile the ground repeats: a square of `ground` ruled on its top and
+/// left edges in `ground2`.
+///
+/// Every preset shares one. A second kind of tile is a field here when it
+/// exists, not before.
+package struct GroundTile: Equatable, Sendable {
+    /// The side of the square, in points.
+    package let size: Double
+    /// The rule's width, in points.
+    package let lineWidth: Double
+
+    package init(size: Double, lineWidth: Double) {
+        self.size = size
+        self.lineWidth = lineWidth
+    }
+
+    /// The design's grid 34.
+    package static let grid = GroundTile(size: 34, lineWidth: 1.5)
+}
+
 /// The colours a theme sets, and everything the design derives from them.
 ///
-/// Five hexes, a palette, two percentages and a dark flag are the whole of
-/// a theme: nothing else in the editor's chrome carries a colour of its
-/// own, bar the red of a save that did not land. Outlines, keycap walls,
-/// the grid line, and the seat's body and current row are all computed
-/// here, so a new theme is a row of the preset table and never a sweep
-/// through the views.
+/// Five hexes, a palette, two percentages, a dark flag and a ground tile
+/// are the whole of a theme: nothing else in the editor's chrome carries a
+/// colour of its own, bar the red of a save that did not land. Outlines,
+/// keycap walls, the grid line, and the seat's body and current row are all
+/// computed here, so a new theme is a row of the preset table and never a
+/// sweep through the views.
 ///
 /// No UIKit and no SwiftUI: this is a durable value, and the bridges to
 /// `UIColor` and `Color` live with the views that need them.
@@ -63,6 +83,8 @@ package struct Theme: Equatable, Sendable {
     package let outlineMixPale: Double
     /// Mix toward white instead of toward `ink`. Dark mode's one difference.
     package let invertsMix: Bool
+    /// What the ground repeats.
+    package let groundTile: GroundTile
 
     package init(
         ground: RGBA8,
@@ -73,7 +95,8 @@ package struct Theme: Equatable, Sendable {
         palette: [RGBA8],
         outlineMixSaturated: Double = 0.42,
         outlineMixPale: Double = 0.55,
-        invertsMix: Bool = false
+        invertsMix: Bool = false,
+        groundTile: GroundTile = .grid
     ) {
         self.ground = ground
         self.chrome = chrome
@@ -84,6 +107,7 @@ package struct Theme: Equatable, Sendable {
         self.outlineMixSaturated = outlineMixSaturated
         self.outlineMixPale = outlineMixPale
         self.invertsMix = invertsMix
+        self.groundTile = groundTile
     }
 
     // MARK: Derived
