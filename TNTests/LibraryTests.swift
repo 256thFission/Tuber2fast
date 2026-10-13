@@ -18,6 +18,16 @@ let oneStepUp: MigrationStep = { root, fileSystem in
     try fileSystem.writeAtomically(jsonData(object), to: indexURL, syncing: root)
 }
 
+/// The library's sidecars and the keys each carries, written out by hand as
+/// `packageKeyPins` writes the package's. What this build writes must match
+/// them (the three key-pin tests below), and so must the golden corpus
+/// (`GoldenCorpusTests`).
+let sidecarKeyPins: [String: Set<String>] = [
+    ".folder.json": ["formatVersion", "folderID", "color", "symbol"],
+    "Favorites.json": ["formatVersion", "notebooks", "folders"],
+    "origin.json": ["formatVersion", "originPathHint", "originName", "deletedAt"],
+]
+
 @Suite("Library: the tree, the trash, the ledger")
 @MainActor
 struct LibraryTests {
@@ -583,7 +593,7 @@ struct LibraryTests {
         _ = try await library.store.createFolder(named: "Term", in: "")
         let sidecar = library.store.url(of: "Term").appendingPathComponent(".folder.json")
         let written = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: sidecar)) as? [String: Any])
-        #expect(Set(written.keys) == ["formatVersion", "folderID", "color", "symbol"])
+        #expect(Set(written.keys) == sidecarKeyPins[".folder.json"])
         #expect(written["formatVersion"] as? Int == 1)
 
         for key in written.keys {
@@ -614,7 +624,7 @@ struct LibraryTests {
         try await library.store.setFavorite(try #require(made.identity), true)
         let url = library.store.favoritesURL
         let written = try jsonObject(Data(contentsOf: url))
-        #expect(Set(written.keys) == ["formatVersion", "notebooks", "folders"])
+        #expect(Set(written.keys) == sidecarKeyPins["Favorites.json"])
         #expect(written["formatVersion"] as? Int == 1)
 
         for key in written.keys {
@@ -652,9 +662,9 @@ struct LibraryTests {
         }
 
         let written = try jsonObject(Data(contentsOf: originURL(fromFolder)))
-        #expect(Set(written.keys) == ["formatVersion", "originPathHint", "originName", "deletedAt"])
+        #expect(Set(written.keys) == sidecarKeyPins["origin.json"])
         #expect(written["formatVersion"] as? Int == 1)
-        #expect(Set(try jsonObject(Data(contentsOf: originURL(fromRoot))).keys) == ["formatVersion", "originPathHint", "originName", "deletedAt"])
+        #expect(Set(try jsonObject(Data(contentsOf: originURL(fromRoot))).keys) == sidecarKeyPins["origin.json"])
 
         func listedOrigin() async throws -> Result<TrashOrigin, LibraryError> {
             try #require(try await library.store.listTrash().first { $0.id == fromFolder.id }).origin

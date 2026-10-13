@@ -3,10 +3,47 @@ import Testing
 @testable import TNFormat
 @testable import TNModel
 
+/// Every object the package writes and the keys it carries, written out by
+/// hand at the paths `keySets(of:at:)` spells, each file's path starting
+/// from its name. What this build writes must match them (`KeySetPins`), and
+/// so must the golden corpus, in both directions (`GoldenCorpusTests`).
+let packageKeyPins: [String: Set<String>] = {
+    let layer: Set<String> = ["layerID", "kind", "transform", "locked"]
+    let rect: Set<String> = ["x", "y", "width", "height"]
+    return [
+        "notebook.json": ["formatVersion", "notebookID", "createdAt", "pages", "bookmarks"],
+        "notebook.json.pages[]": ["id", "width", "height", "paper"],
+        "notebook.json.pages[].paper(blank)": ["kind"],
+        "notebook.json.pages[].paper(lined)": ["kind"],
+        "notebook.json.pages[].paper(grid)": ["kind"],
+        "notebook.json.pages[].paper(dotted)": ["kind"],
+        "notebook.json.pages[].paper(image)": ["kind", "asset"],
+        "notebook.json.pages[].paper(pdf)": ["kind", "asset", "sourcePageIndex"],
+        "notebook.json.bookmarks[]": ["page", "title"],
+        "page": ["pageID", "hasInk", "layers"],
+        "view.json": ["currentPageID"],
+        "layer(image)": layer.union(["image"]),
+        "layer(image).image": ["asset", "naturalSize"],
+        "layer(image).image.naturalSize": ["width", "height"],
+        "layer(pdf)": layer.union(["pdf"]),
+        "layer(pdf).pdf": ["asset", "sourcePageIndex", "sourceExtent"],
+        "layer(pdf).pdf.sourceExtent": rect.union(["rotation"]),
+        "layer(link)": layer.union(["link"]),
+        "layer(link).link": ["rect", "target"],
+        "layer(link).link.rect": rect,
+        "layer(link).link.target(internal)": ["scope", "pageID"],
+        "layer(link).link.target(external)": ["scope", "notebookID", "pageID"],
+        "layer(text)": layer.union(["text"]),
+        "layer(text).text": ["rect", "runs", "alignment"],
+        "layer(text).text.rect": rect,
+        "layer(text).text.runs[]": ["string", "font", "size", "bold", "italic", "underline", "color"],
+    ]
+}()
+
 @Suite("Format: key sets are pinned")
 struct KeySetPins {
-    @Test("notebook.json carries exactly its keys, and each page record, paper of each kind, and bookmark exactly theirs")
-    func indexKeys() throws {
+    @Test("Every object in every file this build writes carries exactly its pin's keys, and every pin is written")
+    func everyObjectCarriesItsPin() throws {
         let papers: [Paper] = DrawnPaper.allCases.map(Paper.drawn) + [
             .image(AssetRef(id: AssetID(), format: .heic)), .pdf(AssetRef(id: AssetID(), format: .pdf), sourcePageIndex: 3),
         ]
@@ -14,51 +51,21 @@ struct KeySetPins {
             notebookID: NotebookID(), createdAt: Date(timeIntervalSince1970: 1_800_000_000),
             pages: papers.map { PageRecord(id: PageID(), geometry: .letter, paper: $0) },
             bookmarks: [])
-        let index = plain.withBookmarks([PageBookmark(page: plain.pageIDs[0], title: "Chapter one")])
-        let data = try Codecs.encode(index)
-        let top = try jsonObject(data)
-        #expect(Set(top.keys) == ["formatVersion", "notebookID", "createdAt", "pages", "bookmarks"])
-        let pages = try #require(top["pages"] as? [[String: Any]])
-        for page in pages {
-            #expect(Set(page.keys) == ["id", "width", "height", "paper"])
+        let index = try jsonObject(Codecs.encode(plain.withBookmarks([PageBookmark(page: plain.pageIDs[0], title: "Chapter one")])))
+        let external = Layer(id: LayerID(), transform: .identity, payload: .link(LinkLayer(
+            rect: PageRect(x: 1, y: 1, width: 10, height: 10),
+            target: .externalPage(notebook: NotebookID(), page: PageID()))))
+        var written = keySets(of: index, at: "notebook.json")
+            + keySets(of: try jsonObject(Codecs.encode(PageFile(pageID: PageID(), hasInk: true, layers: [LayerID()]))), at: "page")
+            + keySets(of: try jsonObject(Codecs.encode(ViewState(currentPageID: PageID()))), at: "view.json")
+        for layer in [Fixture.imageLayer(), Fixture.pdfLayer(), Fixture.linkLayer(to: PageID()), external, Fixture.textLayer()] {
+            written += keySets(of: try jsonObject(LayerFile.encode(layer)), at: "layer")
         }
-        let paperKeys = try pages.map { Set(try #require($0["paper"] as? [String: Any]).keys) }
-        #expect(paperKeys == Array(repeating: ["kind"], count: DrawnPaper.allCases.count) + [
-            ["kind", "asset"], ["kind", "asset", "sourcePageIndex"],
-        ])
-        let bookmarks = try #require(top["bookmarks"] as? [[String: Any]])
-        #expect(bookmarks.count == 1)
-        for bookmark in bookmarks {
-            #expect(Set(bookmark.keys) == ["page", "title"])
+        for object in written {
+            #expect(packageKeyPins[object.path] == object.keys, "\(object.path)")
         }
-        #expect(top["formatVersion"] as? Int == 1)
-    }
-
-    @Test("pages/<id>.json carries exactly its keys")
-    func pageFileKeys() throws {
-        let data = try Codecs.encode(PageFile(pageID: PageID(), hasInk: true, layers: [LayerID()]))
-        #expect(Set(try jsonObject(data).keys) == ["pageID", "hasInk", "layers"])
-    }
-
-    @Test("Each layer kind's file carries exactly its keys, payload keyed by kind")
-    func layerFileKeys() throws {
-        let cases: [(Layer, Set<String>)] = [
-            (Fixture.imageLayer(), ["asset", "naturalSize"]),
-            (Fixture.pdfLayer(), ["asset", "sourcePageIndex", "sourceExtent"]),
-            (Fixture.linkLayer(to: PageID()), ["rect", "target"]),
-            (Fixture.textLayer(), ["rect", "runs", "alignment"]),
-        ]
-        for (layer, payloadKeys) in cases {
-            let top = try jsonObject(try LayerFile.encode(layer))
-            let kind = layer.payload.kind.rawValue
-            #expect(Set(top.keys) == ["layerID", "kind", "transform", "locked", kind])
-            #expect(Set(try #require(top[kind] as? [String: Any]).keys) == payloadKeys)
-        }
-    }
-
-    @Test("view.json carries exactly its key")
-    func viewKeys() throws {
-        #expect(Set(try jsonObject(try Codecs.encode(ViewState(currentPageID: PageID()))).keys) == ["currentPageID"])
+        #expect(Set(written.map(\.path)) == Set(packageKeyPins.keys))
+        #expect(index["formatVersion"] as? Int == 1)
     }
 }
 

@@ -202,3 +202,19 @@ func jsonObject(_ data: Data) throws -> [String: Any] {
 func jsonData(_ object: [String: Any]) throws -> Data {
     try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
 }
+
+/// The key set of every object in a JSON tree, by where it sits: keys
+/// joined by `.`, `[]` for an array's elements, and `(name)` after an object
+/// that names its own `kind` or `scope`, because that name decides its keys.
+/// The paths the key-set pins are written at.
+func keySets(of node: Any, at path: String) -> [(path: String, keys: Set<String>)] {
+    switch node {
+    case let object as [String: Any]:
+        let here = ((object["kind"] ?? object["scope"]) as? String).map { "\(path)(\($0))" } ?? path
+        return [(here, Set(object.keys))] + object.flatMap { keySets(of: $0.value, at: "\(here).\($0.key)") }
+    case let array as [Any]:
+        return array.flatMap { keySets(of: $0, at: "\(path)[]") }
+    default:
+        return []
+    }
+}
