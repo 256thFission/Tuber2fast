@@ -203,16 +203,18 @@ is the first thing read from a package, before any key is checked: a
 version this build does not write refuses the notebook by its number,
 never by a key, because the number is the one fact that says what the
 rest of the file means. A newer version is refused in words that say the
-notebook needs a newer TuberNotes. An older version is refused until a
-migration step brings it to the current one. Three keys of the index
-never change name or type, at any version: `formatVersion`, `notebookID`
-and `createdAt`. The library reads only those three to list a package,
-so a notebook keeps its identity in the listing, in stars and in the
-trash at a version this build cannot open, and a migration can tell what
-it holds before it reads anything else. Adding or removing a key changes
-the key-set pins in `TNTests/FormatTests.swift`, which fail until every
-file that carries the key round-trips, and once *Burn things down with
-permission* has ended it bumps the version too (decided R2, F1, F2, F3).
+notebook needs a newer TuberNotes. An older version is carried to the
+current one by the steps that opening it runs, and refused only where no
+step reaches it (*An older notebook is migrated on open*). Three keys of
+the index never change name or type, at any version: `formatVersion`,
+`notebookID` and `createdAt`. The library reads only those three to list
+a package, so a notebook keeps its identity in the listing, in stars and
+in the trash at a version this build cannot open, and a migration can
+tell what it holds before it reads anything else. Adding or removing a
+key changes the key-set pins in `TNTests/FormatTests.swift`, which fail
+until every file that carries the key round-trips, and once *Burn things
+down with permission* has ended it bumps the version too (decided R2, F1,
+F2, F3).
 
 **Layer kinds are `image`, `pdf`, `link`, `text`, and nothing else.** The
 payload object is keyed by the kind name, so an unknown kind is detected
@@ -323,7 +325,10 @@ report     which pages were refused. Nothing is deleted.
 - **Atomic per page, not across pages.** A crash between phases can leave
   an ink file for a page whose file says `hasInk: false`. Open treats the
   ink file as the ink and marks the page dirty.
-- **Only `compact()` deletes.** Open, save, and close delete nothing.
+- **Only `compact()` deletes from a package.** Open, save, and close
+  delete nothing a package holds. What an open removes after a migration
+  is the copy the exchange left in Staging, which is no package anything
+  lists (*An older notebook is migrated on open*).
   Compact removes files no page refers to, only if they are more than a
   day old, and skips a whole class of file if it could not read every file
   that might refer to it.
@@ -521,7 +526,59 @@ or the leftover of a process that died, and can be removed at any time
 without loss. That invariant is what a sweep of Staging and a migration
 rely on, and it binds them: a migration that builds in Staging keeps the
 original where it stands until the swap commits, because nothing live is
-ever Staging's alone (decided F4, F1; durability-07).
+ever Staging's alone. So the store empties `Staging/` when it starts, and
+a duplicate or a migration whose build fails removes the copy it was
+building (decided F4, F1; durability-07).
+
+**An older notebook is migrated on open, in Staging, and swapped in by one
+exchange.** `TNFormat` holds the steps as a plain list, one for each
+version this build has left behind, each carrying a package from its
+version to the next; there is no protocol and no registry. A package at
+version N runs the step for N, then the next, until it is current, all on
+one copy, so a step is written once, against the shape its version wrote.
+The decoders stay strict and know one version: a step is the only code
+that reads an older shape, and it reads that shape as its own input, never
+through a decoder taught to accept it. The list is empty today, because
+every version is 1 and nothing older was ever written; the ladder, the
+exchange and the sweep exist now so the first step lands as a step and
+not as a rewrite of the open path.
+
+The ladder runs in one place: inside `Library.checkout`, after the
+reservation is taken and before `Notebook.open`, where that reservation
+already refuses a rename, a move, a trash and a duplicate of the package
+for as long as it is held. It is a call of its own, never part of
+`PackageStore.load()`: a cover, a duplicate's identity rewrite and
+`compact()` all load a package, and a ladder reached from any of them
+could swap a stale copy in under a notebook that has already saved into
+the live one. Each of those still refuses an older version, and the
+listing, the stars and the trash read only the three stable keys, so an
+older notebook keeps its name and identity and shows no cover until its
+first open. Duplicate runs the same steps on its own copy in Staging
+before it gives that copy its identity, and swaps nothing.
+
+A migration is a build in Staging and one exchange. The original is
+cloned into `Staging/`, and each step writes into the clone through the
+seam a save writes through, staged with the barrier and published by
+rename. The clone is verified by loading it as this build loads any
+package, the index and every page, and is synced. Then the clone and the
+original change places by one atomic exchange (`renamex_np` with
+`RENAME_SWAP`, which is why `Staging/` and `Notebooks/` share a volume),
+the directory the package lives in is synced, and the copy the exchange
+left in Staging is removed. The live path is never empty and the only
+copy is never in Staging, so a process that dies at any point leaves the
+old package in place or the new one, and the next launch's sweep takes
+what else was left. Two renames in place of the exchange are forbidden:
+between them the only copy is in Staging, and the sweep would take it. A
+step that throws ends the migration where it is: the clone is removed,
+the original has not been touched, and the open is refused with the
+step's fault. A page the clone refuses when it is verified is refused as
+it would be on any open and does not refuse the migration: a step carries
+a page's fault forward and does not mend it, and a notebook that held a
+refused page before an update still opens after one (*Refuse at the
+narrowest scope*). Verification is for a step that broke what it did not
+mean to touch; what a step means to do is proved against a package
+written at the version it leaves (decided F1, R2; format-02, format-03,
+durability-07).
 
 The identity index maps `NotebookID` to path. It is built off the main
 thread and marks notebooks in the trash. If two packages share an
