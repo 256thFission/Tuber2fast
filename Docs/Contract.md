@@ -430,7 +430,8 @@ publish 3  only if the index changed: write it listing only the pages
            that list is empty);
            stage, rename, fsync the package root
 report     which pages were refused, and which intended pages the written
-           index left out. Nothing is deleted.
+           index left out. Nothing the package holds is deleted; only
+           this save's own unpublished temps go.
 ```
 
 - **A save writes only what changed.** An unchanged page file is not
@@ -470,12 +471,42 @@ report     which pages were refused, and which intended pages the written
   report clean, and the reopened notebook would list neither the page nor
   its ink (decided I2; contract-03, durability-01).
 - **Only `compact()` deletes from a package.** Open, save, and close
-  delete nothing a package holds. What an open removes after a migration
-  is the copy the exchange left in Staging, which is no package anything
-  lists (*An older notebook is migrated on open*).
-  Compact removes files no page refers to, only if they are more than a
-  day old, and skips a whole class of file if it could not read every file
-  that might refer to it.
+  delete nothing a package holds. A save removes only the temps it
+  staged itself and did not publish, for a page refused at staging or a
+  publish that failed; a temp is no part of the package, and one a crash
+  leaves is a file nothing refers to, which compact takes like any other.
+  What an open removes after a migration is the copy the exchange left
+  in Staging, which is no package anything lists (*An older notebook is
+  migrated on open*). Compact removes files nothing refers to, only if
+  they are more than a day old, and skips a whole class of file if it
+  could not read every file that might refer to it. A file whose age it
+  cannot read is kept: the one deletion authority does not fail open.
+  **Compact keeps every asset an open notebook can still restore.** The
+  files on disk name what is saved; the notebook names what its memory
+  can bring back, and the library hands that set to the notebook's own
+  store as each sweep begins (*Custody*), read then and not once for
+  every package, since the person may be back and editing between one
+  package's sweep and the next. The set is every asset named by a layer
+  in either revision of any entry on the undo or the redo stack, by a
+  revision parked for a page outside the window (*A pending revision is
+  unsaved work*), by a layer of any page the notebook holds ready, or
+  as paper by the index it holds, and compact counts each of those
+  reachable as it counts what a page file names. Layer files need no
+  such set: a restore re-pends the layer, and the next save rewrites
+  its file. An asset is written once, at import, and nothing writes it
+  again (*Assets are immutable*), so an asset the sweep takes is gone.
+  The reason is the undo of a delete. Compact reads reachability from
+  the files on disk and age from a file's own modification time, so an
+  image placed a day ago and deleted today was unreachable the moment
+  its delete landed, and the sweep on the next phase change removed it;
+  the undo then brought back a layer whose asset was gone, the next
+  save refused the whole page as `danglingAsset`, ink included, and
+  refused it on every pass after, so the only way out was discard.
+  Before the sweep had a caller this could not happen; a sweep that
+  spared open packages would never reclaim anything, because only open
+  packages are swept (*Leaving the foreground compacts every open
+  package*) (decided M3 S1; round-two call: the keep-set; arch-data-01,
+  thermo-data-01, contract-02, durability-02, contract-12).
 - **A missing file that the index refers to refuses the page. A file the
   index does not refer to is ignored** until compact.
 - **`view.json`** is written by rename, without fsync, one second after a
@@ -985,9 +1016,11 @@ and never saved.
 ## Lifecycle
 
 `Workspace` takes the background lease and holds it until no write is
-outstanding. It runs one forced save per open notebook, active tab first.
-If the lease expires it is logged; the format recovers on next open. A
-forced save runs on backgrounding and on close.
+outstanding. It runs one forced save per open notebook, active tab first,
+then one compact per open package (*Leaving the foreground compacts
+every open package*). If the lease expires it is logged; the format
+recovers on next open. A forced save runs on leaving the foreground,
+`.inactive` and `.background` alike, and on close.
 
 **Leaving the foreground ends every open tool use before the forced
 save.** Leaving cancels every touch, and PencilKit may not end the use it
@@ -1018,6 +1051,30 @@ that pass has captured its pages, so the page is dirty when the lease ends
 and a suspension kill loses the ink that the dropped second change would
 have saved (decided I2, card 09 C6; round-two call: the lease takes a
 second pass).
+
+**Leaving the foreground compacts every open package, after the forced
+save.** Inside the lease, once every open notebook's forced pass has
+returned, `Workspace` has the library sweep each open package through
+that notebook's own store, with the assets the notebook still holds
+(*Only `compact()` deletes from a package*). It runs on `.inactive` as
+on `.background`, because the flush does: Control Center and the app
+switcher send `.inactive` and often hand the screen straight back, so
+the sweep runs while the person can still undo, and the assets the
+notebook holds are what make that safe. The sweep is last because a save
+that does not land loses work while a sweep that does not run costs
+disk, and a lease that expires over it loses nothing: compact removes
+one file at a time, and the next sweep takes what this one left. Only
+open packages are swept. A notebook nobody has open is reclaimed the
+next time it is, which is the price of never scanning the library for
+bytes to free. Each sweep is logged by the notebook's identity, never
+its path, with the count it removed and the count it kept, one line per
+open package, so a session on the iPad can show that every open
+notebook was swept; removed is usually zero, because a file younger
+than a day is kept. A compact that throws is logged the same way and
+not surfaced, since nothing the person asked for failed. This is the
+one production caller of `compact()`. Before it the sweep had none,
+and a package only ever grew (decided M3 S1; round-two call: compact
+also runs on inactive; critique C3; durability-02).
 
 **Close tears down every canvas first, and the teardown is terminal.**
 `retireAll` marks the runtime torn down: from then on it builds no canvas,
