@@ -498,8 +498,8 @@ struct MacaronPanel<Content: View>: View {
 /// accent for the one action the panel exists to perform, the secondary for
 /// a second-rank one, and the ground for a control that is not a peer of the
 /// others — the band's overflow chip sets that last precedent. Nothing here
-/// gets a colour the six tokens do not already hold, so a destructive action
-/// is an ordinary cap whose word says what it does.
+/// gets a colour the theme's five colours do not already hold, so a
+/// destructive action is an ordinary cap whose word says what it does.
 struct MacaronButton: View {
     let title: String
     var icon: String?

@@ -64,11 +64,11 @@ package struct Theme: Equatable, Sendable {
     package let accent: RGBA8
     /// Seat toggle, resize grip, dirty dot, and the second kind of button.
     package let secondary: RGBA8
-    /// What every outline is mixed toward, and the one colour the chrome
-    /// uses straight: the words typed into a field, the tray knob's ring,
-    /// the bar's shadow in flight. Not what the hand writes in: a stroke
-    /// keeps the colour it was drawn in, and no module the ink passes
-    /// through can name a theme at all.
+    /// What every outline is mixed toward, and, unmixed, the colour of the
+    /// words typed into a field, the tray knob's ring and the bar's shadow
+    /// in flight. Not what the hand writes in: a stroke keeps the colour it
+    /// was drawn in, and no module the ink passes through can name a theme
+    /// at all.
     package let ink: RGBA8
     /// The seven colours the brush offers, in the order they are drawn.
     ///

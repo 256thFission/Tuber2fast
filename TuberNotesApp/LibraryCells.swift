@@ -415,9 +415,9 @@ struct LibraryChevronMenu<MenuContent: View>: View {
 @MainActor
 enum LibraryStyle {
     /// A folder's colour is durable per-folder data: it is chosen once and
-    /// kept, so it cannot come off the six tokens, which change under it
-    /// when the theme does. The hexes are written out rather than taken from
-    /// the system palette so that nothing in the library reaches for a
+    /// kept, so it cannot come off the theme's colours, which change under
+    /// it when the theme does. The hexes are written out rather than taken
+    /// from the system palette so that nothing in the library reaches for a
     /// colour the app did not pick. `.neutral` is what a folder draws in
     /// when it has never been decorated.
     static func rgba(of color: FolderColor) -> RGBA8 {
