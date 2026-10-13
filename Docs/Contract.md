@@ -63,7 +63,9 @@ Each piece of state has one owner, and the owner holds the value.
 | Which pages have canvases, the scroll position, the selected object | `PagedCanvasController` | in memory; rebuilt from one `setPages` and the installs that follow |
 | The tool in hand, and the text style typed with | `EditorViewModel`, per tab | in memory; the runtime is told and keeps a copy for canvases built later; a canvas with a tool use open takes the new tool when the use ends |
 | The theme | `Workspace` | in memory, resolved from the choice and the system's appearance; each editor is told and tells its runtime with the tool, and the runtime is built with one, so it never lacks one, and keeps a copy for canvases built later |
-| Tool presets, colour recents, the last-used tool | `ToolPalette` | `UserDefaults`, through `ToolPaletteDefaults`; never in the package |
+| The theme choice: the system's own light and dark, or one preset | `Workspace` | `UserDefaults`, through `PreferenceDefaults` |
+| Tool presets, the text style last typed with, colour recents, gesture bindings, the last-used tool | `ToolPalette` | `UserDefaults`, through `PreferenceDefaults`, as one record; never in the package |
+| How the library is listed: grid or list, the sort, and the setup the last new notebook was made with | `LibraryBrowser` | `UserDefaults`, through `PreferenceDefaults` |
 | The drawing during a stroke | `PKCanvasView` | until its commit lands, or its use is ended without one |
 | The draft of a text box being edited | `PageCanvasController` | until the session ends |
 | Page thumbnails | `Renderer` | in memory, keyed by `ThumbnailKey`; rebuilt from the page |
@@ -105,6 +107,35 @@ a pan offset, a zoom level, or a Pencil sample. `Notebook` exposes five
 properties for views to read: `pageCount`, `currentPageID`,
 `dirtyPageCount`, `lastSaveError`, `isClosed`. All other state is
 `@ObservationIgnored`, so a stroke never causes a view to re-render.
+
+**A preference is one value under one key, written whole and read whole
+or not at all.** The palette's record, the library's view options and the
+theme choice are the three preferences, and `PreferenceDefaults`, in the
+app, is the one writer of `UserDefaults`: each is one `Codable` value,
+encoded as a property list under its own key, and its owner in the table
+above holds it. A change writes the whole value once: the palette holds
+its record and saves it when the record changes, so a tool taken is one
+write, not one per field. A read is the record's own synthesized decoder,
+with nothing hand-written beside it: a key it needs that is missing, a
+value that does not decode, or a theme choice naming a preset this build
+has no row for, is a preference this build cannot read, and the whole of
+it is replaced by its built-in default, which is the built-in palette, the
+built-in view, or the system's own light and dark. No field is filled in
+for a key that is absent; a `nil` written as no key and read back as `nil`
+is the value, not a fill. A decoder that filled one in would read a shape
+this build never wrote (*Forbidden*), and a record half read is a palette
+that disagrees with itself about which tool is in hand. A preference
+carries no version and no ladder, so adding a field to a record costs
+every saved record once: it reads as unreadable, and the next launch opens
+on the built-in. That is a tap, and nothing more, because a preference is
+never notebook or library state. The one entry a saved preference may lack
+is in the palette's map from ink kind to preset: a map short of a kind
+this build has is not an unreadable record, since a map with one entry
+fewer is a map, so the palette keeps every slot the map holds and gives
+the missing kind its built-in preset. The reason is the bar's open set of
+tools: a kind joining it must not reset the presets and the recents a
+person keeps (decided R2, R3, W3; thermo-app-01, format-08, ext-02,
+thermo-app-03, thermo-app-11, contract-12, docs-05).
 
 ## The seam
 
@@ -969,10 +1000,11 @@ TNCore <- TNModel <- TNFormat <- TNRender <- TNNotebook <- TNEditor <- App
   build refuses them today; the checker keeps them gone (decided I5;
   contract-16, theme-04).
 - File I/O happens in `PosixFileSystem`, `LibraryStore`, and
-  `ImportReader`, and nowhere else. The app's `ToolPaletteDefaults` and
-  `LibraryViewDefaults` write preferences to `UserDefaults`; a preference
-  is never notebook or library state, and an unreadable one is replaced by
-  the built-in default.
+  `ImportReader`, and nowhere else. `PreferenceDefaults`, in the app, is
+  the one file that names `UserDefaults`, and the allowlist admits it
+  once, for the three preferences it keeps: the palette, the library view
+  and the theme choice (*A preference is one value under one key*). A
+  preference is never notebook or library state.
 - Modules below the app cannot import SwiftUI (the name is aliased away in
   `project.yml`). UIKit is imported only by `TNCanvas`, `TNEditor`, the
   app, and `TextTypesetting.swift` in `TNModel`, the one typesetting
