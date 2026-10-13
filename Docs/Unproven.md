@@ -673,3 +673,11 @@ Not gaps — properties of the tooling that read as project defects when hit.
   the workspace, so the route is reviewed by diff only. Owed: open, move
   and trash a notebook from the library; with Notes open, moving its folder
   says "close Notes first"; a link into a moved notebook opens.
+- **The eraser's second tap (U21, I3 lines 2 and 11).** The editor suite
+  proves a second tap switches the mode both ways and a width on the object
+  eraser makes the pixel eraser in one tool write, and a screenshot shows
+  each mode's glyph on the cap. The simulator cannot tap the cap, or land
+  two taps in one turn, so the bar re-reading the tool at a swatch or width
+  tap is reviewed by diff only. Owed: tap the eraser twice and see the
+  glyph change; object erase takes whole strokes and pixel erase cuts; tap
+  a swatch and the band's Text chip with two fingers at once: no crash.

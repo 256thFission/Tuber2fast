@@ -186,6 +186,46 @@ package enum EditorTool: Equatable, Sendable {
         }
     }
 
+    // What the tool carries is asked of the tool. The bar enables a control
+    // from these and re-reads them at the tap, and the view model's setters
+    // trap on exactly the tools they answer no for.
+
+    /// The width the tool draws or erases at, or nil when it has none.
+    package var width: ToolWidth? {
+        switch self {
+        case .ink(_, let preset): preset.width
+        case .erasePixel(let width): width
+        case .eraseObject, .lasso, .text: nil
+        }
+    }
+
+    /// Whether a width can be set: on every tool that has one, and on the
+    /// object eraser, which a width makes the pixel eraser. The lasso and
+    /// text are the band's tools, not the bar's.
+    package var takesWidth: Bool {
+        switch self {
+        case .ink, .erasePixel, .eraseObject: true
+        case .lasso, .text: false
+        }
+    }
+
+    /// The colour a stroke lands in, or nil for a tool that lays no ink.
+    /// Text's colour is its style's, which the swatches never set.
+    package var color: ToolColor? {
+        if case .ink(_, let preset) = self { preset.color } else { nil }
+    }
+
+    /// Which of the palette's kinds the tool is: what the bar holds sunk,
+    /// and what a tab opens on. The lasso is none of them.
+    package var kind: ToolPalette.Kind? {
+        switch self {
+        case .ink(let kind, _): .ink(kind)
+        case .eraseObject, .erasePixel: .eraser
+        case .text: .text
+        case .lasso: nil
+        }
+    }
+
     /// `.highlighter` becomes `.marker` here and nowhere else: highlighter
     /// is the product word and the contract's, and one translation at the
     /// boundary is the whole tax.

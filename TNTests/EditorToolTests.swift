@@ -150,6 +150,31 @@ struct EditorToolTests {
         }
     }
 
+    // MARK: Capabilities
+
+    @Test("Every tool says which width and colour it carries, whether it takes a width, and its kind")
+    func capabilitiesForEveryTool() {
+        let violet = ToolColor(rgba: RGBA8(red: 0x7A, green: 0x3F, blue: 0xC4, alpha: 0xFF))
+        let rows: [(EditorTool, ToolWidth?, ToolColor?, Bool, ToolPalette.Kind?)] = InkKind.allCases.map {
+            (.ink($0, InkPreset(color: violet, width: .thick)), .thick, violet, true, .ink($0))
+        } + ToolWidth.allCases.map {
+            (.erasePixel($0), $0, nil, true, .eraser)
+        } + [
+            // No width, but it takes one: a width is how it becomes the
+            // pixel eraser.
+            (.eraseObject, nil, nil, true, .eraser),
+            (.lasso, nil, nil, false, nil),
+            // The text style's colour is not the swatches' to set.
+            (.text(.body, .center), nil, nil, false, .text),
+        ]
+        for (tool, width, color, takesWidth, kind) in rows {
+            #expect(tool.width == width, "\(tool)")
+            #expect(tool.color == color, "\(tool)")
+            #expect(tool.takesWidth == takesWidth, "\(tool)")
+            #expect(tool.kind == kind, "\(tool)")
+        }
+    }
+
     // MARK: The record
 
     @Test("A palette record round-trips through a property list")

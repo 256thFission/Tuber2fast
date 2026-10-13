@@ -145,6 +145,21 @@ struct ToolPaletteTests {
         #expect(palette.eraserTool == .eraseObject)
     }
 
+    /// `remember` and `EditorTool.kind` each map a tool to its kind, the one
+    /// for what a tab opens on and the other for which cap the bar sinks.
+    /// This holds them to one answer.
+    @Test("Remembering a tool writes the kind the tool says it is, and opens on that tool again")
+    func rememberingWritesTheToolsKind() {
+        let palette = ToolPalette(store: MemoryPaletteStore())
+        let tools: [EditorTool] = InkKind.allCases.map { .ink($0, InkPreset(color: swatch(0x3C), width: .thin)) }
+            + [.eraseObject, .erasePixel(.thick), .text(.body, .center)]
+        for tool in tools {
+            palette.remember(tool)
+            #expect(palette.lastKind == tool.kind, "\(tool)")
+            #expect(palette.currentTool == tool, "\(tool)")
+        }
+    }
+
     @Test("One tool change is one write, and opening writes nothing")
     func oneToolChangeIsOneWrite() {
         let store = MemoryPaletteStore()

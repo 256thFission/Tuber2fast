@@ -172,14 +172,21 @@ package final class EditorViewModel {
     // One call per tap, so the strip computes nothing. Each restores what
     // the palette holds rather than asking the view to carry it.
 
-    package func select(kind: InkKind) { tool = palette.tool(for: kind) }
+    package func select(_ kind: ToolPalette.Kind) {
+        switch kind {
+        case .ink(let ink): tool = palette.tool(for: ink)
+        case .eraser: selectEraser()
+        case .text: selectText()
+        }
+    }
 
-    package func selectEraser() { tool = palette.eraserTool }
-
-    package func setEraserMode(_ mode: EraserMode) {
-        switch mode {
-        case .object: tool = .eraseObject
-        case .pixel: tool = .erasePixel(palette.pixelEraserWidth)
+    /// The eraser the palette last held, or, while an eraser is already in
+    /// hand, the other one: a second tap is how the mode changes.
+    package func selectEraser() {
+        switch tool {
+        case .eraseObject: tool = .erasePixel(palette.pixelEraserWidth)
+        case .erasePixel: tool = .eraseObject
+        case .ink, .text, .lasso: tool = palette.eraserTool
         }
     }
 
@@ -206,12 +213,15 @@ package final class EditorViewModel {
         switch tool {
         case .ink(let kind, let preset):
             tool = .ink(kind, InkPreset(color: preset.color, width: width))
-        case .erasePixel:
+        case .erasePixel, .eraseObject:
+            // A width on the object eraser is how it becomes the eraser that
+            // has one: one tool write, so the runtime and the palette hear
+            // the pixel eraser once.
             tool = .erasePixel(width)
-        case .eraseObject, .lasso, .text:
-            // The strip offers no width for any of these, so reaching here
-            // is a view that drew a control the tool does not have.
-            TNPrecondition.fail("a width was set on \(tool), which has none")
+        case .lasso, .text:
+            // `takesWidth` says no for these, so reaching here is a view
+            // that offered a width the tool cannot take.
+            TNPrecondition.fail("a width was set on \(tool), which takes none")
         }
     }
 
@@ -239,8 +249,8 @@ package final class EditorViewModel {
     /// A stroke landed, so the colour it landed in is one the person drew
     /// with. An eraser or a lasso report carries no colour.
     private func inkReported() {
-        guard case .ink(_, let preset) = tool else { return }
-        palette.used(preset.color)
+        guard let color = tool.color else { return }
+        palette.used(color)
     }
 
     // MARK: History

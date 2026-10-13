@@ -85,9 +85,10 @@ package protocol ToolPaletteStore: Sendable {
 /// field holds the attributes of a tool, never a tool, so the slots cannot
 /// disagree with their keys.
 @MainActor @Observable package final class ToolPalette {
-    /// Which kind of tool a new tab opens on. Lasso is not a member: a tab
-    /// that opened on lasso is a tab you cannot write in. The tool itself
-    /// is rebuilt from the slots by `currentTool`.
+    /// Which kind of tool a new tab opens on, and what the bar's caps ask
+    /// for. Lasso is not a member: a tab that opened on lasso is a tab you
+    /// cannot write in. The tool itself is rebuilt from the slots by
+    /// `currentTool`.
     package enum Kind: Equatable, Sendable, Codable {
         case ink(InkKind)
         case eraser

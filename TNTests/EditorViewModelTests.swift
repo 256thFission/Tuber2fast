@@ -44,7 +44,7 @@ struct EditorViewModelTests {
         let editor = EditorViewModel(notebook: book, palette: palette(lastTool: .text(bold, .center)), theme: .macaron) { _ in }
         #expect(editor.tool == .text(bold, .center))
 
-        editor.select(kind: .pen)
+        editor.select(.ink(.pen))
         editor.selectText()
         #expect(editor.tool == .text(bold, .center), "selectText restores the last style and alignment")
 
@@ -73,10 +73,10 @@ struct EditorViewModelTests {
         editor.selectEraser()
         #expect(binding.bindingsForStroke().isEmpty, "an eraser pass is never a gesture")
 
-        editor.select(kind: .highlighter)
+        editor.select(.ink(.highlighter))
         #expect(binding.bindingsForStroke() == [.scribble: .erase], "every ink kind gestures")
 
-        editor.select(kind: .pen)
+        editor.select(.ink(.pen))
         editor.bind(.scribble, to: nil)
         #expect(shared.gestures.isEmpty, "the intention went to the palette")
         #expect(binding.bindingsForStroke().isEmpty, "the closure reads the palette, it does not hold a copy")
@@ -129,15 +129,15 @@ struct EditorViewModelTests {
         let editor = EditorViewModel(notebook: book, palette: shared, theme: .macaron) { _ in }
 
         let violet = ToolColor(rgba: RGBA8(red: 0x7A, green: 0x3F, blue: 0xC4, alpha: 0xFF))
-        editor.select(kind: .highlighter)
+        editor.select(.ink(.highlighter))
         editor.setColor(violet)
         editor.setWidth(.thin)
         #expect(editor.tool == .ink(.highlighter, InkPreset(color: violet, width: .thin)))
 
-        editor.select(kind: .pen)
+        editor.select(.ink(.pen))
         #expect(editor.tool == .ink(.pen, InkPreset(color: .black, width: .medium)))
 
-        editor.select(kind: .highlighter)
+        editor.select(.ink(.highlighter))
         #expect(editor.tool == .ink(.highlighter, InkPreset(color: violet, width: .thin)))
         withExtendedLifetime(scratch) {}
     }
@@ -150,7 +150,6 @@ struct EditorViewModelTests {
 
         editor.selectEraser()
         #expect(editor.tool == .eraseObject)
-        editor.setEraserMode(.pixel)
         editor.setWidth(.thick)
         #expect(editor.tool == .erasePixel(.thick))
 
@@ -161,6 +160,57 @@ struct EditorViewModelTests {
         #expect(shared.lastKind == .eraser)
         editor.selectEraser()
         #expect(editor.tool == .erasePixel(.thick))
+        withExtendedLifetime(scratch) {}
+    }
+
+    @Test("A width on the object eraser makes the pixel eraser, in one tool write")
+    func aWidthOnTheObjectEraserMakesThePixelEraser() async throws {
+        let (scratch, book) = try await notebook("vm-eraser-width")
+        let surface = RecordingSurface()
+        let store = MemoryPaletteStore()
+        let editor = EditorViewModel(
+            binding: EditorBinding(notebook: book, surface: surface),
+            palette: ToolPalette(store: store),
+            theme: .macaron
+        )
+        editor.selectEraser()
+        #expect(editor.tool == .eraseObject)
+        let told = surface.environments.count
+        let saves = store.saves
+
+        editor.setWidth(.thin)
+
+        #expect(editor.tool == .erasePixel(.thin))
+        #expect(surface.environments.count == told + 1, "the runtime hears the pixel eraser once")
+        #expect(store.saves == saves + 1, "the palette writes once")
+        #expect(store.stored?.eraserMode == .pixel)
+        #expect(store.stored?.pixelEraserWidth == .thin)
+        withExtendedLifetime(scratch) {}
+    }
+
+    @Test("A second tap on the eraser switches its mode both ways, and a first tap restores the last mode")
+    func aSecondEraserTapSwitchesMode() async throws {
+        let (scratch, book) = try await notebook("vm-eraser-mode")
+        let shared = ToolPalette(store: MemoryPaletteStore())
+        shared.remember(.erasePixel(.thick))
+        shared.remember(.ink(.pen, InkPreset(color: .black, width: .medium)))
+        let editor = EditorViewModel(notebook: book, palette: shared, theme: .macaron) { _ in }
+
+        editor.selectEraser()
+        #expect(editor.tool == .erasePixel(.thick), "a first tap takes the mode the palette last held")
+
+        editor.selectEraser()
+        #expect(editor.tool == .eraseObject)
+        #expect(shared.eraserMode == .object)
+        #expect(shared.pixelEraserWidth == .thick, "the pixel width waits for the way back")
+
+        editor.selectEraser()
+        #expect(editor.tool == .erasePixel(.thick))
+
+        editor.selectEraser()
+        editor.select(.ink(.pencil))
+        editor.select(.eraser)
+        #expect(editor.tool == .eraseObject, "coming back from a pen restores the mode, it does not switch it")
         withExtendedLifetime(scratch) {}
     }
 }

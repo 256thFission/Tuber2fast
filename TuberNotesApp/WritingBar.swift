@@ -2,45 +2,54 @@ import SwiftUI
 import TNEditor
 import TNModel
 
-/// The four instruments, in the order the design fixes them: pen, pencil,
-/// highlighter, eraser. No fifth, ever.
-enum Instrument: CaseIterable {
-    case pen, pencil, highlighter, eraser
+/// What the bar's one run is made of. The run is drawn from a row of
+/// these, so a bar laid out another way is another row and not another
+/// view. `defaultRow` is the only row there is.
+enum BarEntry {
+    case grab
+    case instrument(ToolPalette.Kind)
+    case divider
+    case widths
+    case swatches
 
-    var symbol: String {
+    /// In the order the design fixes.
+    static let defaultRow: [BarEntry] = [
+        .grab,
+        .instrument(.ink(.pen)), .instrument(.ink(.pencil)),
+        .instrument(.ink(.highlighter)), .instrument(.eraser),
+        .divider, .widths, .divider, .swatches,
+    ]
+}
+
+extension ToolPalette.Kind {
+    /// The eraser's glyph is its mode's: a second tap on it switches the
+    /// mode, and the cap is the one place that says which is in hand.
+    func symbol(_ eraser: EraserMode) -> String {
         switch self {
-        case .pen: "pencil.tip"
-        case .pencil: "pencil"
-        case .highlighter: "highlighter"
-        case .eraser: "eraser"
+        case .ink(.pen): "pencil.tip"
+        case .ink(.pencil): "pencil"
+        case .ink(.highlighter): "highlighter"
+        case .eraser: eraser == .object ? "eraser" : "eraser.line.dashed"
+        case .text: "textformat"
         }
     }
 
     var label: String {
         switch self {
-        case .pen: "Pen"
-        case .pencil: "Pencil"
-        case .highlighter: "Highlighter"
+        case .ink(.pen): "Pen"
+        case .ink(.pencil): "Pencil"
+        case .ink(.highlighter): "Highlighter"
         case .eraser: "Eraser"
+        case .text: "Text"
         }
     }
 
-    init?(_ tool: EditorTool) {
-        switch tool {
-        case .ink(.pen, _): self = .pen
-        case .ink(.pencil, _): self = .pencil
-        case .ink(.highlighter, _): self = .highlighter
-        case .eraseObject, .erasePixel: self = .eraser
-        case .lasso, .text: return nil
-        }
-    }
-
-    @MainActor func take(_ editor: EditorViewModel) {
+    /// What VoiceOver says after the label. Only the eraser has a state of
+    /// its own to say.
+    func value(_ eraser: EraserMode) -> String {
         switch self {
-        case .pen: editor.select(kind: .pen)
-        case .pencil: editor.select(kind: .pencil)
-        case .highlighter: editor.select(kind: .highlighter)
-        case .eraser: editor.selectEraser()
+        case .eraser: eraser == .object ? "Whole strokes" : "Pixels"
+        case .ink, .text: ""
         }
     }
 }
@@ -96,8 +105,9 @@ enum SnapPoint: CaseIterable {
     }
 }
 
-/// The writing bar: a grab pill, four instruments, the widths, and four
-/// swatches in one run. Nothing else is on it, and nothing else ever is.
+/// The writing bar: one run drawn from a row of entries. The default row,
+/// the only one built, is a grab pill, four instruments, the widths, and
+/// four swatches.
 struct WritingBar: View {
     let editor: EditorViewModel
 
@@ -175,15 +185,18 @@ struct WritingBar: View {
         }
     }
 
-    /// One run, in the one order. The layout container is what changes
+    /// One run, in the row's order. The layout container is what changes
     /// between the snap states, never the contents and never their order.
     @ViewBuilder private var contents: some View {
-        grabPill
-        InstrumentRun(editor: editor)
-        MacaronDivider(vertical: !isHorizontal)
-        widths
-        MacaronDivider(vertical: !isHorizontal)
-        swatches
+        ForEach(Array(BarEntry.defaultRow.enumerated()), id: \.offset) { _, entry in
+            switch entry {
+            case .grab: grabPill
+            case .instrument(let kind): InstrumentCap(editor: editor, kind: kind)
+            case .divider: MacaronDivider(vertical: !isHorizontal)
+            case .widths: widths
+            case .swatches: swatches
+            }
+        }
     }
 
     /// Flat: it is a handle, not a button, and a wall would say "press me".
@@ -275,12 +288,12 @@ struct WritingBar: View {
     @ViewBuilder private var widths: some View {
         if isHorizontal {
             ForEach(ToolWidth.allCases, id: \.self) { width in
-                widthChip(width, isHeld: width == currentWidth)
+                widthChip(width, isHeld: width == editor.tool.width)
             }
         } else {
             // One chip standing for the width in hand; the other two live in
             // the bubble it opens.
-            widthChip(currentWidth ?? .medium, isHeld: false)
+            widthChip(editor.tool.width ?? .medium, isHeld: false)
                 .popover(isPresented: $isShowingWidths, arrowEdge: .leading) { widthBubble }
         }
     }
@@ -289,7 +302,7 @@ struct WritingBar: View {
         Keycap(
             fill: isHeld ? theme.accent : theme.chrome,
             isHeld: isHeld,
-            isEnabled: widthApplies
+            isEnabled: editor.tool.takesWidth
         ) {
             if isHorizontal {
                 take(width)
@@ -312,40 +325,11 @@ struct WritingBar: View {
         }
     }
 
-    /// The width the tool in hand carries, or nothing when it carries none.
-    /// The object eraser is the interesting one: it has no width at all, so
-    /// no chip is sunk while it is held.
-    private var currentWidth: ToolWidth? {
-        switch editor.tool {
-        case .ink(_, let preset): preset.width
-        case .erasePixel(let width): width
-        case .eraseObject, .lasso, .text: nil
-        }
-    }
-
-    /// Whether a width chip means anything with the tool in hand.
-    ///
-    /// The editor traps on a width set on a tool that has none, and it is
-    /// right to: a view that draws a control the tool does not have is the
-    /// defect. The lasso and text are the band's tools, not the bar's, so
-    /// while one of them is in hand the bar's widths and swatches have no
-    /// owner and are not offered.
-    private var widthApplies: Bool {
-        switch editor.tool {
-        case .ink, .erasePixel, .eraseObject: true
-        case .lasso, .text: false
-        }
-    }
-
-    private var colourApplies: Bool {
-        if case .ink = editor.tool { return true }
-        return false
-    }
-
-    /// Asking the object eraser for a width is how it becomes the eraser
-    /// that has one. Every other tool here already carries its own.
+    /// Read again at the tap, not trusted from the last body pass: two
+    /// fingers can land a width and a band chip in one turn, and the editor
+    /// traps on a width the tool in hand cannot take.
     private func take(_ width: ToolWidth) {
-        if case .eraseObject = editor.tool { editor.setEraserMode(.pixel) }
+        guard editor.tool.takesWidth else { return }
         editor.setWidth(width)
     }
 
@@ -359,10 +343,10 @@ struct WritingBar: View {
                     isShowingWidths = false
                 } label: {
                     Circle()
-                        .fill(width == currentWidth ? theme.accent.color : theme.chrome.color)
+                        .fill(width == editor.tool.width ? theme.accent.color : theme.chrome.color)
                         .overlay {
                             Circle().strokeBorder(
-                                theme.outline(of: width == currentWidth ? theme.accent : theme.chrome).color,
+                                theme.outline(of: width == editor.tool.width ? theme.accent : theme.chrome).color,
                                 lineWidth: Macaron.line
                             )
                         }
@@ -396,7 +380,7 @@ struct WritingBar: View {
     /// a column when it stands up, and never a column inside a row.
     @ViewBuilder private var swatches: some View {
         ForEach(Array(fourColours.enumerated()), id: \.offset) { _, colour in
-            let isHeld = colour == currentColour
+            let isHeld = colour == editor.tool.color
             Keycap(
                 fill: colour.rgba,
                 size: CGSize(
@@ -406,8 +390,10 @@ struct WritingBar: View {
                 radius: Macaron.swatchRadius,
                 wall: Macaron.swatchWall,
                 isHeld: isHeld,
-                isEnabled: colourApplies
+                isEnabled: editor.tool.color != nil
             ) {
+                // Read again at the tap, as a width is.
+                guard editor.tool.color != nil else { return }
                 editor.setColor(colour)
             }
             .accessibilityAddTraits(isHeld ? .isSelected : [])
@@ -426,29 +412,28 @@ struct WritingBar: View {
         }
         return seen
     }
-
-    private var currentColour: ToolColor? {
-        if case .ink(_, let preset) = editor.tool { return preset.color }
-        return nil
-    }
 }
 
-/// The instruments as keycaps. The one in hand is sunk into its own wall,
+/// One instrument as a keycap. The one in hand is sunk into its own wall,
 /// which is the entire selected state.
-struct InstrumentRun: View {
+struct InstrumentCap: View {
     let editor: EditorViewModel
+    let kind: ToolPalette.Kind
     @Environment(\.macaron) private var theme
 
     var body: some View {
-        ForEach(Instrument.allCases, id: \.self) { instrument in
-            let isHeld = Instrument(editor.tool) == instrument
-            Keycap(fill: isHeld ? theme.accent : theme.chrome, isHeld: isHeld) {
-                instrument.take(editor)
-            } label: {
-                Image(systemName: instrument.symbol).font(Macaron.body(16))
-            }
-            .accessibilityLabel(instrument.label)
-            .accessibilityAddTraits(isHeld ? .isSelected : [])
+        let isHeld = editor.tool.kind == kind
+        let eraser = editor.palette.eraserMode
+        Keycap(
+            kind.label,
+            systemImage: kind.symbol(eraser),
+            symbolSize: .instrument,
+            fill: isHeld ? theme.accent : theme.chrome,
+            isHeld: isHeld
+        ) {
+            editor.select(kind)
         }
+        .accessibilityValue(kind.value(eraser))
+        .accessibilityAddTraits(isHeld ? .isSelected : [])
     }
 }
