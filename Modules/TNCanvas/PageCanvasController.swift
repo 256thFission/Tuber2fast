@@ -672,16 +672,16 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
     }
 
     /// Topmost first: the stack is bottom-to-top and the layer a finger lands
-    /// on is the one drawn last. A link under the text tool is nothing, and
-    /// an image or a PDF clipping is paper — a box goes on top of it, which
-    /// is why an image over a text box gets a new box rather than opening
-    /// the one it hides.
+    /// on is the one drawn last. A link or a locked text box under the text
+    /// tool is nothing, and an image or a PDF clipping is paper — a box goes
+    /// on top of it, which is why an image over a text box gets a new box
+    /// rather than opening the one it hides.
     static func textHit(at point: CGPoint, layers: [Layer]) -> TextTap? {
         guard let hit = Self.topmost(at: point, layers: layers) else {
             return .create(PagePoint(x: point.x, y: point.y))
         }
         switch hit.payload {
-        case .text: return .edit(hit.id)
+        case .text: return hit.locked ? nil : .edit(hit.id)
         case .link: return nil
         case .image, .pdf: return .create(PagePoint(x: point.x, y: point.y))
         }

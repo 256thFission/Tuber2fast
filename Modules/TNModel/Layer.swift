@@ -256,10 +256,10 @@ package enum LayerPayload: Sendable, Equatable {
 /// whether it is locked.
 ///
 /// A locked layer still renders and exports; what it refuses is a transform,
-/// a move and a delete, at the notebook, and the runtime shows it without
-/// handles. The flag is durable and undoable like the placement, because a
-/// lock the user set is part of the page and a reopen must not quietly drop
-/// it.
+/// a move, a delete and a text session, at the notebook, and the runtime
+/// shows it without handles. The flag is durable and undoable like the
+/// placement, because a lock the user set is part of the page and a reopen
+/// must not quietly drop it.
 package struct Layer: Sendable, Equatable, Identifiable {
     package let id: LayerID
     package let transform: PageSpaceTransform

@@ -1112,6 +1112,13 @@ package final class Notebook {
             changes.append(.textEditingEnded(page, layer))
             return
         }
+        guard !found.locked else {
+            // The canvas does not open a locked box, but an undo can relock
+            // one between the tap and this begin. Released the same way.
+            TNLog.event(.notebook, "text editing was requested on page \(page) for layer \(layer), which is locked")
+            changes.append(.textEditingEnded(page, layer))
+            return
+        }
         content.textEditing = TextSession(layer: layer, before: before)
         content.afterRender.append(.textEditingBegan(page, TextEditStart(layer: layer, text: text)))
         states[page] = .ready(content)

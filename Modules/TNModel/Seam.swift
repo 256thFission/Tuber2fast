@@ -196,7 +196,8 @@ package enum TransformOutcome: Sendable, Equatable {
     /// A tap on paper with the text tool; the tool's style rides with it.
     /// Answered by `beginTextEditing` once the composite omits the layer.
     func textBoxRequested(on page: PageID, at point: PagePoint, style: TextStyle, alignment: TextAlignment)
-    /// A tap in a text rect with the text tool. Answered the same way.
+    /// A tap in a text rect with the text tool. Answered the same way, or by
+    /// `endTextEditing` alone when the notebook opens no session.
     func textEditRequested(on page: PageID, layer: LayerID)
     /// The whole committed value. Answered by `endTextEditing` once the
     /// composite has the text.

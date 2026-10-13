@@ -1042,6 +1042,32 @@ struct NotebookTests {
         #expect(changes.contains { if case .textEditingEnded(let p, let l) = $0 { p == page && l == missing } else { false } }, "\(changes)")
     }
 
+    @Test("A begin on a text box an undo relocked opens no session, leaves the page as it was, and ends the session it never opened")
+    func beginOnALockedTextBoxOpensNoSession() async throws {
+        let scratch = try Scratch("nb-text-begin-locked")
+        defer { withExtendedLifetime(scratch) {} }
+        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        let page = notebook.pageIDs[0]
+        notebook.windowChanged(to: [page])
+        try await waitUntil { notebook.state(of: page)?.content != nil }
+        let text = Fixture.textLayer()
+        try notebook.insertLayer(text, on: page)
+        #expect(notebook.setLayerLock(text.id, on: page, locked: true) == .accepted)
+        #expect(notebook.setLayerLock(text.id, on: page, locked: false) == .accepted)
+        #expect(notebook.undo() == page)
+        let before = try #require(notebook.state(of: page)?.content)
+        #expect(before.layers == [text.withLock(true)])
+        _ = notebook.drainChanges()
+
+        notebook.beginTextEditing(on: page, layer: text.id)
+        let after = try #require(notebook.state(of: page)?.content)
+        #expect(after.textEditing == nil)
+        #expect(after.layers == before.layers)
+        #expect(after.revision == before.revision)
+        let changes = notebook.drainChanges()
+        #expect(changes.contains { if case .textEditingEnded(let p, let l) = $0 { p == page && l == text.id } else { false } }, "\(changes)")
+    }
+
     @Test("A load whose page left the window is dropped on arrival")
     func staleLoadIsDropped() async throws {
         let scratch = try Scratch("nb-stale")

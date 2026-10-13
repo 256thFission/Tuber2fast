@@ -140,6 +140,21 @@ final class TNCanvasTextTests: HostingSuite {
         _ = runtime.retireAll()
     }
 
+    @Test("A locked text box under the text tool is nothing: no edit request, no new box, no session")
+    func aLockedTextBoxDoesNotOpen() throws {
+        let reporter = RecordingReporter()
+        let box = textLayer("hi", x: 100, y: 200).withLock(true)
+        let (runtime, _, canvas) = try livePage(reporter, layers: [box])
+        runtime.apply(CanvasEnvironment(tool: .text(.body, .leading), theme: .macaron))
+
+        canvas.tapped(at: centre(of: box))
+        #expect(reporter.textEditRequests.isEmpty)
+        #expect(reporter.textBoxRequests.isEmpty)
+        if case .idle = canvas.phase {} else { Issue.record("phase is \(canvas.phase)") }
+        #expect(!canvas.overlayView.subviews.contains { $0 is TextEditingView })
+        _ = runtime.retireAll()
+    }
+
     @Test("undoTyping reaches the open text view's own manager, and does nothing while the view is still opening")
     func undoTypingReachesTheTextView() throws {
         let reporter = RecordingReporter()
