@@ -294,7 +294,7 @@ package final class EditorViewModel {
     package func addPageFlatteningCurrentPage(size: PageSize, orientation: PageOrientation) async {
         let page = notebook.currentPageID
         lastContentError = nil
-        guard !notebook.hasTextSession(on: page) else { lastContentError = Self.textBoxOpen(page); return }
+        commitTextEditing()
         let flattened: AssetRef
         do { flattened = try await notebook.flatten(page) } catch {
             lastContentError = error
@@ -308,6 +308,7 @@ package final class EditorViewModel {
     /// `lastContentError` like any other content change. A refused append
     /// creates nothing, so there is nothing to take the reader to.
     private func append(_ size: PageSize, _ orientation: PageOrientation, _ paper: NewPagePaper) async {
+        commitTextEditing()
         lastContentError = nil
         guard let geometry = size.geometry(orientation) else {
             lastContentError = Self.sizeOutOfBounds
@@ -349,6 +350,7 @@ package final class EditorViewModel {
     /// the current page's paper and geometry, not `page`'s: that is what
     /// `appendPage` copies today, and the navigator's label says so.
     package func addPage(after page: PageID) {
+        commitTextEditing()
         var created: PageID?
         binding.intention { created = notebook.appendPage(after: page) }
         if let created { binding.surface.scroll(to: created) }
@@ -358,6 +360,7 @@ package final class EditorViewModel {
     /// The notebook reads an unloaded source from its files, so a cell in the
     /// navigator can be duplicated without being visited first.
     package func duplicatePage(_ page: PageID) async {
+        commitTextEditing()
         lastContentError = nil
         var created: PageID?
         do { created = try await notebook.duplicatePage(page) } catch { lastContentError = error }
@@ -368,6 +371,7 @@ package final class EditorViewModel {
     /// The only page cannot be deleted; the notebook refuses it, silently,
     /// because a notebook with no pages has no state to return to.
     package func deletePage(_ page: PageID) {
+        commitTextEditing()
         binding.intention { notebook.deletePage(page) }
     }
 
@@ -440,6 +444,7 @@ package final class EditorViewModel {
     /// Drawn paper only: the two asset papers are intentions of their own,
     /// and neither is a menu item the user picks from a list.
     package func setPaper(_ paper: DrawnPaper) async {
+        commitTextEditing()
         await binding.intention { try? await notebook.setPaper(.drawn(paper), on: notebook.currentPageID) }
     }
 
@@ -460,7 +465,7 @@ package final class EditorViewModel {
     package func importImage(_ data: Data) async {
         let page = notebook.currentPageID
         lastContentError = nil
-        guard !notebook.hasTextSession(on: page) else { lastContentError = Self.textBoxOpen(page); return }
+        commitTextEditing()
         do { try await notebook.importImage(data, on: page) } catch { lastContentError = error }
         binding.drain()
     }
@@ -472,16 +477,15 @@ package final class EditorViewModel {
     package func setPaper(photo data: Data) async {
         let page = notebook.currentPageID
         lastContentError = nil
-        guard !notebook.hasTextSession(on: page) else { lastContentError = Self.textBoxOpen(page); return }
+        commitTextEditing()
         do { try await notebook.importImageAsPaper(data, on: page) } catch { lastContentError = error }
         binding.drain()
     }
 
     /// One new page per PDF page, after the current one.
     package func importPDF(_ data: Data) async {
-        let page = notebook.currentPageID
         lastContentError = nil
-        guard !notebook.hasTextSession(on: page) else { lastContentError = Self.textBoxOpen(page); return }
+        commitTextEditing()
         do { try await notebook.importPDF(data) } catch { lastContentError = error }
         binding.drain()
     }
@@ -490,17 +494,17 @@ package final class EditorViewModel {
         let page = notebook.currentPageID
         let rect = Self.defaultRect(width: 160, height: 44, on: notebook.index.record(of: page)?.geometry)
         lastContentError = nil
-        guard !notebook.hasTextSession(on: page) else { lastContentError = Self.textBoxOpen(page); return }
+        commitTextEditing()
         do { try notebook.addLinkLayer(on: page, rect: rect, target: target) } catch { lastContentError = error }
         binding.drain()
     }
 
-    /// An insert while a box is open would record an entry out of order
-    /// with the session's. Nothing here closes the box; the person editing
-    /// it does.
-    private static func textBoxOpen(_ page: PageID) -> FormatFault {
-        .invalidWrite("page \(page) has a text box open")
-    }
+    /// An open text box commits before anything is inserted, a page added,
+    /// duplicated or deleted, or an export read, so the session's entry
+    /// lands before the insert's and an export has what was typed. Called
+    /// inside each method rather than by the row that asks, because the
+    /// navigator reaches the same methods as the band.
+    package func commitTextEditing() { binding.commitTextEditing() }
 
     /// The inset is a page point count, not a fraction: a new box sits the
     /// same distance from the corner whatever the page's size.
@@ -528,9 +532,8 @@ package final class EditorViewModel {
     /// and already pushed, because the notebook publishes them on its way out.
     /// An empty array is a cancel and does nothing at all.
     package func importScan(_ images: [Data]) async {
-        let page = notebook.currentPageID
         lastContentError = nil
-        guard !notebook.hasTextSession(on: page) else { lastContentError = Self.textBoxOpen(page); return }
+        commitTextEditing()
         var created: [PageID] = []
         do { created = try await notebook.importScan(images) } catch { lastContentError = error }
         binding.drain()
@@ -578,9 +581,8 @@ package final class EditorViewModel {
     /// A range outside `1...pageCount` is a refusal and nothing is asked of
     /// the renderer. A second export cancels the one in flight.
     package func exportPDF(pages: ClosedRange<Int>) {
-        let current = notebook.currentPageID
         lastContentError = nil
-        guard !notebook.hasTextSession(on: current) else { lastContentError = Self.textBoxOpen(current); return }
+        commitTextEditing()
         let ids = notebook.pageIDs
         guard pages.lowerBound >= 1, pages.upperBound <= ids.count else {
             lastContentError = .invalidWrite("pages \(pages.lowerBound)-\(pages.upperBound) are outside 1-\(ids.count)")
@@ -613,7 +615,7 @@ package final class EditorViewModel {
     package func exportCurrentPageImage() {
         let page = notebook.currentPageID
         lastContentError = nil
-        guard !notebook.hasTextSession(on: page) else { lastContentError = Self.textBoxOpen(page); return }
+        commitTextEditing()
         guard let record = notebook.index.record(of: page) else {
             lastContentError = .invalidWrite("page \(page) has no record")
             return

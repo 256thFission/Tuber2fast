@@ -622,3 +622,12 @@ Not gaps — properties of the tooling that read as project defects when hit.
   each render (R2-10). Owed: import a lecture PDF, over 64 MB if one is at
   hand; read the memory gauge at page 5 and again after flipping to page
   35: less than 100 MB more, and no jetsam.
+- **A typed answer survives going to the background (U11, I3 lines 7 and
+  10).** A hosted test shows a commit puts the typed words in the notebook
+  before it returns, and the recorder suites show an export, an insert, and
+  a page added or deleted commit an open box first. No seam drives the
+  workspace's scene phase, so the commit on `.background` is reviewed by
+  diff only, as is the keyboard going down under it. Owed: type a word in
+  a box, swipe Home, force-quit from the switcher and relaunch, and see the
+  word; with a box open, Insert > Photo closes the box with its words and
+  the photo lands; Export > PDF has the typed answer.

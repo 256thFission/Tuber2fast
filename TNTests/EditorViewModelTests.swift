@@ -1,4 +1,5 @@
 import Foundation
+import PDFKit
 import Testing
 @testable import TNEditor
 @testable import TNFormat
@@ -253,18 +254,26 @@ struct EditorViewModelExportTests {
         withExtendedLifetime(scratch) {}
     }
 
-    @Test("An export while a text box is open is refused, and the history is untouched")
-    func anOpenTextBoxRefusesAnExport() async throws {
-        let (scratch, book, editor) = try await editor("vm-export-text")
+    @Test("An export with a text box open commits the box first, and the PDF has what was typed")
+    func exportCommitsAnOpenTextBoxFirst() async throws {
+        let scratch = try Scratch("vm-export-text")
+        let book = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        let surface = RecordingSurface()
+        let binding = EditorBinding(notebook: book, surface: surface)
+        surface.reporter = binding
+        let editor = EditorViewModel(binding: binding, palette: ToolPalette(store: MemoryPaletteStore()), theme: .macaron)
         try await ready(book)
         let page = book.currentPageID
-        book.createTextBox(on: page, at: PagePoint(x: 40, y: 40), style: .body, alignment: .leading)
-        #expect(book.hasTextSession(on: page))
-        let canUndo = editor.canUndo
+        let box = try await openBox(on: page, typing: "answer", in: book, surface)
+
         editor.exportPDF(pages: 1...1)
-        #expect(editor.lastContentError != nil)
-        #expect(editor.exportProgress == nil && editor.exportedFile == nil)
-        #expect(editor.canUndo == canUndo)
+        #expect(!book.hasTextSession, "the box was committed before anything was read")
+        #expect(typedText(in: box, on: page, of: book) == "answer")
+        try await waitUntil { editor.exportedFile != nil }
+        #expect(editor.lastContentError == nil)
+        let pdf = try #require(editor.exportedFile?.data)
+        let text = try #require(PDFDocument(data: pdf)?.page(at: 0)).string ?? ""
+        #expect(text.contains("answer"), "the typed words, extracted from the PDF: \(text)")
         _ = await editor.close()
         withExtendedLifetime(scratch) {}
     }
@@ -285,12 +294,59 @@ struct EditorViewModelContentTests {
         notebook.windowChanged(to: [page])
         try await waitUntil { notebook.state(of: page)?.content != nil }
         let surface = RecordingSurface()
-        let editor = EditorViewModel(
-            binding: EditorBinding(notebook: notebook, surface: surface),
-            palette: ToolPalette(store: MemoryPaletteStore()),
-            theme: .macaron
-        )
+        let binding = EditorBinding(notebook: notebook, surface: surface)
+        surface.reporter = binding
+        let editor = EditorViewModel(binding: binding, palette: ToolPalette(store: MemoryPaletteStore()), theme: .macaron)
         return (scratch, notebook, surface, editor)
+    }
+
+    @Test("An insert with a text box open commits the box first, and its entry lands under the insert's")
+    func insertCommitsAnOpenTextBoxFirst() async throws {
+        let (scratch, notebook, surface, editor) = try await loaded("vm-insert-commits")
+        let page = notebook.pageIDs[0]
+        let box = try await openBox(on: page, typing: "answer", in: notebook, surface)
+        #expect(editor.canUndo && editor.canRedo, "the buttons drive the typing while the box is open")
+
+        await editor.importImage(try Fixture.imageData(width: 40, height: 30))
+        #expect(editor.lastContentError == nil)
+        #expect(!notebook.hasTextSession)
+        #expect(typedText(in: box, on: page, of: notebook) == "answer")
+        #expect(notebook.state(of: page)?.content?.layers.count == 2)
+
+        editor.undo()
+        #expect(notebook.state(of: page)?.content?.layers.map(\.id) == [box], "one undo takes the image and leaves the words")
+        #expect(typedText(in: box, on: page, of: notebook) == "answer")
+        editor.undo()
+        #expect(notebook.state(of: page)?.content?.layers.isEmpty == true, "the box and its words are the next step")
+        withExtendedLifetime(scratch) {}
+        _ = await notebook.close()
+    }
+
+    @Test("A page added or deleted with a text box open commits the box first")
+    func addOrDeletePageCommitsAnOpenTextBoxFirst() async throws {
+        let (scratch, notebook, surface, editor) = try await loaded("vm-page-commits")
+        let page = notebook.pageIDs[0]
+        let first = try await openBox(on: page, typing: "first", in: notebook, surface)
+
+        await editor.addPage(size: .letter, orientation: .portrait)
+        #expect(editor.lastContentError == nil)
+        #expect(!notebook.hasTextSession)
+        #expect(typedText(in: first, on: page, of: notebook) == "first")
+        #expect(notebook.pageCount == 2)
+        let committed = try #require(surface.calls.lastIndex(of: .commitTextEditing))
+        let scrolled = try #require(surface.calls.lastIndex { if case .scroll = $0 { true } else { false } })
+        #expect(committed < scrolled, "the box closed before the reader was taken away from it")
+
+        _ = try await openBox(on: page, typing: "second", in: notebook, surface)
+        editor.deleteCurrentPage()
+        #expect(!notebook.hasTextSession)
+        #expect(surface.openBox == nil, "the box reported its words before its page went")
+        #expect(notebook.pageCount == 1 && !notebook.pageIDs.contains(page), "the page with the box was the current one")
+        let recommitted = try #require(surface.calls.lastIndex(of: .commitTextEditing))
+        let dropped = try #require(surface.calls.lastIndex { if case .setPages(let ids, _, _) = $0 { !ids.contains(page) } else { false } })
+        #expect(recommitted < dropped)
+        withExtendedLifetime(scratch) {}
+        _ = await notebook.close()
     }
 
     @Test("A photo becomes the current page's paper, and the page takes the photo's aspect")
@@ -627,4 +683,24 @@ struct EditorViewModelLifecycleTests {
         _ = await notebook.close()
         withExtendedLifetime(scratch) {}
     }
+}
+
+/// A box opened on `page` as a text-tool tap opens one, with `typed` in it
+/// and nothing committed: the begin has landed on the surface, which holds
+/// the draft the way the runtime's overlay does.
+@MainActor
+private func openBox(on page: PageID, typing typed: String, in notebook: Notebook, _ surface: RecordingSurface) async throws -> LayerID {
+    notebook.createTextBox(on: page, at: PagePoint(x: 40, y: 40), style: .body, alignment: .leading)
+    try await waitUntil { surface.openBox != nil }
+    surface.type(typed)
+    return try #require(surface.openBox?.layer)
+}
+
+/// The words the notebook holds in `layer`, or nil when it holds no such
+/// text layer.
+@MainActor
+private func typedText(in layer: LayerID, on page: PageID, of notebook: Notebook) -> String? {
+    let found = notebook.state(of: page)?.content?.layers.first { $0.id == layer }
+    guard case .text(let text) = found?.payload else { return nil }
+    return text.runs.map(\.string).joined()
 }

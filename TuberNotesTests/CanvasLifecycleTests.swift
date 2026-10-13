@@ -84,6 +84,31 @@ struct CanvasLifecycleTests {
         await editor.close()
     }
 
+    @Test("A commit ends the open box, and the notebook holds what was typed before the call returns")
+    func commitTextEditingReportsTheDraft() async throws {
+        let editor = try await open(pages: 1)
+        let (notebook, binding, runtime) = (editor.notebook, editor.binding, editor.runtime)
+        let page = notebook.pageIDs[0]
+        try await waitUntil { runtime.canvases[page] != nil }
+        let canvas = try #require(runtime.canvases[page])
+        binding.apply(CanvasEnvironment(tool: .text(.body, .leading), theme: testEnvironment.theme))
+        canvas.tapped(at: CGPoint(x: 100, y: 100))
+        try await waitUntil { if case .editing = canvas.phase { true } else { false } }
+        guard case .editing(let layer, let overlay) = canvas.phase else { return }
+        overlay.insertText("answer")
+
+        runtime.commitTextEditing()
+        #expect(!notebook.hasTextSession)
+        let committed = notebook.state(of: page)?.content?.layers.first { $0.id == layer }?.payload
+        let words: String? = if case .text(let text) = committed { text.runs.map(\.string).joined() } else { nil }
+        #expect(words == "answer")
+        // The end is pushed after the composite that has the words, and the
+        // inert overlay comes down with it.
+        try await waitUntil { canvas.closing.isEmpty }
+        #expect(overlay.superview == nil)
+        await editor.close()
+    }
+
     @Test("A page the notebook pruned gets no canvas until its content is pushed again")
     func anEvictedPageWaitsForItsReload() async throws {
         let editor = try await open(pages: 6)

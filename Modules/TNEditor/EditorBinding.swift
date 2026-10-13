@@ -10,12 +10,12 @@ import UIKit
 /// `CanvasSurface` in `TNModel` is the value channel: descriptors,
 /// snapshots, composites. Retiring every live canvas at once, telling the
 /// runtime whether undo is available, asking whether a stroke is in
-/// flight, and ending the tool uses nothing can touch are about the
-/// runtime itself, so they live here rather than widening the seam. The
-/// binding holds the runtime as one of these and nothing narrower, so the
-/// close a test proves is the one production runs. `TNCanvas` adopts this
-/// in `CanvasRuntime.swift`, the one file in this target that names
-/// `TNCanvas`.
+/// flight, ending the tool uses nothing can touch, and committing every
+/// open text box are about the runtime itself, so they live here rather
+/// than widening the seam. The binding holds the runtime as one of these
+/// and nothing narrower, so the close a test proves is the one production
+/// runs. `TNCanvas` adopts this in `CanvasRuntime.swift`, the one file in
+/// this target that names `TNCanvas`.
 @MainActor package protocol CanvasRuntime: CanvasSurface {
     /// Tears the runtime down, which is terminal: it builds no canvas
     /// after this. Retires every live page and returns the pages whose
@@ -29,6 +29,9 @@ import UIKit
     /// Nothing can touch the canvases: a tool use PencilKit did not end,
     /// ends.
     func endToolUses()
+    /// Every open text box commits, as a tap away commits it, and reports
+    /// `textEditingEnded` before this returns.
+    func commitTextEditing()
 }
 
 /// Forwards the runtime's reports to the binding.
@@ -217,6 +220,13 @@ import UIKit
     /// The app left the foreground.
     package func endToolUses() {
         surface.endToolUses()
+    }
+
+    /// An open text box commits. Its report runs `textEditingEnded`
+    /// below, which drains, so the notebook holds the words when this
+    /// returns.
+    package func commitTextEditing() {
+        surface.commitTextEditing()
     }
 
     // MARK: Closing

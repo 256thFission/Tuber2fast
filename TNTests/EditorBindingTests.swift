@@ -22,6 +22,7 @@ enum SurfaceCall: Sendable, Equatable {
     case undoTyping
     case redoTyping
     case endToolUses
+    case commitTextEditing
 }
 
 /// A surface that records instead of drawing. It stands where
@@ -38,6 +39,11 @@ final class RecordingSurface: CanvasRuntime {
     /// What the runtime answers when the binding asks, as a Pencil held
     /// down would make it answer.
     var isStrokeInFlight = false
+    /// Where a commit reports the open box, as the runtime reports to its
+    /// forwarder. Nil, and a commit is only recorded.
+    weak var reporter: (any CanvasReporting)?
+    /// The box that is up, with whatever has been typed into it.
+    private(set) var openBox: (page: PageID, layer: LayerID, text: TextLayer)?
 
     func setPages(_ pages: [PageDescriptor], seq: StructureSeq, answering: ReportSeq?) {
         calls.append(.setPages(pages.map(\.id), seq: seq, answering: answering))
@@ -63,6 +69,16 @@ final class RecordingSurface: CanvasRuntime {
     func beginTextEditing(on page: PageID, _ start: TextEditStart) {
         calls.append(.beginTextEditing(page, start.layer))
         starts.append(start)
+        openBox = (page, start.layer, start.text)
+    }
+
+    /// Typing into the open box, as the person does.
+    func type(_ string: String) {
+        guard let box = openBox else {
+            Issue.record("there is no box open to type into")
+            return
+        }
+        openBox?.text = TextLayer(rect: box.text.rect, runs: box.text.runs + [TextRun(string: string, style: .body)], alignment: box.text.alignment)
     }
 
     func endTextEditing(on page: PageID, layer: LayerID) { calls.append(.endTextEditing(page, layer)) }
@@ -80,6 +96,14 @@ final class RecordingSurface: CanvasRuntime {
     func setUndoAvailability(canUndo: Bool, canRedo: Bool) {}
 
     func endToolUses() { calls.append(.endToolUses) }
+
+    /// The open box reports its draft and closes, as a tap away closes it.
+    func commitTextEditing() {
+        calls.append(.commitTextEditing)
+        guard let box = openBox else { return }
+        openBox = nil
+        reporter?.textEditingEnded(on: box.page, layer: box.layer, box.text)
+    }
 
     // MARK: What a test asks
 
@@ -522,34 +546,34 @@ struct EditorBindingTests {
         _ = await notebook.close()
     }
 
-    @Test("An import or a link while a box is open on the current page is refused through the content error")
-    func insertDuringASessionIsRefused() async throws {
-        let scratch = try Scratch("editor-insert-during-session")
+    @Test("A commit ends the open box before it returns, and the end is pushed once its composite lands")
+    func commitTextEditingDrains() async throws {
+        let scratch = try Scratch("editor-commit-text")
         let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
         let surface = RecordingSurface()
         let binding = EditorBinding(notebook: notebook, surface: surface)
-        let editor = EditorViewModel(binding: binding, palette: ToolPalette(store: MemoryPaletteStore()), theme: .macaron)
+        surface.reporter = binding
         let page = notebook.pageIDs[0]
         binding.windowChanged(to: [page])
         try await waitUntil { surface.installed.contains(page) }
+        let told = surface.calls.count
+        binding.commitTextEditing()
+        #expect(Array(surface.calls.dropFirst(told)) == [.commitTextEditing], "with no box open, nothing answers")
+
         binding.textBoxRequested(on: page, at: PagePoint(x: 30, y: 40), style: .body, alignment: .leading)
-        let layers = try #require(notebook.state(of: page)?.content?.layers.count)
+        try await waitUntil { surface.openBox != nil }
+        let layer = try #require(surface.openBox?.layer)
+        surface.type("answer")
 
-        await editor.importImage(try Fixture.imageData(width: 40, height: 30))
-        #expect(editor.lastContentError != nil)
-        await editor.addLink(to: .internalPage(page))
-        #expect(editor.lastContentError != nil)
-        await editor.importPDF(try Fixture.pdfData(pages: 1))
-        #expect(editor.lastContentError != nil)
-        #expect(notebook.state(of: page)?.content?.layers.count == layers, "nothing was inserted")
-        #expect(notebook.pageCount == 1, "no page was added")
-        #expect(!notebook.canUndo, "nothing was recorded")
-        #expect(editor.canUndo && editor.canRedo, "the buttons drive the typing while the box is open")
-
-        let box = try #require(notebook.state(of: page)?.content?.textEditing?.layer)
-        binding.textEditingEnded(on: page, layer: box, TextLayer(rect: PageRect(x: 30, y: 40, width: 240, height: 96), runs: [], alignment: .leading))
-        await editor.addLink(to: .internalPage(page))
-        #expect(editor.lastContentError == nil, "the refusal ends with the session")
+        binding.commitTextEditing()
+        #expect(!notebook.hasTextSession, "the report reached the notebook before the call returned")
+        let committed = notebook.state(of: page)?.content?.layers.first?.payload
+        let words: String? = if case .text(let text) = committed { text.runs.map(\.string).joined() } else { nil }
+        #expect(words == "answer")
+        #expect(notebook.canUndo, "the session is one entry")
+        try await waitUntil { surface.calls.contains(.endTextEditing(page, layer)) }
+        let commit = try #require(surface.calls.lastIndex(of: .commitTextEditing))
+        #expect(Array(surface.calls.dropFirst(commit).suffix(2)) == [.updateComposite(page), .endTextEditing(page, layer)])
         _ = await notebook.close()
     }
 }

@@ -296,6 +296,12 @@ final class Workspace {
         // Leaving the foreground cancels every touch. A tool use PencilKit did
         // not end, ends, so the tab is not wedged when it comes back.
         for tab in tabs { tab.editor.endToolUses() }
+        // Before the guard: `.inactive` has usually started the flush, and
+        // the pass it runs again must see the typed words. Not on
+        // `.inactive`, which Control Center sends and often takes back.
+        if phase == .background {
+            for tab in tabs { tab.editor.commitTextEditing() }
+        }
         guard leaseFlush == nil else {
             flushAgain = true
             return

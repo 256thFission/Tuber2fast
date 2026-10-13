@@ -453,6 +453,12 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
         }
     }
 
+    /// Every open text box commits, as a tap away commits it, and its
+    /// report reaches the notebook before this returns.
+    package func commitTextEditing() {
+        for canvas in canvases.values { canvas.commitTextEditing() }
+    }
+
     /// What the system undo gesture is allowed to offer. The depth of the
     /// stack is the notebook's, so the answer is told rather than computed.
     package func setUndoAvailability(canUndo: Bool, canRedo: Bool) {

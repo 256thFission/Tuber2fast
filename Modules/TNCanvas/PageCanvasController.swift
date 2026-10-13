@@ -402,7 +402,7 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         self.tool = tool
         switch tool {
         case .ink(let pkTool):
-            commitSession()
+            commitTextEditing()
             // A selection belongs to the lasso and to nothing else, so every
             // other arm drops it. Lasso to lasso keeps it.
             if !(pkTool is PKLassoTool) { clearSelection() }
@@ -467,8 +467,8 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
 
     /// Reports the draft whole and leaves the view up, inert, until the
     /// composite that has the text lands. State settles before the report
-    /// leaves.
-    private func commitSession() {
+    /// leaves. With no box open, it does nothing.
+    func commitTextEditing() {
         guard case .editing(let layer, let view) = phase else { return }
         view.resignFirstResponder()
         closing[layer] = view
@@ -562,7 +562,7 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         // The draft goes home before the ink does. A session still opening
         // has no draft; the begin that arrives later finds no canvas, and the
         // owner answers it.
-        commitSession()
+        commitTextEditing()
         // A selection is not a value, so nothing is reported for it.
         clearSelection()
         phase = .idle
@@ -672,7 +672,7 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         switch tool {
         case .text(let style, let alignment):
             guard let hit = Self.textHit(at: pagePoint, targets: hitTargets) else { return }
-            commitSession()
+            commitTextEditing()
             phase = .opening
             switch hit {
             case .edit(let layer):
