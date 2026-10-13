@@ -199,6 +199,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(TN_BUNDLE_ID_PREFIX)
         PRODUCT_NAME: TuberNotes
+        MARKETING_VERSION: "0.1"
+        CURRENT_PROJECT_VERSION: "1"
         TARGETED_DEVICE_FAMILY: "2"
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         # One window is a contract rule (Docs/Forks/fundamental-rewrite.md,
