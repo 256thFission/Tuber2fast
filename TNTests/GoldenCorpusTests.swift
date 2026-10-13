@@ -433,7 +433,7 @@ struct GoldenCorpusGenerator {
         notebook.inkChanged(on: slides[0], PKDrawing(strokes: [
             try Golden.line(.highlighter, .medium, from: (72, 120), to: (420, 120)),
             try Golden.line(.highlighter, .thick, from: (72, 180), to: (300, 180)),
-        ]), echoOf: nil)
+        ]))
         let extent = try #require(PDFSource(data: pdf)?.page(at: 2).flatMap { PDFSource.displayExtent(of: $0) })
         let clipping = Layer(
             id: LayerID(),
@@ -460,7 +460,7 @@ struct GoldenCorpusGenerator {
             try Golden.line(.pen, .thin, from: (60, 120), to: (300, 130)),
             try Golden.line(.pen, .medium, from: (60, 220), to: (240, 210)),
             try Golden.line(.pencil, .thin, from: (60, 320), to: (330, 330)),
-        ]), echoOf: nil)
+        ]))
         let flattened = try await notebook.flatten(sheet)
         let geometry = try #require(notebook.index.record(of: sheet)).geometry
         _ = try await notebook.appendPage(after: sheet, geometry: geometry, paper: .asset(.image(flattened)))
@@ -487,10 +487,10 @@ struct GoldenCorpusGenerator {
         }
         strokes.append(try Golden.line(.pen, .medium, from: (72, 540), to: (420, 540), mask: UIBezierPath(rect: CGRect(x: 72, y: 520, width: 160, height: 40))))
         strokes.append(try Golden.line(.pen, .medium, from: (480, 700), to: (700, 860)))
-        notebook.inkChanged(on: pages[0], PKDrawing(strokes: strokes), echoOf: nil)
+        notebook.inkChanged(on: pages[0], PKDrawing(strokes: strokes))
 
-        notebook.inkChanged(on: pages[1], PKDrawing(strokes: [try Golden.line(.pen, .thin, from: (72, 100), to: (300, 100))]), echoOf: nil)
-        notebook.inkChanged(on: pages[1], PKDrawing(), echoOf: nil)
+        notebook.inkChanged(on: pages[1], PKDrawing(strokes: [try Golden.line(.pen, .thin, from: (72, 100), to: (300, 100))]))
+        notebook.inkChanged(on: pages[1], PKDrawing())
 
         for (offset, box) in Golden.boxes.enumerated() {
             notebook.createTextBox(on: pages[2], at: PagePoint(x: 72, y: 72 + 140 * Double(offset)), style: .body, alignment: box.alignment)
