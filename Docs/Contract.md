@@ -193,9 +193,13 @@ Commands, `CanvasSurface`:
   runtime forgets its snapshot of the page, which waits as a placeholder
   until a later `installContent` gives it content again. Never sent for a
   page with a canvas; the runtime traps if it is (decided I2, card 09 C1).
-- `updateComposite`: a sharper or refreshed backdrop for a live page, with
-  the layer list it was rendered from, so the runtime's hit rects match
-  the picture. Ink is untouched.
+- `updateComposite`: a refreshed backdrop for a live page, with the layer
+  list it was rendered from, so the runtime's hit rects match the
+  picture. Ink is untouched. A composite is rendered at one scale, and
+  the view that holds it is placed and scaled on each scroll and zoom
+  tick (*Rendering*), so a zoom renders nothing and sends nothing: the
+  bullet once promised a finer backdrop at zoom, a render no code makes
+  (docs-05, arch-canvas-07).
 - `beginTextEditing`: the layer and its value; arrives with the composite
   that omits the layer, and the runtime raises a live text view over it.
 - `endTextEditing`: arrives with the composite that has the committed
@@ -380,7 +384,7 @@ file records where the ink sits, because there is one place it can be.
 Once it is true, the ink file is written whenever the ink changes, an
 empty drawing included, and is deleted only with the page. A save that
 changes only layers does not rewrite the ink file. The reason no position
-is stored is what the stored one did. The page file carried `inkIndex`,
+is stored is what the stored one did. The page file carried inkIndex,
 the ink's position in the stack; every save wrote it as the layer count
 and nothing that draws read it, so it was a field reserved for a future
 feature (*Forbidden*), and a page file that put a layer above the ink
@@ -545,8 +549,17 @@ the user removing that layer. Nothing is dropped, adapted, or written back
 unread. In the library the scope is the item a sidecar describes (*An
 unreadable sidecar refuses only the item it describes*).
 
-**`nil` is not an answer.** A missing package is an error, a missing
-`view.json` means the first page, and nothing else is optional.
+**`nil` is not an answer.** A missing package is an error, and nothing
+else is optional. A replacement this contract makes by name is
+`view.json`: one that is missing, one that does not decode, and one that
+names a page the index does not hold each mean the first page. The file
+is disposable (*Durable form*): it records which page was showing and
+nothing the package depends on, so a bad one costs a page turn, where
+refusing the notebook over it would refuse the whole for a file whose
+loss costs nothing. A stale one is ordinary, not damage: the index lands
+on the save's clock and the view a second after the turn (*One save*),
+so a process that dies between the two leaves a view naming a page the
+index no longer holds (contract-12).
 
 ## One save
 
@@ -642,8 +655,9 @@ report     which pages were refused, and which intended pages the written
   thermo-data-01, contract-02, durability-02, contract-12).
 - **A missing file that the index refers to refuses the page. A file the
   index does not refer to is ignored** until compact.
-- **`view.json`** is written by rename, without fsync, one second after a
-  page turn. It has no version.
+- **`view.json`** is written by rename, with the barrier every staged
+  file gets and no sync of its directory, one second after a page turn.
+  It has no version.
 
 Save timing. Capture is synchronous: for every dirty page, the values and
 their sequence numbers. Serialization runs once per save in a detached
@@ -750,9 +764,18 @@ forbidden, because it would be a second copy of the ink. While a text box
 is being edited, the text view's own undo manager answers the chain for
 typing. It dies with the session and holds nothing durable.
 
-The stack holds at most 100 entries. Turning, adding, reordering, and
-deleting pages are navigation, not edits, and cannot be undone; deleting a
-page forgets its entries. A paper change is not an edit either: it moves
+The stack is bounded twice: it holds at most 100 entries, and at most 64
+MB by the estimate each entry carries, summed when it is recorded. A new
+edit evicts the oldest entries past either bound and never the one just
+recorded, so an edit larger than the whole bound is still undoable once.
+The count bounds ink that came from a canvas, which shares its strokes
+with the drawing it was taken from, so a hundred such entries is tens of
+megabytes; a drawing the app builds for itself shares nothing, so a
+hundred of those would be hundreds of megabytes, and the byte bound is
+what holds that. Both are constants in code, not fields in the file
+(decided I6; contract-12). Turning, adding, reordering, and deleting
+pages are navigation, not edits, and cannot be undone; deleting a page
+forgets its entries. A paper change is not an edit either: it moves
 the index, not the revision, records no entry, and cannot be undone,
 which is why a PDF page or a photo keeps its paper (*A page whose paper
 is an asset keeps it*).
