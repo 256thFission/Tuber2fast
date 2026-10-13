@@ -584,9 +584,10 @@ checkout traps. Renaming, moving, trashing, or duplicating an open
 notebook, or any folder above it, is refused with the notebook's name.
 
 Trash is `Trash/<NotebookID or FolderID>/<original name>` with an
-`origin.json` beside it. Recovery restores the original name, adds a
-suffix only if that name is taken, and falls back to the root if the
-original folder is gone. Duplicate gives the copy a new `NotebookID` and
+`origin.json` beside it. Recovery restores the original name, suffixes it
+only if that name is taken (*A taken name becomes `Name (n)`*), and falls
+back to the root if the original folder is gone. Duplicate gives the copy
+a new `NotebookID` and
 keeps every `PageID`. A folder has a `.folder.json` holding its
 `FolderID`, its colour, and its symbol. Stars live in `Favorites.json`
 beside `Notebooks/`, as identities, so a star follows a rename or a move
@@ -673,8 +674,11 @@ refuses an occupied target (`renamex_np` with `RENAME_EXCL`, which fails
 with `EEXIST`) and never replaces one. The rename is the claim on the
 name: a check before the build claims nothing, because a second create
 can take the name across the build's await, so whatever the rename meets
-is refused with `.alreadyExists` and left as it was, never deleted and
-never written into. A rename, a move, a recovery and a duplicate's landing
+is left as it was, never deleted and never written into: a rename, a move
+or a trash that meets one is refused with `.alreadyExists`, and a create,
+a recovery or a duplicate that meets one goes to the next free name (*A
+taken name becomes `Name (n)`*). A rename, a move, a recovery and a
+duplicate's landing
 are the same kind of rename, and every landing is followed by an fsync of
 the directory it left and the one it entered, Staging's excepted, since
 nothing in Staging is kept. So a listing never meets a half-built item: a
@@ -690,6 +694,32 @@ original where it stands until the swap commits, because nothing live is
 ever Staging's alone. So the store empties `Staging/` when it starts, and
 a duplicate or a migration whose build fails removes the copy it was
 building (decided F4, F1; durability-07).
+
+**A taken name becomes `Name (n)` for what the library makes; a rename
+and a move refuse one.** A notebook or folder created under a name its
+folder already holds lands under the first free of `Name (1)`, `Name (2)`
+and so on; a recovery whose original name is taken lands the same way,
+and so does a duplicate, whose name is `Name copy`. One function,
+`freeName`, spells the suffix for all three, so the library has one answer
+to a taken name and not the three it had, recover's `Name 2` and
+duplicate's `Name copy 2` beside create's `Name (1)`. A rename or a move
+onto a taken name is refused with `.alreadyExists` and nothing moves: a
+second "New notebook" is the ordinary case, not a mistake, and a rename
+onto a name in use is a mistake the user should see. The free name is not
+found before the publish, it is claimed by it. The item is built once in
+Staging, each candidate in turn is the target of the exclusive rename
+above, and `EEXIST` means the next candidate, so two creates in flight at
+once land under two names, where a check that found a name free across
+the build's await claims nothing. No candidate is held by a directory made
+ahead of the publish: a process dying between such a claim and the publish
+would leave an empty package listed as a notebook that cannot open, or a
+folder without its sidecar, each holding a name, and *Staging is scratch*
+promises that a death before the publish leaves nothing listed. What the
+library makes takes the name it was given with its ends trimmed, and
+`New notebook` or `New folder` when that leaves nothing: a name left blank
+is not a refusal, and this is the one place a blank name is replaced
+(*Invalid states fail loud*) (decided M3 S3, M3 S4; round-two call: one
+naming function; critique C5; simple-data-12, thermo-data-10).
 
 **An older notebook is migrated on open, in Staging, and swapped in by one
 exchange.** `TNFormat` holds the steps as a plain list, one for each
