@@ -128,12 +128,17 @@ package final class Library {
         var reports: [NotebookID: CompactReport] = [:]
         for path in Array(openNotebooks.keys) {
             guard let notebook = openNotebooks[path] else { continue }
-            do {
+            do throws(FormatFault) {
                 let report = try await notebook.store.compact(now: Date(), keeping: notebook.assetsInUse)
                 TNLog.event(.library, "compact \(notebook.notebookID) removed \(report.removed.count) kept \(report.kept)")
                 reports[notebook.notebookID] = report
             } catch {
-                TNLog.event(.library, "compact \(notebook.notebookID) refused: \(error)")
+                // An I/O fault's description names the package's path.
+                let reason = switch error {
+                case .io(let failure): "\(failure.operation.rawValue) \(failure.code)"
+                default: error.description
+                }
+                TNLog.event(.library, "compact \(notebook.notebookID) refused: \(reason)")
             }
         }
         return reports
