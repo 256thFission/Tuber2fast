@@ -315,9 +315,32 @@ until every file that carries the key round-trips, and once *Burn things
 down with permission* has ended it bumps the version too (decided R2, F1,
 F2, F3; tests-hostless-01).
 
-**Layer kinds are `image`, `pdf`, `link`, `text`, and nothing else.** The
-payload object is keyed by the kind name, so an unknown kind is detected
-before its payload is parsed. Adding a kind is a `CONTRACT:` change.
+**Kinds are closed on disk as they are in code.** Layer kinds are
+`image`, `pdf`, `link`, `text`, and nothing else; paper kinds are `none`,
+`blank`, `lined`, `grid`, `dotted`, `image`, `pdf`, and nothing else. A
+kind name this build does not write is not an unknown to be carried,
+shown or written back: it is a file this build cannot read, refused at
+the scope of the file that holds it (*Refuse at the narrowest scope*). A
+layer file naming one is an unreadable layer file and refuses its page; a
+page record naming one is a bad index and refuses the notebook. Each
+payload object is keyed by the kind name, so the name is checked before
+any payload key is. A new kind is a `CONTRACT:` change and a change to
+the file's shape, so it bumps the format version as any change to the
+shape does (*Format version is 1*); the number is what tells an older
+build it holds a notebook with a kind it was not built for, and nothing
+else in the file is asked to. An older build meets a new kind only in a
+notebook at a newer version, which it refuses by the number before it
+reads any kind, in words that say the notebook needs a newer TuberNotes:
+it never reaches the kind, so it has no path on which to drop one or to
+crash on one. The reason is what the carried unknown did. An unknown
+paper kept its page as a placeholder but decoded to its name alone, so
+the next index write dropped the asset the paper named, and compact,
+which reads reachability from the files, counted that asset as nothing's;
+a cover drew the page as blank paper and said nothing; and the kind rode
+the seam in every `setPages` for a placeholder that took its words from
+the fault instead. A kind carried unknown is a shim for a shape this
+build never wrote (*Forbidden*) (decided F3; format-05,
+deepen-notebook-06, arch-canvas-06).
 
 **Ink is not a layer.** `inkIndex` is the ink's position in the stack. An
 import inserts at `inkIndex` and increments it, so ink stays above imported
@@ -361,9 +384,11 @@ image at asset resolution. Flattening does not change the source page.
 Importing a PDF creates one new page per PDF page, each with that page as
 its paper; the `pdf` layer kind is for a PDF clipping placed on a page.
 
-A page whose paper this build does not know is refused; the notebook still
-opens. A page whose paper asset is missing is refused the same way.
-`compact()` treats a paper asset as reachable from the page that names it.
+A page whose paper asset is missing is refused, and the notebook still
+opens. A page record naming a paper kind this build does not write is not
+the page's fault but the index's, and refuses the notebook (*Kinds are
+closed on disk*). `compact()` treats a paper asset as reachable from the
+page that names it.
 
 **Geometry** is per page, chosen when the page is created from a
 catalogue of named sizes or a custom size, finite, and within
@@ -405,8 +430,8 @@ one rule with no threshold is as safe as one with (decided R2-10; critique
 C8).
 
 **Refuse at the narrowest scope, and say why.** A bad index refuses the
-notebook. A missing page file, a bad ink file, an unknown paper, or a bad
-layer refuses that page only. A page with a refused layer is shown as a
+notebook. A missing page file, a bad ink file, a missing paper asset, or
+a bad layer refuses that page only. A page with a refused layer is shown as a
 placeholder that names the fault and cannot be edited. The only way out is
 the user removing that layer. Nothing is dropped, adapted, or written back
 unread. In the library the scope is the item a sidecar describes (*An
