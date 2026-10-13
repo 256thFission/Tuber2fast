@@ -312,7 +312,8 @@ publish 3  only if the index changed: write it listing only the pages
            whose files are present, and only their bookmarks (skip it if
            that list is empty);
            stage, rename, fsync the package root
-report     which pages were refused. Nothing is deleted.
+report     which pages were refused, and which intended pages the written
+           index left out. Nothing is deleted.
 ```
 
 - **A save writes only what changed.** An unchanged page file is not
@@ -325,6 +326,24 @@ report     which pages were refused. Nothing is deleted.
 - **Atomic per page, not across pages.** A crash between phases can leave
   an ink file for a page whose file says `hasInk: false`. Open treats the
   ink file as the ink and marks the page dirty.
+- **An index written without a page this pass tried to save is not the
+  saved index.** Publish 3 lists only the pages whose files are present,
+  so a page that failed to stage is left out of the index written in the
+  same pass, and the report says which pages were left out. The notebook
+  advances `savedIndexSeq` only for an index that left out none of the
+  pages the pass captured. After any other index the index stays ahead of
+  its saved counter, the notebook stays dirty, and the next pass rewrites
+  the index, so the page is named by the first index written after its
+  file lands; the index on disk is not the intended one, so that rewrite
+  is not a rewrite of an unchanged file. Only captured pages count: a page
+  the notebook holds as a placeholder, one whose file is missing for
+  instance, is never captured and is left out of every index written, and
+  it neither keeps the index dirty nor blocks a clean close. The reason is
+  the retry. A refused page stays dirty and its file lands on a later
+  pass; had the partial index counted as saved, that pass would carry
+  `indexChanged: false`, the page would commit and go clean, close would
+  report clean, and the reopened notebook would list neither the page nor
+  its ink (decided I2; contract-03, durability-01).
 - **Only `compact()` deletes from a package.** Open, save, and close
   delete nothing a package holds. What an open removes after a migration
   is the copy the exchange left in Staging, which is no package anything
