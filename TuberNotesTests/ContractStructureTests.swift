@@ -517,7 +517,7 @@ enum ContractChecker {
     /// wrapped initialiser.
     static var literalStylePatterns: [Regex<AnyRegexOutput>] {
         [
-            #"\b(?:UI)?Color\(\s*(?:red:|white:|hex:|\.sRGB\b|\.displayP3\b|#[0-9A-Fa-f]{3,8}\b|0x[0-9A-Fa-f]{6,8}\b)"#,
+            #"\b(?:UI)?Color\(\s*(?:red:|white:|hue:|hex:|\.sRGB\b|\.displayP3\b|#[0-9A-Fa-f]{3,8}\b|0x[0-9A-Fa-f]{6,8}\b)"#,
             #"\.system(?:Red|Orange|Yellow|Green|Mint|Teal|Cyan|Blue|Indigo|Purple|Pink|Brown|Gray\d?|\w*Background|\w*Fill)\b"#,
             #"\baccentColor\b"#,
             #"\b(?:UI)?Color\.(?:\#(namedColours))\b"#,
@@ -1397,6 +1397,7 @@ struct ContractCheckerOwnTests {
         #expect(unmarked("Text(t)\n    .font(.footnote)\n    .background(Color.red)\n") == [2, 3])
         #expect(unmarked("let c = UIColor(\n    red: 1, green: 0, blue: 0, alpha: 1)\n") == [1])
         #expect(unmarked("let c = Color(hex: \"#FF8800\")\nview.tintColor = .systemBlue\n") == [1, 2])
+        #expect(unmarked("let c = Color(hue: 0.5, saturation: 1, brightness: 1)\n") == [1])
         #expect(unmarked("label.font = .preferredFont(forTextStyle: .body)\nx.foregroundStyle(.secondary)\n") == [1, 2])
         #expect(unmarked("// macaron: one-off the save bar steps outside the theme.\nText(t).font(.footnote)\n").isEmpty)
         #expect(unmarked("Text(t).font(.system(size: 9)) // macaron: one-off. A weight the kit lacks.\n").isEmpty)

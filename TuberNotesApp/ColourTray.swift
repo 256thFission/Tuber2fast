@@ -18,6 +18,7 @@ struct HSV: Equatable {
 
     /// Through UIKit's own conversion, in sRGB.
     var colour: ToolColor {
+        // macaron: one-off. This converts the picker's own values; it names no colour.
         ToolColor(UIColor(hue: hue, saturation: saturation, brightness: value, alpha: 1))
     }
 }
@@ -63,6 +64,7 @@ struct ColourTray: View {
     private static let gap: CGFloat = 9
     /// Round the wheel from the trailing edge, clockwise, as SwiftUI turns
     /// an angle.
+    // macaron: one-off. The wheel is every hue at full strength, the same in every theme.
     private static let hues = (0...6).map { Color(hue: Double($0) / 6, saturation: 1, brightness: 1) }
 
     init(editor: EditorViewModel, index: Int, colour: ToolColor) {

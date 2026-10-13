@@ -297,7 +297,7 @@ private struct RefusalBar: View {
 
     var body: some View {
         Text(message)
-            // macaron: one-off. Red on white is the same in every theme, so a failed save is never missed.
+            // macaron: one-off. White on red is the same in every theme, so a failed save is never missed.
             .font(.footnote).foregroundStyle(.white)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 16)
