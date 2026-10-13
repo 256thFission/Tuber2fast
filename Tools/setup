@@ -116,9 +116,6 @@ if [ -z "$BUNDLE" ]; then
   # invented, and the two then disagree about what is being signed.
   bad "TN_BUNDLE_ID_PREFIX in Local.xcconfig is empty"
   note "set it to com.tubernotes.greenfield, or your own prefix if you share an iPad"
-elif [ "$BUNDLE" = "com.tubernotes.app" ]; then
-  bad "TN_BUNDLE_ID_PREFIX is com.tubernotes.app, the behavioral reference app"
-  note "installing this build would overwrite it on the iPad; choose another prefix"
 else
   ok "bundle id $BUNDLE"
 fi

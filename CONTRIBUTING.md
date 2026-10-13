@@ -142,10 +142,8 @@ BLOCKED is not a failure; MISCONFIGURED is. Confusing the two is how someone
 ends up "fixing" a signing config to work around an unplugged cable.
 
 Every check prints a remedy line. Notable ones: Developer Mode status, pairing
-state, DDI availability, whether iPadOS is a major release past the installed
-SDK (that Xcode cannot install to it), and whether the bundle identifier has
-drifted onto `com.tubernotes.app` — which would overwrite the behavioral
-reference app on the iPad the next time anyone installs.
+state, DDI availability, and whether iPadOS is a major release past the
+installed SDK (that Xcode cannot install to it).
 
 Diagnose with this before touching `project.yml`. Most device failures are a
 locked screen.
@@ -348,9 +346,8 @@ and record the gap explicitly in `Docs/Unproven.md` as outstanding device eviden
   invalid placeholder team rather than a real one — a real ID there would be one
   person's, and anyone who copied the file instead of running `Tools/setup`
   would sign against it and get an error naming the wrong cause.
-- Bundle ID defaults to `com.tubernotes.greenfield`, deliberately different from
-  the reference app's `com.tubernotes.app` so installing this never replaces it
-  on the iPad. Change the prefix if two people share one iPad.
+- Bundle ID defaults to `com.tubernotes.greenfield`. Change the prefix if two
+  people share one iPad.
 - `Artifacts/` holds build and test logs and captured device sessions. It is
   regenerated and gitignored — cite paths from it as evidence, never commit it.
 - **`Tools/` is four files and no shared library.** `pinned-simulator` is one

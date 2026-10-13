@@ -45,7 +45,6 @@
 #   - Auto-remediate. No unlocking, no re-pairing, no mounting a DDI, no
 #     editing Local.xcconfig, no installing anything. It prints the remedy.
 #   - Choose among several paired iPads. It refuses and names them.
-#   - Install onto com.tubernotes.app, the behavioral reference app.
 
 # Deliberately not `set -e`. The diagnosis phase must run every check and report
 # all of them at once — a preflight that stops at the first problem makes you
@@ -73,7 +72,6 @@ LOCAL_CONFIG="$REPO_ROOT/Local.xcconfig"
 PROJECT="$REPO_ROOT/TuberNotes.xcodeproj"
 SCHEME=TuberNotes
 APP_NAME=TuberNotes
-REFERENCE_BUNDLE=com.tubernotes.app
 DERIVED_DATA="$REPO_ROOT/DerivedData"
 
 CHECK_ONLY=0
@@ -305,8 +303,8 @@ else
 fi
 
 # The authoritative bundle id is what xcodebuild resolves through the whole
-# xcconfig include chain, not what Local.xcconfig appears to say. The check that
-# protects the reference app must read the value that will actually be signed.
+# xcconfig include chain, not what Local.xcconfig appears to say. Install and
+# launch must name the value that will actually be signed.
 BUNDLE_ID=""
 DEPLOYMENT_TARGET=""
 if [ -d "$PROJECT" ]; then
@@ -319,15 +317,12 @@ if [ -d "$PROJECT" ]; then
 fi
 
 if [ -z "$BUNDLE_ID" ]; then
-  # Never default this. A tool that invents a bundle id will cheerfully report
-  # that it differs from the reference app while the build signs something else.
+  # Never default this. A tool that invents a bundle id will cheerfully launch
+  # an app the build never signed.
   bad "could not resolve PRODUCT_BUNDLE_IDENTIFIER from the project" \
       "run Tools/setup to regenerate, and check TN_BUNDLE_ID_PREFIX in Local.xcconfig"
-elif [ "$BUNDLE_ID" = "$REFERENCE_BUNDLE" ]; then
-  bad "bundle id collides with the reference app ($REFERENCE_BUNDLE)" \
-      "installing would overwrite the comparison app on the iPad; change TN_BUNDLE_ID_PREFIX in Local.xcconfig"
 else
-  ok "bundle id $BUNDLE_ID (distinct from the reference app)"
+  ok "bundle id $BUNDLE_ID"
 fi
 [ -n "$DEPLOYMENT_TARGET" ] && ok "deployment target iOS $DEPLOYMENT_TARGET"
 

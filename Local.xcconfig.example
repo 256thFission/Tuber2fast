@@ -18,8 +18,7 @@
 TN_DEVELOPMENT_TEAM = PUT_YOUR_TEAM_ID_HERE
 
 // Bundle identifier prefix. Change this if you and a peer install onto the
-// same iPad; two builds sharing an id overwrite each other. It must never be
-// com.tubernotes.app, which is the behavioral reference app.
+// same iPad; two builds sharing an id overwrite each other.
 TN_BUNDLE_ID_PREFIX = com.tubernotes.greenfield
 
 // The physical iPad for device work. Leave empty for "the one iPad this Mac
