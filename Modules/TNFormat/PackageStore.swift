@@ -404,14 +404,16 @@ package actor PackageStore {
     /// Assets are immutable and published at import, before any layer names
     /// them. Writing an asset that exists is a no-op.
     package func writeAsset(_ data: Data, _ ref: AssetRef) throws(FormatFault) {
-        guard data.count <= AssetBounds.maxBytes else { throw .invalidWrite("asset \(ref.fileName) exceeds \(AssetBounds.maxBytes) bytes") }
+        guard data.count <= AssetBounds.maxBytes else { throw .invalidWrite("asset \(ref.fileName) is larger than \(AssetBounds.maxBytes / (1024 * 1024)) MB") }
         let final = layout.assetURL(ref)
         if fs.exists(final) { return }
         do { try fs.writeAtomically(data, to: final, syncing: layout.assetsDirectory) } catch { throw Self.ioFault(error) }
     }
 
+    /// Mapped, never copied: an asset is written once and never rewritten
+    /// in place, so the mapping never sees its bytes change.
     package func readAsset(_ ref: AssetRef) throws(FormatFault) -> Data {
-        do { return try fs.read(layout.assetURL(ref)) } catch { throw Self.ioFault(error) }
+        do { return try fs.readMapped(layout.assetURL(ref)) } catch { throw Self.ioFault(error) }
     }
 
     // MARK: View state (disposable)

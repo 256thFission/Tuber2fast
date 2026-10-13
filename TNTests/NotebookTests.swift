@@ -88,8 +88,7 @@ final class RefusingNewPagesStore: ForwardingStore, @unchecked Sendable {
 }
 
 /// A real store whose `readAsset` parks every call until the test releases
-/// it by index, so two renders of one page can be made to land in either
-/// order.
+/// it by index, so a render can be held while the notebook moves on.
 final class GatedAssetStore: ForwardingStore, @unchecked Sendable {
     let gate = CallGate()
     override func readAsset(_ ref: AssetRef) async throws(FormatFault) -> Data {
@@ -1820,7 +1819,7 @@ struct NotebookTests {
         // invalid committed rect are traps, which Swift Testing cannot observe.
     }
 
-    @Test("Two renders landing out of order install the newer one, and the text changes ride behind it")
+    @Test("Two renders on one held read install only the newer one, and the text changes ride behind it")
     func staleRenderIsDropped() async throws {
         let scratch = try Scratch("nb-text-race")
         let created = try await Notebook.create(at: scratch.packageURL, schedule: fast)
@@ -1838,20 +1837,21 @@ struct NotebookTests {
         let text = textLayer("hi")
         try notebook.insertLayer(text, on: page)
         try await waitUntil { notebook.drainChanges().contains { if case .compositeUpdated = $0 { true } else { false } } }
-        // The decoded asset is cached; purge so the next two renders both read.
+        // The decoded asset is cached; purge so the next render reads.
         await notebook.renderer.purge()
 
         notebook.beginTextEditing(on: page, layer: text.id)
         try await notebook.waitForArrivals(store.gate, 2)
         guard case .text(let value) = try #require(notebook.state(of: page)?.content?.layers.last?.payload) else { Issue.record("not text"); return }
         notebook.endTextEditing(on: page, layer: text.id, value)
-        try await notebook.waitForArrivals(store.gate, 3)
-        #expect(notebook.drainChanges().isEmpty, "nothing lands while both renders are parked")
+        // The commit's render waits on the begin's read instead of opening one.
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(await store.gate.arrivals == 2)
+        #expect(notebook.drainChanges().isEmpty, "nothing lands while the read is parked")
 
-        // The commit's render lands first, then the begin's, which is stale.
-        await store.gate.release(2)
-        try await waitUntil { notebook.state(of: page)?.content?.afterRender.isEmpty == true }
+        // The read lands both renders, in either order; the begin's is stale.
         await store.gate.release(1)
+        try await waitUntil { notebook.state(of: page)?.content?.afterRender.isEmpty == true }
         try await Task.sleep(for: .milliseconds(100))
         let changes = notebook.drainChanges()
         let composites = changes.filter { if case .compositeUpdated = $0 { true } else { false } }

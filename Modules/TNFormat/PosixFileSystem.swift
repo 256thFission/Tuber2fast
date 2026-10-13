@@ -31,6 +31,10 @@ package protocol PackageFileSystem: Sendable {
     /// `fsync` on the directory so the renames it holds are durable.
     func syncDirectory(_ url: URL) throws
     func read(_ url: URL) throws -> Data
+    /// The file's bytes mapped read-only, never copied into memory; the
+    /// mapping lives as long as the bytes. Only for a file written once and
+    /// never rewritten in place: an asset.
+    func readMapped(_ url: URL) throws -> Data
     func exists(_ url: URL) -> Bool
     func modificationTime(_ url: URL) throws -> Date
     /// File names directly inside `directory`, no recursion, no hidden files.
@@ -176,6 +180,22 @@ package struct PosixFileSystem: PackageFileSystem {
         }
         if filled < data.count { data.removeSubrange(filled...) }
         return data
+    }
+
+    package func readMapped(_ url: URL) throws -> Data {
+        let path = url.path
+        let fd = Darwin.open(path, O_RDONLY | O_CLOEXEC)
+        guard fd >= 0 else { throw FileSystemError(.read, path, code: errno) }
+        defer { _ = Darwin.close(fd) }
+        var info = Darwin.stat()
+        guard fstat(fd, &info) == 0 else { throw FileSystemError(.stat, path, code: errno) }
+        let size = Int(info.st_size)
+        // mmap refuses a zero length.
+        guard size > 0 else { return Data() }
+        guard let bytes = mmap(nil, size, PROT_READ, MAP_PRIVATE, fd, 0), bytes != UnsafeMutableRawPointer(bitPattern: -1) else {
+            throw FileSystemError(.read, path, code: errno)
+        }
+        return Data(bytesNoCopy: bytes, count: size, deallocator: .custom { bytes, size in _ = munmap(bytes, size) })
     }
 
     package func exists(_ url: URL) -> Bool {
@@ -338,6 +358,7 @@ package final class FaultingFileSystem: PackageFileSystem {
     }
 
     package func read(_ url: URL) throws -> Data { try base.read(url) }
+    package func readMapped(_ url: URL) throws -> Data { try base.readMapped(url) }
     package func exists(_ url: URL) -> Bool { base.exists(url) }
     package func modificationTime(_ url: URL) throws -> Date { try base.modificationTime(url) }
     package func list(_ directory: URL) throws -> [String] { try base.list(directory) }

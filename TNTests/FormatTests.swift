@@ -528,6 +528,21 @@ struct StoreTests {
         #expect(await store.readView() == nil)
     }
 
+    /// Heap memory is what `malloc_zone_from_ptr` recognizes; a mapping is
+    /// not in any zone.
+    @Test("An asset is read mapped, never into the heap; the index and a page file are read as copies")
+    func readAssetIsMapped() async throws {
+        let scratch = try Scratch("asset-mapped")
+        let (store, index, layer) = try await Fixture.populated(at: scratch.packageURL)
+        let asset = try await store.readAsset(try #require(layer.payload.asset))
+        #expect(asset == Fixture.archive(9, count: 512))
+        #expect(asset.withUnsafeBytes { malloc_zone_from_ptr($0.baseAddress) } == nil, "the asset's bytes are heap")
+        for url in [store.layout.indexURL, store.layout.pageURL(index.pageIDs[1])] {
+            let copy = try PosixFileSystem().read(url)
+            #expect(copy.withUnsafeBytes { malloc_zone_from_ptr($0.baseAddress) } != nil, "\(url.lastPathComponent) was not copied")
+        }
+    }
+
     @Test("An exclusive publish onto an existing directory, full or empty, fails with EEXIST and changes neither")
     func publishExclusiveNeverReplaces() throws {
         let scratch = try Scratch("exclusive")

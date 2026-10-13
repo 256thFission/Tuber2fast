@@ -8,6 +8,8 @@ enum ImportReader {
     static func read(url: URL) throws -> Data {
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-        return try Data(contentsOf: url)
+        // Mapped where the volume allows it, so a 256 MB PDF is not 256 MB of
+        // heap on its way to the store; the mapping outlives the scope.
+        return try Data(contentsOf: url, options: .mappedIfSafe)
     }
 }

@@ -60,7 +60,7 @@ package struct PixelSize: Codable, Sendable, Equatable {
 }
 
 package enum AssetBounds {
-    package static let maxBytes: Int = 64 * 1024 * 1024
+    package static let maxBytes: Int = 256 * 1024 * 1024
     package static let maxPixelEdge: Int = 16384
 }
 

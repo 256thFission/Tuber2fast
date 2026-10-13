@@ -21,7 +21,8 @@ package struct ThumbnailKey: Hashable, Sendable {
 }
 
 /// One shape for every bounded in-memory cache in this project: values by
-/// key, oldest evicted first once the byte total passes the bound. Each
+/// key, oldest evicted first once the byte total passes the bound. A value
+/// larger than the bound is not kept and evicts nothing for it. Each
 /// instance still declares its owner, bound, and evictor where it is
 /// declared, as the contract requires; this type is the mechanism, not the
 /// declaration.
@@ -39,14 +40,16 @@ package struct BoundedCache<Key: Hashable, Value> {
 
     package subscript(key: Key) -> Value? { values[key] }
 
-    package var count: Int { values.count }
-
-    /// A key already present is replaced and becomes the newest.
+    /// A key already present is replaced and becomes the newest. An oversize
+    /// value still removes the old one, so a key never answers with a value
+    /// it was told to replace.
     package mutating func insert(_ value: Value, for key: Key) {
-        if let replaced = values.updateValue(value, forKey: key) {
+        if let replaced = values.removeValue(forKey: key) {
             bytes -= cost(replaced)
             order.removeAll { $0 == key }
         }
+        guard cost(value) <= bound else { return }
+        values[key] = value
         order.append(key)
         bytes += cost(value)
         while bytes > bound, let oldest = order.first {
@@ -85,8 +88,13 @@ package actor Renderer {
     private let assets: any AssetReading
     private var decoded = BoundedCache<AssetRef, DecodedAsset>(bound: Renderer.assetCacheBound, cost: \.bytes)
     private var thumbnails = BoundedCache<ThumbnailKey, CGImage>(bound: Renderer.thumbnailCacheBound, cost: { $0.bytesPerRow * $0.height })
+    /// Asset reads in flight. Not a cache, so it declares no bound: an entry
+    /// lives only until its read lands. This actor is reentrant across a
+    /// read, and a render that misses `decoded` waits here instead of opening
+    /// a read of its own.
+    private var reading: [AssetRef: Task<DecodedAsset?, Never>] = [:]
 
-    private enum DecodedAsset {
+    private enum DecodedAsset: Sendable {
         case image(CGImage, bytes: Int)
         case pdf(PDFSource, bytes: Int)
         var bytes: Int {
@@ -234,15 +242,21 @@ package actor Renderer {
         }
     }
 
-    /// Height over width of an asset paper, from the decoded asset. Drawn
-    /// paper has no aspect of its own.
+    /// Height over width of an asset paper: an image's from the file's own
+    /// pixel size, since its decode is capped and may have rounded; a PDF
+    /// page's from its displayed extent. Drawn paper has no aspect of its own.
     package func aspect(of paper: Paper) async -> Double? {
         switch paper {
         case .drawn:
             return nil
         case .image(let ref):
-            guard case .image(let image, _)? = await decodedAsset(ref), image.width > 0 else { return nil }
-            return Double(image.height) / Double(image.width)
+            guard let data = try? await assets.readAsset(ref),
+                  let source = CGImageSourceCreateWithData(data as CFData, nil),
+                  let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+                  let width = properties[kCGImagePropertyPixelWidth] as? Int,
+                  let height = properties[kCGImagePropertyPixelHeight] as? Int, width > 0
+            else { return nil }
+            return Double(height) / Double(width)
         case .pdf(let ref, let sourcePageIndex):
             guard case .pdf(let source, _)? = await decodedAsset(ref),
                   let page = source.page(at: sourcePageIndex),
@@ -402,21 +416,36 @@ package actor Renderer {
 
     private func decodedAsset(_ ref: AssetRef) async -> DecodedAsset? {
         if let cached = decoded[ref] { return cached }
+        if let running = reading[ref] { return await running.value }
+        let read = Task { [assets] in await Self.decode(ref, from: assets) }
+        reading[ref] = read
+        let asset = await read.value
+        reading[ref] = nil
+        if let asset { decoded.insert(asset, for: ref) }
+        return asset
+    }
+
+    /// An image at no more than `maximumLongEdgePixels` on its long edge,
+    /// the most any render draws, so a decoded photo costs at most about
+    /// 31 MB and fits the cache.
+    private static func decode(_ ref: AssetRef, from assets: any AssetReading) async -> DecodedAsset? {
         let data: Data
         do { data = try await assets.readAsset(ref) } catch { return nil }
-        let asset: DecodedAsset
         switch ref.format {
         case .heic:
+            let options = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceShouldCacheImmediately: true,
+                kCGImageSourceThumbnailMaxPixelSize: maximumLongEdgePixels,
+            ] as CFDictionary
             guard let source = CGImageSourceCreateWithData(data as CFData, nil),
-                  let image = CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCache: true] as CFDictionary)
+                  let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options)
             else { return nil }
-            asset = .image(image, bytes: image.bytesPerRow * image.height)
+            return .image(image, bytes: image.bytesPerRow * image.height)
         case .pdf:
             guard let source = PDFSource(data: data) else { return nil }
-            asset = .pdf(source, bytes: data.count)
+            return .pdf(source, bytes: data.count)
         }
-        decoded.insert(asset, for: ref)
-        return asset
     }
 }
 

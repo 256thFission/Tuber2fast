@@ -12,6 +12,34 @@ private struct NoAssets: AssetReading {
     func readAsset(_ ref: AssetRef) async throws(FormatFault) -> Data { throw .invalidWrite("no assets") }
 }
 
+/// Assets from memory, every read counted. A held reader keeps each read
+/// waiting until the test releases it, so renders can all be asked for
+/// before the first read lands.
+private actor CountingAssets: AssetReading {
+    private let files: [AssetRef: Data]
+    private(set) var reads = 0
+    private var held: Bool
+    private var waiting: [CheckedContinuation<Void, Never>] = []
+
+    init(_ files: [AssetRef: Data], held: Bool = false) {
+        self.files = files
+        self.held = held
+    }
+
+    func release() {
+        held = false
+        for waiter in waiting { waiter.resume() }
+        waiting.removeAll()
+    }
+
+    func readAsset(_ ref: AssetRef) async throws(FormatFault) -> Data {
+        reads += 1
+        if held { await withCheckedContinuation { waiting.append($0) } }
+        guard let data = files[ref] else { throw .invalidWrite("no asset \(ref.fileName)") }
+        return data
+    }
+}
+
 @Suite("Renderer: thumbnails and the bounded caches")
 struct RendererTests {
     private let letter = PageGeometry.letter
@@ -80,7 +108,57 @@ struct RendererTests {
         #expect(cache["b"] == 2 && cache["d"] == 4 && cache["e"] == 1)
         #expect(cache.bytes == 7, "eviction stops once under the bound")
         cache.removeAll()
-        #expect(cache.count == 0 && cache.bytes == 0)
+        #expect(cache.bytes == 0 && cache["b"] == nil && cache["d"] == nil && cache["e"] == nil)
+    }
+
+    @Test("A value larger than the bound is not kept, and evicts nothing for it")
+    func anOversizeEntryDoesNotFlushTheCache() {
+        var cache = BoundedCache<String, Int>(bound: 10, cost: { $0 })
+        cache.insert(4, for: "a")
+        cache.insert(4, for: "b")
+        cache.insert(11, for: "big")
+        #expect(cache["big"] == nil)
+        #expect(cache["a"] == 4 && cache["b"] == 4 && cache.bytes == 8)
+        cache.insert(11, for: "a")
+        #expect(cache["a"] == nil, "a key never answers with the value an oversize insert replaced")
+        #expect(cache["b"] == 4 && cache.bytes == 4)
+    }
+
+    @Test("Five composites of one PDF page at once read the PDF once")
+    func concurrentCompositesReadAnAssetOnce() async throws {
+        let pdf = AssetRef(id: AssetID(), format: .pdf)
+        let assets = CountingAssets([pdf: try Fixture.pdfData(pages: 1)], held: true)
+        let renderer = Renderer(assets: assets)
+        let geometry = PageGeometry(width: 400, height: 600)
+        let composites = (0..<5).map { _ in
+            Task { await renderer.composite(geometry: geometry, paper: .pdf(pdf, sourcePageIndex: 0), layers: [], scale: 1) }
+        }
+        while await assets.reads == 0 { try await Task.sleep(for: .milliseconds(5)) }
+        // The first read is held open; the other four have this long to open
+        // their own, which is what they did before the in-flight record.
+        try await Task.sleep(for: .milliseconds(200))
+        await assets.release()
+        for composite in composites { #expect(await composite.value != nil) }
+        #expect(await assets.reads == 1)
+    }
+
+    @Test("The store takes a 200 MiB asset and refuses 257 MiB, naming the limit in megabytes")
+    func assetBoundIs256MB() async throws {
+        let mebibyte = 1024 * 1024
+        #expect(AssetBounds.maxBytes == 256 * mebibyte)
+        let scratch = try Scratch("asset-bound")
+        let store = try await PackageStore.create(root: scratch.packageURL, index: Fixture.index(pages: 1))
+        let accepted = AssetRef(id: AssetID(), format: .pdf)
+        try await store.writeAsset(Data(count: 200 * mebibyte), accepted)
+        #expect(try await store.readAsset(accepted).count == 200 * mebibyte)
+        let refused = AssetRef(id: AssetID(), format: .pdf)
+        do {
+            try await store.writeAsset(Data(count: 257 * mebibyte), refused)
+            Issue.record("a 257 MiB asset was accepted")
+        } catch {
+            #expect("\(error)".contains("256 MB"), "\(error)")
+        }
+        #expect(!PosixFileSystem().exists(store.layout.assetURL(refused)))
     }
 }
 
@@ -103,11 +181,11 @@ struct RendererExportTests {
         try #require(CGDataProvider(data: data as CFData).flatMap(CGPDFDocument.init))
     }
 
-    /// The `Subtype` of every XObject in a page's resources: `Form` is a
-    /// vector drawing, `Image` is pixels. Empty means the page is paths and
-    /// text alone.
-    private func xobjectSubtypes(of page: CGPDFPage) -> [String] {
-        final class Found { var names: [String] = [] }
+    /// Every XObject in a page's resources, by `Subtype` and pixel size:
+    /// `Form` is a vector drawing, `Image` is pixels. Empty means the page
+    /// is paths and text alone.
+    private func xobjects(of page: CGPDFPage) -> [(subtype: String, width: Int, height: Int)] {
+        final class Found { var all: [(subtype: String, width: Int, height: Int)] = [] }
         guard let dictionary = page.dictionary else { return [] }
         var resources: CGPDFDictionaryRef?
         guard CGPDFDictionaryGetDictionary(dictionary, "Resources", &resources), let resources else { return [] }
@@ -121,12 +199,17 @@ struct RendererExportTests {
             guard CGPDFObjectGetValue(object, .stream, &stream), let stream,
                   let streamDictionary = CGPDFStreamGetDictionary(stream) else { return }
             var subtype: UnsafePointer<Int8>?
+            var width: CGPDFInteger = 0, height: CGPDFInteger = 0
+            _ = CGPDFDictionaryGetInteger(streamDictionary, "Width", &width)
+            _ = CGPDFDictionaryGetInteger(streamDictionary, "Height", &height)
             if CGPDFDictionaryGetName(streamDictionary, "Subtype", &subtype), let subtype {
-                found.names.append(String(cString: subtype))
+                found.all.append((String(cString: subtype), width, height))
             }
         }, Unmanaged.passUnretained(found).toOpaque())
-        return found.names
+        return found.all
     }
+
+    private func xobjectSubtypes(of page: CGPDFPage) -> [String] { xobjects(of: page).map(\.subtype) }
 
     /// An exported page drawn back into a bitmap, white ground, `scale`
     /// pixels per point. A CGImage's first row is the top of the page.
@@ -217,6 +300,28 @@ struct RendererExportTests {
         let image = try rasterized(page, scale: 1)
         #expect(luminance(of: image, x: image.width / 2, y: image.height / 2) < 200, "the imported page's marks are on the exported page")
         withExtendedLifetime(scratch) {}
+    }
+
+    /// The export is where the decode shows: a PDF context embeds an image
+    /// at the pixels it was drawn from.
+    @Test("A 6000 by 4000 photo is read once over two renders and decoded at no more than the long-edge cap")
+    func aLargePhotoDecodesAtRenderSizeOnce() async throws {
+        let photo = AssetRef(id: AssetID(), format: .heic)
+        let heic = try #require(ImageImport.normalize(try Fixture.imageData(width: 6000, height: 4000))).heic
+        let assets = CountingAssets([photo: heic])
+        let renderer = Renderer(assets: assets)
+        let layer = Layer(
+            id: LayerID(),
+            transform: .placing(sourceWidth: 6000, sourceHeight: 4000, at: (0, 0), scale: 0.1),
+            payload: .image(ImageLayer(asset: photo, naturalSize: PixelSize(width: 6000, height: 4000))))
+        #expect(await renderer.composite(geometry: letter, paper: .drawn(.blank), layers: [layer], scale: 2) != nil)
+        let data = try #require(await renderer.pdf(pageCount: 1) { _ in
+            (self.letter, .drawn(.blank), [layer], PKDrawing())
+        })
+        #expect(await assets.reads == 1, "a full decode is 96 MB, past the cache's bound, and is read again")
+        let images = xobjects(of: try #require(try document(data).page(at: 1))).filter { $0.subtype == "Image" }
+        #expect(images.count == 1)
+        #expect(images.allSatisfy { max($0.width, $0.height) <= Int(Renderer.maximumLongEdgePixels) }, "\(images)")
     }
 
     @Test("A page the source cannot give refuses the whole export")

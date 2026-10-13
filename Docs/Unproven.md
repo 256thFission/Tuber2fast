@@ -613,3 +613,12 @@ Not gaps — properties of the tooling that read as project defects when hit.
   unproven. Owed: at fit zoom, drag the Pencil sideways from a page's edge
   with the pen, then with the text tool; the page never turns, and a finger
   swipe still does.
+- **A big PDF within an iPad's memory (U17, I3 line 9).** The simulator
+  proves an asset's bytes are mapped and not heap, that five composites of
+  one PDF share one read, and that a photo decodes at no more than 2800
+  pixels on its long edge. It cannot show the jetsam budget, or that the
+  import's mapped read outlives a real Files security scope (its test file
+  has no scope). A PDF over 48 MB is not cached and is re-read, mapped, on
+  each render (R2-10). Owed: import a lecture PDF, over 64 MB if one is at
+  hand; read the memory gauge at page 5 and again after flipping to page
+  35: less than 100 MB more, and no jetsam.
