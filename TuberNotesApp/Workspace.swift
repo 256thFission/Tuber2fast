@@ -106,6 +106,10 @@ final class Workspace {
     private(set) var identitiesReady = false
 
     private var leaseFlush: Task<Void, Never>?
+    /// A phase change while a flush runs: the flush runs again when it ends.
+    /// `.inactive` starts the flush, and a cancelled touch's late commit can
+    /// land after that pass captured its pages.
+    private var flushAgain = false
     private var memoryWarnings: (any NSObjectProtocol)?
 
     init() {
@@ -293,9 +297,16 @@ final class Workspace {
         // Leaving the foreground cancels every touch. A tool use PencilKit did
         // not end, ends, so the tab is not wedged when it comes back.
         for tab in tabs { tab.editor.endToolUses() }
-        guard leaseFlush == nil else { return }
+        guard leaseFlush == nil else {
+            flushAgain = true
+            return
+        }
         leaseFlush = Task {
-            await self.flushUnderLease()
+            repeat {
+                self.flushAgain = false
+                await self.flushUnderLease()
+                if self.flushAgain { TNLog.event(.lifecycle, "lease flush ran again") }
+            } while self.flushAgain
             self.leaseFlush = nil
         }
     }
