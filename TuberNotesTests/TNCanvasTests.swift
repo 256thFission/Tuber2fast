@@ -96,6 +96,19 @@ struct TNCanvasTests {
         _ = runtime.retireAll()
     }
 
+    @Test("The page turn is a finger's: the Pencil never reaches the paging pan")
+    func pencilCannotTurnThePage() {
+        let reporter = RecordingReporter()
+        let runtime = hosted(reporter)
+        let allowed = runtime.scrollView.panGestureRecognizer.allowedTouchTypes.map { UITouch.TouchType(rawValue: $0.intValue)! }
+
+        #expect(!allowed.contains(.pencil))
+        #expect(allowed.contains(.direct))
+        #expect(allowed.contains(.indirectPointer))
+
+        _ = runtime.retireAll()
+    }
+
     // MARK: - The diff
 
     @Test("A page that leaves the list hands its ink over first")

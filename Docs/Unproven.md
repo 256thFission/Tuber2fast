@@ -607,3 +607,9 @@ Not gaps — properties of the tooling that read as project defects when hit.
   chain, or PencilKit keeps a manager of its own, is unproven. Owed: draw
   two strokes, three-finger swipe left, then right; only the second stroke
   goes and Redo lights on the bar, and the swipe right brings it back.
+- **The Pencil does not turn the page (U12, I3 line 5).** The paging pan
+  takes only a direct touch and the indirect pointer, and a hosted test reads
+  that back. The simulator has no Pencil, so a real Pencil drag's route is
+  unproven. Owed: at fit zoom, drag the Pencil sideways from a page's edge
+  with the pen, then with the text tool; the page never turns, and a finger
+  swipe still does.

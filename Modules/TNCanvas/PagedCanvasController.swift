@@ -119,6 +119,15 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
         scrollView.alwaysBounceVertical = false
         scrollView.alwaysBounceHorizontal = true
         scrollView.contentInsetAdjustmentBehavior = .never
+        // Finger navigates, Pencil writes. A scroll view's pan accepts the
+        // Pencil by default, so a Pencil drag PencilKit did not claim (at a
+        // page's horizontal edge, or under the text tool, which turns the
+        // drawing gesture off) turned the page. Only a finger or a pointer
+        // turns it.
+        scrollView.panGestureRecognizer.allowedTouchTypes = [
+            NSNumber(value: UITouch.TouchType.direct.rawValue),
+            NSNumber(value: UITouch.TouchType.indirectPointer.rawValue),
+        ]
         paintGround()
         scrollView.delegate = self
 
