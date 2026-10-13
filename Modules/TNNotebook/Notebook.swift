@@ -109,14 +109,6 @@ package final class Notebook {
         return notebook
     }
 
-    /// A new notebook: one page, US Letter and blank paper unless told
-    /// otherwise, committed.
-    package static func create(at root: URL, geometry: PageGeometry = .letter, paper: DrawnPaper = .blank, fileSystem: any PackageFileSystem = PosixFileSystem(), schedule: SaveSchedule = SaveSchedule()) async throws(FormatFault) -> Notebook {
-        let index = NotebookIndex.new(notebookID: NotebookID(), firstPage: PageID(), createdAt: Date(), geometry: geometry, paper: paper)
-        let store = try await PackageStore.create(root: root, index: index, fileSystem: fileSystem)
-        return try await open(store: store, schedule: schedule)
-    }
-
     // MARK: Reading state
 
     package func state(of page: PageID) -> PageState? { states[page] }

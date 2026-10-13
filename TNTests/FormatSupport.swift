@@ -5,6 +5,7 @@ import PDFKit
 import Testing
 @testable import TNFormat
 @testable import TNModel
+@testable import TNNotebook
 
 /// A scratch directory per test, deleted when the value goes away.
 final class Scratch: Sendable {
@@ -216,5 +217,14 @@ func keySets(of node: Any, at path: String) -> [(path: String, keys: Set<String>
         return array.flatMap { keySets(of: $0, at: "\(path)[]") }
     default:
         return []
+    }
+}
+
+extension Notebook {
+    /// A new one-page notebook, committed and open. The app creates through
+    /// `LibraryStore.createNotebook`; this is the tests' shorter way.
+    static func create(at root: URL, geometry: PageGeometry = .letter, schedule: SaveSchedule) async throws(FormatFault) -> Notebook {
+        let index = NotebookIndex.new(notebookID: NotebookID(), firstPage: PageID(), createdAt: Date(), geometry: geometry, paper: .blank)
+        return try await open(store: try await PackageStore.create(root: root, index: index), schedule: schedule)
     }
 }

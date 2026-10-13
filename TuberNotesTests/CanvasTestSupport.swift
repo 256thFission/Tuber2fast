@@ -2,6 +2,7 @@ import Foundation
 import PencilKit
 import Testing
 @testable import TNCanvas
+@testable import TNFormat
 @testable import TNModel
 @testable import TNNotebook
 import UIKit
@@ -30,6 +31,14 @@ func waitUntil(_ timeout: Duration = .seconds(5), _ condition: @MainActor () -> 
     while !condition() {
         try #require(clock.now < deadline, "timed out")
         try await Task.sleep(for: .milliseconds(5))
+    }
+}
+
+extension Notebook {
+    /// TNTests' `create`, copied for the same reason as `fast`.
+    static func create(at root: URL, schedule: SaveSchedule) async throws(FormatFault) -> Notebook {
+        let index = NotebookIndex.new(notebookID: NotebookID(), firstPage: PageID(), createdAt: Date(), geometry: .letter, paper: .blank)
+        return try await open(store: try await PackageStore.create(root: root, index: index), schedule: schedule)
     }
 }
 
