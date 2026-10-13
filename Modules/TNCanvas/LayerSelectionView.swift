@@ -75,8 +75,9 @@ final class LayerSelectionView: UIView {
     /// The flag the notebook holds, restated by every `setLayers`.
     private(set) var isLocked: Bool
 
-    /// The layer is placed by a rect, which moves and never resizes or
-    /// rotates, so the frame has no handle and no knob.
+    /// The layer is placed by a rect, which this frame only moves, so it has
+    /// no handle and no knob. A text box's size changes only in its text
+    /// session.
     let movesOnly: Bool
 
     /// The theme the frame draws in, restated by every theme change.

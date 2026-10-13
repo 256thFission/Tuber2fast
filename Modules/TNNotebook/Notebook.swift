@@ -1202,8 +1202,8 @@ package final class Notebook {
     /// `transformLayer` refuses every one of them. This is that method's body
     /// with a new origin in place of a new transform, recorded through the
     /// revision like any other layer edit, and rerendered so the hit rects
-    /// follow the picture. There is no size to pass: a text box resized
-    /// would reflow its words.
+    /// follow the picture. There is no size to pass: the frame only moves
+    /// one, and a text box's size changes only in its text session.
     ///
     /// It answers a `TransformOutcome` so the frame's report can be answered
     /// the way `layerTransformed` is.

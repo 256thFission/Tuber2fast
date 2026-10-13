@@ -293,8 +293,9 @@ package struct Layer: Sendable, Equatable, Identifiable {
     }
 
     /// The rect a link or a text box is placed by, and nil for an image or a
-    /// PDF clipping, which the transform places. A layer with a rect moves
-    /// and never resizes or rotates.
+    /// PDF clipping, which the transform places. The selection frame only
+    /// moves a layer with a rect; a text box's size changes only in its text
+    /// session.
     package var rect: PageRect? {
         switch payload {
         case .link(let link): link.rect
