@@ -17,9 +17,16 @@ happen, the code calls `TNPrecondition` and the app traps. Nothing is
 clamped, adapted, corrected, or replaced with a default unless a rule below
 says so by name.
 
-**Burn things down with permission.** There are no users and no data to
-keep. No legacy support, no backwards shim, no migrator that reads a shape
-this build never wrote.
+**Burn things down with permission, until the first install outside
+Phillip's iPad.** Until then there are no users and no data to keep: a
+file's shape may change under the version number it already has, and a
+library written in the old shape is deleted, not migrated. The permission
+ends at the first install on any other device, and it does not come back.
+From then on every format change bumps the version and lands with the
+step that carries a package from the old version to the new one, so an
+older notebook opens by migration and only a newer one is refused
+(decided R2, F1). Neither regime has a shim: an old shape is deleted or
+migrated, never read in place.
 
 Cite rules by name, not number. A change to a rule edits this file, and the
 commit subject starts with `CONTRACT:`.
@@ -165,11 +172,22 @@ CRC32 of the payload, zeros to 64) followed by the archive. Any header
 mismatch or bad checksum refuses the page. There is no separate checksum
 table.
 
-**Format version is 4.** Adding a key means a version bump and a change
-to the key-set pins in `TNTests/FormatTests.swift`, which fail until every
-file that carries the key round-trips. There is no migrator and none is
-written: a package this build did not write is refused by the key it is
-missing, which is *Burn things down with permission*.
+**Format version is 1**, in the package and in every versioned file the
+library keeps beside it. The index carries it as `formatVersion`, and it
+is the first thing read from a package, before any key is checked: a
+version this build does not write refuses the notebook by its number,
+never by a key, because the number is the one fact that says what the
+rest of the file means. A newer version is refused in words that say the
+notebook needs a newer TuberNotes. An older version is refused until a
+migration step brings it to the current one. Three keys of the index
+never change name or type, at any version: `formatVersion`, `notebookID`
+and `createdAt`. The library reads only those three to list a package,
+so a notebook keeps its identity in the listing, in stars and in the
+trash at a version this build cannot open, and a migration can tell what
+it holds before it reads anything else. Adding or removing a key changes
+the key-set pins in `TNTests/FormatTests.swift`, which fail until every
+file that carries the key round-trips, and once *Burn things down with
+permission* has ended it bumps the version too (decided R2, F1, F2, F3).
 
 **Layer kinds are `image`, `pdf`, `link`, `text`, and nothing else.** The
 payload object is keyed by the kind name, so an unknown kind is detected
