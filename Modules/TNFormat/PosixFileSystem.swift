@@ -2,8 +2,10 @@ import Foundation
 import Synchronization
 import TNCore
 
-/// The file primitives the package store is built on, and the only place in
-/// the v2 modules that names a file API.
+/// The file primitives the package store is built on, and the ones the
+/// library commits its sidecars through. Not every file API goes through it:
+/// `LibraryStore` still reads, lists, moves, copies and deletes with
+/// `FileManager`.
 ///
 /// A seam rather than a concrete type so a test can fail call N, truncate a
 /// staged write, or discard a published file's bytes after its rename: the
@@ -29,6 +31,27 @@ package protocol PackageFileSystem: Sendable {
     func remove(_ url: URL) throws
     /// Bytes available to this app on the volume holding `url`.
     func availableBytes(at url: URL) throws -> Int64
+}
+
+extension PackageFileSystem {
+    package func tempURL(beside final: URL) -> URL {
+        final.deletingLastPathComponent()
+            .appendingPathComponent("\(PackageStore.tempPrefix)\(UUID().uuidString)-\(final.lastPathComponent)")
+    }
+
+    /// Stage, publish, sync: the commit sequence for a single file.
+    /// `syncing: nil` is the disposable case (`view.json`).
+    package func writeAtomically(_ data: Data, to final: URL, syncing directory: URL?) throws {
+        let temp = tempURL(beside: final)
+        do {
+            try stage(data, at: temp)
+            try publish(temp, to: final)
+            if let directory { try syncDirectory(directory) }
+        } catch {
+            try? remove(temp)
+            throw error
+        }
+    }
 }
 
 package struct FileSystemError: Error, Sendable, Equatable, CustomStringConvertible {

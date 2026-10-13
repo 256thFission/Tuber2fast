@@ -424,4 +424,118 @@ struct LibraryTests {
         let ids = try await library.store.list(folder: "").compactMap(\.notebookID)
         #expect(Set(ids).count == 2)
     }
+
+    /// The three faults a sidecar commit meets, and whether the old file is
+    /// what remains. A failed sync comes after the rename, so the new file is
+    /// already in place.
+    static let sidecarFaults: [(fault: FaultingFileSystem.Fault, keepsOld: Bool)] = [
+        (.failStage(nth: 1), true), (.failPublish(nth: 1), true), (.failSync(nth: 1), false),
+    ]
+
+    /// A store over the same library whose file system fails on cue.
+    func faulting(_ scratch: Scratch, _ fault: FaultingFileSystem.Fault) throws -> LibraryStore {
+        try LibraryStore(base: scratch.root, fileSystem: FaultingFileSystem(faults: [fault]))
+    }
+
+    @Test("A star written into each fault leaves the old stars or the new ones")
+    func favoriteWriteSurvivesEachFault() async throws {
+        for (fault, keepsOld) in Self.sidecarFaults {
+            let (scratch, library) = try makeLibrary("lib-favorite-fault")
+            defer { withExtendedLifetime(scratch) {} }
+            let first = try #require(try await library.store.createNotebook(named: "First", in: "").identity)
+            let second = try #require(try await library.store.createNotebook(named: "Second", in: "").identity)
+            try await library.store.setFavorite(first, true)
+
+            let store = try faulting(scratch, fault)
+            await #expect(throws: LibraryError.self, "\(fault)") { try await store.setFavorite(second, true) }
+            #expect(try await library.store.favorites() == Set(keepsOld ? [first] : [first, second]), "\(fault)")
+        }
+    }
+
+    @Test("A decoration written into each fault leaves the old sidecar or the new one, with its identity")
+    func decorationWriteSurvivesEachFault() async throws {
+        for (fault, keepsOld) in Self.sidecarFaults {
+            let (scratch, library) = try makeLibrary("lib-decoration-fault")
+            defer { withExtendedLifetime(scratch) {} }
+            let made = try await library.store.createFolder(named: "Term", in: "")
+            let chosen = FolderDecoration(color: .blue, symbol: .star)
+
+            let store = try faulting(scratch, fault)
+            await #expect(throws: LibraryError.self, "\(fault)") { try await store.setDecoration(chosen, at: "Term") }
+            let sidecar = try #require(await library.store.folderFile(of: "Term"), "\(fault)")
+            #expect(sidecar.folderID == made.folderID, "\(fault)")
+            #expect(sidecar.decoration == (keepsOld ? .plain : chosen), "\(fault)")
+        }
+    }
+
+    @Test("A trash interrupted before the move leaves the item where it was, and a retry trashes it")
+    func trashInterruptedBeforeTheMoveKeepsTheItem() async throws {
+        for (fault, _) in Self.sidecarFaults {
+            let (scratch, library) = try makeLibrary("lib-trash-fault")
+            defer { withExtendedLifetime(scratch) {} }
+            let item = try await library.store.createNotebook(named: "Essay", in: "")
+
+            let store = try faulting(scratch, fault)
+            await #expect(throws: LibraryError.self, "\(fault)") { try await store.trash(at: item.relativePath) }
+            let listed = try await library.store.list(folder: "")
+            #expect(listed.map(\.relativePath) == [item.relativePath], "\(fault)")
+            #expect(listed.map(\.notebookID) == [item.notebookID], "\(fault)")
+            #expect(try await library.store.listTrash().isEmpty, "\(fault)")
+
+            let entry = try await library.trash(at: item.relativePath)
+            #expect(try await library.store.listTrash().map(\.id) == [entry.id], "\(fault)")
+        }
+    }
+
+    @Test("A trash container that holds an item refuses a second item under its identity, and both stay")
+    func occupiedTrashContainerRefuses() async throws {
+        let (scratch, library) = try makeLibrary("lib-trash-occupied")
+        defer { withExtendedLifetime(scratch) {} }
+        let one = try await library.store.createNotebook(named: "One", in: "")
+        try FileManager.default.copyItem(at: library.store.url(of: one.relativePath), to: library.store.url(of: "Two.tubernotes"))
+        let trashed = try await library.trash(at: one.relativePath)
+
+        await #expect(throws: LibraryError.alreadyExists(trashed.id)) { try await library.trash(at: "Two.tubernotes") }
+        let listed = try await library.store.list(folder: "")
+        #expect(listed.map(\.relativePath) == ["Two.tubernotes"])
+        #expect(listed.map(\.notebookID) == [one.notebookID])
+        let inTrash = try await library.store.listTrash()
+        #expect(inTrash.map(\.id) == [trashed.id])
+        #expect(inTrash.map(\.notebookID) == [one.notebookID])
+    }
+
+    @Test("A container left holding only its sidecar does not block the next trash of its item")
+    func sidecarOnlyLeftoverDoesNotBlockTrash() async throws {
+        let (scratch, library) = try makeLibrary("lib-trash-leftover")
+        defer { withExtendedLifetime(scratch) {} }
+        let item = try await library.store.createNotebook(named: "Essay", in: "")
+        let first = try await library.trash(at: item.relativePath)
+        // A recovery interrupted after its move and before it removed the
+        // container: the container keeps `origin.json` and nothing else.
+        let container = library.store.trashRoot.appendingPathComponent(first.id)
+        try FileManager.default.moveItem(
+            at: container.appendingPathComponent(first.origin.originName),
+            to: library.store.url(of: item.relativePath)
+        )
+        #expect(try await library.store.listTrash().isEmpty)
+
+        let second = try await library.trash(at: item.relativePath)
+        #expect(second.id == first.id)
+        #expect(try await library.store.listTrash().map(\.id) == [first.id])
+        #expect(try await library.store.list(folder: "").isEmpty)
+    }
+
+    @Test("A notebook whose index cannot be read is trashed under a fresh name, with no identity invented")
+    func unreadableIndexTrashesWithNoInventedID() async throws {
+        let (scratch, library) = try makeLibrary("lib-trash-unreadable")
+        defer { withExtendedLifetime(scratch) {} }
+        let item = try await library.store.createNotebook(named: "Torn", in: "")
+        let id = try #require(item.notebookID)
+        try Data("{".utf8).write(to: PackageLayout(root: library.store.url(of: item.relativePath)).indexURL)
+
+        let entry = try await library.trash(at: item.relativePath)
+        #expect(entry.notebookID == nil)
+        #expect(entry.id != id.description)
+        #expect(try await library.store.listTrash().map(\.notebookID) == [nil])
+    }
 }

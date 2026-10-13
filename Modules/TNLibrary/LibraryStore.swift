@@ -198,13 +198,17 @@ package actor LibraryStore {
     package nonisolated var trashRoot: URL { base.appendingPathComponent("Trash", isDirectory: true) }
     package nonisolated var stagingRoot: URL { base.appendingPathComponent("Staging", isDirectory: true) }
 
+    /// What every sidecar is committed through, and what every
+    /// `PackageStore` this library builds is handed, so a test can fault both.
+    package nonisolated let fileSystem: any PackageFileSystem
     private let fm = FileManager.default
     private static let folderSidecar = ".folder.json"
     private static let originSidecar = "origin.json"
     private static let favoritesKeys: Set<String> = ["formatVersion", "notebooks", "folders"]
 
-    package init(base: URL) throws(LibraryError) {
+    package init(base: URL, fileSystem: any PackageFileSystem = PosixFileSystem()) throws(LibraryError) {
         self.base = base
+        self.fileSystem = fileSystem
         for directory in [notebooksRoot, trashRoot, stagingRoot] {
             do {
                 // Complete-until-first-unlock: a background save after the
@@ -348,7 +352,7 @@ package actor LibraryStore {
         do {
             try fm.createDirectory(at: target, withIntermediateDirectories: false)
             let sidecar = FolderFile(folderID: FolderID(), decoration: .plain)
-            try Codecs.encode(sidecar).write(to: target.appendingPathComponent(Self.folderSidecar))
+            try fileSystem.writeAtomically(Codecs.encode(sidecar), to: target.appendingPathComponent(Self.folderSidecar), syncing: target)
         } catch let fault as FormatFault {
             throw .format(fault)
         } catch {
@@ -391,7 +395,7 @@ package actor LibraryStore {
             geometry: geometry, paper: paper
         )
         do {
-            _ = try await PackageStore.create(root: target, index: index)
+            _ = try await PackageStore.create(root: target, index: index, fileSystem: fileSystem)
         } catch {
             throw .format(error)
         }
@@ -436,7 +440,7 @@ package actor LibraryStore {
     package func coverSource(of relativePath: String) async throws(LibraryError) -> CoverSource {
         let (url, kind) = try existing(relativePath)
         guard kind == .notebook else { throw .notANotebook(relativePath) }
-        let packageStore = PackageStore(root: url)
+        let packageStore = PackageStore(root: url, fileSystem: fileSystem)
         let loaded: LoadedNotebook
         do { loaded = try await packageStore.load() } catch { throw .format(error) }
         guard let record = loaded.index.pages.first else { throw .format(.indexInvalid(.noPages)) }
@@ -492,7 +496,7 @@ package actor LibraryStore {
             folders: folders.sorted { $0.description < $1.description }
         )
         do {
-            try Codecs.encode(file).write(to: favoritesURL, options: .atomic)
+            try fileSystem.writeAtomically(Codecs.encode(file), to: favoritesURL, syncing: base)
         } catch let fault as FormatFault {
             throw .format(fault)
         } catch {
@@ -532,7 +536,7 @@ package actor LibraryStore {
         }
         let file = FolderFile(folderID: current.folderID, decoration: decoration)
         do {
-            try Codecs.encode(file).write(to: url.appendingPathComponent(Self.folderSidecar), options: .atomic)
+            try fileSystem.writeAtomically(Codecs.encode(file), to: url.appendingPathComponent(Self.folderSidecar), syncing: url)
         } catch let fault as FormatFault {
             throw .format(fault)
         } catch {
@@ -545,12 +549,19 @@ package actor LibraryStore {
     package func trash(at relativePath: String) throws(LibraryError) -> TrashEntry {
         let (source, kind) = try existing(relativePath)
         let parentPath = relativePath.contains("/") ? String(relativePath[..<relativePath.lastIndex(of: "/")!]) : ""
-        let containerName: String
-        switch kind {
-        case .notebook: containerName = notebookID(ofPackageAt: source)?.description ?? UUID().uuidString
-        case .folder: containerName = (folderID(of: relativePath) ?? FolderID()).description
+        let notebookID = kind == .notebook ? notebookID(ofPackageAt: source) : nil
+        let containerName = switch kind {
+        case .notebook: notebookID?.description ?? UUID().uuidString
+        case .folder: (folderID(of: relativePath) ?? FolderID()).description
         }
         let container = trashRoot.appendingPathComponent(containerName, isDirectory: true)
+        // A container that holds an item is a second item under this identity.
+        // One that holds only its sidecar is an interrupted trash or recovery,
+        // and is cleared below.
+        let held = (try? fm.contentsOfDirectory(atPath: container.path)) ?? []
+        if held.contains(where: { self.kind(at: container.appendingPathComponent($0)) != nil }) {
+            throw .alreadyExists(containerName)
+        }
         let origin = TrashOrigin(
             formatVersion: TrashOrigin.currentFormatVersion,
             originFolderID: parentPath.isEmpty ? nil : folderID(of: parentPath),
@@ -561,14 +572,14 @@ package actor LibraryStore {
         do {
             if fm.fileExists(atPath: container.path) { try fm.removeItem(at: container) }
             try fm.createDirectory(at: container, withIntermediateDirectories: false)
-            try Codecs.encode(origin).write(to: container.appendingPathComponent(Self.originSidecar))
+            try fileSystem.writeAtomically(Codecs.encode(origin), to: container.appendingPathComponent(Self.originSidecar), syncing: container)
             try fm.moveItem(at: source, to: container.appendingPathComponent(source.lastPathComponent, isDirectory: true))
         } catch let fault as FormatFault {
             throw .format(fault)
         } catch {
             throw .io("trash \(relativePath): \(error)")
         }
-        return TrashEntry(id: containerName, name: Self.displayName(of: origin.originName), kind: kind, origin: origin, notebookID: kind == .notebook ? NotebookID(raw: UUID(uuidString: containerName)!) : nil)
+        return TrashEntry(id: containerName, name: Self.displayName(of: origin.originName), kind: kind, origin: origin, notebookID: notebookID)
     }
 
     package func listTrash() throws(LibraryError) -> [TrashEntry] {
@@ -644,7 +655,7 @@ package actor LibraryStore {
             throw .io("stage duplicate of \(relativePath): \(error)")
         }
         do {
-            try await PackageStore(root: staged).rewriteNotebookID(NotebookID())
+            try await PackageStore(root: staged, fileSystem: fileSystem).rewriteNotebookID(NotebookID())
         } catch {
             try? fm.removeItem(at: staging)
             throw .format(error)
@@ -690,7 +701,7 @@ package actor LibraryStore {
         try walk("")
         for path in collisions {
             let newID = NotebookID()
-            do { try await PackageStore(root: url(of: path)).rewriteNotebookID(newID) } catch { throw .format(error) }
+            do { try await PackageStore(root: url(of: path), fileSystem: fileSystem).rewriteNotebookID(newID) } catch { throw .format(error) }
             live[newID] = path
             TNLog.event(.library, "re-minted colliding notebook identity at \(path)")
         }

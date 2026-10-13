@@ -78,7 +78,7 @@ package final class Library {
         }
         reservations.insert(relativePath)
         defer { reservations.remove(relativePath) }
-        let packageStore = PackageStore(root: store.url(of: relativePath))
+        let packageStore = PackageStore(root: store.url(of: relativePath), fileSystem: store.fileSystem)
         do {
             let notebook = try await Notebook.open(store: packageStore, schedule: schedule)
             openNotebooks[relativePath] = notebook
@@ -162,7 +162,7 @@ package final class Library {
         if Task.isCancelled { return nil }
         guard case .ready(let content) = await Notebook.decode(source.bytes) else { return nil }
         if Task.isCancelled { return nil }
-        let renderer = Renderer(assets: PackageStore(root: store.url(of: item.relativePath)))
+        let renderer = Renderer(assets: PackageStore(root: store.url(of: item.relativePath), fileSystem: store.fileSystem))
         let image = await renderer.thumbnail(
             ThumbnailKey(page: source.pageID, version: source.version),
             geometry: source.geometry, paper: source.paper,

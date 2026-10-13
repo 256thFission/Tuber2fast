@@ -311,18 +311,18 @@ package actor PackageStore {
             do {
                 if case .archive(let archive) = plan.write.ink {
                     let final = layout.inkURL(plan.write.pageID)
-                    let temp = tempURL(beside: final)
+                    let temp = fs.tempURL(beside: final)
                     try fs.stage(InkContainer.encode(notebookID: intended.notebookID, pageID: plan.write.pageID, archive: archive), at: temp)
                     entry.leaves.append((temp, final))
                 }
                 for (layerID, data) in plan.layerData {
                     let final = layout.layerURL(layerID)
-                    let temp = tempURL(beside: final)
+                    let temp = fs.tempURL(beside: final)
                     try fs.stage(data, at: temp)
                     entry.leaves.append((temp, final))
                 }
                 let final = layout.pageURL(plan.write.pageID)
-                let temp = tempURL(beside: final)
+                let temp = fs.tempURL(beside: final)
                 try fs.stage(plan.pageFileData, at: temp)
                 entry.pageFile = (temp, final)
                 staged.append(entry)
@@ -358,7 +358,7 @@ package actor PackageStore {
                 TNLog.event(.format, "index withheld: no intended page is present")
             } else {
                 let data = present.count == intended.pages.count ? indexData : try Codecs.encode(intended.withPages(present))
-                try publishAtomically(data, to: layout.indexURL, syncing: layout.root)
+                do { try fs.writeAtomically(data, to: layout.indexURL, syncing: layout.root) } catch { throw Self.ioFault(error) }
                 knownNotebookID = intended.notebookID
                 indexWritten = true
             }
@@ -399,25 +399,6 @@ package actor PackageStore {
         return .success(PagePlan(write: write, pageFileData: pageFileData, layerData: layerData, skip: skip))
     }
 
-    private func tempURL(beside final: URL) -> URL {
-        final.deletingLastPathComponent()
-            .appendingPathComponent("\(Self.tempPrefix)\(UUID().uuidString)-\(final.lastPathComponent)")
-    }
-
-    /// Stage, publish, sync: the commit sequence for a single file.
-    /// `syncing: nil` is the disposable case (`view.json`).
-    private func publishAtomically(_ data: Data, to final: URL, syncing directory: URL?) throws(FormatFault) {
-        let temp = tempURL(beside: final)
-        do {
-            try fs.stage(data, at: temp)
-            try fs.publish(temp, to: final)
-            if let directory { try fs.syncDirectory(directory) }
-        } catch {
-            try? fs.remove(temp)
-            throw Self.ioFault(error)
-        }
-    }
-
     // MARK: Assets
 
     /// Assets are immutable and published at import, before any layer names
@@ -426,7 +407,7 @@ package actor PackageStore {
         guard data.count <= AssetBounds.maxBytes else { throw .invalidWrite("asset \(ref.fileName) exceeds \(AssetBounds.maxBytes) bytes") }
         let final = layout.assetURL(ref)
         if fs.exists(final) { return }
-        try publishAtomically(data, to: final, syncing: layout.assetsDirectory)
+        do { try fs.writeAtomically(data, to: final, syncing: layout.assetsDirectory) } catch { throw Self.ioFault(error) }
     }
 
     package func readAsset(_ ref: AssetRef) throws(FormatFault) -> Data {
@@ -443,7 +424,7 @@ package actor PackageStore {
     }
 
     package func writeView(_ view: ViewState) throws(FormatFault) {
-        try publishAtomically(try Codecs.encode(view), to: layout.viewURL, syncing: nil)
+        do { try fs.writeAtomically(Codecs.encode(view), to: layout.viewURL, syncing: nil) } catch { throw Self.ioFault(error) }
     }
 
     // MARK: Identity
@@ -461,7 +442,7 @@ package actor PackageStore {
             do { data = try fs.read(url) } catch { throw Self.ioFault(error) }
             let rewritten: Data
             do { rewritten = try InkContainer.rewritingNotebookID(data, to: newID) } catch { continue }
-            try publishAtomically(rewritten, to: url, syncing: nil)
+            do { try fs.writeAtomically(rewritten, to: url, syncing: nil) } catch { throw Self.ioFault(error) }
         }
         do { try fs.syncDirectory(layout.inkDirectory) } catch { throw Self.ioFault(error) }
         let report = try await save(SaveBatch(index: loaded.index.withNotebookID(newID), indexChanged: true, pages: []))
