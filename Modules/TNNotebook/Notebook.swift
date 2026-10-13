@@ -1401,12 +1401,16 @@ package final class Notebook {
             else { continue }
             loads[page]?.cancel()
             loads[page] = nil
-            // A page outside the window gets no canvas, so no retire report
-            // would ever let `prune` free it.
-            content.retired = !wanted.contains(page)
+            // A page outside the window is held as an import's page is:
+            // retired, unpushed and without a composite, until the window
+            // pushes it on entry or `prune` frees it once saved.
+            let shown = wanted.contains(page)
+            content.retired = !shown
             states[page] = .ready(content)
-            emitContent(page)
-            rerenderComposite(of: page)
+            if shown {
+                emitContent(page)
+                rerenderComposite(of: page)
+            }
             settled = true
         }
         guard settled else { return }

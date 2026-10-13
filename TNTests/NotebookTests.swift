@@ -734,6 +734,7 @@ struct NotebookTests {
         notebook.windowChanged(to: [])
         notebook.retired(page, finalInk: nil)
         notebook.prune()
+        _ = notebook.drainChanges()
 
         await store.hold()
         #expect(notebook.undo() == page)
@@ -743,6 +744,11 @@ struct NotebookTests {
         let closing = Task { await notebook.close() }
         await store.release()
         #expect(await closing.value == .clean)
+        if leavesTheWindow {
+            #expect(!notebook.drainChanges().contains { if case .content(let s) = $0 { s.id == page } else { false } }, "a page settled outside the window is not pushed")
+            let held = try #require(notebook.state(of: page)?.content)
+            #expect(held.retired && held.composite == nil, "held as an import's page is, with no composite")
+        }
 
         let reopened = try await Notebook.open(store: PackageStore(root: scratch.packageURL), schedule: fast)
         reopened.windowChanged(to: [page])
