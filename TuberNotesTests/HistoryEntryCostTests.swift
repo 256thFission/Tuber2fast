@@ -27,7 +27,14 @@ import Testing
 /// allocator, a different page size, and PencilKit built for the Mac. The
 /// simulator number says which shapes share and which copy; the device
 /// number is the one the bound is set from.
-@Suite("History entry cost", .serialized)
+@Suite(
+    "History entry cost",
+    .serialized,
+    .enabled(
+        if: ProcessInfo.processInfo.environment["TN_BENCHMARKS"] != nil,
+        "A wall-clock benchmark, run only by the TuberNotesBenchmarks scheme"
+    )
+)
 struct HistoryEntryCostTests {
     static let strokeCount = 20_000
     static let entries = EditHistory.maximumEntries

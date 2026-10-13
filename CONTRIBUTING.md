@@ -75,6 +75,21 @@ onto the run page and emits them as annotations on the pull request diff, then
 uploads the logs — so a contributor reads the verdict in a browser rather than
 inside a downloaded zip.
 
+The default gate never runs the benchmarks in `HistoryEntryCostTests`; it
+reports them as skipped. They read the wall clock and process-wide memory, so
+a simulator starved by other work fails them, and a gate that fails under load
+teaches people to rerun it. They run only when `TN_BENCHMARKS` is set, which
+the `TuberNotesBenchmarks` scheme does. Run them alone, on an idle machine:
+
+```bash
+xcodebuild test -project TuberNotes.xcodeproj -scheme TuberNotesBenchmarks \
+  -only-testing:TuberNotesTests/HistoryEntryCostTests \
+  -destination "platform=iOS Simulator,name=$(< Tools/pinned-simulator)"
+```
+
+`-only-testing` keeps the other hosted suites out of the measurement. The
+scheme cannot select the suite itself; its comment in `project.yml` says why.
+
 **CI calls no script in `Tools/`, deliberately.** What "green" means has to stay
 readable without running anything we would factor into it, so the workflows
 spell out `xcodebuild` and duplicate their few guard lines rather than sharing

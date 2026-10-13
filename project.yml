@@ -292,3 +292,19 @@ schemes:
       targets:
         - TuberNotesTests
         - TNTests
+  # The wall-clock benchmarks in HistoryEntryCostTests run only when
+  # TN_BENCHMARKS is set: a starved simulator fails them, so the gate skips
+  # them. A scheme's skippedTests and selectedTests do not reach Swift
+  # Testing suites, which is why this is a variable and not a test list.
+  TuberNotesBenchmarks:
+    build:
+      targets:
+        TuberNotes: all
+    test:
+      # Debug, like the gate: @testable needs testability, and the bounds
+      # were measured on Debug builds.
+      config: Debug
+      environmentVariables:
+        TN_BENCHMARKS: "1"
+      targets:
+        - TuberNotesTests
