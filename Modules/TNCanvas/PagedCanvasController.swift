@@ -345,6 +345,7 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
         guard let index = order.firstIndex(of: page) else {
             TNPrecondition.fail("scroll(to:) named page \(page), which this runtime has not been told about")
         }
+        guard !isTornDown else { return }
         let layout = currentLayout
         guard !layout.isEmpty else {
             // No viewport yet, so no offset exists to write. The request is
@@ -403,6 +404,7 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
     package func retireAll() -> [PageID] {
         isTornDown = true
         scrollView.isScrollEnabled = false
+        pendingScroll = nil
         // Close is reached from the library, where no canvas is in a window. A
         // use still drawing there is one PencilKit never ended, and nothing can
         // touch it now: it ends here, so close does not wait on it.

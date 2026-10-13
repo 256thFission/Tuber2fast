@@ -753,8 +753,8 @@ struct TNCanvasTests {
 
     // MARK: - Teardown
 
-    @Test("After retireAll no canvas is built: not for an install, a turn, or a stroke's end")
-    func aTornDownRuntimeBuildsNothing() throws {
+    @Test("After retireAll nothing scrolls, and no canvas is built: not for an install, a turn, or a stroke's end")
+    func aTornDownRuntimeBuildsNothing() async throws {
         let reporter = RecordingReporter()
         let runtime = hosted(reporter)
         let pages = descriptors(2)
@@ -778,8 +778,31 @@ struct TNCanvasTests {
         #expect(reporter.retired.filter { $0.page == a }.map { $0.finalInk?.strokes.count } == [1])
         #expect(!runtime.scrollView.isScrollEnabled)
 
+        let offset = runtime.scrollView.contentOffset
+        runtime.scroll(to: b)
+        // Longer than the animated turn a live runtime would run and settle.
+        try await Task.sleep(for: .seconds(1))
+        #expect(runtime.scrollView.contentOffset == offset, "a turn asked for does not scroll it")
+        #expect(reporter.becameCurrent.isEmpty)
+
         settle(runtime, at: 1)
         #expect(runtime.canvases.isEmpty, "a turn builds nothing either")
+    }
+
+    @Test("A torn-down runtime does not scroll to a page asked for before its first layout, whether asked before the teardown or after")
+    func aTornDownRuntimeKeepsNoScrollForItsFirstLayout() {
+        let reporter = RecordingReporter()
+        let runtime = PagedCanvasController(reporter: reporter)
+        let pages = descriptors(3)
+        runtime.setPages(pages, seq: StructureSeq(1), answering: nil)
+        runtime.scroll(to: pages[2].id)
+        _ = runtime.retireAll()
+        runtime.scroll(to: pages[1].id)
+
+        host(runtime)
+
+        #expect(runtime.scrollView.contentOffset.x == 0)
+        #expect(reporter.becameCurrent.isEmpty)
     }
 
     @Test("Close does not wait on a use nothing can touch: one still drawing outside the window ends in the teardown")
