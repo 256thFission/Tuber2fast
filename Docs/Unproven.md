@@ -657,3 +657,11 @@ Not gaps — properties of the tooling that read as project defects when hit.
   real canvas through the pair. Owed: with a box open and an answer typed,
   Insert > Photo: the box commits, the photo lands, and one Undo removes
   only the photo.
+- **Black ink stays black after dark (U32, I3 line 12).** A hosted test
+  shows every canvas's trait is light under a dark window, and the lasso
+  frame's and text box's colours are read back in the simulator.
+  That PencilKit then draws black ink black on a device in Dark, and that
+  a hand-picked preset's alerts and menus follow it, has not been seen;
+  the simulator cannot author a stroke a screenshot captures. Owed: set
+  the iPad to Dark with theme System and write in black, then pick a light
+  preset and open a menu; the ink is black and the menu is light.
