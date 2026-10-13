@@ -320,7 +320,7 @@ struct NotebookTests {
         var changes = notebook.drainChanges()
         #expect(changes.contains { if case .content(let s) = $0 { s.id == page && s.ink?.strokes.isEmpty == true && s.isEditable } else { false } })
 
-        notebook.inkChanged(on: page, Ink.drawing(strokes: 3), echoOf: nil)
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 3))
         #expect(notebook.dirtyPageCount == 1)
         await notebook.flush()
         #expect(notebook.dirtyPageCount == 0)
@@ -344,10 +344,10 @@ struct NotebookTests {
         try await waitUntil { notebook.state(of: page)?.content != nil }
 
         await store.hold()
-        notebook.inkChanged(on: page, Ink.drawing(strokes: 1), echoOf: nil)
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 1))
         let flushing = Task { await notebook.flush() }
         try await Task.sleep(for: .milliseconds(60))   // the pass is inside the held save
-        notebook.inkChanged(on: page, Ink.drawing(strokes: 2), echoOf: nil)
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 2))
         await store.release()
         await flushing.value
         // The first pass returned; the page edited during it is still dirty.
@@ -367,7 +367,7 @@ struct NotebookTests {
         notebook.windowChanged(to: [page])
         try await waitUntil { notebook.state(of: page)?.content != nil }
         await store.hold()
-        notebook.inkChanged(on: page, Ink.drawing(strokes: 5), echoOf: nil)
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 5))
         let closing = Task { await notebook.close() }
         try await Task.sleep(for: .milliseconds(60))
         #expect(!notebook.isClosed)
@@ -446,7 +446,7 @@ struct NotebookTests {
         notebook.windowChanged(to: [page])
         try await waitUntil { notebook.state(of: page)?.content != nil }
         await store.hold()
-        notebook.inkChanged(on: page, Ink.drawing(strokes: 1), echoOf: nil)
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 1))
         let closing = Task { await notebook.close() }
         try await notebook.waitForArrivals(store.gate, 1)
         let discarding = Task { await notebook.discard() }
@@ -466,15 +466,15 @@ struct NotebookTests {
         notebook.windowChanged(to: [page])
         try await waitUntil { notebook.state(of: page)?.content != nil }
         _ = notebook.drainChanges()
-        notebook.inkChanged(on: page, Ink.drawing(strokes: 1), echoOf: nil)
-        notebook.inkChanged(on: page, Ink.drawing(strokes: 2), echoOf: nil)
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 1))
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 2))
         let editSeqBefore = notebook.state(of: page)!.content!.editSeq
         #expect(notebook.undo() == page)
         let changes = notebook.drainChanges()
-        guard case .inkRestored(let restoredPage, let ink, let seq) = try #require(changes.last) else { Issue.record("no restore"); return }
+        guard case .inkRestored(let restoredPage, let ink, _) = try #require(changes.last) else { Issue.record("no restore"); return }
         #expect(restoredPage == page && ink.strokes.count == 1)
         // The runtime reports PencilKit's callback for the programmatic set.
-        notebook.inkChanged(on: page, ink, echoOf: seq)
+        notebook.inkChanged(on: page, ink)
         #expect(notebook.state(of: page)!.content!.editSeq == editSeqBefore + 1, "the echo is not an edit")
         #expect(notebook.state(of: page)!.content!.ink.strokes.count == 1)
         #expect(notebook.canRedo)
@@ -490,14 +490,14 @@ struct NotebookTests {
         let page = notebook.pageIDs[0]
         notebook.windowChanged(to: [page])
         try await waitUntil { notebook.state(of: page)?.content != nil }
-        notebook.inkChanged(on: page, Ink.drawing(strokes: 2), echoOf: nil)
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 2))
         await notebook.flush()
         let inkURL = PackageStore(root: scratch.packageURL).layout.inkURL(page)
         let written = try PosixFileSystem().modificationTime(inkURL)
         let held = notebook.state(of: page)!.content!
         _ = notebook.drainChanges()
 
-        notebook.inkChanged(on: page, held.ink, echoOf: nil)
+        notebook.inkChanged(on: page, held.ink)
         let after = notebook.state(of: page)!.content!
         #expect(after.editSeq == held.editSeq)
         #expect(!after.isDirty && !notebook.isDirty)
@@ -514,15 +514,15 @@ struct NotebookTests {
         notebook.windowChanged(to: [page])
         try await waitUntil { notebook.state(of: page)?.content != nil }
         _ = notebook.drainChanges()
-        notebook.inkChanged(on: page, Ink.drawing(strokes: 1), echoOf: nil)
-        notebook.inkChanged(on: page, Ink.drawing(strokes: 2), echoOf: nil)
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 1))
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 2))
         #expect(notebook.undo() == page)
-        guard case .inkRestored(_, let restored, let seq) = try #require(notebook.drainChanges().last) else { Issue.record("no restore"); return }
+        guard case .inkRestored(_, let restored, _) = try #require(notebook.drainChanges().last) else { Issue.record("no restore"); return }
         #expect(restored.strokes.count == 1)
         // The canvas installed the restore, then PencilKit finished committing
         // the undone stroke on top of it and reported the result stamped as
         // the install's echo. The drawing on the canvas is two strokes again.
-        notebook.inkChanged(on: page, Ink.drawing(strokes: 2), echoOf: seq)
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 2))
         #expect(notebook.state(of: page)!.content!.ink.strokes.count == 2, "custody follows the canvas: the value it holds is the value on screen")
         #expect(notebook.state(of: page)!.content!.isDirty)
         #expect(notebook.canUndo, "the stroke that came back is undoable again")
@@ -556,22 +556,22 @@ struct NotebookTests {
         let (notebook, page, scratch) = try await gesturePage()
         _ = scratch
         let (lines, scribbled) = Self.scribbledLines()
-        notebook.inkChanged(on: page, lines, echoOf: nil)
+        notebook.inkChanged(on: page, lines)
         _ = notebook.drainChanges()
         let editSeqBefore = notebook.state(of: page)!.content!.editSeq
 
-        notebook.inkChanged(on: page, scribbled, echoOf: nil, bindings: [.scribble: .erase])
+        notebook.inkChanged(on: page, scribbled, bindings: [.scribble: .erase])
         #expect(notebook.state(of: page)?.content?.ink.strokes.count == 1, "the two crossed lines and the scribble are gone")
         let changes = notebook.drainChanges()
-        let restores = changes.compactMap { change -> (PageID, PKDrawing, InkSeq)? in
-            if case .inkRestored(let p, let ink, let seq) = change { (p, ink, seq) } else { nil }
+        let restores = changes.compactMap { change -> (PageID, PKDrawing)? in
+            if case .inkRestored(let p, let ink, _) = change { (p, ink) } else { nil }
         }
         #expect(restores.count == 1, "\(changes)")
         let restore = try #require(restores.first)
         #expect(restore.0 == page && restore.1.strokes.count == 1)
 
-        // The canvas reports the push back; the latch swallows it.
-        notebook.inkChanged(on: page, restore.1, echoOf: restore.2)
+        // The canvas reports the push back; it is the ink already held, so it is no edit.
+        notebook.inkChanged(on: page, restore.1)
         #expect(notebook.state(of: page)!.content!.editSeq == editSeqBefore + 1, "the gesture is one edit and its echo is none")
 
         // Two entries stand: the one that laid the lines down and the
@@ -594,11 +594,11 @@ struct NotebookTests {
         let (notebook, page, scratch) = try await gesturePage()
         _ = scratch
         let (lines, scribbled) = Self.scribbledLines()
-        notebook.inkChanged(on: page, lines, echoOf: nil)
+        notebook.inkChanged(on: page, lines)
         _ = notebook.drainChanges()
         #expect(notebook.historyByteEstimateForTesting == HistoryEntry.sharedEntryBytes, "the canvas handed that drawing over")
 
-        notebook.inkChanged(on: page, scribbled, echoOf: nil, bindings: [.scribble: .erase])
+        notebook.inkChanged(on: page, scribbled, bindings: [.scribble: .erase])
         // One line survives the scratch-out, and the gesture built the
         // drawing that holds it, so its entry pays for that one stroke on
         // top of the shared figure every entry pays.
@@ -614,9 +614,9 @@ struct NotebookTests {
         let (notebook, page, scratch) = try await gesturePage()
         _ = scratch
         let (lines, scribbled) = Self.scribbledLines()
-        notebook.inkChanged(on: page, lines, echoOf: nil)
+        notebook.inkChanged(on: page, lines)
         _ = notebook.drainChanges()
-        notebook.inkChanged(on: page, scribbled, echoOf: nil)
+        notebook.inkChanged(on: page, scribbled)
         #expect(notebook.state(of: page)?.content?.ink.strokes.count == 4)
         #expect(!notebook.drainChanges().contains { if case .inkRestored = $0 { true } else { false } })
     }
@@ -627,7 +627,7 @@ struct NotebookTests {
             let (notebook, page, scratch) = try await gesturePage()
             _ = scratch
             let scribble = PKDrawing(strokes: [Ink.zigzag(over: CGRect(x: 20, y: -10, width: 80, height: 70), turns: 4)])
-            notebook.inkChanged(on: page, scribble, echoOf: nil, bindings: bindings)
+            notebook.inkChanged(on: page, scribble, bindings: bindings)
             #expect(notebook.state(of: page)?.content?.ink.strokes.count == 1)
             #expect(!notebook.drainChanges().contains { if case .inkRestored = $0 { true } else { false } })
         }
@@ -647,20 +647,20 @@ struct NotebookTests {
         let (notebook, page, scratch) = try await gesturePage()
         _ = scratch
         let (lines, circled) = Self.circledLines()
-        notebook.inkChanged(on: page, lines, echoOf: nil)
+        notebook.inkChanged(on: page, lines)
         _ = notebook.drainChanges()
         let editSeqBefore = notebook.state(of: page)!.content!.editSeq
 
-        notebook.inkChanged(on: page, circled, echoOf: nil, bindings: [.doubleCircle: .erase])
+        notebook.inkChanged(on: page, circled, bindings: [.doubleCircle: .erase])
         #expect(notebook.state(of: page)?.content?.ink.strokes.count == 1, "the two enclosed lines and the ring are gone")
-        let restores = notebook.drainChanges().compactMap { change -> (PageID, PKDrawing, InkSeq)? in
-            if case .inkRestored(let p, let ink, let seq) = change { (p, ink, seq) } else { nil }
+        let restores = notebook.drainChanges().compactMap { change -> (PageID, PKDrawing)? in
+            if case .inkRestored(let p, let ink, _) = change { (p, ink) } else { nil }
         }
         #expect(restores.count == 1)
         let restore = try #require(restores.first)
         #expect(restore.0 == page && restore.1.strokes.count == 1)
 
-        notebook.inkChanged(on: page, restore.1, echoOf: restore.2)
+        notebook.inkChanged(on: page, restore.1)
         #expect(notebook.state(of: page)!.content!.editSeq == editSeqBefore + 1, "the gesture is one edit and its echo is none")
         #expect(notebook.undo() == page)
         #expect(notebook.state(of: page)?.content?.ink.strokes.count == 3, "undo brings the lines back and not the ring")
@@ -671,11 +671,11 @@ struct NotebookTests {
         let (notebook, page, scratch) = try await gesturePage()
         _ = scratch
         let (lines, circled) = Self.circledLines()
-        notebook.inkChanged(on: page, lines, echoOf: nil)
+        notebook.inkChanged(on: page, lines)
         _ = notebook.drainChanges()
         // The built-in bindings, which leave the second trigger off: the map
         // is the record, and a trigger it does not name is unbound.
-        notebook.inkChanged(on: page, circled, echoOf: nil, bindings: [.scribble: .erase])
+        notebook.inkChanged(on: page, circled, bindings: [.scribble: .erase])
         #expect(notebook.state(of: page)?.content?.ink.strokes.count == 4)
         #expect(!notebook.drainChanges().contains { if case .inkRestored = $0 { true } else { false } })
     }
@@ -695,10 +695,10 @@ struct NotebookTests {
         let (notebook, page, scratch) = try await gesturePage()
         _ = scratch
         let (before, after) = Self.scratchOutInLoops()
-        notebook.inkChanged(on: page, before, echoOf: nil)
+        notebook.inkChanged(on: page, before)
         _ = notebook.drainChanges()
 
-        notebook.inkChanged(on: page, after, echoOf: nil, bindings: [.doubleCircle: .erase])
+        notebook.inkChanged(on: page, after, bindings: [.doubleCircle: .erase])
         let left = try #require(notebook.state(of: page)?.content?.ink.strokes)
         #expect(left.count == 1, "the enclosed line and the ring go")
         #expect(left.first?.renderBounds.minX ?? 0 < -100, "the line the loops crossed stays")
@@ -709,10 +709,10 @@ struct NotebookTests {
         let (notebook, page, scratch) = try await gesturePage()
         _ = scratch
         let (before, after) = Self.scratchOutInLoops()
-        notebook.inkChanged(on: page, before, echoOf: nil)
+        notebook.inkChanged(on: page, before)
         _ = notebook.drainChanges()
 
-        notebook.inkChanged(on: page, after, echoOf: nil, bindings: [.scribble: .erase, .doubleCircle: .erase])
+        notebook.inkChanged(on: page, after, bindings: [.scribble: .erase, .doubleCircle: .erase])
         let left = try #require(notebook.state(of: page)?.content?.ink.strokes)
         #expect(left.count == 1, "the crossed line and the ring go")
         #expect(left.first?.renderBounds.minX ?? 0 > 0, "the line the loops merely enclosed stays")
@@ -723,12 +723,12 @@ struct NotebookTests {
         let (notebook, page, scratch) = try await gesturePage()
         _ = scratch
         let (lines, scribbled) = Self.scribbledLines()
-        notebook.inkChanged(on: page, lines, echoOf: nil)
+        notebook.inkChanged(on: page, lines)
         _ = notebook.drainChanges()
         let extra = Ink.line(from: CGPoint(x: 0, y: 200), to: CGPoint(x: 200, y: 200))
         // The scribble is still the last stroke; the count is what refuses it.
         let two = PKDrawing(strokes: lines.strokes + [extra] + scribbled.strokes.suffix(1))
-        notebook.inkChanged(on: page, two, echoOf: nil, bindings: [.scribble: .erase])
+        notebook.inkChanged(on: page, two, bindings: [.scribble: .erase])
         #expect(notebook.state(of: page)?.content?.ink.strokes.count == 5)
         #expect(!notebook.drainChanges().contains { if case .inkRestored = $0 { true } else { false } })
     }
@@ -741,8 +741,8 @@ struct NotebookTests {
         let (a, b) = (notebook.pageIDs[0], notebook.pageIDs[1])
         notebook.windowChanged(to: [a, b])
         try await waitUntil { notebook.state(of: a)?.content != nil && notebook.state(of: b)?.content != nil }
-        notebook.inkChanged(on: a, Ink.drawing(strokes: 1), echoOf: nil)
-        notebook.inkChanged(on: b, Ink.drawing(strokes: 2), echoOf: nil)
+        notebook.inkChanged(on: a, Ink.drawing(strokes: 1))
+        notebook.inkChanged(on: b, Ink.drawing(strokes: 2))
         await notebook.flush()
         // Page a leaves the window and is pruned; its history entry survives.
         notebook.windowChanged(to: [b])
@@ -768,8 +768,8 @@ struct NotebookTests {
         try await waitUntil { notebook.state(of: page)?.content != nil }
         try notebook.insertLayer(textLayer("hi"), on: page)
         try await waitUntil { notebook.drainChanges().contains { if case .compositeUpdated = $0 { true } else { false } } }
-        notebook.inkChanged(on: page, Ink.drawing(strokes: 1), echoOf: nil)
-        notebook.inkChanged(on: page, Ink.drawing(strokes: 2), echoOf: nil)
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 1))
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 2))
         _ = notebook.drainChanges()
         #expect(notebook.undo() == page)
         try await Task.sleep(for: .milliseconds(100))
@@ -788,8 +788,8 @@ struct NotebookTests {
         let page = notebook.pageIDs[0]
         notebook.windowChanged(to: [page])
         try await waitUntil { notebook.state(of: page)?.content != nil }
-        notebook.inkChanged(on: page, Ink.drawing(strokes: 1), echoOf: nil)
-        notebook.inkChanged(on: page, Ink.drawing(strokes: 2), echoOf: nil)
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 1))
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 2))
         await notebook.flush()
         notebook.windowChanged(to: [])
         notebook.retired(page, finalInk: nil)
@@ -819,8 +819,8 @@ struct NotebookTests {
         let (a, b) = (notebook.pageIDs[0], notebook.pageIDs[1])
         notebook.windowChanged(to: [a, b])
         try await waitUntil { notebook.state(of: a)?.content != nil && notebook.state(of: b)?.content != nil }
-        notebook.inkChanged(on: b, Ink.drawing(strokes: 1), echoOf: nil)
-        notebook.inkChanged(on: a, Ink.drawing(strokes: 1), echoOf: nil)
+        notebook.inkChanged(on: b, Ink.drawing(strokes: 1))
+        notebook.inkChanged(on: a, Ink.drawing(strokes: 1))
         await notebook.flush()
         notebook.windowChanged(to: [b])
         notebook.retired(a, finalInk: nil)
@@ -848,8 +848,8 @@ struct NotebookTests {
         let page = notebook.pageIDs[0]
         notebook.windowChanged(to: [page])
         try await waitUntil { notebook.state(of: page)?.content != nil }
-        notebook.inkChanged(on: page, Ink.drawing(strokes: 1), echoOf: nil)
-        notebook.inkChanged(on: page, Ink.drawing(strokes: 2), echoOf: nil)
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 1))
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 2))
         await notebook.flush()
         notebook.windowChanged(to: [])
         notebook.retired(page, finalInk: nil)
@@ -887,7 +887,7 @@ struct NotebookTests {
         let layer = Fixture.imageLayer()
         try await notebook.addLayer(layer, assetData: Fixture.archive(1, count: 128), on: page)
         // The ink report is the entry; it holds the layer at its first placement.
-        notebook.inkChanged(on: page, Ink.drawing(strokes: 1), echoOf: nil)
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 1))
         #expect(notebook.transformLayer(on: page, layer: layer.id, to: .translation(x: 5, y: 5)) == .accepted)
 
         await store.hold()
@@ -1126,7 +1126,7 @@ struct NotebookTests {
         let first = notebook.pageIDs[0]
         notebook.windowChanged(to: [first])
         try await waitUntil { notebook.state(of: first)?.content != nil }
-        notebook.inkChanged(on: first, Ink.drawing(strokes: 1), echoOf: nil)
+        notebook.inkChanged(on: first, Ink.drawing(strokes: 1))
         let refusedPage = notebook.appendPage()
         await notebook.flush()
         if case .pagesRefused(let refused) = notebook.lastSaveError { #expect(refused.keys.contains(refusedPage)) } else { Issue.record("expected pagesRefused, got \(String(describing: notebook.lastSaveError))") }
@@ -1148,7 +1148,7 @@ struct NotebookTests {
         let notebook = try await Notebook.open(store: store)
         notebook.windowChanged(to: [page])
         try await waitUntil { notebook.state(of: page)?.content != nil }
-        notebook.inkChanged(on: page, Ink.drawing(strokes: 3), echoOf: nil)
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 3))
         for _ in 0..<3 { await notebook.flush() }
         #expect(notebook.state(of: page)?.content?.isDirty == true, "a refused page stays dirty")
         #expect(store.archives.count >= 3)
@@ -1167,7 +1167,7 @@ struct NotebookTests {
         // The default debounce is long, so only the two flushes run passes.
         let notebook = try await Notebook.open(store: store)
         let page = notebook.appendPage()
-        notebook.inkChanged(on: page, Ink.drawing(strokes: 3), echoOf: nil)
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 3))
         await notebook.flush()
         if case .pagesRefused(let refused) = notebook.lastSaveError { #expect(refused.keys.contains(page)) } else { Issue.record("expected pagesRefused, got \(String(describing: notebook.lastSaveError))") }
         #expect(try await PackageStore(root: scratch.packageURL).load().index.pageIDs == index.pageIDs, "the first index left the page out")
@@ -1200,7 +1200,7 @@ struct NotebookTests {
         let ids = notebook.pageIDs
         notebook.windowChanged(to: ids)
         try await waitUntil { ids.allSatisfy { notebook.state(of: $0)?.content != nil } }
-        notebook.inkChanged(on: ids[1], Ink.drawing(strokes: 1), echoOf: nil)
+        notebook.inkChanged(on: ids[1], Ink.drawing(strokes: 1))
         notebook.windowChanged(to: [ids[2]])
         notebook.retired(ids[0], finalInk: nil)
         notebook.retired(ids[1], finalInk: nil)
@@ -1329,9 +1329,9 @@ struct NotebookTests {
         let (a, b) = (notebook.pageIDs[0], notebook.pageIDs[1])
         notebook.windowChanged(to: [a, b])
         try await waitUntil { notebook.state(of: a)?.content != nil && notebook.state(of: b)?.content != nil }
-        notebook.inkChanged(on: a, Ink.drawing(strokes: 1), echoOf: nil)
-        notebook.inkChanged(on: b, Ink.drawing(strokes: 1), echoOf: nil)
-        notebook.inkChanged(on: a, Ink.drawing(strokes: 2), echoOf: nil)
+        notebook.inkChanged(on: a, Ink.drawing(strokes: 1))
+        notebook.inkChanged(on: b, Ink.drawing(strokes: 1))
+        notebook.inkChanged(on: a, Ink.drawing(strokes: 2))
         #expect(notebook.undo() == a, "a's newest entry is on the redo stack")
         #expect(notebook.canRedo)
 
@@ -1354,7 +1354,7 @@ struct NotebookTests {
         let (a, b) = (notebook.pageIDs[0], notebook.pageIDs[1])
         notebook.windowChanged(to: [a])
         try await waitUntil { notebook.state(of: a)?.content != nil }
-        notebook.inkChanged(on: a, Ink.drawing(strokes: 1), echoOf: nil)
+        notebook.inkChanged(on: a, Ink.drawing(strokes: 1))
         await notebook.flush()
         notebook.windowChanged(to: [])
         notebook.retired(a, finalInk: nil)
@@ -1384,7 +1384,7 @@ struct NotebookTests {
         let page = notebook.pageIDs[0]
         notebook.windowChanged(to: [page])
         try await waitUntil { notebook.state(of: page)?.content != nil }
-        notebook.inkChanged(on: page, Ink.drawing(strokes: 1), echoOf: nil)
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 1))
         await notebook.flush()
         notebook.windowChanged(to: [])
         notebook.retired(page, finalInk: nil)
@@ -1439,14 +1439,14 @@ struct NotebookTests {
         }
 
         _ = notebook.drainChanges()
-        notebook.inkChanged(on: page, Ink.drawing(strokes: 1), echoOf: nil)
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 1))
         expectBump("ink")
-        notebook.inkChanged(on: page, Ink.drawing(strokes: 2), echoOf: nil)
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 2))
         expectBump("ink again")
         notebook.undo()
         expectBump("undo into a loaded page")
-        guard case .inkRestored(_, let ink, let seq) = try #require(notebook.drainChanges().last) else { Issue.record("no restore"); return }
-        notebook.inkChanged(on: page, ink, echoOf: seq)
+        guard case .inkRestored(_, let ink, _) = try #require(notebook.drainChanges().last) else { Issue.record("no restore"); return }
+        notebook.inkChanged(on: page, ink)
         expectSame("the echo")
         try await notebook.setPaper(.drawn(.grid), on: page)
         expectBump("paper")
@@ -1478,7 +1478,7 @@ struct NotebookTests {
         let page = notebook.pageIDs[0]
         notebook.windowChanged(to: [page])
         try await waitUntil { notebook.state(of: page)?.content != nil }
-        notebook.inkChanged(on: page, Ink.drawing(strokes: 1), echoOf: nil)
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 1))
         await notebook.flush()
         _ = await notebook.close()
 
@@ -1499,8 +1499,8 @@ struct NotebookTests {
         let (a, b) = (notebook.pageIDs[0], notebook.pageIDs[1])
         notebook.windowChanged(to: [a, b])
         try await waitUntil { notebook.state(of: a)?.content != nil && notebook.state(of: b)?.content != nil }
-        notebook.inkChanged(on: a, Ink.drawing(strokes: 1), echoOf: nil)
-        notebook.inkChanged(on: b, Ink.drawing(strokes: 1), echoOf: nil)
+        notebook.inkChanged(on: a, Ink.drawing(strokes: 1))
+        notebook.inkChanged(on: b, Ink.drawing(strokes: 1))
         await notebook.flush()
         notebook.windowChanged(to: [b])
         notebook.retired(a, finalInk: nil)
@@ -1571,7 +1571,7 @@ struct NotebookTests {
         let page = notebook.pageIDs[0]
         notebook.windowChanged(to: [page])
         try await waitUntil { notebook.state(of: page)?.content != nil }
-        notebook.inkChanged(on: page, Ink.drawing(strokes: 1), echoOf: nil)
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 1))
         await notebook.flush()
         _ = await notebook.close()
 
@@ -1610,8 +1610,8 @@ struct NotebookTests {
         let (a, b) = (notebook.pageIDs[0], notebook.pageIDs[1])
         notebook.windowChanged(to: [a, b])
         try await waitUntil { notebook.state(of: a)?.content != nil && notebook.state(of: b)?.content != nil }
-        notebook.inkChanged(on: a, Ink.drawing(strokes: 1), echoOf: nil)
-        notebook.inkChanged(on: b, Ink.drawing(strokes: 1), echoOf: nil)
+        notebook.inkChanged(on: a, Ink.drawing(strokes: 1))
+        notebook.inkChanged(on: b, Ink.drawing(strokes: 1))
         await notebook.flush()
         notebook.windowChanged(to: [b])
         notebook.retired(a, finalInk: nil)
@@ -1644,7 +1644,7 @@ struct NotebookTests {
         let page = notebook.pageIDs[0]
         notebook.windowChanged(to: [page])
         try await waitUntil { notebook.state(of: page)?.content != nil }
-        notebook.inkChanged(on: page, Ink.drawing(strokes: 2), echoOf: nil)
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 2))
         let revision = try #require(await notebook.revision(of: page))
         #expect(revision.ink.strokes.count == 2, "custody, before the save engine has written anything")
         withExtendedLifetime(scratch) {}
@@ -1713,7 +1713,7 @@ struct NotebookTests {
     func aPageWhoseInkWasUndoneIsReplaced() async throws {
         let (scratch, notebook, page) = try await readyPage("nb-pdf-undone")
         try await notebook.setPaper(.drawn(.lined), on: page)
-        notebook.inkChanged(on: page, Ink.drawing(strokes: 1), echoOf: nil)
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 1))
         #expect(notebook.undo() == page)
         #expect(notebook.canRedo)
 
@@ -1806,7 +1806,7 @@ struct NotebookTests {
         await #expect(throws: PaperRefusal.pageHasAssetPaper) { try await notebook.setPaper(.image(flattened), on: source) }
         #expect(notebook.paper(of: source) == pdf)
 
-        notebook.inkChanged(on: letter, Ink.drawing(strokes: 1), echoOf: nil)
+        notebook.inkChanged(on: letter, Ink.drawing(strokes: 1))
         await #expect(throws: PaperRefusal.pageNotEmpty) { try await notebook.setPaper(.image(flattened), on: letter) }
         #expect(notebook.paper(of: letter) == .drawn(.blank))
         // Drawn paper still applies to a page with ink on it.
@@ -1839,7 +1839,7 @@ struct NotebookTests {
         try await waitUntil { notebook.state(of: source)?.content != nil }
         let layer = Fixture.imageLayer()
         try await notebook.addLayer(layer, assetData: try Fixture.imageData(width: 40, height: 30), on: source)
-        notebook.inkChanged(on: source, Ink.drawing(strokes: 2), echoOf: nil)
+        notebook.inkChanged(on: source, Ink.drawing(strokes: 2))
         let ink = try #require(notebook.state(of: source)?.content?.ink)
 
         let flattened = try await notebook.flatten(source)
@@ -1875,7 +1875,7 @@ struct NotebookTests {
             after: first, geometry: PageGeometry(width: 842, height: 595), paper: .drawn(.grid))
         try await notebook.addLayer(Fixture.imageLayer(), assetData: try Fixture.imageData(width: 40, height: 30), on: source)
         try notebook.insertLayer(Fixture.textLayer(), on: source)
-        notebook.inkChanged(on: source, Ink.drawing(strokes: 2), echoOf: nil)
+        notebook.inkChanged(on: source, Ink.drawing(strokes: 2))
         let before = try #require(notebook.state(of: source)?.content)
         let couldUndo = notebook.canUndo
 
@@ -1916,7 +1916,7 @@ struct NotebookTests {
         notebook.windowChanged(to: [source])
         try await waitUntil { notebook.state(of: source)?.content != nil }
         let ink = Ink.drawing(strokes: 3)
-        notebook.inkChanged(on: source, ink, echoOf: nil)
+        notebook.inkChanged(on: source, ink)
         await notebook.flush()
         _ = await notebook.close()
 
@@ -2163,7 +2163,7 @@ struct NotebookTests {
         notebook.windowChanged(to: [page])
         try await waitUntil { notebook.state(of: page)?.content != nil }
         let ink = Ink.drawing(strokes: 2)
-        notebook.inkChanged(on: page, ink, echoOf: nil)
+        notebook.inkChanged(on: page, ink)
         let first = textLayer("first"), second = textLayer("second")
         try notebook.insertLayer(first, on: page)
         try notebook.insertLayer(second, on: page)

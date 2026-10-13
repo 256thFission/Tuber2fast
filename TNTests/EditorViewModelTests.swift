@@ -389,7 +389,7 @@ struct EditorViewModelContentTests {
         let source = notebook.pageIDs[0]
         let layer = Fixture.imageLayer()
         try await notebook.addLayer(layer, assetData: try Fixture.imageData(width: 40, height: 30), on: source)
-        notebook.inkChanged(on: source, Ink.drawing(strokes: 2), echoOf: nil)
+        notebook.inkChanged(on: source, Ink.drawing(strokes: 2))
         let ink = try #require(notebook.state(of: source)?.content?.ink)
         let couldUndo = notebook.canUndo
 
@@ -444,7 +444,7 @@ struct EditorViewModelContentTests {
     func duplicatingAPagePushesAndScrolls() async throws {
         let (scratch, notebook, surface, editor) = try await loaded("vm-duplicate")
         let source = notebook.pageIDs[0]
-        notebook.inkChanged(on: source, Ink.drawing(strokes: 1), echoOf: nil)
+        notebook.inkChanged(on: source, Ink.drawing(strokes: 1))
 
         await editor.duplicatePage(source)
 
@@ -492,7 +492,7 @@ struct EditorViewModelContentTests {
     func importingAPDFLandsOnItsFirstPage() async throws {
         let (scratch, notebook, surface, editor) = try await loaded("vm-pdf-lands")
         let first = notebook.pageIDs[0]
-        notebook.inkChanged(on: first, Ink.drawing(strokes: 1), echoOf: nil)
+        notebook.inkChanged(on: first, Ink.drawing(strokes: 1))
 
         await editor.importPDF(try Fixture.pdfData(pages: 2))
 
@@ -739,7 +739,7 @@ struct EditorViewModelContentTests {
     func photoIsRefusedOnAPageWithInk() async throws {
         let (scratch, notebook, _, editor) = try await loaded("vm-paper-photo-refused")
         let page = notebook.pageIDs[0]
-        notebook.inkChanged(on: page, Ink.drawing(strokes: 1), echoOf: nil)
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 1))
 
         await editor.setPaper(photo: try Fixture.imageData(width: 200, height: 100))
 

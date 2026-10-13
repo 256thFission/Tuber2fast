@@ -49,7 +49,7 @@ struct LibraryCoverTests {
         let page = notebook.pageIDs[0]
         notebook.windowChanged(to: [page])
         try await waitUntil { notebook.state(of: page)?.content != nil }
-        notebook.inkChanged(on: page, Ink.drawing(strokes: 1), echoOf: nil)
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 1))
         let open = try #require(await library.cover(of: created))
         #expect(open === (await notebook.thumbnail(of: page)))
         #expect(await notebook.close() == .clean)

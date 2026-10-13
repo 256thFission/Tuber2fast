@@ -55,11 +55,11 @@ struct EditorViewModelExportTests {
         try await ready(book)
         // Ink on the first page, so the PDF follows it rather than taking its
         // place, and the range has a page before it to leave out.
-        book.inkChanged(on: book.pageIDs[0], Ink.drawing(strokes: 1), echoOf: nil)
+        book.inkChanged(on: book.pageIDs[0], Ink.drawing(strokes: 1))
         await editor.importPDF(try Fixture.pdfData(pages: 2))
         try #require(book.pageCount == 3)
         let (worksheet, unloaded) = (book.pageIDs[1], book.pageIDs[2])
-        for page in [worksheet, unloaded] { book.inkChanged(on: page, Ink.drawing(strokes: 1), echoOf: nil) }
+        for page in [worksheet, unloaded] { book.inkChanged(on: page, Ink.drawing(strokes: 1)) }
         await book.flush()
         book.windowChanged(to: [worksheet])
         book.retired(unloaded, finalInk: nil)
@@ -96,7 +96,7 @@ struct EditorViewModelExportTests {
         let (scratch, book, editor) = try await editor("vm-export-image")
         try await ready(book)
         let page = book.currentPageID
-        book.inkChanged(on: page, Ink.drawing(strokes: 1), echoOf: nil)
+        book.inkChanged(on: page, Ink.drawing(strokes: 1))
         editor.export(.currentPageImage)
         try await waitUntil { editor.exportedFile != nil }
         #expect(editor.exportedFile?.kind == .png)
@@ -158,7 +158,7 @@ struct EditorViewModelExportTests {
         try await made.importPDF(try Fixture.pdfData(pages: 1))
         let worksheet = made.pageIDs[1]
         guard case .pdf(let asset, _) = try #require(made.paper(of: worksheet)) else { Issue.record("not PDF paper"); return }
-        made.inkChanged(on: worksheet, Ink.drawing(strokes: 1), echoOf: nil)
+        made.inkChanged(on: worksheet, Ink.drawing(strokes: 1))
         await made.flush()
         _ = await made.close()
         let store = PackageStore(root: scratch.packageURL)

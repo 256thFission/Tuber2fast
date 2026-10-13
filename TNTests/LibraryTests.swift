@@ -225,7 +225,7 @@ struct LibraryTests {
         let page = notebook.pageIDs[0]
         notebook.windowChanged(to: [page])
         try await waitUntil { notebook.state(of: page)?.content != nil }
-        notebook.inkChanged(on: page, Ink.drawing(strokes: 2), echoOf: nil)
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 2))
         await notebook.flush()
         #expect(notebook.lastSaveError != nil)
         #expect(notebook.debounce != nil, "the failed pass armed its retry")
@@ -309,7 +309,7 @@ struct LibraryTests {
         let page = notebook.pageIDs[0]
         notebook.windowChanged(to: [page])
         try await waitUntil { notebook.state(of: page)?.content != nil }
-        notebook.inkChanged(on: page, Ink.drawing(strokes: 4), echoOf: nil)
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 4))
         #expect(await notebook.close() == .clean)
         library.release(item.relativePath)
 
@@ -1053,7 +1053,7 @@ struct LibraryTests {
         let page = written.pageIDs[0]
         written.windowChanged(to: [page])
         try await waitUntil { written.state(of: page)?.content != nil }
-        written.inkChanged(on: page, Ink.drawing(strokes: 4), echoOf: nil)
+        written.inkChanged(on: page, Ink.drawing(strokes: 4))
         #expect(await written.close() == .clean)
         library.release(item.relativePath)
         try writeOlderVersion(of: item, in: library)

@@ -288,26 +288,17 @@ package final class Notebook {
     /// a preference is never notebook state. A gesture applies inside this
     /// call, so the one entry recorded below runs from the revision before
     /// the trigger stroke to the revision after its effect.
-    package func inkChanged(on page: PageID, _ ink: PKDrawing, echoOf: InkSeq?, bindings: GestureBindings = [:]) {
+    package func inkChanged(on page: PageID, _ ink: PKDrawing, bindings: GestureBindings = [:]) {
         guard case .ready(var content) = states[page] else {
             TNPrecondition.fail("ink reported for page \(page) which is not ready: \(String(describing: states[page]))")
         }
-        // An echo restates the value that was pushed. A report stamped with
-        // the sequence but carrying different ink is PencilKit committing a
-        // stroke on top of the install: on the device the commit that
-        // follows `canvasViewDidEndUsingTool` can land after an undo's
-        // restore and rides in under its latch. Swallowing it left the
-        // undone stroke on the canvas and out of custody, and the next
-        // stroke reported it back as new ink. Equality is the check, so the
-        // value on screen is the value held either way.
-        if let echoOf, echoOf == content.pendingEcho, ink == content.ink {
-            content.pendingEcho = nil
-            states[page] = .ready(content)
-            return
-        }
         content.pendingEcho = nil
-        // A report of the ink already held is no edit: the page stays clean
-        // and its ink file is not rewritten.
+        // A report of the ink already held is no edit, an echo included: the
+        // page stays clean and its ink file is not rewritten. Equality is the
+        // check, not the stamp, because a stamped report can carry different
+        // ink: on the device PencilKit's commit after
+        // `canvasViewDidEndUsingTool` can land on top of an undo's restore,
+        // and that stroke must come back into custody.
         if ink == content.ink {
             states[page] = .ready(content)
             return
@@ -316,7 +307,7 @@ package final class Notebook {
         let gesture = gesture(on: page, in: ink, after: captured, bindings: bindings)
         if let gesture {
             // The same shape undo pushes: the edited drawing rides
-            // `.inkRestored`, and its echo is swallowed by the latch above.
+            // `.inkRestored`, and its echo is the ink already held.
             restore(gesture, on: page, in: &content)
         }
         content.setInk(gesture ?? ink)
@@ -475,7 +466,7 @@ package final class Notebook {
         case nil:
             return  // a deleted page: its ink went with it (deletePage)
         case .ready(let content):
-            if let finalInk, content.ink != finalInk { inkChanged(on: page, finalInk, echoOf: nil) }
+            if let finalInk, content.ink != finalInk { inkChanged(on: page, finalInk) }
             withContent(page) { $0.retired = true }
         case .unloaded, .loading, .unreadable:
             TNPrecondition.require(finalInk == nil, "page \(page) retired with ink the notebook does not hold: \(String(describing: states[page]))")
