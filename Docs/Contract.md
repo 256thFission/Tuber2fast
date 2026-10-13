@@ -361,25 +361,28 @@ report     which pages were refused, and which intended pages the written
   an ink file for a page whose file says `hasInk: false`. Open treats the
   ink file as the ink and marks the page dirty.
 - **An index written without a page this pass tried to save is not the
-  saved index.** Publish 3 lists only the pages whose files are present,
-  so a page that failed to stage is left out of the index written in the
-  same pass, and the report says which pages were left out. The notebook
-  advances `savedIndexSeq` only for an index that left out none of the
-  pages the pass captured. After any other index the index stays ahead of
-  its saved counter, the notebook stays dirty, and the next pass rewrites
-  the index, so the page is named by the first index written after its
-  file lands; the index on disk is not the intended one, so that rewrite
-  is not a rewrite of an unchanged file. Only captured pages count. A page
-  the notebook holds as a placeholder is never captured, so it neither
-  keeps the index owed nor blocks a clean close; an index that waited for
-  a page no pass will write would never count as saved, and the notebook
-  would never close clean. Of the placeholders, only one whose page file
-  is missing is left out of the indexes written: a page refused for its
-  ink, a layer, or its paper keeps its page file on disk, and publish 3
-  keeps every intended page whose page file is present (*Refuse at the
-  narrowest scope*: nothing is dropped). The reason is the retry. A
-  refused page stays dirty and its file lands on a later pass; had the
-  partial index counted as saved, that pass would carry
+  saved index.** Publish 3 lists only the pages whose page files are
+  present, so a page with no page file on disk yet, a new page refused at
+  plan or at staging, is left out of the index written in that pass, and
+  the report says which pages were left out. A refused page whose earlier
+  page file is on disk stays in that index: the page is still dirty, and
+  a later pass lands its file under an index that already names it. The
+  notebook advances `savedIndexSeq` only for an index that left out none
+  of the pages the pass captured. After any other index the index stays
+  ahead of its saved counter, the notebook stays dirty, and the next pass
+  rewrites the index, so the page is named by the first index written
+  after its file lands; the index on disk is not the intended one, so that
+  rewrite is not a rewrite of an unchanged file. Only captured pages
+  count. A page the notebook holds as a placeholder is never captured, so
+  it neither keeps the index owed nor blocks a clean close; an index that
+  waited for a page no pass will write would never count as saved, and
+  the notebook would never close clean. Of the placeholders, only one
+  whose page file is missing is left out of the indexes written: a page
+  refused for its ink, a layer, or its paper keeps its page file on disk,
+  and publish 3 keeps every intended page whose page file is present
+  (*Refuse at the narrowest scope*: nothing is dropped). The reason is the
+  retry. The page left out stays dirty and its file lands on a later pass;
+  had the partial index counted as saved, that pass would carry
   `indexChanged: false`, the page would commit and go clean, close would
   report clean, and the reopened notebook would list neither the page nor
   its ink (decided I2; contract-03, durability-01).
