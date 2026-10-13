@@ -190,6 +190,14 @@ package final class EditorViewModel {
         }
     }
 
+    /// The tool a kind's cap stands for: the one in hand when it is that
+    /// kind, otherwise the one a tap restores. Each tab's editor holds its
+    /// own tool over the one palette, so the palette can name an eraser
+    /// mode this tab's eraser is not in.
+    package func tool(for kind: ToolPalette.Kind) -> EditorTool {
+        tool.kind == kind ? tool : palette.tool(for: kind)
+    }
+
     package func selectLasso() { tool = .lasso }
 
     /// The text tool, typing with what the palette last typed with.

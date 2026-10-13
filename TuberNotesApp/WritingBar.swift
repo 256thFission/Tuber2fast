@@ -21,35 +21,39 @@ enum BarEntry {
     ]
 }
 
-extension ToolPalette.Kind {
-    /// The eraser's glyph is its mode's: a second tap on it switches the
-    /// mode, and the cap is the one place that says which is in hand.
-    func symbol(_ eraser: EraserMode) -> String {
+extension EditorTool {
+    /// The eraser's glyph is its mode's, since a second tap on it switches
+    /// the mode.
+    var symbol: String {
         switch self {
-        case .ink(.pen): "pencil.tip"
-        case .ink(.pencil): "pencil"
-        case .ink(.highlighter): "highlighter"
-        case .eraser: eraser == .object ? "eraser" : "eraser.line.dashed"
+        case .ink(.pen, _): "pencil.tip"
+        case .ink(.pencil, _): "pencil"
+        case .ink(.highlighter, _): "highlighter"
+        case .eraseObject: "eraser"
+        case .erasePixel: "eraser.line.dashed"
         case .text: "textformat"
+        case .lasso: "lasso"
         }
     }
 
     var label: String {
         switch self {
-        case .ink(.pen): "Pen"
-        case .ink(.pencil): "Pencil"
-        case .ink(.highlighter): "Highlighter"
-        case .eraser: "Eraser"
+        case .ink(.pen, _): "Pen"
+        case .ink(.pencil, _): "Pencil"
+        case .ink(.highlighter, _): "Highlighter"
+        case .eraseObject, .erasePixel: "Eraser"
         case .text: "Text"
+        case .lasso: "Lasso"
         }
     }
 
     /// What VoiceOver says after the label. Only the eraser has a state of
     /// its own to say.
-    func value(_ eraser: EraserMode) -> String {
+    var value: String {
         switch self {
-        case .eraser: eraser == .object ? "Whole strokes" : "Pixels"
-        case .ink, .text: ""
+        case .eraseObject: "Whole strokes"
+        case .erasePixel: "Pixels"
+        case .ink, .text, .lasso: ""
         }
     }
 }
@@ -423,17 +427,17 @@ struct InstrumentCap: View {
 
     var body: some View {
         let isHeld = editor.tool.kind == kind
-        let eraser = editor.palette.eraserMode
+        let shown = editor.tool(for: kind)
         Keycap(
-            kind.label,
-            systemImage: kind.symbol(eraser),
+            shown.label,
+            systemImage: shown.symbol,
             symbolSize: .instrument,
             fill: isHeld ? theme.accent : theme.chrome,
             isHeld: isHeld
         ) {
             editor.select(kind)
         }
-        .accessibilityValue(kind.value(eraser))
+        .accessibilityValue(shown.value)
         .accessibilityAddTraits(isHeld ? .isSelected : [])
     }
 }

@@ -134,9 +134,12 @@ package protocol ToolPaletteStore: Sendable {
     // MARK: The tools it names
 
     /// The tool `lastKind` names, built from the slots.
-    package var currentTool: EditorTool {
-        switch lastKind {
-        case .ink(let kind): tool(for: kind)
+    package var currentTool: EditorTool { tool(for: lastKind) }
+
+    /// The tool a kind restores, built from its slot.
+    package func tool(for kind: Kind) -> EditorTool {
+        switch kind {
+        case .ink(let ink): tool(for: ink)
         case .eraser: eraserTool
         case .text: textTool
         }

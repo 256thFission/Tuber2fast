@@ -213,6 +213,32 @@ struct EditorViewModelTests {
         #expect(editor.tool == .eraseObject, "coming back from a pen restores the mode, it does not switch it")
         withExtendedLifetime(scratch) {}
     }
+
+    @Test("A cap in hand shows that tab's tool, not the eraser mode another tab saved")
+    func aHeldCapShowsItsOwnTabsTool() async throws {
+        let shared = ToolPalette(store: MemoryPaletteStore())
+        let (firstScratch, first) = try await notebook("vm-cap-a")
+        let (secondScratch, second) = try await notebook("vm-cap-b")
+        let one = EditorViewModel(notebook: first, palette: shared, theme: .macaron) { _ in }
+        let two = EditorViewModel(notebook: second, palette: shared, theme: .macaron) { _ in }
+
+        one.selectEraser()
+        one.setWidth(.thick)
+        two.selectEraser()
+        two.selectEraser()
+        #expect(shared.eraserMode == .object)
+
+        #expect(one.tool(for: .eraser) == .erasePixel(.thick))
+        #expect(two.tool(for: .eraser) == .eraseObject)
+
+        one.selectEraser()
+        #expect(one.tool(for: .eraser) == .eraseObject, "the second tap shows the mode it switched to")
+
+        two.select(.ink(.pen))
+        #expect(two.tool(for: .eraser) == shared.eraserTool, "a cap not in hand shows what a tap restores")
+        #expect(two.tool(for: .ink(.highlighter)) == shared.tool(for: .highlighter))
+        withExtendedLifetime((firstScratch, secondScratch)) {}
+    }
 }
 
 /// Export: what the sheet's four intentions do to the two properties it
