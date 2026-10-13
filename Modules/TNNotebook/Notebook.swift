@@ -1373,8 +1373,15 @@ package final class Notebook {
                 }
                 retryBuffer[item.page] = nil
             }
+            // A refused page stays dirty and every pass captures it again.
+            // One the store will refuse again keeps its bytes, so those
+            // passes do not re-encode the drawing.
+            var kept = 0
             for (page, refusal) in report.refusals {
                 TNLog.event(.notebook, "page \(page) refused: \(refusal)")
+                guard !refusal.isTransient, let entry = serialized[page] else { continue }
+                kept += entry.bytes.count
+                if kept <= schedule.retryBufferBytes { retryBuffer[page] = entry }
             }
             // An index that left out a page this pass captured stays owed, so
             // the pass that lands the page's file rewrites the index to name

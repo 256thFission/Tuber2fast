@@ -107,6 +107,26 @@ final class RefusingNewPagesStore: ForwardingStore, @unchecked Sendable {
     }
 }
 
+/// Refuses every write of one page as a dangling asset, which the store
+/// would give again on any retry, and keeps each ink archive it was handed
+/// for that page.
+final class PermanentlyRefusingStore: ForwardingStore, @unchecked Sendable {
+    let page: PageID
+    private(set) var archives: [Data] = []
+    init(_ base: PackageStore, refusing page: PageID) {
+        self.page = page
+        super.init(base)
+    }
+    override func save(_ batch: SaveBatch) async throws(FormatFault) -> SaveReport {
+        let refused = batch.pages.filter { $0.pageID == page }
+        for write in refused { if case .archive(let bytes) = write.ink { archives.append(bytes) } }
+        let report = try await base.save(SaveBatch(index: batch.index, indexChanged: batch.indexChanged, pages: batch.pages.filter { $0.pageID != page }))
+        var refusals = report.refusals
+        if !refused.isEmpty { refusals[page] = .danglingAsset(LayerID(), AssetRef(id: AssetID(), format: .heic)) }
+        return SaveReport(committed: report.committed, refusals: refusals, indexWritten: report.indexWritten, omitted: report.omitted, indexWithheld: report.indexWithheld)
+    }
+}
+
 /// A real store whose `readAsset` parks every call until the test releases
 /// it by index, so a render can be held while the notebook moves on.
 final class GatedAssetStore: ForwardingStore, @unchecked Sendable {
@@ -1116,6 +1136,25 @@ struct NotebookTests {
         #expect(onDisk.index.pageIDs == [first], "the index names only what is present")
         #expect(onDisk.pageFaults.isEmpty)
         #expect(notebook.pageIDs == [first, refusedPage], "the intent survives in memory")
+    }
+
+    @Test("A page the store will refuse again is serialized once, and later passes write the same bytes")
+    func aPermanentRefusalIsSerializedOnce() async throws {
+        let scratch = try Scratch("nb-refused-permanently")
+        let base = try await PackageStore.create(root: scratch.packageURL, index: Fixture.index(pages: 1))
+        let page = try await base.load().index.pageIDs[0]
+        let store = PermanentlyRefusingStore(base, refusing: page)
+        // The default debounce is long, so the flushes run the passes.
+        let notebook = try await Notebook.open(store: store)
+        notebook.windowChanged(to: [page])
+        try await waitUntil { notebook.state(of: page)?.content != nil }
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 3), echoOf: nil)
+        for _ in 0..<3 { await notebook.flush() }
+        #expect(notebook.state(of: page)?.content?.isDirty == true, "a refused page stays dirty")
+        #expect(store.archives.count >= 3)
+        // A fresh encoding is a fresh buffer; reused bytes share the first.
+        let buffers = Set(store.archives.map { $0.withUnsafeBytes { Int(bitPattern: $0.baseAddress) } })
+        #expect(buffers.count == 1, "every pass after the first reused the first pass's bytes")
     }
 
     @Test("A page the written index left out is named by the index the pass that lands its file writes")
