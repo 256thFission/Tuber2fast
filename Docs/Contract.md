@@ -330,7 +330,7 @@ bumps it in either regime (*Kinds are closed on disk*) (decided R2, F1,
 F2, F3; tests-hostless-01).
 
 **Kinds are closed on disk as they are in code.** Layer kinds are
-`image`, `pdf`, `link`, `text`, and nothing else; paper kinds are `none`,
+`image`, `pdf`, `link`, `text`, and nothing else; paper kinds are
 `blank`, `lined`, `grid`, `dotted`, `image`, `pdf`, and nothing else. A
 kind name this build does not write is not an unknown to be carried,
 shown or written back: it is a file this build cannot read, refused at
@@ -399,10 +399,20 @@ is that list in page order; nothing else is stored for it. A bookmark is
 not a layer, is not ink, and is not undoable. Deleting a page takes its
 bookmark with it, and a save that drops a page drops its bookmark too.
 
-**Paper** is either drawn or an asset. Drawn paper is `none`, `blank`,
-`lined`, `grid`, or `dotted`. Asset paper is an image (`.heic`) or one page
-of a PDF (`.pdf` plus a page index), stored in `assets/` like any other
-asset and named from the page's record in the index:
+**Paper** is either drawn or an asset. Drawn paper is `blank`, `lined`,
+`grid`, or `dotted`: marks drawn over a page already filled white, and
+`blank` is that page with no marks. There is no drawn paper that draws
+nothing. The file once named one, `none`, "not even a white ground", but
+nothing is ever under drawn paper and `Renderer.drawPage` fills every
+page white before it draws any, so `none` and `blank` were one picture
+under two names: page setup offered both, and the notebook turned the one
+into the other when a new page copied its paper. A kind no picture can
+tell from another is a name with nothing behind it. It goes at the reset
+of every version to 1, while *Burn things down with permission* still
+lets a kind leave a file under the number the file carries (decided R2;
+simple-canvas-05, thermo-canvas-05). Asset paper is an image (`.heic`) or
+one page of a PDF (`.pdf` plus a page index), stored in `assets/` like
+any other asset and named from the page's record in the index:
 
 ```json
 { "id": "UUID", "width": 612, "height": 792,
@@ -413,8 +423,8 @@ asset and named from the page's record in the index:
 
 Paper is not a layer: it cannot be selected, moved, or deleted, it always
 fills the page, and a new page copies the current page's drawn paper
-(`none` becomes `blank`) unless its creation specified a paper; after asset
-paper a new page is `blank`. Asset paper
+unless its creation specified a paper; after asset paper a new page is
+`blank`. Asset paper
 is drawn to fill the page rectangle exactly and is never stretched: the
 page's geometry is set from the asset's aspect when the paper is applied,
 and asset paper can only be applied to a page with no ink and no layers.
@@ -929,9 +939,18 @@ wrote into another notebook's package, and the only way out was discard
 docs-07; critique C4).
 
 Trash is `Trash/<NotebookID or FolderID>/<original name>` with an
-`origin.json` beside it. Recovery restores the original name, suffixes it
-only if that name is taken (*A taken name becomes `Name (n)`*), and falls
-back to the root if the original folder is gone. Duplicate gives the copy
+`origin.json` beside it, which records, beside its version, the path of
+the folder the item sat in, the item's name, and when it was trashed, and
+nothing else. Recovery restores the original name, suffixes it only if
+that name is taken (*A taken name becomes `Name (n)`*), and falls back to
+the root if no folder is at that path any more: the record names the
+folder by its path, not its identity, so a folder renamed or moved since
+the trash is gone to it. The record once carried the folder's `FolderID`
+too, read from the folder's sidecar on every trash and read back by
+nothing but a test, a field reserved for a future feature (*Forbidden*);
+it goes at the reset of every version to 1, while *Burn things down with
+permission* still lets a key leave a file under the number the file
+carries (decided R2; simple-data-04). Duplicate gives the copy
 a new `NotebookID` and
 keeps every `PageID`. A folder has a `.folder.json` holding its
 `FolderID`, its colour, and its symbol. Stars live in `Favorites.json`
@@ -1159,9 +1178,16 @@ arch-data-05, contract-12).
 
 ## Links and tabs
 
-A link layer points at a page, in this notebook or another. Tapping it is
-a report; the editor turns the layer into a target; the app opens or
-focuses that notebook's tab and scrolls to the page. Each notebook has at
+A link layer's payload is its rect and the page it points at, in this
+notebook or another, and nothing else: every link is drawn the same way,
+so no file records how one looks. The layer file once carried `style`,
+with the one value `button`, written by every link and read by nothing
+that draws, a field reserved for a future feature (*Forbidden*); it goes
+at the reset of every version to 1, while *Burn things down with
+permission* still lets a key leave a file under the number the file
+carries (decided R2; simple-data-04). Tapping a link is a report; the
+editor turns the layer into a target; the app opens or focuses that
+notebook's tab and scrolls to the page. Each notebook has at
 most one tab. A missing target says so; so does a target in the trash,
 and so does one whose identity two packages share (*A `NotebookID` is
 minted once and never rewritten*). Backlinks, if ever built, are computed
