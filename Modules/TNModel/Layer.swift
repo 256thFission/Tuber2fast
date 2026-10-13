@@ -1,8 +1,8 @@
 import Foundation
 
-/// A static layer beneath (or, by `inkIndex`, among) a page's ink. The set of
-/// kinds is closed in code and on disk: a layer file naming any other kind is
-/// unreadable, and the page carrying it is a placeholder.
+/// A static layer beneath a page's ink. The set of kinds is closed in code
+/// and on disk: a layer file naming any other kind is unreadable, and the
+/// page carrying it is a placeholder.
 package enum LayerKind: String, Codable, Sendable, CaseIterable {
     case image, pdf, link, text
 }

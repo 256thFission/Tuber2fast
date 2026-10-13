@@ -61,7 +61,7 @@ enum PlaceholderCopy {
         switch fault {
         case .missingPageFile:
             "This page is missing."
-        case .pageFileUnreadable, .pageIDMismatch, .invalidInkIndex, .duplicateLayerID:
+        case .pageFileUnreadable, .pageIDMismatch, .duplicateLayerID:
             "This page can't be read."
         case .missingInk, .inkContainerInvalid, .inkArchiveUndecodable:
             "This page's ink can't be read."

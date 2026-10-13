@@ -28,7 +28,6 @@ package struct PageContent: Sendable {
     package var layers: [Layer]
     /// The durable flag: once true, every save writes the container.
     package var hasInk: Bool
-    package var inkIndex: Int
     /// The rendered backdrop, a value the renderer produced.
     package var composite: Composite?
     package var editSeq: UInt64
@@ -59,11 +58,10 @@ package struct PageContent: Sendable {
     package var isDirty: Bool { editSeq > savedSeq }
     package var inkIsDirty: Bool { inkSeq > savedInkSeq }
 
-    package init(ink: PKDrawing, layers: [Layer], hasInk: Bool, inkIndex: Int) {
+    package init(ink: PKDrawing, layers: [Layer], hasInk: Bool) {
         self.ink = ink
         self.layers = layers
         self.hasInk = hasInk
-        self.inkIndex = inkIndex
         self.composite = nil
         self.editSeq = 0
         self.savedSeq = 0
@@ -86,7 +84,7 @@ package struct PageContent: Sendable {
         inkSeq += 1
     }
 
-    /// A non-ink change: layers, index. The page file is due, the ink is not.
+    /// A non-ink change: the layers. The page file is due, the ink is not.
     package mutating func edited() {
         editSeq += 1
     }
@@ -94,11 +92,11 @@ package struct PageContent: Sendable {
     /// A page with nothing on it. The state every new page but a duplicate
     /// starts in.
     package static var empty: PageContent {
-        PageContent(ink: PKDrawing(), layers: [], hasInk: false, inkIndex: 0)
+        PageContent(ink: PKDrawing(), layers: [], hasInk: false)
     }
 
     package var revision: PageRevision {
-        PageRevision(ink: ink, layers: layers, inkIndex: inkIndex)
+        PageRevision(ink: ink, layers: layers)
     }
 
     /// Puts `layer` in place of the one at `position`. The value the page
@@ -111,12 +109,11 @@ package struct PageContent: Sendable {
         edited()
     }
 
-    /// Takes out the layer at `position`, and one off the ink index when it
-    /// sat beneath the ink. Its file is no longer owed: it stays on disk,
-    /// because only `compact()` deletes, and the page file stops naming it.
+    /// Takes out the layer at `position`. Its file is no longer owed: it
+    /// stays on disk, because only `compact()` deletes, and the page file
+    /// stops naming it.
     package mutating func removeLayer(at position: Int) {
         let removed = layers.remove(at: position)
-        if position < inkIndex { inkIndex -= 1 }
         pendingLayerFiles.remove(removed.id)
         edited()
     }
@@ -126,7 +123,7 @@ package struct PageContent: Sendable {
     /// both come here, so their pending-layer arithmetic cannot drift.
     package mutating func adopt(_ revision: PageRevision) -> (ink: Bool, layers: Bool) {
         let inkDiffers = ink != revision.ink
-        let layersDiffer = layers != revision.layers || inkIndex != revision.inkIndex
+        let layersDiffer = layers != revision.layers
         if inkDiffers { setInk(revision.ink) }
         if layersDiffer {
             // A layer the revision removes is not pending: its file stays on
@@ -136,7 +133,6 @@ package struct PageContent: Sendable {
                 pendingLayerFiles.insert(layer.id)
             }
             layers = revision.layers
-            inkIndex = revision.inkIndex
             edited()
         }
         return (inkDiffers, layersDiffer)
@@ -158,7 +154,6 @@ package struct TextSession: Sendable, Equatable {
 package struct PageRevision: Sendable, Equatable {
     package let ink: PKDrawing
     package let layers: [Layer]
-    package let inkIndex: Int
 }
 
 /// One undo step: the page, the revision it had before the edit and the

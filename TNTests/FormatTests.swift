@@ -36,8 +36,8 @@ struct KeySetPins {
 
     @Test("pages/<id>.json carries exactly its keys")
     func pageFileKeys() throws {
-        let data = try Codecs.encode(PageFile(pageID: PageID(), hasInk: true, inkIndex: 1, layers: [LayerID()]))
-        #expect(Set(try jsonObject(data).keys) == ["pageID", "hasInk", "inkIndex", "layers"])
+        let data = try Codecs.encode(PageFile(pageID: PageID(), hasInk: true, layers: [LayerID()]))
+        #expect(Set(try jsonObject(data).keys) == ["pageID", "hasInk", "layers"])
     }
 
     @Test("Each layer kind's file carries exactly its keys, payload keyed by kind")
@@ -315,7 +315,7 @@ private func everyShape() throws -> [(file: String, object: [String: Any], refus
     var shapes: [(file: String, object: [String: Any], refusal: (Data) -> String?)] = [
         ("notebook.json", try jsonObject(Codecs.encode(index.withBookmarks([PageBookmark(page: index.pageIDs[0], title: "One")]))),
          reading { _ = try IndexFile.decode($0) }),
-        ("page file", try jsonObject(Codecs.encode(PageFile(pageID: PageID(), hasInk: true, inkIndex: 1, layers: [LayerID()]))),
+        ("page file", try jsonObject(Codecs.encode(PageFile(pageID: PageID(), hasInk: true, layers: [LayerID()]))),
          reading { _ = try Codecs.decodeStrict(PageFile.self, from: $0) }),
         ("view.json", try jsonObject(Codecs.encode(ViewState(currentPageID: PageID()))),
          reading { _ = try Codecs.decodeStrict(ViewState.self, from: $0) }),
@@ -413,7 +413,7 @@ struct StoreTests {
         let page1 = try await reopened.loadPage(index.pageIDs[1])
         #expect(page1.inkArchive == Fixture.archive(2))
         #expect(page1.layers == [layer])
-        #expect(page1.file.inkIndex == 1)
+        #expect(page1.file.layers == [layer.id])
         let page2 = try await reopened.loadPage(index.pageIDs[2])
         #expect(page2.inkArchive == nil)
         #expect(page2.faults.isEmpty)
@@ -459,8 +459,8 @@ struct StoreTests {
         let beforeInk = try PosixFileSystem().modificationTime(untouchedInk)
 
         let batch = SaveBatch(index: index, indexChanged: false, pages: [
-            PageWrite(file: PageFile(pageID: index.pageIDs[0], hasInk: true, inkIndex: 0, layers: []), ink: .archive(Fixture.archive(7)), layerFiles: []),
-            PageWrite(file: PageFile(pageID: index.pageIDs[1], hasInk: true, inkIndex: 1, layers: try await store.loadPage(index.pageIDs[1]).file.layers), ink: .unchanged, layerFiles: []),
+            PageWrite(file: PageFile(pageID: index.pageIDs[0], hasInk: true, layers: []), ink: .archive(Fixture.archive(7)), layerFiles: []),
+            PageWrite(file: PageFile(pageID: index.pageIDs[1], hasInk: true, layers: try await store.loadPage(index.pageIDs[1]).file.layers), ink: .unchanged, layerFiles: []),
         ])
         let report = try await store.save(batch)
         #expect(report.refusals.isEmpty)
@@ -478,8 +478,8 @@ struct StoreTests {
         let intended = index.withPages(index.pages + [newPage])
         let dangling = Fixture.imageLayer()  // its asset was never written
         let batch = SaveBatch(index: intended, indexChanged: true, pages: [
-            PageWrite(file: PageFile(pageID: newPage.id, hasInk: false, inkIndex: 1, layers: [dangling.id]), ink: .unchanged, layerFiles: [dangling]),
-            PageWrite(file: PageFile(pageID: index.pageIDs[2], hasInk: true, inkIndex: 0, layers: []), ink: .archive(Fixture.archive(5)), layerFiles: []),
+            PageWrite(file: PageFile(pageID: newPage.id, hasInk: false, layers: [dangling.id]), ink: .unchanged, layerFiles: [dangling]),
+            PageWrite(file: PageFile(pageID: index.pageIDs[2], hasInk: true, layers: []), ink: .archive(Fixture.archive(5)), layerFiles: []),
         ])
         let report = try await store.save(batch)
         #expect(report.refusals[newPage.id] == .danglingAsset(dangling.id, dangling.payload.asset!))
@@ -499,7 +499,7 @@ struct StoreTests {
         for directory in store.layout.directories { try PosixFileSystem().createDirectory(directory) }
         let dangling = Fixture.imageLayer()
         let batch = SaveBatch(index: index, indexChanged: true, pages: [
-            PageWrite(file: PageFile(pageID: index.pageIDs[0], hasInk: false, inkIndex: 1, layers: [dangling.id]), ink: .unchanged, layerFiles: [dangling]),
+            PageWrite(file: PageFile(pageID: index.pageIDs[0], hasInk: false, layers: [dangling.id]), ink: .unchanged, layerFiles: [dangling]),
         ])
         let report = try await store.save(batch)
         #expect(report.indexWithheld)
@@ -538,7 +538,7 @@ struct StoreTests {
         let (_, index, _) = try await Fixture.populated(at: scratch.packageURL)
         let store = PackageStore(root: scratch.packageURL, fileSystem: FaultingFileSystem(faults: [.failStat]))
         let batch = SaveBatch(index: index.withBookmarks([PageBookmark(page: index.pageIDs[0], title: "x")]), indexChanged: true, pages: [
-            PageWrite(file: PageFile(pageID: index.pageIDs[0], hasInk: true, inkIndex: 0, layers: []), ink: .archive(Fixture.archive(6)), layerFiles: []),
+            PageWrite(file: PageFile(pageID: index.pageIDs[0], hasInk: true, layers: []), ink: .archive(Fixture.archive(6)), layerFiles: []),
         ])
         // Page 0 is committed by the save; page 1 is the first the index
         // must look for.
@@ -592,7 +592,7 @@ struct StoreTests {
         let scratch = try Scratch("inkflag")
         let (store, index, _) = try await Fixture.populated(at: scratch.packageURL)
         let batch = SaveBatch(index: index, indexChanged: false, pages: [
-            PageWrite(file: PageFile(pageID: index.pageIDs[2], hasInk: false, inkIndex: 0, layers: []), ink: .archive(Fixture.archive(1)), layerFiles: []),
+            PageWrite(file: PageFile(pageID: index.pageIDs[2], hasInk: false, layers: []), ink: .archive(Fixture.archive(1)), layerFiles: []),
         ])
         let report = try await store.save(batch)
         #expect(report.refusals[index.pageIDs[2]] == .inkWithoutHasInk)
@@ -605,7 +605,7 @@ struct StoreTests {
         let store = PackageStore(root: scratch.packageURL, fileSystem: FaultingFileSystem(faults: [.noSpace]))
         let loaded = try await store.load()
         let batch = SaveBatch(index: loaded.index, indexChanged: false, pages: [
-            PageWrite(file: PageFile(pageID: loaded.index.pageIDs[0], hasInk: true, inkIndex: 0, layers: []), ink: .archive(Fixture.archive(8)), layerFiles: []),
+            PageWrite(file: PageFile(pageID: loaded.index.pageIDs[0], hasInk: true, layers: []), ink: .archive(Fixture.archive(8)), layerFiles: []),
         ])
         var refused = false
         do { _ = try await store.save(batch) } catch FormatFault.insufficientSpace { refused = true } catch { Issue.record("\(error)") }
@@ -731,9 +731,9 @@ struct WriteOrderSweep {
         let intended = index.withPages(index.pages + [newPage])
         let ids = index.pageIDs
         let batch = SaveBatch(index: intended, indexChanged: true, pages: [
-            PageWrite(file: PageFile(pageID: ids[0], hasInk: true, inkIndex: 0, layers: []), ink: .archive(Fixture.archive(21)), layerFiles: []),
-            PageWrite(file: PageFile(pageID: ids[1], hasInk: true, inkIndex: 2, layers: [existingLayer.id, added.id]), ink: .unchanged, layerFiles: [added]),
-            PageWrite(file: PageFile(pageID: newPage.id, hasInk: true, inkIndex: 0, layers: []), ink: .archive(Fixture.archive(22)), layerFiles: []),
+            PageWrite(file: PageFile(pageID: ids[0], hasInk: true, layers: []), ink: .archive(Fixture.archive(21)), layerFiles: []),
+            PageWrite(file: PageFile(pageID: ids[1], hasInk: true, layers: [existingLayer.id, added.id]), ink: .unchanged, layerFiles: [added]),
+            PageWrite(file: PageFile(pageID: newPage.id, hasInk: true, layers: []), ink: .archive(Fixture.archive(22)), layerFiles: []),
         ])
         return (batch, added, newPage)
     }
@@ -817,7 +817,7 @@ struct CompactTests {
         let layout = store.layout
         // Remove the layer from page 1: the file and its asset become orphans.
         let batch = SaveBatch(index: index, indexChanged: false, pages: [
-            PageWrite(file: PageFile(pageID: index.pageIDs[1], hasInk: true, inkIndex: 0, layers: []), ink: .unchanged, layerFiles: []),
+            PageWrite(file: PageFile(pageID: index.pageIDs[1], hasInk: true, layers: []), ink: .unchanged, layerFiles: []),
         ])
         _ = try await store.save(batch)
         #expect(try PosixFileSystem().exists(layout.layerURL(layer.id)))

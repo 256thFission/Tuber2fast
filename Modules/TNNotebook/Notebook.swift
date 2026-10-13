@@ -223,8 +223,7 @@ package final class Notebook {
         var content = PageContent(
             ink: ink ?? PKDrawing(),
             layers: bytes.layers,
-            hasInk: bytes.file.hasInk || bytes.inkRecordNeeded,
-            inkIndex: bytes.file.inkIndex
+            hasInk: bytes.file.hasInk || bytes.inkRecordNeeded
         )
         // An adopted container is recorded by the next save.
         if bytes.inkRecordNeeded { content.edited() }
@@ -690,7 +689,7 @@ package final class Notebook {
         }
 
         let layers = copied.layers.map { Layer(id: LayerID(), transform: $0.transform, payload: $0.payload, locked: $0.locked) }
-        var content = PageContent(ink: copied.ink, layers: layers, hasInk: false, inkIndex: copied.inkIndex)
+        var content = PageContent(ink: copied.ink, layers: layers, hasInk: false)
         content.pendingLayerFiles = Set(layers.map(\.id))
         // `setInk` rather than the initializer's flag, so the durable flag and
         // the ink sequence agree and the first save writes the container.
@@ -705,8 +704,8 @@ package final class Notebook {
     /// mark nobody named, which is a mark all the same: presence is the flag.
     ///
     /// Not undoable, and it queues no change. Undo belongs to ink
-    /// (`Docs/Contract.md` — Undo) and `PageRevision` is ink, layers and
-    /// `inkIndex`, so there is no shape for a mark to be recorded in; and
+    /// (`Docs/Contract.md` — Undo) and `PageRevision` is the ink and the
+    /// layers, so there is no shape for a mark to be recorded in; and
     /// `EditorBinding.intention` refreshes the mirrors whether or not the
     /// mutation queued anything, so the navigator sees this without a
     /// structure change. Deleting, duplicating and moving pages are equally
@@ -881,8 +880,7 @@ package final class Notebook {
         guard case .ready(var content) = states[page] else { throw .invalidWrite("page \(page) is not ready") }
         if recording, content.textEditing != nil { throw .invalidWrite("page \(page) has a text box open") }
         do { _ = try layer.validated() } catch { throw .invalidWrite("layer invalid: \(error)") }
-        content.layers.insert(layer, at: content.inkIndex)
-        content.inkIndex += 1
+        content.layers.append(layer)
         content.pendingLayerFiles.insert(layer.id)
         content.edited()
         commitLayerEdit(content, on: page, recording: recording)
@@ -1294,7 +1292,7 @@ package final class Notebook {
         var captured: [Captured] = []
         for page in index.pageIDs {
             guard case .ready(let content) = states[page], content.isDirty else { continue }
-            let file = PageFile(pageID: page, hasInk: content.hasInk, inkIndex: content.inkIndex, layers: content.layers.map(\.id))
+            let file = PageFile(pageID: page, hasInk: content.hasInk, layers: content.layers.map(\.id))
             captured.append(Captured(
                 page: page, file: file,
                 ink: content.hasInk && content.inkIsDirty ? content.ink : nil,

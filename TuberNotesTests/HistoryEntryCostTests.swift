@@ -86,8 +86,8 @@ struct HistoryEntryCostTests {
             transform: .placing(sourceWidth: 300, sourceHeight: 200, at: (10, 20), scale: 1),
             payload: .image(ImageLayer(asset: AssetRef(id: AssetID(), format: .heic), naturalSize: PixelSize(width: 300, height: 200)))
         )
-        let inkOnly = PageRevision(ink: drawing, layers: [], inkIndex: 0)
-        let withText = PageRevision(ink: drawing, layers: [longText, image], inkIndex: 0)
+        let inkOnly = PageRevision(ink: drawing, layers: [])
+        let withText = PageRevision(ink: drawing, layers: [longText, image])
 
         // Both the erase shapes rebuild the stroke array through `strokes`,
         // which is what an eraser pass or a lasso delete hands `inkChanged`.
@@ -100,7 +100,7 @@ struct HistoryEntryCostTests {
             Shape(name: "append one stroke") { revision in
                 var ink = revision.ink
                 ink.append(Self.drawing(strokes: 1, offset: Double(revision.ink.strokes.count)))
-                return PageRevision(ink: ink, layers: revision.layers, inkIndex: revision.inkIndex)
+                return PageRevision(ink: ink, layers: revision.layers)
             },
             Shape(name: "erase five scattered strokes") { revision in
                 erasePass += 1
@@ -108,7 +108,7 @@ struct HistoryEntryCostTests {
                 for slot in stride(from: 4, through: 0, by: -1) {
                     strokes.remove(at: (erasePass * 7 + slot * (strokes.count / 5)) % strokes.count)
                 }
-                return PageRevision(ink: PKDrawing(strokes: strokes), layers: revision.layers, inkIndex: revision.inkIndex)
+                return PageRevision(ink: PKDrawing(strokes: strokes), layers: revision.layers)
             },
             // The same five strokes, removed through the `strokes` setter on a
             // copy of the drawing instead of rebuilt with `PKDrawing(strokes:)`.
@@ -124,20 +124,20 @@ struct HistoryEntryCostTests {
                 for slot in stride(from: 4, through: 0, by: -1) {
                     edited.strokes.remove(at: (setterPass * 7 + slot * (edited.strokes.count / 5)) % edited.strokes.count)
                 }
-                return PageRevision(ink: edited, layers: revision.layers, inkIndex: revision.inkIndex)
+                return PageRevision(ink: edited, layers: revision.layers)
             },
             Shape(name: "lasso-delete twenty contiguous strokes") { revision in
                 lassoPass += 1
                 var strokes = revision.ink.strokes
                 let start = (lassoPass * 131) % (strokes.count - 20)
                 strokes.removeSubrange(start..<start + 20)
-                return PageRevision(ink: PKDrawing(strokes: strokes), layers: revision.layers, inkIndex: revision.inkIndex)
+                return PageRevision(ink: PKDrawing(strokes: strokes), layers: revision.layers)
             },
             Shape(name: "transform an image beside a long text layer") { revision in
                 var layers = revision.layers
                 let moved = layers[1].withTransform(.translation(x: layers[1].transform.tx + 1, y: layers[1].transform.ty))
                 layers[1] = moved
-                return PageRevision(ink: revision.ink, layers: layers, inkIndex: revision.inkIndex)
+                return PageRevision(ink: revision.ink, layers: layers)
             },
         ]
         let starts = [inkOnly, inkOnly, inkOnly, inkOnly, withText]

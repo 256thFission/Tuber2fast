@@ -149,8 +149,8 @@ enum Fixture {
         try await store.writeAsset(archive(9, count: 512), layer.payload.asset!)
         let ids = index.pageIDs
         let batch = SaveBatch(index: index, indexChanged: false, pages: [
-            PageWrite(file: PageFile(pageID: ids[0], hasInk: true, inkIndex: 0, layers: []), ink: .archive(archive(1)), layerFiles: []),
-            PageWrite(file: PageFile(pageID: ids[1], hasInk: true, inkIndex: 1, layers: [layer.id]), ink: .archive(archive(2)), layerFiles: [layer]),
+            PageWrite(file: PageFile(pageID: ids[0], hasInk: true, layers: []), ink: .archive(archive(1)), layerFiles: []),
+            PageWrite(file: PageFile(pageID: ids[1], hasInk: true, layers: [layer.id]), ink: .archive(archive(2)), layerFiles: [layer]),
         ])
         let report = try await store.save(batch)
         try #require(report.refusals.isEmpty)

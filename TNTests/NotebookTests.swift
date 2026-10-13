@@ -861,7 +861,7 @@ struct NotebookTests {
         #expect(bytes.layers == [layer], "the restored placement is on disk, not the moved one")
     }
 
-    @Test("Insert then undo removes the layer and restores the ink index; redo brings it back with its file pending")
+    @Test("Insert then undo removes the layer; redo brings it back with its file pending")
     func undoRemovesAnInsertedLayer() async throws {
         let scratch = try Scratch("nb-undo-insert")
         let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
@@ -871,18 +871,16 @@ struct NotebookTests {
         let layer = textLayer("hi")
         try notebook.insertLayer(layer, on: page)
         try await waitUntil { notebook.drainChanges().contains { if case .compositeUpdated = $0 { true } else { false } } }
-        #expect(notebook.state(of: page)?.content?.inkIndex == 1)
+        #expect(notebook.state(of: page)?.content?.layers == [layer])
 
         #expect(notebook.undo() == page)
         #expect(notebook.state(of: page)?.content?.layers.isEmpty == true)
-        #expect(notebook.state(of: page)?.content?.inkIndex == 0)
         try await waitUntil {
             notebook.drainChanges().contains { if case .compositeUpdated(let p, _, let layers) = $0 { p == page && layers.isEmpty } else { false } }
         }
 
         #expect(notebook.redo() == page)
         #expect(notebook.state(of: page)?.content?.layers == [layer])
-        #expect(notebook.state(of: page)?.content?.inkIndex == 1)
         #expect(notebook.state(of: page)?.content?.pendingLayerFiles.contains(layer.id) == true)
     }
 
@@ -918,11 +916,9 @@ struct NotebookTests {
 
         notebook.deleteLayer(first.id, on: page)
         #expect(notebook.state(of: page)?.content?.layers == [second])
-        #expect(notebook.state(of: page)?.content?.inkIndex == 1)
 
         #expect(notebook.undo() == page)
         #expect(notebook.state(of: page)?.content?.layers == [first, second])
-        #expect(notebook.state(of: page)?.content?.inkIndex == 2)
     }
 
     @Test("A refused transform and a transform to the one the layer has record nothing")
@@ -1020,7 +1016,6 @@ struct NotebookTests {
         await store.release()
         try await waitUntil { notebook.state(of: page)?.content != nil }
         #expect(notebook.state(of: page)?.content?.layers.isEmpty == true, "undone on arrival")
-        #expect(notebook.state(of: page)?.content?.inkIndex == 0)
         try await waitUntil {
             notebook.drainChanges().contains { if case .compositeUpdated(let p, _, let layers) = $0 { p == page && layers.isEmpty } else { false } }
         }
@@ -1618,7 +1613,7 @@ struct NotebookTests {
         #expect(reopened.pageFaults.isEmpty)
         #expect(reopened.index.pages[1].paper == notebook.index.pages[1].paper)
         let bytes = try await PackageStore(root: scratch.packageURL).loadPage(imported[0])
-        #expect(bytes.file.layers.isEmpty && bytes.file.inkIndex == 0)
+        #expect(bytes.file.layers.isEmpty)
     }
 
     @Test("A PDF with a page that has no page box is refused whole, and nothing is made or written")
@@ -1803,7 +1798,6 @@ struct NotebookTests {
         #expect(notebook.pageIDs == [first, source, copy], "the copy follows the source")
         let copied = try #require(notebook.state(of: copy)?.content)
         #expect(copied.ink == before.ink)
-        #expect(copied.inkIndex == before.inkIndex)
         #expect(copied.hasInk == before.hasInk)
         #expect(notebook.index.record(of: copy)?.geometry == PageGeometry(width: 842, height: 595))
         #expect(notebook.paper(of: copy) == .drawn(.grid))
@@ -2061,18 +2055,42 @@ struct NotebookTests {
         try await waitUntil { notebook.state(of: page)?.content != nil }
         let layer = Fixture.imageLayer()
         try await notebook.addLayer(layer, assetData: Fixture.archive(1, count: 128), on: page)
-        #expect(notebook.state(of: page)?.content?.inkIndex == 1)
+        #expect(notebook.state(of: page)?.content?.layers == [layer])
         #expect(notebook.transformLayer(on: page, layer: layer.id, to: .translation(x: 5, y: 5)) == .accepted)
         #expect(notebook.transformLayer(on: page, layer: layer.id, to: PageSpaceTransform(a: 0, b: 0, c: 0, d: 0, tx: 0, ty: 0)) == .refused(reason: "invalidTransform(\(layer.id))"))
         await notebook.flush()
         let bytes = try await PackageStore(root: scratch.packageURL).loadPage(page)
-        #expect(bytes.file.layers == [layer.id] && bytes.file.inkIndex == 1)
+        #expect(bytes.file.layers == [layer.id])
         #expect(bytes.layers.first?.transform == .translation(x: 5, y: 5))
         notebook.deleteLayer(layer.id, on: page)
-        #expect(notebook.state(of: page)?.content?.inkIndex == 0)
+        #expect(notebook.state(of: page)?.content?.layers.isEmpty == true)
         await notebook.flush()
         let after = try await PackageStore(root: scratch.packageURL).loadPage(page)
-        #expect(after.file.layers.isEmpty && after.file.inkIndex == 0)
+        #expect(after.file.layers.isEmpty)
+    }
+
+    @Test("Layers stack in the order they were inserted, all beneath the ink: in memory, in the composite, on disk")
+    func layersStackInInsertionOrder() async throws {
+        let scratch = try Scratch("nb-layer-order")
+        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        let page = notebook.pageIDs[0]
+        notebook.windowChanged(to: [page])
+        try await waitUntil { notebook.state(of: page)?.content != nil }
+        let ink = Ink.drawing(strokes: 2)
+        notebook.inkChanged(on: page, ink, echoOf: nil)
+        let first = textLayer("first"), second = textLayer("second")
+        try notebook.insertLayer(first, on: page)
+        try notebook.insertLayer(second, on: page)
+
+        #expect(notebook.state(of: page)?.content?.layers == [first, second], "the second lands on top of the first")
+        #expect(notebook.state(of: page)?.content?.ink == ink, "the ink is no layer, and an insert does not touch it")
+        try await waitUntil {
+            notebook.drainChanges().contains { if case .compositeUpdated(let p, _, let layers) = $0 { p == page && layers == [first, second] } else { false } }
+        }
+        await notebook.flush()
+        let bytes = try await PackageStore(root: scratch.packageURL).loadPage(page)
+        #expect(bytes.file.layers == [first.id, second.id])
+        #expect(bytes.file.hasInk)
     }
 
     @Test("An undo of a deleted image after a compact brings back its asset too, and the page saves")
@@ -2284,12 +2302,11 @@ struct NotebookTests {
         notebook.beginTextEditing(on: page, layer: layer.id)
         notebook.endTextEditing(on: page, layer: layer.id, TextLayer(rect: text.rect, runs: [TextRun(string: "", style: .body)], alignment: .leading))
         #expect(notebook.state(of: page)?.content?.layers.isEmpty == true)
-        #expect(notebook.state(of: page)?.content?.inkIndex == 0)
         #expect(notebook.state(of: page)?.content?.isDirty == true)
         try await waitUntil { notebook.drainChanges().contains { if case .textEditingEnded = $0 { true } else { false } } }
         await notebook.flush()
         let bytes = try await PackageStore(root: scratch.packageURL).loadPage(page)
-        #expect(bytes.file.layers.isEmpty && bytes.file.inkIndex == 0)
+        #expect(bytes.file.layers.isEmpty)
         // Begin while a session is open, a commit for the wrong layer, and an
         // invalid committed rect are traps, which Swift Testing cannot observe.
     }
@@ -2442,12 +2459,10 @@ struct NotebookTests {
 
         #expect(notebook.undo() == page)
         #expect(notebook.state(of: page)?.content?.layers.isEmpty == true)
-        #expect(notebook.state(of: page)?.content?.inkIndex == 0)
         #expect(!notebook.canUndo, "one step took the box and its text")
 
         #expect(notebook.redo() == page)
-        #expect(notebook.state(of: page)?.content?.layers.first?.payload == .text(typed))
-        #expect(notebook.state(of: page)?.content?.inkIndex == 1)
+        #expect(notebook.state(of: page)?.content?.layers.map(\.payload) == [.text(typed)])
         #expect(notebook.state(of: page)?.content?.pendingLayerFiles.contains(layer.id) == true)
         _ = await notebook.close()
         _ = scratch
@@ -2507,7 +2522,6 @@ struct NotebookTests {
         let box = try #require(notebook.state(of: page)?.content?.textEditing?.layer)
         notebook.endTextEditing(on: page, layer: box, TextLayer(rect: PageRect(x: 30, y: 40, width: 240, height: 96), runs: [], alignment: .leading))
         #expect(notebook.state(of: page)?.content?.layers.isEmpty == true)
-        #expect(notebook.state(of: page)?.content?.inkIndex == 0)
         #expect(notebook.isDirty, "the removal is a change to the page even though the stack saw none")
         #expect(notebook.contentVersion(of: page) == version + 1)
         #expect(!notebook.canUndo && notebook.canRedo, "a record would have cleared redo")
@@ -2563,7 +2577,7 @@ struct EditHistoryBoundTests {
     /// A revision whose drawing has `strokes` strokes, all the same one.
     private static func revision(strokes: Int) -> PageRevision {
         let stroke = Ink.line(from: .zero, to: CGPoint(x: 10, y: 10))
-        return PageRevision(ink: PKDrawing(strokes: Array(repeating: stroke, count: strokes)), layers: [], inkIndex: 0)
+        return PageRevision(ink: PKDrawing(strokes: Array(repeating: stroke, count: strokes)), layers: [])
     }
 
     private static func entry(_ page: PageID, strokes: Int, rebuilt: Bool) -> HistoryEntry {
