@@ -158,6 +158,24 @@ struct LibraryBrowserTests {
         #expect(browser.options.newNotebook == NotebookSetup(geometry: a5, paper: .lined))
     }
 
+    @Test("A notebook made while the stars cannot be read is remembered, and the stars' line stays up")
+    func aNewNotebookIsRememberedPastABadFavoritesFile() async throws {
+        let (scratch, browser) = try makeBrowser("browser-new-notebook-bad-favorites")
+        defer { withExtendedLifetime(scratch) {} }
+        let store = browser.library.store
+        let essay = try await store.createNotebook(named: "Essay", in: "")
+        try await store.setFavorite(try #require(essay.identity), true)
+        let written = try Data(contentsOf: store.favoritesURL)
+        try written.prefix(written.count / 2).write(to: store.favoritesURL)
+
+        let a5 = PageGeometry(width: 420, height: 595)
+        await browser.createNotebook(named: "Lab", geometry: a5, paper: .grid)
+        #expect(browser.listing.items.map(\.name).sorted() == ["Essay", "Lab"])
+        let refusal = try #require(browser.refusal, "the stars' fault is still a line")
+        #expect(refusal.hasPrefix("Favorites.json cannot be read: "))
+        #expect(browser.options.newNotebook == NotebookSetup(geometry: a5, paper: .grid))
+    }
+
     @Test("Entering and leaving a folder walks the path")
     func walkingTheTree() async throws {
         let (scratch, browser) = try makeBrowser("browser-walk")

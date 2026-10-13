@@ -49,7 +49,10 @@ package final class LibraryBrowser {
     package private(set) var favorites: Set<ItemIdentity> = []
     /// nil when not selecting. Paths, because that is what a mutation takes.
     package private(set) var selection: Set<String>?
-    /// The last refused intention, one line. Cleared by the next that lands.
+    /// One line: the last refused intention, or else the stars' fault. An
+    /// intention that lands clears it, but the reload after it raises the
+    /// stars' fault again while they cannot be read, so it is no sign that
+    /// an intention landed; `perform`'s result is.
     package var refusal: String?
 
     package init(library: Library, optionsStore: any LibraryViewOptionsStore) {
@@ -194,7 +197,10 @@ package final class LibraryBrowser {
 
     /// Untyped because a closure does not infer a typed throw; every call
     /// inside throws `LibraryError`, and the fallback names anything else.
-    private func perform(_ work: () async throws -> Void) async {
+    /// True when the work landed, read before the reload can raise the
+    /// stars' fault.
+    @discardableResult
+    private func perform(_ work: () async throws -> Void) async -> Bool {
         do {
             try await work()
             refusal = nil
@@ -203,7 +209,9 @@ package final class LibraryBrowser {
         } catch {
             refusal = "\(error)"
         }
+        let landed = refusal == nil
         await reload()
+        return landed
     }
 
     package func rename(_ item: LibraryItem, to name: String) async {
@@ -261,11 +269,11 @@ package final class LibraryBrowser {
     }
 
     package func createNotebook(named name: String, geometry: PageGeometry, paper: DrawnPaper) async {
-        await perform { _ = try await library.store.createNotebook(named: name, in: folder, geometry: geometry, paper: paper) }
+        let made = await perform { _ = try await library.store.createNotebook(named: name, in: folder, geometry: geometry, paper: paper) }
         // Only a notebook that was actually made is a choice worth opening on
-        // next time; `perform` leaves `refusal` nil when it landed. The
-        // `didSet` on `options` is what writes it.
-        guard refusal == nil else { return }
+        // next time. `perform` says so, not `refusal`, which also carries the
+        // stars' fault. The `didSet` on `options` is what writes it.
+        guard made else { return }
         options.newNotebook = NotebookSetup(geometry: geometry, paper: paper)
     }
 
