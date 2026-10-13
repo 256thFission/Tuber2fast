@@ -55,8 +55,27 @@ final class RefusingLoadStore: ForwardingStore, @unchecked Sendable {
     }
 }
 
-actor Gate {
+/// A real store whose `writeAsset` waits until released, so an import can
+/// be caught between two of its asset writes.
+final class HeldAssetStore: ForwardingStore, @unchecked Sendable {
+    let gate = Gate()
+    func hold() async { await gate.close() }
+    func release() async { await gate.open() }
+    override func writeAsset(_ data: Data, _ ref: AssetRef) async throws(FormatFault) {
+        await gate.wait()
+        try await base.writeAsset(data, ref)
+    }
+}
+
+/// A gate a test can wait on until enough calls have reached it.
+protocol Arrivals: Actor {
+    var arrivals: Int { get }
+}
+
+actor Gate: Arrivals {
     private(set) var isOpen = true
+    /// Every call that reached `wait`, held or let through.
+    private(set) var arrivals = 0
     private var waiters: [CheckedContinuation<Void, Never>] = []
     func close() { isOpen = false }
     func open() {
@@ -66,6 +85,7 @@ actor Gate {
         for waiter in resumed { waiter.resume() }
     }
     func wait() async {
+        arrivals += 1
         if isOpen { return }
         await withCheckedContinuation { waiters.append($0) }
     }
@@ -108,7 +128,7 @@ final class GatedLoadStore: ForwardingStore, @unchecked Sendable {
     }
 }
 
-actor CallGate {
+actor CallGate: Arrivals {
     private var parked: [CheckedContinuation<Void, Never>?] = []
     var arrivals: Int { parked.count }
     func park() async {
@@ -373,6 +393,24 @@ struct NotebookTests {
         #expect(notebook.viewWrite == nil, "turning the page wrote view.json")
         notebook.deletePage(notebook.currentPageID)
         #expect(notebook.viewWrite == nil, "deleting the current page wrote view.json")
+    }
+
+    @Test("A scan that close cuts off between two asset writes writes no second asset")
+    func anAssetWriteAfterCloseIsRefused() async throws {
+        let scratch = try Scratch("nb-asset-after-close")
+        defer { withExtendedLifetime(scratch) {} }
+        let store = HeldAssetStore(try await PackageStore.create(root: scratch.packageURL, index: Fixture.index(pages: 1)))
+        let notebook = try await Notebook.open(store: store, schedule: fast)
+        let image = try Fixture.imageData(width: 200, height: 100)
+        await store.hold()
+        let scan = Task { try await notebook.importScan([image, image]) }
+        try await notebook.waitForArrivals(store.gate, 1)
+        #expect(await notebook.close() == .clean)
+
+        await store.release()
+        await #expect(throws: FormatFault.self) { try await scan.value }
+        #expect(await store.gate.arrivals == 1, "the second write reached the store")
+        #expect(try FileManager.default.contentsOfDirectory(atPath: store.base.layout.assetsDirectory.path).count == 1)
     }
 
     @Test("Undo restores the prior value without the echo counting as an edit; redo returns")
@@ -2350,11 +2388,11 @@ enum LayerEdit: String, CaseIterable, Sendable {
 }
 
 extension Notebook {
-    /// Waits until `count` reads have parked at the gate.
-    func waitForArrivals(_ gate: CallGate, _ count: Int) async throws {
+    /// Waits until `count` calls have reached the gate.
+    func waitForArrivals(_ gate: some Arrivals, _ count: Int) async throws {
         let deadline = ContinuousClock.now + .seconds(5)
         while await gate.arrivals < count {
-            try #require(ContinuousClock.now < deadline, "timed out waiting for \(count) reads")
+            try #require(ContinuousClock.now < deadline, "timed out waiting for \(count) calls")
             try await Task.sleep(for: .milliseconds(5))
         }
     }

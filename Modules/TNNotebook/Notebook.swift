@@ -893,7 +893,7 @@ package final class Notebook {
         do { _ = try layer.validated() } catch { throw .invalidWrite("layer invalid: \(error)") }
         if let asset = layer.payload.asset {
             guard let assetData else { throw .invalidWrite("layer names an asset with no bytes") }
-            try await store.writeAsset(assetData, asset)
+            try await writeAsset(assetData, asset)
         }
         try insertLayer(layer, on: page)
     }
@@ -941,7 +941,7 @@ package final class Notebook {
             guard geometry.isWithinBounds else { throw .invalidWrite("PDF page \(pageIndex + 1) is outside the page bounds") }
             pages.append((PageRecord(id: PageID(), geometry: geometry, paper: .pdf(asset, sourcePageIndex: pageIndex)), .empty))
         }
-        try await store.writeAsset(data, asset)
+        try await writeAsset(data, asset)
         let replaced = untouchedOnlyPage()
         let created = insertPages(pages, after: currentPageID, answering: nil, pushing: false)
         if let replaced { deletePage(replaced) }
@@ -1018,7 +1018,7 @@ package final class Notebook {
         }
         guard normalized.size.isValid else { throw .invalidWrite("image is outside the asset bounds") }
         let asset = AssetRef(id: AssetID(), format: .heic)
-        try await store.writeAsset(normalized.heic, asset)
+        try await writeAsset(normalized.heic, asset)
         return asset
     }
 
@@ -1041,8 +1041,15 @@ package final class Notebook {
             geometry: record.geometry, paper: record.paper.paper, layers: content.layers, ink: content.ink, as: "public.heic" as CFString
         ) else { throw .invalidWrite("page \(page) could not be flattened") }
         let asset = AssetRef(id: AssetID(), format: .heic)
-        try await store.writeAsset(heic, asset)
+        try await writeAsset(heic, asset)
         return asset
+    }
+
+    /// An import resumes after its awaits whether or not the notebook closed
+    /// meanwhile, so its asset write asks the latch, as a save does.
+    private func writeAsset(_ data: Data, _ asset: AssetRef) async throws(FormatFault) {
+        guard !isClosed else { throw .invalidWrite("the notebook is closed") }
+        try await store.writeAsset(data, asset)
     }
 
     package func addLinkLayer(on page: PageID, rect: PageRect, target: LinkTarget) throws(FormatFault) {
