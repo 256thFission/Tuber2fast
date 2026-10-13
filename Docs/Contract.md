@@ -704,19 +704,23 @@ and so does a duplicate, whose name is `Name copy`. One function,
 taken name is refused with `.alreadyExists` and nothing moves: a
 second "New notebook" is the ordinary case, not a mistake, and a rename
 onto a name in use is a mistake the user should see. The free name is not
-found before the publish, it is claimed by it. The item is built once in
-Staging, each candidate in turn is the target of the exclusive rename
-above, and `EEXIST` means the next candidate, so two creates in flight at
-once land under two names, where a check that found a name free across
-the build's await claims nothing. No candidate is held by a directory made
-ahead of the publish: a process dying between such a claim and the publish
-would leave an empty package listed as a notebook that cannot open, or a
-folder without its sidecar, each holding a name, and *Staging is scratch*
-promises that a death before the publish leaves nothing listed. What the
-library makes takes the name it was given with its ends trimmed, and
-`New notebook` or `New folder` when that leaves nothing: a name left blank
-is not a refusal, and this is the one place a blank name is replaced
-(*Invalid states fail loud*) (decided M3 S3, M3 S4; round-two call: one
+found before the publish, it is claimed by it. The item is whole before
+the first attempt, a create or a duplicate built once in Staging and a
+recovery as it sits in its trash container, and each candidate in turn is
+the target of the exclusive rename above: `EEXIST` means the next
+candidate, so two creates in flight at once land under two names, where a
+check that found a name free across the build's await claims nothing. No
+candidate is held by a directory made ahead of the publish: a process
+dying between such a claim and the publish would leave an empty package
+listed as a notebook that cannot open, or a folder without its sidecar,
+each holding a name, and *Staging is scratch* promises that a death
+before the publish leaves nothing listed. A create takes the name it was
+asked for with its ends trimmed, and `New notebook` or `New folder` when
+that leaves nothing: a name left blank is not a refusal, and this is the
+one place a blank name is replaced (*Invalid states fail loud*). A
+recovery and a duplicate ask for no name, so neither trims one: the one
+takes back the name the item was trashed under, the other the `Name copy`
+above, each as it stands (decided M3 S3, M3 S4; round-two call: one
 naming function; critique C5; simple-data-12, thermo-data-10).
 
 **An older notebook is migrated on open, in Staging, and swapped in by one
