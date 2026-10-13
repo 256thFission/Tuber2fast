@@ -290,9 +290,10 @@ strands it. Nothing joins this list without a reason of the same kind:
 | the serialize hop in `Notebook.performSave` | the bytes of a save in progress; `Task.detached` makes it uncancellable by construction rather than by anyone remembering |
 | the final ink report | synchronous by contract (`Contract.md` — Navigation and the window) and not a task at all; it must never become one |
 
-A cancelled `Task.sleep` is the ordinary outcome, not a failure, and is caught
-by name in a two-line `do`/`catch` — never `try?`, which answers a genuine
-failure with the same silence.
+A cancelled `Task.sleep` is the ordinary outcome, not a failure. It is written
+`try? await Task.sleep(…)` followed by a `Task.isCancelled` check wherever
+cancellation must stop what comes next: `Task.sleep` throws only
+`CancellationError`, so `try?` hides nothing else.
 
 ## Getting off the main actor
 
@@ -364,7 +365,8 @@ The contract's hardest rule to follow is *smallest change that proves the
 queue item*. The pressure to add the next abstraction is constant and it always
 feels justified. Concretely:
 
-- No `import UIKit` outside `TNCanvas`, `TNEditor`, and the app.
+- No `import UIKit` outside `TNCanvas`, `TNEditor`, the app, and
+  `TextTypesetting.swift` in `TNModel`.
 - The live canvas count is bounded by a small constant and must not grow with
   page count.
 

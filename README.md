@@ -60,10 +60,8 @@ xcodebuild test -project TuberNotes.xcodeproj -scheme TuberNotes \
   -destination "platform=iOS Simulator,name=$(< Tools/pinned-simulator)"
 ```
 
-`Tools/pinned-simulator` is the only place that name is written. CI reads the
-same file, so the docs and CI cannot drift apart, and neither has a
-fallback: a missing pin fails the run rather than quietly substituting a
-different device.
+Why the simulator is pinned, and where the pin lives: `CONTRIBUTING.md`, under
+**CI is the arbiter**.
 
 **Green CI means it compiled and the tests passed. That is all it means.** The
 simulator has no Apple Pencil, so ink, pressure, and palm rejection cannot be
@@ -73,15 +71,17 @@ real iPad — `AGENTS.md`, under **Definition of done**, says which.
 
 ## Reading order
 
-Four documents, one job each. CI and `git` hold the state; these hold only what
+Six documents, one job each. CI and `git` hold the state; these hold only what
 those cannot.
 
 | File | Answers | Shape |
 |---|---|---|
-| [`AGENTS.md`](AGENTS.md) | What are the rules? | Short, for humans and agents alike |
+| [`AGENTS.md`](AGENTS.md) | What are the rules? | Short, for humans and agents alike; `CLAUDE.md` only loads it |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | How do I work here? | The loop, the evidence, and the gotchas |
 | [`Docs/Contract.md`](Docs/Contract.md) | What is true **now**? | Normative, present tense, no history |
 | [`Docs/Queue.md`](Docs/Queue.md) | What does Phillip think is **open**, and why? | His notebook, kept current — not a work assignment |
 | [`Docs/Unproven.md`](Docs/Unproven.md) | What have we **not earned**? | Claims without evidence. No line numbers, no expiry date |
+| [`Docs/Design/Macaron.md`](Docs/Design/Macaron.md) | What does the editor's chrome look like? | The approved visual identity and its theme system |
 
 Before you write application code, read `AGENTS.md` and `Docs/Contract.md`.
 `Docs/Queue.md` is worth a skim for context, but it doesn't gate what you're
@@ -94,7 +94,7 @@ is in [`Docs/Unproven.md`](Docs/Unproven.md).
 or at the code site. There is no decisions log: `git log -p` is the history,
 with dates and authorship no hand-maintained file has. Known defects
 live in the code as `KNOWN DEFECT:` blocks — `grep -rn "KNOWN DEFECT"
-Modules/ TuberNotesApp/`.
+Modules/ TuberNotesApp/ TuberNotesTests/ TNTests/`.
 
 Two rules keep this from rotting:
 

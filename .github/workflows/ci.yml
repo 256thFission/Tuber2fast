@@ -29,17 +29,8 @@ jobs:
       - name: Install XcodeGen
         run: brew install xcodegen
 
-      # The simulator is pinned on purpose: a moving destination makes results
-      # incomparable between runs. Runner images have shipped an Xcode whose
-      # matching iOS runtime was absent, which surfaces from xcodebuild as an
-      # opaque destination error. Fail here instead, naming what this runner
-      # actually has.
-      #
-      # Tools/pinned-simulator is the only home for this value — the docs read
-      # the same file. It holds a bare name and no KEY=VALUE, because the
-      # device name contains spaces and parentheses and is therefore not valid
-      # bash to source. There is deliberately no fallback: a missing pin kills
-      # the run rather than silently substituting one.
+      # Why the simulator is pinned: CONTRIBUTING.md, "CI is the arbiter".
+      # Fail here, naming what this runner actually has.
       - name: Verify the pinned simulator exists
         run: |
           PIN=Tools/pinned-simulator
