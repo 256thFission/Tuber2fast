@@ -107,7 +107,7 @@ struct FolderStyleSheet: View {
                     action: { symbol = candidate }
                 ) {
                     Image(systemName: candidate.rawValue)
-                        .font(Macaron.body(17))
+                        .font(Macaron.body(.headline))
                         .foregroundStyle(LibraryStyle.color(of: color))
                 }
                 .accessibilityLabel(FolderStyleNames.symbol(candidate))

@@ -126,14 +126,7 @@ struct LibraryView: View {
     @ViewBuilder private var header: some View {
         HStack(spacing: Macaron.columnGap) {
             if browser.section == .documents && !browser.folder.isEmpty {
-                Keycap(
-                    fill: theme.chrome,
-                    size: CGSize(width: Macaron.chip, height: Macaron.chip)
-                ) {
-                    browser.back()
-                } label: {
-                    Image(systemName: "chevron.left").font(Macaron.body(14))
-                }
+                Keycap("Back", systemImage: "chevron.left", fill: theme.chrome) { browser.back() }
                 // Dashed, because what is hovering over the way out has
                 // no body here until it is let go of.
                 .overlay(alignment: .top) {
@@ -145,8 +138,6 @@ struct LibraryView: View {
                         .frame(width: Macaron.chip, height: Macaron.chip)
                         .opacity(isDroppingOnBack ? 1 : 0)
                 }
-                .accessibilityAddTraits(.isButton)
-                .accessibilityLabel("Back")
                 // The one way out of a folder by drag: there is no cell
                 // for the parent to drop onto.
                 .dropDestination(for: DraggedLibraryItems.self) { dropped, _ in
@@ -157,7 +148,7 @@ struct LibraryView: View {
                 } isTargeted: { isDroppingOnBack = $0 }
             }
             Text(browser.title)
-                .font(Macaron.title(28))
+                .font(Macaron.title(.display))
                 .foregroundStyle(theme.outline(of: theme.ground).color)
                 .lineLimit(1)
         }
@@ -203,7 +194,8 @@ struct LibraryView: View {
 
                 MacaronDivider()
 
-                LibrarySearchField(text: Bindable(browser).searchText)
+                MacaronField(prompt: "Search", text: Bindable(browser).searchText)
+                    .frame(width: 180)
             }
             .fixedSize(horizontal: true, vertical: false)
         }
@@ -211,8 +203,8 @@ struct LibraryView: View {
 
     private func capLabel(_ title: String, _ symbol: String) -> some View {
         HStack(spacing: Macaron.rowGap) {
-            Image(systemName: symbol).font(Macaron.body(14))
-            Text(title).font(Macaron.title(15))
+            Image(systemName: symbol).font(Macaron.body(.label))
+            Text(title).font(Macaron.title(.button))
         }
     }
 
@@ -232,7 +224,7 @@ struct LibraryView: View {
             sortButton("Name", .name)
             sortButton("Type", .type)
         } label: {
-            Image(systemName: "square.grid.2x2").font(Macaron.body(14))
+            Image(systemName: "square.grid.2x2").font(Macaron.body(.label))
         }
         .accessibilityLabel("View options")
     }
@@ -269,7 +261,7 @@ struct LibraryView: View {
                 MacaronButton(title: "Select All", fill: theme.secondary) { browser.selectAll() }
                 Spacer()
                 Text(browser.title)
-                    .font(Macaron.title(17))
+                    .font(Macaron.title(.headline))
                     .foregroundStyle(theme.outline(of: theme.ground).color)
                 Spacer()
                 // Leaving the mode is the one action this row exists for;
@@ -343,11 +335,11 @@ struct LibraryView: View {
     ) -> some View {
         let shape = RoundedRectangle(cornerRadius: Macaron.shellRadius, style: .continuous)
         return VStack(spacing: Macaron.columnGap) {
-            Image(systemName: symbol).font(Macaron.title(28))
-            Text(title).font(Macaron.title(17))
+            Image(systemName: symbol).font(Macaron.title(.display))
+            Text(title).font(Macaron.title(.headline))
             if let detail {
                 Text(detail)
-                    .font(Macaron.body(13))
+                    .font(Macaron.body(.text))
                     .multilineTextAlignment(.center)
             }
         }
@@ -464,36 +456,6 @@ struct LibraryView: View {
     }
 }
 
-/// The one search field, drawn over a folder's listing and over the trash.
-/// The text is the browser's; what it narrows is the section's.
-struct LibrarySearchField: View {
-    @Binding var text: String
-
-    @Environment(\.macaron) private var theme
-
-    private var shape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: Macaron.chipRadius, style: .continuous)
-    }
-
-    /// Typing into it is not pressing it, so it is flat.
-    var body: some View {
-        HStack(spacing: Macaron.rowGap) {
-            Image(systemName: "magnifyingglass")
-                .font(Macaron.body(13))
-            TextField("Search", text: $text)
-                .textFieldStyle(.plain)
-                .font(Macaron.body(14))
-                .tint(theme.accent.color)
-                .frame(width: 180)
-        }
-        .foregroundStyle(theme.outline(of: theme.chrome).color)
-        .padding(.horizontal, Macaron.shellPadding)
-        .frame(height: Macaron.chip)
-        .background { shape.fill(theme.chrome.color) }
-        .overlay { shape.strokeBorder(theme.outline(of: theme.chrome).color, lineWidth: Macaron.line) }
-    }
-}
-
 /// The collections, in a floating panel: the row you are in is highlighted,
 /// and entering a folder does not move the highlight.
 private struct LibrarySidebar: View {
@@ -541,9 +503,9 @@ private struct LibrarySidebar: View {
         ) {
             HStack(spacing: Macaron.columnGap) {
                 Image(systemName: symbol)
-                    .font(Macaron.body(14))
+                    .font(Macaron.body(.label))
                     .frame(width: Macaron.swatch)
-                Text(title).font(Macaron.title(15))
+                Text(title).font(Macaron.title(.button))
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 14)

@@ -17,9 +17,9 @@ import UniformTypeIdentifiers
 /// and not `private`, because `LibraryView` names the type too.
 ///
 /// KNOWN DEFECT: the representation is `public.data`, the same defect
-/// `PageNavigatorSheet.DraggedPage` carries and for the same reason, so every
-/// folder cell lights up as a drop target for any data item dragged in from
-/// another app. Such a drop decodes to nothing and moves nothing; only the
+/// `DraggedPage` in PageNavigatorSheet.swift carries and for the same reason,
+/// so every folder cell lights up as a drop target for any data item dragged
+/// in from another app. Such a drop decodes to nothing and moves nothing; only the
 /// highlight is wrong. The fix — one exported `UTType`, which needs a plist
 /// array the app's generated Info.plist has no build-setting form for — is
 /// written out at that declaration and serves both sites at once.
@@ -42,39 +42,23 @@ struct DraggedLibraryItems: Transferable, Codable {
     return DraggedLibraryItems(paths: selection.sorted())
 }
 
-/// A cell's cap: a fill, its derived outline, and the wall it stands on,
-/// which it drops when the cell is chosen.
-///
-/// The same geometry `Keycap` draws, drawn again here because `Keycap` owns
-/// its own tap and a cell's tap belongs to the listing, which is the only
+/// A cell's cap, which drops its wall when the cell is chosen. A face and
+/// not a `Keycap`, because a cell's tap belongs to the listing, the only
 /// place that knows whether a tap opens a notebook or chooses it.
 struct LibraryCap<Content: View>: View {
     let fill: RGBA8
     var isSunk = false
     @ViewBuilder var content: () -> Content
 
-    @Environment(\.macaron) private var theme
-
-    private var shape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: Macaron.chipRadius, style: .continuous)
-    }
-
     var body: some View {
         content()
-            .clipShape(shape)
-            .background { shape.fill(fill.color) }
-            .overlay { shape.strokeBorder(theme.outline(of: fill).color, lineWidth: Macaron.line) }
-            .background {
-                shape.fill(theme.outline(of: fill).color)
-                    .offset(y: isSunk ? 0 : Macaron.chipWall)
-            }
-            .offset(y: isSunk ? Macaron.chipWall : 0)
+            .clipShape(RoundedRectangle(cornerRadius: Macaron.chipRadius, style: .continuous))
+            .modifier(KeycapFace(fill: fill, sunk: isSunk))
             .padding(.bottom, Macaron.chipWall)
     }
 }
 
-/// A menu's button, as a keycap. `Keycap` takes the tap itself and a menu
-/// needs that tap to open with, so the cap is drawn rather than composed.
+/// A menu's button, as a keycap's face: the menu needs the tap to open with.
 struct MacaronMenuCap<Label: View, Content: View>: View {
     var fill: RGBA8?
     var padding: CGFloat = 14
@@ -84,23 +68,14 @@ struct MacaronMenuCap<Label: View, Content: View>: View {
 
     @Environment(\.macaron) private var theme
 
-    private var capFill: RGBA8 { fill ?? theme.chrome }
-
-    private var shape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: Macaron.chipRadius, style: .continuous)
-    }
-
     var body: some View {
         Menu {
             menu()
         } label: {
             label()
-                .foregroundStyle(theme.outline(of: capFill).color)
                 .frame(height: height)
                 .padding(.horizontal, padding)
-                .background { shape.fill(capFill.color) }
-                .overlay { shape.strokeBorder(theme.outline(of: capFill).color, lineWidth: Macaron.line) }
-                .background { shape.fill(theme.outline(of: capFill).color).offset(y: Macaron.chipWall) }
+                .modifier(KeycapFace(fill: fill ?? theme.chrome, sunk: false))
                 .padding(.bottom, Macaron.chipWall)
         }
         .menuStyle(.button)
@@ -184,7 +159,7 @@ struct LibraryGridCell<MenuContent: View>: View {
             // the trailing edge rather than sharing the row, which would
             // push the name off the cover it belongs to.
             Text(item.name)
-                .font(Macaron.title(14))
+                .font(Macaron.title(.label))
                 .foregroundStyle(theme.outline(of: theme.ground).color)
                 .lineLimit(2)
                 .truncationMode(.middle)
@@ -196,19 +171,19 @@ struct LibraryGridCell<MenuContent: View>: View {
                 }
 
             Text(LibraryStyle.itemDate.string(from: item.modifiedAt))
-                .font(Macaron.body(11))
+                .font(Macaron.body(.caption))
                 .foregroundStyle(theme.outline(of: theme.ground).color)
 
             if let fault = item.fault {
                 Text(fault.description)
-                    .font(Macaron.body(11))
+                    .font(Macaron.body(.caption))
                     .foregroundStyle(theme.outline(of: theme.ground).color)
                     .multilineTextAlignment(.center)
             }
 
             if let parent = parentWhileSearching(item, browser) {
                 Text(parent)
-                    .font(Macaron.body(10))
+                    .font(Macaron.body(.detail))
                     .foregroundStyle(theme.outline(of: theme.ground).color)
                     .lineLimit(1)
                     .truncationMode(.head)
@@ -243,7 +218,7 @@ struct LibraryGridCell<MenuContent: View>: View {
             }
             .overlay {
                 Image(systemName: "lock.fill")
-                    .font(Macaron.body(11))
+                    .font(Macaron.body(.caption))
                     .foregroundStyle(theme.outline(of: theme.chrome).color)
             }
             .frame(width: Macaron.heldSwatch, height: Macaron.heldSwatch)
@@ -278,27 +253,27 @@ struct LibraryListRow<MenuContent: View>: View {
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: Macaron.rowGap) {
                         Text(item.name)
-                            .font(Macaron.title(14))
+                            .font(Macaron.title(.label))
                             .lineLimit(1)
                             .truncationMode(.middle)
                         if browser.library.isLocked(item.relativePath) {
                             Image(systemName: "lock.fill")
-                                .font(Macaron.body(11))
+                                .font(Macaron.body(.caption))
                                 .accessibilityLabel("Open")
                         }
                     }
                     Text(LibraryStyle.itemDate.string(from: item.modifiedAt))
-                        .font(Macaron.body(11))
+                        .font(Macaron.body(.caption))
 
                     if let fault = item.fault {
                         Text(fault.description)
-                            .font(Macaron.body(11))
+                            .font(Macaron.body(.caption))
                             .lineLimit(2)
                     }
 
                     if let parent = parentWhileSearching(item, browser) {
                         Text(parent)
-                            .font(Macaron.body(10))
+                            .font(Macaron.body(.detail))
                             .lineLimit(1)
                             .truncationMode(.head)
                     }
@@ -311,10 +286,9 @@ struct LibraryListRow<MenuContent: View>: View {
 
                 if item.kind == .folder {
                     Image(systemName: "chevron.right")
-                        .font(Macaron.body(13))
+                        .font(Macaron.body(.text))
                 }
             }
-            .foregroundStyle(theme.outline(of: theme.chrome).color)
             .padding(.horizontal, Macaron.shellPadding)
             .padding(.vertical, Macaron.rowGap)
         }
@@ -396,17 +370,13 @@ struct LibraryFavoriteStar: View {
             // Favoured is the cap sunk, not a second colour: the filled star
             // is the word on the cap, not the state of it.
             Keycap(
+                starred ? "Remove \(item.name) from Favorites" : "Add \(item.name) to Favorites",
+                systemImage: starred ? "star.fill" : "star",
                 fill: theme.chrome,
-                size: CGSize(width: Macaron.chip, height: Macaron.chip),
                 isHeld: starred
             ) {
                 workspace.changeLibrary { await browser.toggleFavorite(item) }
-            } label: {
-                Image(systemName: starred ? "star.fill" : "star")
-                    .font(Macaron.body(14))
             }
-            .accessibilityAddTraits(.isButton)
-            .accessibilityLabel(starred ? "Remove \(item.name) from Favorites" : "Add \(item.name) to Favorites")
         }
     }
 }
@@ -423,7 +393,7 @@ struct LibraryChevronMenu<MenuContent: View>: View {
             menu()
         } label: {
             Image(systemName: "chevron.down")
-                .font(Macaron.body(11))
+                .font(Macaron.body(.caption))
         }
         .accessibilityLabel("Actions for \(name)")
     }

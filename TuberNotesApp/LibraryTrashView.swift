@@ -60,7 +60,7 @@ struct LibraryTrashView: View {
     /// A readout, so it is flat and has no wall.
     private func empty(_ text: String) -> some View {
         Text(text)
-            .font(Macaron.body(13))
+            .font(Macaron.body(.text))
             .foregroundStyle(theme.outline(of: theme.chrome).color)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -68,15 +68,16 @@ struct LibraryTrashView: View {
     private var header: some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
             Text("Trash")
-                .font(Macaron.title(22))
+                .font(Macaron.title(.large))
                 .foregroundStyle(theme.outline(of: theme.chrome).color)
             Text(verbatim: browser.trash.count == 1 ? "1 item" : "\(browser.trash.count) items")
-                .font(Macaron.body(13))
+                .font(Macaron.body(.text))
                 .foregroundStyle(theme.outline(of: theme.chrome).color)
             Spacer()
             // Searching here searches the trash and nothing else: the trash
             // is not in the tree a search elsewhere reads.
-            LibrarySearchField(text: Bindable(browser).searchText)
+            MacaronField(prompt: "Search", text: Bindable(browser).searchText)
+                .frame(width: 180)
             MacaronButton(title: "Empty", fill: theme.accent, isEnabled: !browser.trash.isEmpty) {
                 isEmptying = true
             }
@@ -86,14 +87,14 @@ struct LibraryTrashView: View {
     private func row(_ entry: TrashEntry) -> some View {
         HStack(spacing: 14) {
             Image(systemName: entry.kind == .folder ? "folder" : "book.closed")
-                .font(Macaron.body(14))
+                .font(Macaron.body(.label))
                 .foregroundStyle(theme.outline(of: theme.chrome).color)
             VStack(alignment: .leading, spacing: 3) {
                 Text(entry.name)
-                    .font(Macaron.title(14))
+                    .font(Macaron.title(.label))
                     .foregroundStyle(theme.outline(of: theme.chrome).color)
                 Text(verbatim: caption(of: entry))
-                    .font(Macaron.body(11))
+                    .font(Macaron.body(.caption))
                     .foregroundStyle(theme.outline(of: theme.chrome).color)
             }
             Spacer(minLength: 0)

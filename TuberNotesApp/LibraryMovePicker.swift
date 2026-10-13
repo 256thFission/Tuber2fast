@@ -85,7 +85,7 @@ private struct LibraryMoveLevel: View {
 
     private func readout(_ text: String) -> some View {
         Text(text)
-            .font(Macaron.body(13))
+            .font(Macaron.body(.text))
             .foregroundStyle(theme.outline(of: theme.chrome).color)
     }
 }
