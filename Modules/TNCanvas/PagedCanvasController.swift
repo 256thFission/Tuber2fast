@@ -624,9 +624,12 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
                 canvas.updateComposite(composite)
             }
             // The sequence names the ink value the notebook last pushed, and
-            // the canvas holds the one it last took. A restore reaches a live
-            // canvas directly and moves both, so they should never differ;
-            // this restates rather than traps until a device shows that.
+            // the canvas holds the one it last took. They differ when a page
+            // the notebook kept comes back into the decoded window and the
+            // live one together: its canvas is built from the snapshot it
+            // retired with, then the window push sends its ink again under a
+            // new sequence. A trap here first needs `windowChanged` to skip a
+            // page the runtime still holds.
             if let ink = snapshot.ink, let seq = snapshot.inkSeq, seq != canvas.inkSeq {
                 canvas.restoreInk(ink, seq: seq)
             }
@@ -787,8 +790,10 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
     /// The stored snapshot takes the same value, so a page that leaves the live
     /// window and comes back is rebuilt from the ink it left with rather than
     /// from the ink the last install described. The notebook pushes content
-    /// again only for a page it unloaded, and `unload` has dropped this
-    /// snapshot by then; a page it kept is rebuilt from here.
+    /// again for every page entering the decoded window, so a canvas is built
+    /// from here only for a page that left the live window but stayed in the
+    /// decoded one, and for a page coming back from further out until that
+    /// window push lands.
     func pageDidRetire(_ page: PageID, finalInk: PKDrawing) {
         if let snapshot = snapshots[page], snapshot.isEditable, let inkSeq = snapshot.inkSeq {
             snapshots[page] = PageSnapshot.editable(
