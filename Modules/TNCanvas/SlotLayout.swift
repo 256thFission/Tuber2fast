@@ -1,4 +1,5 @@
 import CoreGraphics
+import TNCore
 import TNModel
 
 /// The paging arithmetic of the runtime, as a value.
@@ -30,6 +31,10 @@ package struct SlotLayout: Equatable, Sendable {
     /// the width, so 0.15 sits under the weakest of them and far above the
     /// overshoot an ordinary turn leaves at finger-lift.
     package static let endBoundaryFraction: CGFloat = 0.15
+
+    /// Closer than this to a slot's offset is resting on that slot: the
+    /// difference is rounding, not a distance anyone can see.
+    package static let settleTolerance: CGFloat = 0.5
 
     package let slot: CGSize
     package let pageCount: Int
@@ -94,9 +99,10 @@ package struct SlotLayout: Equatable, Sendable {
 /// page will occupy once it has.
 package enum PageFit {
     package static func scale(_ geometry: PageGeometry, in slot: CGSize) -> CGFloat {
-        guard slot.width > 0, slot.height > 0, geometry.width > 0, geometry.height > 0 else {
-            return 1
-        }
+        TNPrecondition.require(
+            slot.width > 0 && slot.height > 0 && geometry.width > 0 && geometry.height > 0,
+            "a \(geometry.width)x\(geometry.height) page was fitted to a \(slot.width)x\(slot.height) slot"
+        )
         return min(slot.width / CGFloat(geometry.width), slot.height / CGFloat(geometry.height))
     }
 

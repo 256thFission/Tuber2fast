@@ -240,7 +240,7 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
         } else if order.isEmpty {
             currentPageID = nil
         } else {
-            currentPageID = order[min(max(previousIndex ?? 0, 0), order.count - 1)]
+            currentPageID = order[min(previousIndex ?? 0, order.count - 1)]
         }
 
         layoutSlots()
@@ -365,7 +365,7 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
             return
         }
         let target = layout.offsetX(at: index)
-        if abs(scrollView.contentOffset.x - target) < 0.5 {
+        if abs(scrollView.contentOffset.x - target) < SlotLayout.settleTolerance {
             // Already there: no animation would run and no settle callback
             // would fire, so the turn is settled here instead.
             settle()

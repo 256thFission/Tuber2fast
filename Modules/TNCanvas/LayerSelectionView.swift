@@ -165,7 +165,6 @@ final class LayerSelectionView: UIView {
     /// handles keep page-point sizes at any rotation.
     private func place() {
         let extents = working.unitExtents
-        guard extents.width > 0, extents.height > 0 else { return }
         bounds = CGRect(x: 0, y: 0, width: extents.width, height: extents.height)
         layer.setAffineTransform(CGAffineTransform(
             a: working.a / extents.width, b: working.b / extents.width,
@@ -295,7 +294,6 @@ final class LayerSelectionView: UIView {
         var factor = (wanted.x * current.x + wanted.y * current.y) / length
 
         let extents = working.unitExtents
-        guard extents.width > 0, extents.height > 0 else { return }
         let floor = max(Self.minimumExtent / extents.width, Self.minimumExtent / extents.height)
         factor = max(factor, floor)
 
@@ -348,7 +346,6 @@ final class LayerSelectionView: UIView {
     /// view's scale never enters the arithmetic.
     private func pagePoint(_ local: CGPoint) -> CGPoint {
         let extents = working.unitExtents
-        guard extents.width > 0, extents.height > 0 else { return local }
         let page = working.apply(x: Double(local.x) / extents.width, y: Double(local.y) / extents.height)
         return CGPoint(x: page.x, y: page.y)
     }
@@ -357,7 +354,6 @@ final class LayerSelectionView: UIView {
     /// residual rotation applied, and nothing else.
     private func pageDelta(_ local: CGPoint) -> CGPoint {
         let extents = working.unitExtents
-        guard extents.width > 0, extents.height > 0 else { return local }
         return CGPoint(
             x: working.a / extents.width * local.x + working.c / extents.height * local.y,
             y: working.b / extents.width * local.x + working.d / extents.height * local.y

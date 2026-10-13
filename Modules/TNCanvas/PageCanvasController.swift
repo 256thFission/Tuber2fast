@@ -332,9 +332,8 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         // The mirror carries the zoom, so the frame's radius and line are
         // written in page points divided by it: 10 and 3 on the glass at
         // every zoom, which is what the design fixes them at.
-        let divisor = max(zoom, 0.0001)
-        backdropView.layer.cornerRadius = MacaronPage.radius / divisor
-        backdropView.layer.borderWidth = MacaronPage.lineWidth / divisor
+        backdropView.layer.cornerRadius = MacaronPage.radius / zoom
+        backdropView.layer.borderWidth = MacaronPage.lineWidth / zoom
     }
 
     package func scrollViewDidScroll(_ scrollView: UIScrollView) {
@@ -574,7 +573,6 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         guard bounds != zoomRangeBounds else { return }
 
         let fit = PageFit.scale(geometry, in: bounds)
-        guard fit > 0, fit.isFinite else { return }
 
         // The scale the previous viewport was showing, carried across a resize
         // so a Split View drag does not also re-zoom the page.
@@ -637,7 +635,6 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
     @objc private func handleTap(_ recognizer: UITapGestureRecognizer) {
         guard recognizer.state == .ended else { return }
         let zoom = canvasView.zoomScale
-        guard zoom > 0 else { return }
         // `location(in:)` on a scroll view answers in zoomed content
         // coordinates; page space is that divided by the scale.
         let point = recognizer.location(in: canvasView)
