@@ -20,8 +20,11 @@ says so by name.
 **Burn things down with permission, until the first install outside
 Phillip's iPad.** Until then there are no users and no data to keep: a
 file's shape may change under the version number it already has, and a
-library written in the old shape is deleted, not migrated. The permission
-ends at the first install on any other device, and it does not come back.
+library written in the old shape is deleted, not migrated. The one shape
+change that permission does not cover is a new layer or paper kind,
+which bumps the version even now (*Kinds are closed on disk*). The
+permission ends at the first install on any other device, and it does
+not come back.
 From then on every format change bumps the version and lands with the
 step that carries a package from the old version to the new one, so an
 older notebook opens by migration and only a newer one is refused
@@ -312,7 +315,8 @@ tell what it holds before it reads anything else. Adding or removing a
 key changes the key-set pins, in `TNTests/FormatTests.swift` for the
 package and in `TNTests/LibraryTests.swift` for a sidecar, which fail
 until every file that carries the key round-trips, and once *Burn things
-down with permission* has ended it bumps the version too (decided R2, F1,
+down with permission* has ended it bumps the version too; a new kind
+bumps it in either regime (*Kinds are closed on disk*) (decided R2, F1,
 F2, F3; tests-hostless-01).
 
 **Kinds are closed on disk as they are in code.** Layer kinds are
@@ -322,13 +326,24 @@ kind name this build does not write is not an unknown to be carried,
 shown or written back: it is a file this build cannot read, refused at
 the scope of the file that holds it (*Refuse at the narrowest scope*). A
 layer file naming one is an unreadable layer file and refuses its page; a
-page record naming one is a bad index and refuses the notebook. Each
-payload object is keyed by the kind name, so the name is checked before
-any payload key is. A new kind is a `CONTRACT:` change and a change to
-the file's shape, so it bumps the format version as any change to the
-shape does (*Format version is 1*); the number is what tells an older
-build it holds a notebook with a kind it was not built for, and nothing
-else in the file is asked to. An older build meets a new kind only in a
+page record naming one is a bad index and refuses the notebook. A layer
+file names its kind in `kind` and carries its payload under a key of that
+name; a page record's paper names its kind in `kind` and carries its
+payload flat, beside it. In both the name is checked before any payload
+key is, so a kind this build does not write is refused by its name,
+whatever keys rode with it. A new kind is a `CONTRACT:` change, and it
+bumps the format version in both regimes: it is the one change to a
+file's shape that *Burn things down with permission* does not let stand
+under the number the file already has. While that permission holds the
+bump lands without a step, and a library at the old number is deleted as
+any old shape is; after it, the bump lands with its step like any other.
+The number is what tells an older build it holds a notebook with a kind
+it was not built for, and nothing else in the file is asked to. With the
+carrying paths gone, nothing in an older build can tell a kind a newer
+build wrote from a name corruption left, so a new kind under an
+unchanged number would be refused as a broken layer file or a bad index,
+at the wrong scope and in the wrong words; the bump is what makes
+deleting those paths safe. An older build meets a new kind only in a
 notebook at a newer version, which it refuses by the number before it
 reads any kind, in words that say the notebook needs a newer TuberNotes:
 it never reaches the kind, so it has no path on which to drop one or to
@@ -339,7 +354,7 @@ which reads reachability from the files, counted that asset as nothing's;
 a cover drew the page as blank paper and said nothing; and the kind rode
 the seam in every `setPages` for a placeholder that took its words from
 the fault instead. A kind carried unknown is a shim for a shape this
-build never wrote (*Forbidden*) (decided F3; format-05,
+build never wrote (*Forbidden*) (decided F3, R2; format-05,
 deepen-notebook-06, arch-canvas-06).
 
 **Ink is not a layer.** `inkIndex` is the ink's position in the stack. An
