@@ -100,9 +100,29 @@ package struct PageContent: Sendable {
         PageRevision(ink: ink, layers: layers, inkIndex: inkIndex)
     }
 
+    /// Puts `layer` in place of the one at `position`. The value the page
+    /// already holds is no edit: nothing is owed and the sequence stays, so
+    /// the page stays clean.
+    package mutating func replaceLayer(at position: Int, with layer: Layer) {
+        guard layers[position] != layer else { return }
+        layers[position] = layer
+        pendingLayerFiles.insert(layer.id)
+        edited()
+    }
+
+    /// Takes out the layer at `position`, and one off the ink index when it
+    /// sat beneath the ink. Its file is no longer owed: it stays on disk,
+    /// because only `compact()` deletes, and the page file stops naming it.
+    package mutating func removeLayer(at position: Int) {
+        let removed = layers.remove(at: position)
+        if position < inkIndex { inkIndex -= 1 }
+        pendingLayerFiles.remove(removed.id)
+        edited()
+    }
+
     /// Moves the page to `revision`, touching only the half that differs,
-    /// and says which. The pending-layer arithmetic lives here alone, so a
-    /// restore on a ready page and one folded into a load cannot drift.
+    /// and says which. A restore on a ready page and one folded into a load
+    /// both come here, so their pending-layer arithmetic cannot drift.
     package mutating func adopt(_ revision: PageRevision) -> (ink: Bool, layers: Bool) {
         let inkDiffers = ink != revision.ink
         let layersDiffer = layers != revision.layers || inkIndex != revision.inkIndex

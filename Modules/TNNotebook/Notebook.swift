@@ -60,8 +60,9 @@ package final class Notebook {
     /// Bumped by every change that alters what a page looks like: ink,
     /// layers, paper. Never reset by unload, because content is only dropped
     /// when clean (`prune()`), so the version on reload still describes the
-    /// page. There is no choke point that sees every such change, so the
-    /// bump sites are enumerated and `NotebookTests` is the enforcement.
+    /// page. Every layer edit bumps in one place, `commitLayerEdit`. Ink, a
+    /// restore, paper and an inserted page each bump for themselves, so
+    /// those sites are enumerated and `NotebookTests` is the enforcement.
     @ObservationIgnored private var contentVersions: [PageID: UInt64] = [:]
 
     // MARK: Save engine
@@ -846,21 +847,20 @@ package final class Notebook {
         guard case .ready(var content) = states[page] else { throw .invalidWrite("page \(page) is not ready") }
         if recording, content.textEditing != nil { throw .invalidWrite("page \(page) has a text box open") }
         do { _ = try layer.validated() } catch { throw .invalidWrite("layer invalid: \(error)") }
-        let captured = content.revision
         content.layers.insert(layer, at: content.inkIndex)
         content.inkIndex += 1
         content.pendingLayerFiles.insert(layer.id)
         content.edited()
-        if recording { recordEdit(on: page, from: captured, to: content.revision, rebuilt: false) }
-        states[page] = .ready(content)
-        bumpContentVersion(of: page)
-        markDirty()
-        rerenderComposite(of: page)
+        commitLayerEdit(content, on: page, recording: recording)
     }
 
-    /// Adds a layer beneath the ink. The asset, if any, is published first.
+    /// Adds a layer beneath the ink. The asset, if any, is published first,
+    /// and an open text box is refused before it is, so that refusal leaves
+    /// no asset behind; `insertLayer` asks again after the write, because a
+    /// box can open while it runs.
     package func addLayer(_ layer: Layer, assetData: Data?, on page: PageID) async throws(FormatFault) {
-        guard case .ready = states[page] else { throw .invalidWrite("page \(page) is not ready") }
+        guard case .ready(let content) = states[page] else { throw .invalidWrite("page \(page) is not ready") }
+        guard content.textEditing == nil else { throw .invalidWrite("page \(page) has a text box open") }
         do { _ = try layer.validated() } catch { throw .invalidWrite("layer invalid: \(error)") }
         if let asset = layer.payload.asset {
             guard let assetData else { throw .invalidWrite("layer names an asset with no bytes") }
@@ -1005,10 +1005,12 @@ package final class Notebook {
 
     /// A page's composite and ink rendered to one asset at asset resolution.
     /// The source page is untouched; the caller decides which empty page the
-    /// result becomes the paper of.
+    /// result becomes the paper of. A page with a text box open is refused,
+    /// as a duplicate is: the typing is not in custody yet.
     package func flatten(_ page: PageID) async throws(FormatFault) -> AssetRef {
         guard let record = index.record(of: page) else { throw .invalidWrite("no such page") }
         guard case .ready(let content) = states[page] else { throw .invalidWrite("page \(page) is not ready") }
+        guard content.textEditing == nil else { throw .invalidWrite("page \(page) has a text box open") }
         guard let heic = await renderer.flattened(
             geometry: record.geometry, paper: record.paper.paper, layers: content.layers, ink: content.ink, as: "public.heic" as CFString
         ) else { throw .invalidWrite("page \(page) could not be flattened") }
@@ -1099,25 +1101,34 @@ package final class Notebook {
         // clamp is forbidden.
         do { _ = try committed.validated() } catch { TNPrecondition.fail("a committed text layer is invalid: \(error)") }
         if merged.runs.allSatisfy(\.string.isEmpty) {
-            content.layers.remove(at: position)
-            if position < content.inkIndex { content.inkIndex -= 1 }
-            content.pendingLayerFiles.remove(layer)
-            content.edited()
-        } else if content.layers[position].payload != .text(merged) {
-            content.layers[position] = committed
-            content.pendingLayerFiles.insert(layer)
-            content.edited()
+            content.removeLayer(at: position)
+        } else {
+            content.replaceLayer(at: position, with: committed)
         }
-        // An unchanged commit rewrites nothing: a save writes only what changed.
-        // Two questions, not one: whether this commit moved the page is what
-        // the save and the thumbnail need, and an abandoned empty box moved it
-        // twice, once to insert and once to remove. Whether the session moved
-        // the revision is what the stack needs, and that box did not.
-        let changed = content.editSeq != (states[page]?.content?.editSeq ?? content.editSeq)
+        // Two questions, not one. Whether the session moved the revision is
+        // what the stack needs, and an abandoned empty box did not, so it is
+        // recorded from where the session opened. Whether this commit moved
+        // the page is what the save and the thumbnail need, and that box moved
+        // it twice, once to insert and once to remove; the tail asks that one.
         recordEdit(on: page, from: session.before, to: content.revision, rebuilt: false)
         content.afterRender.append(.textEditingEnded(page, layer))
+        commitLayerEdit(content, on: page, recording: false)
+    }
+
+    /// Where every layer edit ends, and so the one place a layer edit bumps
+    /// the content version. `content` is the page after the edit, and the
+    /// page held until this stores it is the page before, which the entry
+    /// runs from; `recording` is false for a text box, whose session records
+    /// for itself. Only an edit that moved the page's sequence is saved and
+    /// re-thumbnailed, so a layer set to the value it had writes nothing. The
+    /// render runs either way: a commit's end rides behind it.
+    private func commitLayerEdit(_ content: PageContent, on page: PageID, recording: Bool = true) {
+        guard let before = states[page]?.content else {
+            TNPrecondition.fail("a layer edit landed on page \(page), which is not ready: \(String(describing: states[page]))")
+        }
+        if recording { recordEdit(on: page, from: before.revision, to: content.revision, rebuilt: false) }
         states[page] = .ready(content)
-        if changed {
+        if content.editSeq != before.editSeq {
             bumpContentVersion(of: page)
             markDirty()
         }
@@ -1135,15 +1146,8 @@ package final class Notebook {
         guard !content.layers[position].locked else { return .refused(reason: "layer \(layerID) is locked") }
         let moved = content.layers[position].withTransform(transform)
         do { _ = try moved.validated() } catch { return .refused(reason: "\(error)") }
-        let captured = content.revision
-        content.layers[position] = moved
-        content.pendingLayerFiles.insert(layerID)
-        content.edited()
-        recordEdit(on: page, from: captured, to: content.revision, rebuilt: false)
-        states[page] = .ready(content)
-        bumpContentVersion(of: page)
-        markDirty()
-        rerenderComposite(of: page)
+        content.replaceLayer(at: position, with: moved)
+        commitLayerEdit(content, on: page)
         return .accepted
     }
 
@@ -1168,15 +1172,8 @@ package final class Notebook {
             locked: content.layers[position].locked
         )
         do { _ = try moved.validated() } catch { return .refused(reason: "\(error)") }
-        let captured = content.revision
-        content.layers[position] = moved
-        content.pendingLayerFiles.insert(layerID)
-        content.edited()
-        recordEdit(on: page, from: captured, to: content.revision, rebuilt: false)
-        states[page] = .ready(content)
-        bumpContentVersion(of: page)
-        markDirty()
-        rerenderComposite(of: page)
+        content.replaceLayer(at: position, with: moved)
+        commitLayerEdit(content, on: page)
         return .accepted
     }
 
@@ -1186,15 +1183,8 @@ package final class Notebook {
     package func setLayerLock(_ layerID: LayerID, on page: PageID, locked: Bool) -> TransformOutcome {
         guard case .ready(var content) = states[page] else { return .refused(reason: "page is not ready") }
         guard let position = content.layers.firstIndex(where: { $0.id == layerID }) else { return .refused(reason: "no such layer") }
-        let captured = content.revision
-        content.layers[position] = content.layers[position].withLock(locked)
-        content.pendingLayerFiles.insert(layerID)
-        content.edited()
-        recordEdit(on: page, from: captured, to: content.revision, rebuilt: false)
-        states[page] = .ready(content)
-        bumpContentVersion(of: page)
-        markDirty()
-        rerenderComposite(of: page)
+        content.replaceLayer(at: position, with: content.layers[position].withLock(locked))
+        commitLayerEdit(content, on: page)
         return .accepted
     }
 
@@ -1207,16 +1197,8 @@ package final class Notebook {
         guard case .ready(var content) = states[page] else { return .refused(reason: "page is not ready") }
         guard let position = content.layers.firstIndex(where: { $0.id == layerID }) else { return .refused(reason: "no such layer") }
         guard !content.layers[position].locked else { return .refused(reason: "layer \(layerID) is locked") }
-        let captured = content.revision
-        content.layers.remove(at: position)
-        if position < content.inkIndex { content.inkIndex -= 1 }
-        content.pendingLayerFiles.remove(layerID)
-        content.edited()
-        recordEdit(on: page, from: captured, to: content.revision, rebuilt: false)
-        states[page] = .ready(content)
-        bumpContentVersion(of: page)
-        markDirty()
-        rerenderComposite(of: page)
+        content.removeLayer(at: position)
+        commitLayerEdit(content, on: page)
         return .accepted
     }
 

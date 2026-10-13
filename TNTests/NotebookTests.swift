@@ -1195,8 +1195,10 @@ struct NotebookTests {
         #expect(notebook.pageIDs == [first], "the only page cannot be deleted")
     }
 
-    // The content version has no choke point; this list is the invariant's
-    // enforcement. A mutation that changes what a page looks like and is
+    // Every layer edit bumps in `commitLayerEdit`, and
+    // `contentVersionBumpsOncePerLayerEdit` holds one row per edit. Every
+    // other bump site is its own, so this list is the invariant's
+    // enforcement: a mutation that changes what a page looks like and is
     // missing here is a test to add, not a runtime check.
     @Test("The content version rises on every change to a page's picture and on nothing else")
     func contentVersionBumpSites() async throws {
@@ -1228,16 +1230,6 @@ struct NotebookTests {
         expectSame("the echo")
         try await notebook.setPaper(.drawn(.grid), on: page)
         expectBump("paper")
-        try notebook.insertLayer(textLayer("t", rect: PageRect(x: 10, y: 10, width: 100, height: 40)), on: page)
-        expectBump("a text layer added")
-        // Text refuses a transform; an image layer takes one.
-        let layer = Fixture.imageLayer()
-        try await notebook.addLayer(layer, assetData: Fixture.archive(1, count: 128), on: page)
-        expectBump("an image layer added")
-        #expect(notebook.transformLayer(on: page, layer: layer.id, to: .translation(x: 1, y: 1)) == .accepted)
-        expectBump("a layer moved")
-        notebook.deleteLayer(layer.id, on: page)
-        expectBump("a layer deleted")
 
         let second = notebook.appendPage()
         expectSame("another page appended")
@@ -1745,15 +1737,25 @@ struct NotebookTests {
         #expect(notebook.pageCount == 1, "a refused duplicate inserts nothing")
     }
 
-    @Test("An image or a link on a page with a text box open is refused, and nothing is recorded")
-    func recordedInsertRefusesAnOpenTextBox() async throws {
+    @Test("An image, a link or a flatten on a page with a text box open is refused, and leaves no entry and no asset")
+    func insertUnderAnOpenTextBoxThrows() async throws {
         let (scratch, notebook, page) = try await readyPage("nb-insert-text")
+        // Something to redo, which a record would clear.
+        try notebook.insertLayer(textLayer("undone"), on: page)
+        #expect(notebook.undo() == page)
         notebook.createTextBox(on: page, at: PagePoint(x: 40, y: 40), style: .body, alignment: .leading)
+        let assets = scratch.packageURL.appendingPathComponent("assets").path
+        let assetsBefore = try FileManager.default.contentsOfDirectory(atPath: assets)
+        let refusal = FormatFault.invalidWrite("page \(page) has a text box open")
 
-        await #expect(throws: FormatFault.self) { try await notebook.importImage(try Fixture.imageData(width: 40, height: 30), on: page) }
-        #expect(throws: FormatFault.self) { try notebook.addLinkLayer(on: page, rect: PageRect(x: 10, y: 10, width: 160, height: 44), target: .internalPage(page)) }
+        await #expect(throws: refusal) { try await notebook.importImage(try Fixture.imageData(width: 40, height: 30), on: page) }
+        #expect(throws: refusal) { try notebook.addLinkLayer(on: page, rect: PageRect(x: 10, y: 10, width: 160, height: 44), target: .internalPage(page)) }
+        await #expect(throws: refusal) { try await notebook.flatten(page) }
+
         #expect(notebook.state(of: page)?.content?.layers.count == 1, "only the box")
         #expect(!notebook.canUndo)
+        #expect(notebook.canRedo, "a record would have cleared redo")
+        #expect(try FileManager.default.contentsOfDirectory(atPath: assets) == assetsBefore, "a refusal publishes no asset")
         _ = await notebook.close()
         _ = scratch
     }
@@ -2046,38 +2048,76 @@ struct NotebookTests {
         #expect(notebook.state(of: page)?.content?.afterRender.isEmpty == true)
     }
 
-    // The content version has no choke point; this list is the invariant's
-    // enforcement for the sites this plan adds.
-    @Test("The content version rises on an inserted layer and a changed commit, and on nothing else here")
-    func textContentVersionBumpSites() async throws {
-        let scratch = try Scratch("nb-text-version")
-        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
-        let page = notebook.pageIDs[0]
-        notebook.windowChanged(to: [page])
-        try await waitUntil { notebook.state(of: page)?.content != nil }
-        var version = notebook.contentVersion(of: page)
-        func expectBump(_ what: String) {
-            let now = notebook.contentVersion(of: page)
-            #expect(now == version + 1, "\(what) should bump once, went \(version) to \(now)")
-            version = now
+    // MARK: Layer edits
+
+    /// A page holding an image, a link and a text box, in that order, saved
+    /// and clean, for the layer-edit tests to edit.
+    private func pageWithLayers(_ name: String) async throws -> (Scratch, Notebook, PageID, image: Layer, link: Layer, text: Layer) {
+        let (scratch, notebook, page) = try await readyPage(name)
+        let image = Fixture.imageLayer(), link = Fixture.linkLayer(to: page), text = textLayer("hi")
+        try await notebook.addLayer(image, assetData: Fixture.archive(1, count: 128), on: page)
+        try notebook.insertLayer(link, on: page)
+        try notebook.insertLayer(text, on: page)
+        await notebook.flush()
+        #expect(!notebook.isDirty)
+        return (scratch, notebook, page, image, link, text)
+    }
+
+    @Test("Each layer edit bumps the content version once and dirties the page", arguments: LayerEdit.allCases)
+    func contentVersionBumpsOncePerLayerEdit(_ edit: LayerEdit) async throws {
+        let (scratch, notebook, page, image, link, text) = try await pageWithLayers("nb-version-\(edit)")
+        guard case .text(let typed) = text.payload else { Issue.record("not text"); return }
+        let version = notebook.contentVersion(of: page)
+
+        switch edit {
+        case .insert:
+            try notebook.insertLayer(textLayer("more"), on: page)
+        case .transform:
+            #expect(notebook.transformLayer(on: page, layer: image.id, to: .translation(x: 1, y: 1)) == .accepted)
+        case .lock:
+            #expect(notebook.setLayerLock(image.id, on: page, locked: true) == .accepted)
+        case .delete:
+            #expect(notebook.deleteLayer(image.id, on: page) == .accepted)
+        case .moveLink:
+            #expect(notebook.moveLinkLayer(on: page, layer: link.id, to: PageRect(x: 300, y: 500, width: 120, height: 40)) == .accepted)
+        case .commitText:
+            notebook.beginTextEditing(on: page, layer: text.id)
+            notebook.endTextEditing(on: page, layer: text.id, TextLayer(rect: typed.rect, runs: [TextRun(string: "ho", style: .body)], alignment: .leading))
+        case .emptyText:
+            notebook.beginTextEditing(on: page, layer: text.id)
+            notebook.endTextEditing(on: page, layer: text.id, TextLayer(rect: typed.rect, runs: [], alignment: .leading))
         }
-        func expectSame(_ what: String) {
-            #expect(notebook.contentVersion(of: page) == version, "\(what) is not a change to the page")
-        }
-        let layer = textLayer("hi")
-        try notebook.insertLayer(layer, on: page)
-        expectBump("a layer inserted")
-        guard case .text(let text) = try #require(notebook.state(of: page)?.content?.layers.first?.payload) else { Issue.record("not text"); return }
-        notebook.beginTextEditing(on: page, layer: layer.id)
-        expectSame("a session began")
-        notebook.endTextEditing(on: page, layer: layer.id, text)
-        expectSame("an unchanged commit")
-        notebook.beginTextEditing(on: page, layer: layer.id)
-        notebook.endTextEditing(on: page, layer: layer.id, TextLayer(rect: text.rect, runs: [TextRun(string: "ho", style: .body)], alignment: .leading))
-        expectBump("a changed commit")
-        notebook.beginTextEditing(on: page, layer: layer.id)
-        notebook.endTextEditing(on: page, layer: layer.id, TextLayer(rect: text.rect, runs: [], alignment: .leading))
-        expectBump("an emptied box, deleted")
+
+        #expect(notebook.contentVersion(of: page) == version + 1)
+        #expect(notebook.isDirty)
+        _ = await notebook.close()
+        _ = scratch
+    }
+
+    @Test("A layer edit to the value the page holds bumps nothing, dirties nothing, owes no file and records nothing")
+    func sameValueLayerEditsLeaveThePageClean() async throws {
+        let (scratch, notebook, page, image, link, text) = try await pageWithLayers("nb-same-value")
+        guard case .text(let typed) = text.payload, case .link(let placed) = link.payload else { Issue.record("payloads"); return }
+        // Something to redo, which a record would clear.
+        try notebook.insertLayer(textLayer("undone"), on: page)
+        #expect(notebook.undo() == page)
+        await notebook.flush()
+        #expect(!notebook.isDirty)
+        let version = notebook.contentVersion(of: page)
+        let pending = notebook.state(of: page)?.content?.pendingLayerFiles
+
+        #expect(notebook.setLayerLock(image.id, on: page, locked: false) == .accepted)
+        #expect(notebook.transformLayer(on: page, layer: image.id, to: image.transform) == .accepted)
+        #expect(notebook.moveLinkLayer(on: page, layer: link.id, to: placed.rect) == .accepted)
+        notebook.beginTextEditing(on: page, layer: text.id)
+        notebook.endTextEditing(on: page, layer: text.id, typed)
+
+        #expect(notebook.contentVersion(of: page) == version)
+        #expect(!notebook.isDirty)
+        #expect(notebook.state(of: page)?.content?.pendingLayerFiles == pending)
+        #expect(notebook.canRedo, "a record would have cleared redo")
+        _ = await notebook.close()
+        _ = scratch
     }
 
     // MARK: Text sessions on the stack
@@ -2198,6 +2238,11 @@ struct NotebookTests {
         _ = await notebook.close()
         _ = scratch
     }
+}
+
+/// One row per layer edit the notebook offers: a new edit is a new case.
+enum LayerEdit: String, CaseIterable, Sendable {
+    case insert, transform, lock, delete, moveLink, commitText, emptyText
 }
 
 extension Notebook {
