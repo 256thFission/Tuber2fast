@@ -38,61 +38,56 @@ package enum Codecs {
         }
     }
 
-    /// The parsed top-level object, for key checks that must run before a
-    /// typed decode (a kind name is checked here, before its payload).
+    /// The parsed top-level object, for what is read before a typed decode:
+    /// a version before any key, a kind name before its payload.
     package static func topLevelObject(of data: Data) throws(FormatFault) -> [String: Any] {
-        let object: Any
-        do {
-            object = try JSONSerialization.jsonObject(with: data)
-        } catch {
-            throw .corruptJSON(String(describing: error))
-        }
-        guard let dictionary = object as? [String: Any] else {
+        guard let dictionary = try tree(of: data) as? [String: Any] else {
             throw .corruptJSON("top level is not an object")
         }
         return dictionary
     }
 
-    /// The one implementation of "the exact key set": a missing key refuses
-    /// naming it, then an extra key refuses naming it. Missing wins so a
-    /// file from a build that forgot the version bump is reported by what
-    /// this build needs, not by what it added.
-    package static func checkKeys(_ keys: Set<String>, against expected: Set<String>) throws(FormatFault) {
-        if let missing = expected.subtracting(keys).sorted().first { throw .missingKey(missing) }
-        if let extra = keys.subtracting(expected).sorted().first { throw .unknownKey(extra) }
+    /// The one implementation of "the exact key set". The value is decoded
+    /// first, so a missing key refuses naming it; then it is re-encoded with
+    /// the one encoder and the two trees are walked together, so a key the
+    /// file carries at any depth and the re-encode lacks, one the next write
+    /// would drop, refuses naming its path. Missing wins so a file from a
+    /// build that forgot the version bump is reported by what this build
+    /// needs, not by what it added. Arrays are walked element by element,
+    /// because a page record's paper keys depend on that record's kind.
+    package static func decodeStrict<T: Codable>(_ type: T.Type, from data: Data) throws(FormatFault) -> T {
+        let value = try decode(type, from: data)
+        if let extra = firstUnwrittenKey(in: try tree(of: data), against: try tree(of: try encode(value)), at: "") {
+            throw .unknownKey(extra)
+        }
+        return value
     }
 
-    package static func decodeStrict<T: Decodable>(
-        _ type: T.Type,
-        from data: Data,
-        expectedKeys: Set<String>
-    ) throws(FormatFault) -> T {
-        try checkKeys(Set(try topLevelObject(of: data).keys), against: expectedKeys)
-        return try decode(type, from: data)
-    }
-}
-
-/// The key sets the format pins. One place, mirrored by one test each.
-package enum DurableKeys {
-    package static let index: Set<String> = ["formatVersion", "notebookID", "createdAt", "pages", "bookmarks"]
-    package static let pageRecord: Set<String> = ["id", "width", "height", "paper"]
-    package static let bookmark: Set<String> = ["page", "title"]
-    /// Paper's keys depend on its kind. Nil for a kind this build does not
-    /// write, which has no keys to check because it is refused by name.
-    package static func paper(kind: String) -> Set<String>? {
-        switch kind {
-        case Paper.imageKind: ["kind", "asset"]
-        case Paper.pdfKind: ["kind", "asset", "sourcePageIndex"]
-        default: DrawnPaper(rawValue: kind) == nil ? nil : ["kind"]
+    private static func tree(of data: Data) throws(FormatFault) -> Any {
+        do {
+            return try JSONSerialization.jsonObject(with: data)
+        } catch {
+            throw .corruptJSON(String(describing: error))
         }
     }
-    package static let pageFile: Set<String> = ["pageID", "hasInk", "inkIndex", "layers"]
-    package static let view: Set<String> = ["currentPageID"]
-    package static func layerFile(kind: String) -> Set<String> { ["layerID", "kind", "transform", "locked", kind] }
-    package static let image: Set<String> = ["asset", "naturalSize"]
-    package static let pdf: Set<String> = ["asset", "sourcePageIndex", "sourceExtent"]
-    package static let link: Set<String> = ["rect", "style", "target"]
-    package static let text: Set<String> = ["rect", "runs", "alignment"]
+
+    private static func firstUnwrittenKey(in read: Any, against written: Any, at path: String) -> String? {
+        switch (read, written) {
+        case (let read as [String: Any], let written as [String: Any]):
+            for (key, value) in read.sorted(by: { $0.key < $1.key }) {
+                let child = path.isEmpty ? key : "\(path).\(key)"
+                guard let echo = written[key] else { return child }
+                if let extra = firstUnwrittenKey(in: value, against: echo, at: child) { return extra }
+            }
+        case (let read as [Any], let written as [Any]):
+            for (offset, (element, echo)) in zip(read, written).enumerated() {
+                if let extra = firstUnwrittenKey(in: element, against: echo, at: "\(path)[\(offset)]") { return extra }
+            }
+        default:
+            break
+        }
+        return nil
+    }
 }
 
 /// Why the format refused, at file scope. Page-scoped faults are `PageFault`.
@@ -100,7 +95,6 @@ package enum FormatFault: Error, Sendable, Equatable, CustomStringConvertible {
     case missingKey(String)
     case unknownKey(String)
     case corruptJSON(String)
-    case indexUnreadable(String)
     case indexInvalid(NotebookIndexFault)
     case newerFormat(found: UInt32)
     case olderFormat(found: UInt32)
@@ -126,7 +120,6 @@ package enum FormatFault: Error, Sendable, Equatable, CustomStringConvertible {
         case .missingKey(let key): "missing key \(key)"
         case .unknownKey(let key): "unknown key \(key)"
         case .corruptJSON(let detail): "corrupt JSON: \(detail)"
-        case .indexUnreadable(let detail): "index unreadable: \(detail)"
         case .indexInvalid(let fault): "index invalid: \(fault)"
         case .newerFormat: "made by a newer TuberNotes; update the app"
         case .olderFormat: "made by an older TuberNotes this version cannot upgrade"

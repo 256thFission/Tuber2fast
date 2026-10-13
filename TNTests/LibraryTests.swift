@@ -253,6 +253,22 @@ struct LibraryTests {
         #expect(try FileManager.default.contentsOfDirectory(atPath: library.store.stagingRoot.path).isEmpty)
     }
 
+    @Test("A duplicate keeps the record of a page whose file is missing, refused in the copy as in the original")
+    func aDuplicateKeepsARefusedPagesRecord() async throws {
+        let (scratch, library) = try makeLibrary("lib-dup-refused")
+        defer { withExtendedLifetime(scratch) {} }
+        let (store, index, _) = try await Fixture.populated(at: library.store.url(of: "Source.tubernotes"))
+        let refused = index.pageIDs[1]
+        try FileManager.default.removeItem(at: store.layout.pageURL(refused))
+
+        let copy = try await library.duplicateNotebook(at: "Source.tubernotes")
+        let original = try await PackageStore(root: library.store.url(of: "Source.tubernotes")).load()
+        let copied = try await PackageStore(root: library.store.url(of: copy.relativePath)).load()
+        #expect(original.pageFaults == [refused: [.missingPageFile]])
+        #expect(copied.index.pageIDs == index.pageIDs)
+        #expect(copied.pageFaults == original.pageFaults)
+    }
+
     @Test("The identity index resolves live, trashed, and missing, and survives a move")
     func identities() async throws {
         let (scratch, library) = try makeLibrary("lib-ids")

@@ -97,8 +97,7 @@ actor Gate: Arrivals {
 /// page, whatever its identity.
 final class RefusingNewPagesStore: ForwardingStore, @unchecked Sendable {
     override func save(_ batch: SaveBatch) async throws(FormatFault) -> SaveReport {
-        let fs = PosixFileSystem()
-        let isNew: (PageWrite) -> Bool = { !fs.exists(self.base.layout.pageURL($0.pageID)) }
+        let isNew: (PageWrite) -> Bool = { !FileManager.default.fileExists(atPath: self.base.layout.pageURL($0.pageID).path) }
         let refusedIDs = batch.pages.filter(isNew).map(\.pageID)
         let filtered = SaveBatch(index: batch.index, indexChanged: batch.indexChanged, pages: batch.pages.filter { !isNew($0) })
         let report = try await base.save(filtered)
@@ -2012,13 +2011,13 @@ struct NotebookTests {
         await notebook.flush()
 
         _ = try await notebook.store.compact(now: .now + 2 * 86_400, keeping: notebook.assetsInUse)
-        #expect(!PosixFileSystem().exists(layout.layerURL(layer.id)), "the orphaned layer file went")
-        #expect(PosixFileSystem().exists(layout.assetURL(layer.payload.asset!)), "the undo stack names the asset")
+        #expect(try !PosixFileSystem().exists(layout.layerURL(layer.id)), "the orphaned layer file went")
+        #expect(try PosixFileSystem().exists(layout.assetURL(layer.payload.asset!)), "the undo stack names the asset")
 
         #expect(notebook.undo() == page)
         await notebook.flush()
         #expect(notebook.lastSaveError == nil)
-        #expect(PosixFileSystem().exists(layout.layerURL(layer.id)), "the restore rewrote the layer file")
+        #expect(try PosixFileSystem().exists(layout.layerURL(layer.id)), "the restore rewrote the layer file")
         #expect(await notebook.close() == .clean)
     }
 
@@ -2037,8 +2036,8 @@ struct NotebookTests {
         await notebook.flush()
 
         _ = try await notebook.store.compact(now: .now + 2 * 86_400, keeping: notebook.assetsInUse)
-        #expect(!PosixFileSystem().exists(layout.layerURL(layer.id)), "the orphaned layer file went")
-        #expect(PosixFileSystem().exists(layout.assetURL(layer.payload.asset!)), "the redo stack names the asset")
+        #expect(try !PosixFileSystem().exists(layout.layerURL(layer.id)), "the orphaned layer file went")
+        #expect(try PosixFileSystem().exists(layout.assetURL(layer.payload.asset!)), "the redo stack names the asset")
 
         #expect(notebook.redo() == page)
         await notebook.flush()

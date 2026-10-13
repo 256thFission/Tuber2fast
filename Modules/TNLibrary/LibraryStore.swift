@@ -28,8 +28,7 @@ package enum FolderSymbol: String, Codable, Sendable, CaseIterable {
 }
 
 /// The pair a cell draws with. Not `Codable`: the two durable keys are flat
-/// on `FolderFile`, so the flat key check below pins them with no nested
-/// check of its own.
+/// on `FolderFile`.
 package struct FolderDecoration: Sendable, Equatable {
     package let color: FolderColor
     package let symbol: FolderSymbol
@@ -235,10 +234,6 @@ package actor LibraryStore {
     private let fm = FileManager.default
     private static let folderSidecar = ".folder.json"
     private static let originSidecar = "origin.json"
-    private static let favoritesKeys: Set<String> = ["formatVersion", "notebooks", "folders"]
-    private static let folderKeys: Set<String> = ["formatVersion", "folderID", "color", "symbol"]
-    /// `originFolderID` is left out when the item came from the root.
-    private static let originKeys: Set<String> = ["formatVersion", "originPathHint", "originName", "deletedAt"]
 
     package init(
         base: URL,
@@ -337,10 +332,8 @@ package actor LibraryStore {
 
     /// A sidecar read strictly, its version before any key, as the index's
     /// is. A sidecar has no ladder, so another version is refused by its
-    /// number. `optional` names a key the encoder leaves out for a nil.
-    private static func readSidecar<T: Decodable>(
-        _ type: T.Type, at url: URL, version: UInt32, keys: Set<String>, optional: Set<String> = []
-    ) throws(LibraryError) -> T {
+    /// number.
+    private static func readSidecar<T: Codable>(_ type: T.Type, at url: URL, version: UInt32) throws(LibraryError) -> T {
         let file = url.lastPathComponent
         let data: Data
         do { data = try Data(contentsOf: url) } catch { throw .unreadable(file: file, reason: error.localizedDescription) }
@@ -349,8 +342,7 @@ package actor LibraryStore {
             guard let found = top["formatVersion"] as? UInt32 else { throw .missingKey("formatVersion") }
             if found > version { throw .newerFormat(found: found) }
             if found < version { throw .olderFormat(found: found) }
-            try Codecs.checkKeys(Set(top.keys).subtracting(optional), against: keys)
-            return try Codecs.decode(type, from: data)
+            return try Codecs.decodeStrict(type, from: data)
         } catch {
             throw .unreadable(file: file, reason: error.description)
         }
@@ -482,7 +474,7 @@ package actor LibraryStore {
     package func folderFile(of folder: String) throws(LibraryError) -> FolderFile {
         try Self.readSidecar(
             FolderFile.self, at: url(of: folder).appendingPathComponent(Self.folderSidecar),
-            version: FolderFile.currentFormatVersion, keys: Self.folderKeys
+            version: FolderFile.currentFormatVersion
         )
     }
 
@@ -572,7 +564,7 @@ package actor LibraryStore {
         guard fm.fileExists(atPath: favoritesURL.path) else { return [] }
         let file = try Self.readSidecar(
             FavoritesFile.self, at: favoritesURL,
-            version: FavoritesFile.currentFormatVersion, keys: Self.favoritesKeys
+            version: FavoritesFile.currentFormatVersion
         )
         return Set(file.notebooks.map(ItemIdentity.notebook) + file.folders.map(ItemIdentity.folder))
     }
@@ -690,7 +682,7 @@ package actor LibraryStore {
         let origin = Result { () throws(LibraryError) -> TrashOrigin in
             try Self.readSidecar(
                 TrashOrigin.self, at: container.appendingPathComponent(Self.originSidecar),
-                version: TrashOrigin.currentFormatVersion, keys: Self.originKeys, optional: ["originFolderID"]
+                version: TrashOrigin.currentFormatVersion
             )
         }
         return (item.fileName, item.kind, origin)

@@ -90,8 +90,6 @@ package struct PageBytes: Sendable, Equatable {
     /// A valid container was found under `hasInk == false`: the ink is
     /// real, and the next save must record it.
     package let inkRecordNeeded: Bool
-
-    package var isPlaceholder: Bool { !faults.isEmpty }
 }
 
 package struct CompactReport: Sendable, Equatable {
@@ -147,6 +145,12 @@ package actor PackageStore {
         return .invalidWrite("\(error)")
     }
 
+    /// A stat that fails for any reason but absence is an I/O fault, never
+    /// an absent file.
+    private func exists(_ url: URL) throws(FormatFault) -> Bool {
+        do { return try fs.exists(url) } catch { throw Self.ioFault(error) }
+    }
+
     // MARK: Open
 
     package func load() throws(FormatFault) -> LoadedNotebook {
@@ -166,13 +170,13 @@ package actor PackageStore {
             throw .indexInvalid(error)
         }
         var faults: [PageID: [PageFault]] = [:]
-        for page in validated.pageIDs where !fs.exists(layout.pageURL(page)) {
+        for page in validated.pageIDs where try !exists(layout.pageURL(page)) {
             faults[page, default: []].append(.missingPageFile)
         }
         // Stat only: the asset's bytes are the renderer's business, and open
         // reads no page.
         for record in validated.pages {
-            guard let asset = record.paperAsset, !fs.exists(layout.assetURL(asset)) else { continue }
+            guard let asset = record.paperAsset, try !exists(layout.assetURL(asset)) else { continue }
             faults[record.id, default: []].append(.paperAssetMissing(asset.fileName))
         }
         knownNotebookID = validated.notebookID
@@ -199,7 +203,7 @@ package actor PackageStore {
         }
         let file: PageFile
         do {
-            file = try Codecs.decodeStrict(PageFile.self, from: fileData, expectedKeys: DurableKeys.pageFile).validated(expecting: page)
+            file = try Codecs.decodeStrict(PageFile.self, from: fileData).validated(expecting: page)
         } catch let fault as PageFault {
             return refused(fault)
         } catch {
@@ -209,25 +213,20 @@ package actor PackageStore {
         var faults: [PageFault] = []
         var inkArchive: Data?
         var inkRecordNeeded = false
-        let inkURL = layout.inkURL(page)
-        if file.hasInk {
-            do {
-                let container = try fs.read(inkURL)
-                inkArchive = try InkContainer.decode(container, expecting: notebookID, page: page).archive
-            } catch let error as FileSystemError where error.code == ENOENT {
-                faults.append(.missingInk)
-            } catch let fault as InkContainerFault {
-                faults.append(.inkContainerInvalid(fault))
-            } catch {
-                faults.append(.pageFileUnreadable("ink: \(error)"))
+        do {
+            inkArchive = try InkContainer.decode(try fs.read(layout.inkURL(page)), expecting: notebookID, page: page)
+            if !file.hasInk {
+                // A crash between publish phases: the container landed, the
+                // page file recording it did not. The container is the ink.
+                inkRecordNeeded = true
+                TNLog.event(.format, "page \(page) has a container under hasInk=false; adopting it")
             }
-        } else if let container = try? fs.read(inkURL),
-                  let decoded = try? InkContainer.decode(container, expecting: notebookID, page: page) {
-            // A crash between publish phases: the container landed, the page
-            // file recording it did not. The container is the ink.
-            inkArchive = decoded.archive
-            inkRecordNeeded = true
-            TNLog.event(.format, "page \(page) has a container under hasInk=false; adopting it")
+        } catch let error as FileSystemError where error.code == ENOENT {
+            if file.hasInk { faults.append(.missingInk) }
+        } catch let fault as InkContainerFault {
+            faults.append(.inkContainerInvalid(fault))
+        } catch {
+            faults.append(.pageFileUnreadable("ink: \(error)"))
         }
 
         var layers: [Layer] = []
@@ -242,7 +241,7 @@ package actor PackageStore {
             }
             switch result {
             case .success(let layer):
-                if let asset = layer.payload.asset, !fs.exists(layout.assetURL(asset)) {
+                if let asset = layer.payload.asset, try !exists(layout.assetURL(asset)) {
                     faults.append(.layerRefused(.danglingAsset(layer.id, asset)))
                 } else {
                     layers.append(layer)
@@ -289,7 +288,7 @@ package actor PackageStore {
         var refusals: [PageID: PageRefusal] = [:]
         var planned: [PagePlan] = []
         for write in batch.pages {
-            switch plan(write) {
+            switch try plan(write) {
             case .failure(let refusal): refusals[write.pageID] = refusal
             case .success(let plan): planned.append(plan)
             }
@@ -356,7 +355,10 @@ package actor PackageStore {
         var omitted = Set<PageID>()
         var indexWithheld = false
         if let indexData {
-            let present = intended.pages.filter { committed.contains($0.id) || fs.exists(layout.pageURL($0.id)) }
+            var present: [PageRecord] = []
+            for record in intended.pages where try committed.contains(record.id) ? true : exists(layout.pageURL(record.id)) {
+                present.append(record)
+            }
             if present.isEmpty {
                 indexWithheld = true
                 TNLog.event(.format, "index withheld: no intended page is present")
@@ -371,19 +373,19 @@ package actor PackageStore {
         return SaveReport(committed: committed, refusals: refusals, indexWritten: indexWritten, omitted: omitted, indexWithheld: indexWithheld)
     }
 
-    private func plan(_ write: PageWrite) -> Result<PagePlan, PageRefusal> {
+    private func plan(_ write: PageWrite) throws(FormatFault) -> Result<PagePlan, PageRefusal> {
         let file: PageFile
         do { file = try write.file.validated(expecting: write.pageID) } catch { return .failure(.invalidPageFile(error)) }
 
         let writtenLayers = Set(write.layerFiles.map(\.id))
-        for layerID in file.layers where !writtenLayers.contains(layerID) && !fs.exists(layout.layerURL(layerID)) {
-            return .failure(.layerFileMissing(layerID))
+        for layerID in file.layers where !writtenLayers.contains(layerID) {
+            if try !exists(layout.layerURL(layerID)) { return .failure(.layerFileMissing(layerID)) }
         }
         var layerData: [(LayerID, Data)] = []
         for layer in write.layerFiles {
             guard file.layers.contains(layer.id) else { return .failure(.layerNotInPage(layer.id)) }
             do { _ = try layer.validated() } catch { return .failure(.invalidLayer(error)) }
-            if let asset = layer.payload.asset, !fs.exists(layout.assetURL(asset)) {
+            if let asset = layer.payload.asset, try !exists(layout.assetURL(asset)) {
                 return .failure(.danglingAsset(layer.id, asset))
             }
             do { layerData.append((layer.id, try LayerFile.encode(layer))) } catch { return .failure(.encodeFailed(error.description)) }
@@ -392,7 +394,7 @@ package actor PackageStore {
         case .archive:
             guard file.hasInk else { return .failure(.inkWithoutHasInk) }
         case .unchanged:
-            if file.hasInk, !fs.exists(layout.inkURL(write.pageID)) { return .failure(.hasInkWithoutContainer) }
+            if file.hasInk, try !exists(layout.inkURL(write.pageID)) { return .failure(.hasInkWithoutContainer) }
         }
         let pageFileData: Data
         do { pageFileData = try Codecs.encode(file) } catch { return .failure(.encodeFailed(error.description)) }
@@ -411,7 +413,7 @@ package actor PackageStore {
     package func writeAsset(_ data: Data, _ ref: AssetRef) throws(FormatFault) {
         guard data.count <= AssetBounds.maxBytes else { throw .invalidWrite("asset \(ref.fileName) is larger than \(AssetBounds.maxBytes / (1024 * 1024)) MB") }
         let final = layout.assetURL(ref)
-        if fs.exists(final) { return }
+        if try exists(final) { return }
         do { try fs.writeAtomically(data, to: final, syncing: layout.assetsDirectory) } catch { throw Self.ioFault(error) }
     }
 
@@ -425,7 +427,7 @@ package actor PackageStore {
 
     package func readView() -> ViewState? {
         guard let data = try? fs.read(layout.viewURL),
-              let view = try? Codecs.decodeStrict(ViewState.self, from: data, expectedKeys: DurableKeys.view)
+              let view = try? Codecs.decodeStrict(ViewState.self, from: data)
         else { return nil }
         return view
     }
@@ -439,21 +441,35 @@ package actor PackageStore {
     /// Duplicate's rewrite: a new notebook identity in the index and in the
     /// header of every ink container. Payloads are untouched and page
     /// identities are preserved, so no page need be decodable for its
-    /// identity to be corrected.
-    package func rewriteNotebookID(_ newID: NotebookID) async throws(FormatFault) {
+    /// identity to be corrected. The index is published as it was read, not
+    /// through a save, whose publish 3 would drop the record of a page whose
+    /// file is missing and orphan its ink.
+    package func rewriteNotebookID(_ newID: NotebookID) throws(FormatFault) {
         let loaded = try load()
-        let names = (try? fs.list(layout.inkDirectory)) ?? []
+        let names: [String]
+        do { names = try fs.list(layout.inkDirectory) } catch { throw Self.ioFault(error) }
         for name in names where !name.hasPrefix(Self.tempPrefix) {
             let url = layout.inkDirectory.appendingPathComponent(name)
             let data: Data
             do { data = try fs.read(url) } catch { throw Self.ioFault(error) }
             let rewritten: Data
-            do { rewritten = try InkContainer.rewritingNotebookID(data, to: newID) } catch { continue }
+            do {
+                rewritten = try InkContainer.rewritingNotebookID(data, to: newID)
+            } catch {
+                // Left as it is, the copy refuses this page by the same fault
+                // the original does.
+                TNLog.event(.format, "duplicate leaves \(name) unrewritten: \(error)")
+                continue
+            }
             do { try fs.writeAtomically(rewritten, to: url, syncing: nil) } catch { throw Self.ioFault(error) }
         }
-        do { try fs.syncDirectory(layout.inkDirectory) } catch { throw Self.ioFault(error) }
-        let report = try await save(SaveBatch(index: loaded.index.withNotebookID(newID), indexChanged: true, pages: []))
-        guard report.indexWritten else { throw .invalidWrite("rewriteNotebookID to \(newID) did not commit") }
+        do {
+            try fs.syncDirectory(layout.inkDirectory)
+            try fs.writeAtomically(Codecs.encode(loaded.index.withNotebookID(newID)), to: layout.indexURL, syncing: layout.root)
+        } catch {
+            throw Self.ioFault(error)
+        }
+        knownNotebookID = newID
     }
 
     // MARK: Compact
@@ -470,7 +486,7 @@ package actor PackageStore {
         var reachableAssets = Set(keeping.map(\.fileName))
         for page in index.pageIDs {
             guard let data = try? fs.read(layout.pageURL(page)),
-                  let file = try? Codecs.decodeStrict(PageFile.self, from: data, expectedKeys: DurableKeys.pageFile)
+                  let file = try? Codecs.decodeStrict(PageFile.self, from: data)
             else {
                 // A page file we cannot read may name any layer.
                 report.layerReclamationSuspended = true
@@ -542,8 +558,10 @@ package actor PackageStore {
     }
 }
 
-/// The index file with its nested key sets checked, so a page record or a
-/// paper object with a missing or extra key refuses by name.
+/// The index file, read version first, then strictly at every level, so a
+/// page record, a paper or a bookmark with a missing or extra key refuses by
+/// name, and a paper of a kind this build does not write refuses by that
+/// name before any of its keys.
 package enum IndexFile {
     /// The three keys that never change name or type, read at any version.
     package struct Header: Decodable, Sendable, Equatable {
@@ -557,32 +575,16 @@ package enum IndexFile {
     }
 
     package static func decode(_ data: Data) throws(FormatFault) -> NotebookIndex {
-        let top = try Codecs.topLevelObject(of: data)
         // The version is read before any key: another version's key set is
         // not this one's. This is the only version gate a load passes, so an
         // index in memory is always current and save checks no version. An
         // older index is a step's input, never this decoder's.
-        guard let version = top["formatVersion"] as? UInt32 else { throw .missingKey("formatVersion") }
+        guard let version = try Codecs.topLevelObject(of: data)["formatVersion"] as? UInt32 else {
+            throw .missingKey("formatVersion")
+        }
         if version > NotebookIndex.currentFormatVersion { throw .newerFormat(found: version) }
         if version < NotebookIndex.currentFormatVersion { throw .olderFormat(found: version) }
-        try Codecs.checkKeys(Set(top.keys), against: DurableKeys.index)
-        guard let pages = top["pages"] as? [[String: Any]] else { throw .corruptJSON("pages is not an array of objects") }
-        for page in pages {
-            try Codecs.checkKeys(Set(page.keys), against: DurableKeys.pageRecord)
-            guard let paper = page["paper"] as? [String: Any] else { throw .corruptJSON("paper is not an object") }
-            guard let kind = paper["kind"] as? String else { throw .missingKey("kind") }
-            guard let keys = DurableKeys.paper(kind: kind) else {
-                throw .indexUnreadable("paper kind \(kind) is not one this build writes")
-            }
-            try Codecs.checkKeys(Set(paper.keys), against: keys)
-        }
-        guard let bookmarks = top["bookmarks"] as? [[String: Any]] else {
-            throw .corruptJSON("bookmarks is not an array of objects")
-        }
-        for bookmark in bookmarks {
-            try Codecs.checkKeys(Set(bookmark.keys), against: DurableKeys.bookmark)
-        }
-        return try Codecs.decode(NotebookIndex.self, from: data)
+        return try Codecs.decodeStrict(NotebookIndex.self, from: data)
     }
 }
 

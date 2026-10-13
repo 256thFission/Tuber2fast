@@ -25,17 +25,13 @@ package enum InkContainer {
         return header + archive
     }
 
-    package struct Decoded: Sendable, Equatable {
-        package let notebookID: NotebookID
-        package let pageID: PageID
-        package let archive: Data
-    }
-
+    /// The archive, once every header field agrees with the identities the
+    /// caller expects.
     package static func decode(
         _ data: Data,
         expecting notebookID: NotebookID,
         page pageID: PageID
-    ) throws(InkContainerFault) -> Decoded {
+    ) throws(InkContainerFault) -> Data {
         guard data.count >= headerLength else { throw .tooShort }
         let bytes = [UInt8](data.prefix(headerLength))
         guard Array(bytes[0..<4]) == magic else { throw .badMagic }
@@ -52,7 +48,7 @@ package enum InkContainer {
         }
         let crc = UInt32(littleEndian: bytes, at: 48)
         guard crc == CRC32.checksum(payload) else { throw .checksumMismatch }
-        return Decoded(notebookID: notebookID, pageID: pageID, archive: Data(payload))
+        return Data(payload)
     }
 
     /// The same container under a new notebook identity. The payload and

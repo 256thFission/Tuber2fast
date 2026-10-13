@@ -38,21 +38,11 @@ package enum LayerFile {
             return .failure(.fileUnreadable(expected, "layer kind \(kindName) is not one this build writes"))
         }
         do {
-            try Codecs.checkKeys(Set(object.keys), against: DurableKeys.layerFile(kind: kind.rawValue))
-            let layer: Layer
-            switch kind {
-            case .image:
-                let body = try Codecs.decode(Body<ImageLayer>.self, from: data)
-                layer = Layer(id: body.layerID, transform: body.transform, payload: .image(body.payload), locked: body.locked)
-            case .pdf:
-                let body = try Codecs.decode(Body<PDFLayer>.self, from: data)
-                layer = Layer(id: body.layerID, transform: body.transform, payload: .pdf(body.payload), locked: body.locked)
-            case .link:
-                let body = try Codecs.decode(Body<LinkLayer>.self, from: data)
-                layer = Layer(id: body.layerID, transform: body.transform, payload: .link(body.payload), locked: body.locked)
-            case .text:
-                let body = try Codecs.decode(Body<TextLayer>.self, from: data)
-                layer = Layer(id: body.layerID, transform: body.transform, payload: .text(body.payload), locked: body.locked)
+            let layer = switch kind {
+            case .image: try Body.layer(from: data, LayerPayload.image)
+            case .pdf: try Body.layer(from: data, LayerPayload.pdf)
+            case .link: try Body.layer(from: data, LayerPayload.link)
+            case .text: try Body.layer(from: data, LayerPayload.text)
             }
             return .success(try layer.validated())
         } catch let fault as LayerFault {
@@ -86,6 +76,11 @@ private struct Body<Payload: Codable>: Codable {
         self.transform = layer.transform
         self.locked = layer.locked
         self.payload = payload
+    }
+
+    static func layer(from data: Data, _ payload: (Payload) -> LayerPayload) throws(FormatFault) -> Layer {
+        let body = try Codecs.decodeStrict(Self.self, from: data)
+        return Layer(id: body.layerID, transform: body.transform, payload: payload(body.payload), locked: body.locked)
     }
 
     init(from decoder: Decoder) throws {

@@ -35,7 +35,9 @@ package protocol PackageFileSystem: Sendable {
     /// mapping lives as long as the bytes. Only for a file written once and
     /// never rewritten in place: an asset.
     func readMapped(_ url: URL) throws -> Data
-    func exists(_ url: URL) -> Bool
+    /// False only for `ENOENT`: any other failed stat throws, because a
+    /// file that could not be looked at is not an absent one.
+    func exists(_ url: URL) throws -> Bool
     func modificationTime(_ url: URL) throws -> Date
     /// File names directly inside `directory`, no recursion, no hidden files.
     func list(_ directory: URL) throws -> [String]
@@ -198,8 +200,13 @@ package struct PosixFileSystem: PackageFileSystem {
         return Data(bytesNoCopy: bytes, count: size, deallocator: .custom { bytes, size in _ = munmap(bytes, size) })
     }
 
-    package func exists(_ url: URL) -> Bool {
-        (try? Self.fileInfo(of: url)) != nil
+    package func exists(_ url: URL) throws -> Bool {
+        do {
+            _ = try Self.fileInfo(of: url)
+            return true
+        } catch let error as FileSystemError where error.code == ENOENT {
+            return false
+        }
     }
 
     package func modificationTime(_ url: URL) throws -> Date {
@@ -230,12 +237,17 @@ package struct PosixFileSystem: PackageFileSystem {
     }
 
     package func availableBytes(at url: URL) throws -> Int64 {
+        let values: URLResourceValues
         do {
-            let values = try url.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
-            return values.volumeAvailableCapacityForImportantUsage ?? 0
+            values = try url.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
         } catch let error as NSError {
             throw FileSystemError(.statfs, url.path, code: Int32(truncatingIfNeeded: error.code))
         }
+        // A volume that does not say how much is free is not a full one.
+        guard let available = values.volumeAvailableCapacityForImportantUsage else {
+            throw FileSystemError(.statfs, url.path, code: ENOTSUP)
+        }
+        return available
     }
 }
 
@@ -264,6 +276,11 @@ package final class FaultingFileSystem: PackageFileSystem {
         case failExchange(nth: Int)
         /// The volume reports no free space.
         case noSpace
+        /// Every `exists` throws `EIO`, a stat that failed other than by
+        /// absence.
+        case failStat
+        /// Every `list` throws `EIO`.
+        case failList
     }
 
     package struct Counts: Sendable, Equatable {
@@ -359,9 +376,15 @@ package final class FaultingFileSystem: PackageFileSystem {
 
     package func read(_ url: URL) throws -> Data { try base.read(url) }
     package func readMapped(_ url: URL) throws -> Data { try base.readMapped(url) }
-    package func exists(_ url: URL) -> Bool { base.exists(url) }
+    package func exists(_ url: URL) throws -> Bool {
+        if state.withLock({ $0.faults.contains(.failStat) }) { throw FileSystemError(.stat, url.path, code: EIO) }
+        return try base.exists(url)
+    }
     package func modificationTime(_ url: URL) throws -> Date { try base.modificationTime(url) }
-    package func list(_ directory: URL) throws -> [String] { try base.list(directory) }
+    package func list(_ directory: URL) throws -> [String] {
+        if state.withLock({ $0.faults.contains(.failList) }) { throw FileSystemError(.list, directory.path, code: EIO) }
+        return try base.list(directory)
+    }
     package func remove(_ url: URL) throws { try base.remove(url) }
     package func availableBytes(at url: URL) throws -> Int64 {
         if state.withLock({ $0.faults.contains(.noSpace) }) { return 0 }

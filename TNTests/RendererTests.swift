@@ -158,7 +158,7 @@ struct RendererTests {
         } catch {
             #expect("\(error)".contains("256 MB"), "\(error)")
         }
-        #expect(!PosixFileSystem().exists(store.layout.assetURL(refused)))
+        #expect(try !PosixFileSystem().exists(store.layout.assetURL(refused)))
     }
 }
 

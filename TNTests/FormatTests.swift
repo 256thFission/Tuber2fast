@@ -5,22 +5,31 @@ import Testing
 
 @Suite("Format: key sets are pinned")
 struct KeySetPins {
-    @Test("notebook.json carries exactly its keys, and each page record, paper and bookmark exactly theirs")
+    @Test("notebook.json carries exactly its keys, and each page record, paper of each kind, and bookmark exactly theirs")
     func indexKeys() throws {
-        let plain = Fixture.index(pages: 2)
+        let papers: [Paper] = DrawnPaper.allCases.map(Paper.drawn) + [
+            .image(AssetRef(id: AssetID(), format: .heic)), .pdf(AssetRef(id: AssetID(), format: .pdf), sourcePageIndex: 3),
+        ]
+        let plain = NotebookIndex(
+            notebookID: NotebookID(), createdAt: Date(timeIntervalSince1970: 1_800_000_000),
+            pages: papers.map { PageRecord(id: PageID(), geometry: .letter, paper: $0) },
+            bookmarks: [])
         let index = plain.withBookmarks([PageBookmark(page: plain.pageIDs[0], title: "Chapter one")])
         let data = try Codecs.encode(index)
         let top = try jsonObject(data)
-        #expect(Set(top.keys) == DurableKeys.index)
+        #expect(Set(top.keys) == ["formatVersion", "notebookID", "createdAt", "pages", "bookmarks"])
         let pages = try #require(top["pages"] as? [[String: Any]])
         for page in pages {
-            #expect(Set(page.keys) == DurableKeys.pageRecord)
-            #expect(Set(try #require(page["paper"] as? [String: Any]).keys) == DurableKeys.paper(kind: "lined"))
+            #expect(Set(page.keys) == ["id", "width", "height", "paper"])
         }
+        let paperKeys = try pages.map { Set(try #require($0["paper"] as? [String: Any]).keys) }
+        #expect(paperKeys == Array(repeating: ["kind"], count: DrawnPaper.allCases.count) + [
+            ["kind", "asset"], ["kind", "asset", "sourcePageIndex"],
+        ])
         let bookmarks = try #require(top["bookmarks"] as? [[String: Any]])
         #expect(bookmarks.count == 1)
         for bookmark in bookmarks {
-            #expect(Set(bookmark.keys) == DurableKeys.bookmark)
+            #expect(Set(bookmark.keys) == ["page", "title"])
         }
         #expect(top["formatVersion"] as? Int == 1)
     }
@@ -28,78 +37,76 @@ struct KeySetPins {
     @Test("pages/<id>.json carries exactly its keys")
     func pageFileKeys() throws {
         let data = try Codecs.encode(PageFile(pageID: PageID(), hasInk: true, inkIndex: 1, layers: [LayerID()]))
-        #expect(Set(try jsonObject(data).keys) == DurableKeys.pageFile)
+        #expect(Set(try jsonObject(data).keys) == ["pageID", "hasInk", "inkIndex", "layers"])
     }
 
     @Test("Each layer kind's file carries exactly its keys, payload keyed by kind")
     func layerFileKeys() throws {
         let cases: [(Layer, Set<String>)] = [
-            (Fixture.imageLayer(), DurableKeys.image),
-            (Fixture.pdfLayer(), DurableKeys.pdf),
-            (Fixture.linkLayer(to: PageID()), DurableKeys.link),
-            (Fixture.textLayer(), DurableKeys.text),
+            (Fixture.imageLayer(), ["asset", "naturalSize"]),
+            (Fixture.pdfLayer(), ["asset", "sourcePageIndex", "sourceExtent"]),
+            (Fixture.linkLayer(to: PageID()), ["rect", "style", "target"]),
+            (Fixture.textLayer(), ["rect", "runs", "alignment"]),
         ]
         for (layer, payloadKeys) in cases {
             let top = try jsonObject(try LayerFile.encode(layer))
             let kind = layer.payload.kind.rawValue
-            #expect(Set(top.keys) == DurableKeys.layerFile(kind: kind))
+            #expect(Set(top.keys) == ["layerID", "kind", "transform", "locked", kind])
             #expect(Set(try #require(top[kind] as? [String: Any]).keys) == payloadKeys)
         }
     }
 
     @Test("view.json carries exactly its key")
     func viewKeys() throws {
-        #expect(Set(try jsonObject(try Codecs.encode(ViewState(currentPageID: PageID()))).keys) == DurableKeys.view)
+        #expect(Set(try jsonObject(try Codecs.encode(ViewState(currentPageID: PageID()))).keys) == ["currentPageID"])
     }
 }
 
 @Suite("Format: strict decode refuses by name")
 struct StrictDecode {
-    @Test("Deleting any index key refuses naming it; adding one refuses too")
-    func indexDeleteEachKey() throws {
-        let base = try jsonObject(try Codecs.encode(Fixture.index(pages: 1)))
-        for key in DurableKeys.index {
-            var object = base
-            object.removeValue(forKey: key)
-            #expect(throws: FormatFault.missingKey(key)) { try IndexFile.decode(try jsonData(object)) }
+    @Test("An extra key in any object of any file, at any depth, is refused naming its path")
+    func anExtraKeyAtEveryLevelIsRefused() throws {
+        var walked = Set<String>()
+        for shape in try everyShape() {
+            let variants = everyObject(in: shape.object) { path, object in
+                walked.insert(path)
+                var wide = object
+                wide["extra"] = true
+                return [(FormatFault.unknownKey(path.isEmpty ? "extra" : "\(path).extra").description, wide)]
+            }
+            for variant in variants {
+                #expect(shape.refusal(try jsonData(try #require(variant.tree as? [String: Any]))) == variant.said, "\(shape.file)")
+            }
         }
-        var extra = base
-        extra["title"] = "x"
-        #expect(throws: FormatFault.unknownKey("title")) { try IndexFile.decode(try jsonData(extra)) }
-        var unnumbered = base
+        #expect(walked.isSuperset(of: [
+            "pages[0]", "pages[2].paper", "bookmarks[0]", "image", "image.naturalSize",
+            "pdf.sourceExtent", "link.rect", "link.target", "text.rect", "text.runs[1]",
+        ]))
+    }
+
+    @Test("A key missing from any object of any file, at any depth, is refused naming it")
+    func aMissingKeyAtEveryLevelIsRefused() throws {
+        for shape in try everyShape() {
+            let variants = everyObject(in: shape.object) { path, object in
+                object.keys.map { key in
+                    var short = object
+                    short.removeValue(forKey: key)
+                    // A layer file's ID is read before any key, to name the file.
+                    let said = path.isEmpty && key == "layerID" ? "layerID is not a canonical UUID" : FormatFault.missingKey(key).description
+                    return (said, short)
+                }
+            }
+            for variant in variants {
+                #expect(shape.refusal(try jsonData(try #require(variant.tree as? [String: Any]))) == variant.said, "\(shape.file)")
+            }
+        }
+    }
+
+    @Test("A formatVersion that is not a number is refused as missing")
+    func unnumberedVersion() throws {
+        var unnumbered = try jsonObject(try Codecs.encode(Fixture.index(pages: 1)))
         unnumbered["formatVersion"] = "1"
         #expect(throws: FormatFault.missingKey("formatVersion")) { try IndexFile.decode(try jsonData(unnumbered)) }
-
-        var pages = try #require(base["pages"] as? [[String: Any]])
-        for key in DurableKeys.pageRecord {
-            var page = pages[0]
-            page.removeValue(forKey: key)
-            var object = base
-            object["pages"] = [page]
-            #expect(throws: FormatFault.missingKey(key)) { try IndexFile.decode(try jsonData(object)) }
-        }
-        pages[0]["paper"] = [:]
-        var object = base
-        object["pages"] = pages
-        #expect(throws: FormatFault.missingKey("kind")) { try IndexFile.decode(try jsonData(object)) }
-
-        // A bookmark object is pinned in the reader the way a page record is.
-        let marked = try jsonObject(
-            try Codecs.encode(Fixture.index(pages: 1).withBookmarks([PageBookmark(page: PageID(), title: "x")]))
-        )
-        let bookmark = try #require((marked["bookmarks"] as? [[String: Any]])?[0])
-        for key in DurableKeys.bookmark {
-            var short = bookmark
-            short.removeValue(forKey: key)
-            var withShort = marked
-            withShort["bookmarks"] = [short]
-            #expect(throws: FormatFault.missingKey(key)) { try IndexFile.decode(try jsonData(withShort)) }
-        }
-        var wide = bookmark
-        wide["colour"] = "blue"
-        var withWide = marked
-        withWide["bookmarks"] = [wide]
-        #expect(throws: FormatFault.unknownKey("colour")) { try IndexFile.decode(try jsonData(withWide)) }
     }
 
     @Test("A newer version that adds a key and drops one refuses by its number, and its header still reads")
@@ -155,11 +162,9 @@ struct StrictDecode {
             pages[1]["paper"] = paper
             object["pages"] = pages
             let data = try jsonData(object)
-            #expect(throws: FormatFault.indexUnreadable("paper kind parchment is not one this build writes")) {
-                try IndexFile.decode(data)
-            }
-            // Paper's own decoder has no arm for it either.
-            #expect(throws: (any Error).self) { try Codecs.decode(NotebookIndex.self, from: data) }
+            let fault = #expect(throws: FormatFault.self) { try IndexFile.decode(data) }
+            guard case .corruptJSON(let detail) = fault else { Issue.record("\(String(describing: fault))"); continue }
+            #expect(detail.hasSuffix("paper kind parchment is not one this build writes"))
         }
     }
 
@@ -206,7 +211,7 @@ struct StrictDecode {
         #expect(try IndexFile.decode(try Codecs.encode(present)).validated() == present)
     }
 
-    @Test("Every paper kind round-trips through the index with exactly its own keys")
+    @Test("Every paper kind round-trips through the index")
     func paperKinds() throws {
         let heic = AssetRef(id: AssetID(), format: .heic)
         let pdf = AssetRef(id: AssetID(), format: .pdf)
@@ -218,18 +223,10 @@ struct StrictDecode {
         let data = try Codecs.encode(index)
         let decoded = try IndexFile.decode(data).validated()
         #expect(decoded == index)
-
-        let pages = try #require(try jsonObject(data)["pages"] as? [[String: Any]])
-        for page in pages {
-            let paper = try #require(page["paper"] as? [String: Any])
-            let kind = try #require(paper["kind"] as? String)
-            #expect(Set(paper.keys) == DurableKeys.paper(kind: kind))
-        }
-        #expect(pages.last?["paper"] as? [String: Any] != nil)
     }
 
-    @Test("Deleting any key of an asset paper refuses the index naming it; a mismatched format refuses too")
-    func assetPaperDeleteEachKey() throws {
+    @Test("An asset paper naming a file of the other format refuses the index")
+    func assetPaperOfTheOtherFormat() throws {
         let assets: [(Paper, AssetRef)] = [
             (.image(AssetRef(id: AssetID(), format: .heic)), AssetRef(id: AssetID(), format: .pdf)),
             (.pdf(AssetRef(id: AssetID(), format: .pdf), sourcePageIndex: 2), AssetRef(id: AssetID(), format: .heic)),
@@ -241,7 +238,6 @@ struct StrictDecode {
                 bookmarks: [])
             let base = try jsonObject(try Codecs.encode(index))
             let paperObject = try #require((base["pages"] as? [[String: Any]])?[0]["paper"] as? [String: Any])
-            let kind = try #require(paperObject["kind"] as? String)
             func data(withPaper object: [String: Any]) throws -> Data {
                 var page = try #require((base["pages"] as? [[String: Any]])?[0])
                 page["paper"] = object
@@ -249,47 +245,14 @@ struct StrictDecode {
                 top["pages"] = [page]
                 return try jsonData(top)
             }
-            for key in try #require(DurableKeys.paper(kind: kind)) {
-                var object = paperObject
-                object.removeValue(forKey: key)
-                #expect(throws: FormatFault.missingKey(key)) { try IndexFile.decode(try data(withPaper: object)) }
-            }
-            var extra = paperObject
-            extra["spacing"] = 12
-            #expect(throws: FormatFault.unknownKey("spacing")) { try IndexFile.decode(try data(withPaper: extra)) }
-
             var mismatched = paperObject
             mismatched["asset"] = wrongFormat.fileName
             #expect(throws: (any Error).self) { try IndexFile.decode(try data(withPaper: mismatched)) }
         }
     }
 
-    @Test("Deleting any page-file key refuses naming it")
-    func pageFileDeleteEachKey() throws {
-        let base = try jsonObject(try Codecs.encode(PageFile(pageID: PageID(), hasInk: false, inkIndex: 0, layers: [])))
-        for key in DurableKeys.pageFile {
-            var object = base
-            object.removeValue(forKey: key)
-            #expect(throws: FormatFault.missingKey(key)) {
-                try Codecs.decodeStrict(PageFile.self, from: try jsonData(object), expectedKeys: DurableKeys.pageFile)
-            }
-        }
-    }
-
-    @Test("A layer file missing a key, or naming a kind this build does not write, is unreadable and says why")
+    @Test("A layer file naming a kind this build does not write is unreadable and says why")
     func layerFileRefusals() throws {
-        for layer in [Fixture.imageLayer(), Fixture.pdfLayer(), Fixture.linkLayer(to: PageID()), Fixture.textLayer()] {
-            let base = try jsonObject(try LayerFile.encode(layer))
-            for key in DurableKeys.layerFile(kind: layer.payload.kind.rawValue) where key != "layerID" && key != "kind" {
-                var object = base
-                object.removeValue(forKey: key)
-                guard case .failure(let fault) = LayerFile.decode(try jsonData(object), expecting: layer.id) else {
-                    Issue.record("\(layer.payload.kind) without \(key) decoded"); continue
-                }
-                guard case .fileUnreadable(_, let detail) = fault else { Issue.record("wrong fault \(fault)"); continue }
-                #expect(detail.contains(key))
-            }
-        }
         var unknown = try jsonObject(try LayerFile.encode(Fixture.imageLayer()))
         unknown["kind"] = "hologram"
         unknown["hologram"] = ["body": "hi"]
@@ -335,6 +298,75 @@ struct StrictDecode {
     }
 }
 
+/// A file of every shape the package holds, each layer kind and both link
+/// scopes among them, with how its reader words a refusal: nil when the
+/// file reads.
+private func everyShape() throws -> [(file: String, object: [String: Any], refusal: (Data) -> String?)] {
+    func reading(_ read: @escaping (Data) throws -> Void) -> (Data) -> String? {
+        { data in
+            do { try read(data); return nil } catch { return "\(error)" }
+        }
+    }
+    let papers: [Paper] = [.drawn(.lined), .image(AssetRef(id: AssetID(), format: .heic)), .pdf(AssetRef(id: AssetID(), format: .pdf), sourcePageIndex: 3)]
+    let index = NotebookIndex(
+        notebookID: NotebookID(), createdAt: Date(timeIntervalSince1970: 1_800_000_000),
+        pages: papers.map { PageRecord(id: PageID(), geometry: .letter, paper: $0) },
+        bookmarks: [])
+    var shapes: [(file: String, object: [String: Any], refusal: (Data) -> String?)] = [
+        ("notebook.json", try jsonObject(Codecs.encode(index.withBookmarks([PageBookmark(page: index.pageIDs[0], title: "One")]))),
+         reading { _ = try IndexFile.decode($0) }),
+        ("page file", try jsonObject(Codecs.encode(PageFile(pageID: PageID(), hasInk: true, inkIndex: 1, layers: [LayerID()]))),
+         reading { _ = try Codecs.decodeStrict(PageFile.self, from: $0) }),
+        ("view.json", try jsonObject(Codecs.encode(ViewState(currentPageID: PageID()))),
+         reading { _ = try Codecs.decodeStrict(ViewState.self, from: $0) }),
+    ]
+    let external = Layer(id: LayerID(), transform: .identity, payload: .link(LinkLayer(
+        rect: PageRect(x: 1, y: 1, width: 10, height: 10), style: .button,
+        target: .externalPage(notebook: NotebookID(), page: PageID()))))
+    for layer in [Fixture.imageLayer(), Fixture.pdfLayer(), Fixture.linkLayer(to: PageID()), external, Fixture.textLayer()] {
+        shapes.append(("\(layer.payload.kind) layer", try jsonObject(LayerFile.encode(layer)), { data in
+            switch LayerFile.decode(data, expecting: layer.id) {
+            case .success: nil
+            case .failure(.fileUnreadable(_, let detail)): detail
+            case .failure(let fault): "\(fault)"
+            }
+        }))
+    }
+    return shapes
+}
+
+/// The tree once for each object in it and each edit `edits` makes to that
+/// object, with what the edit says the reader should answer. Paths are
+/// spelled as `Codecs.decodeStrict` spells them.
+private func everyObject(
+    in node: Any, at path: String = "", _ edits: (String, [String: Any]) -> [(String, [String: Any])]
+) -> [(said: String, tree: Any)] {
+    switch node {
+    case let object as [String: Any]:
+        var trees: [(said: String, tree: Any)] = edits(path, object).map { ($0.0, $0.1) }
+        for (key, child) in object {
+            for edited in everyObject(in: child, at: path.isEmpty ? key : "\(path).\(key)", edits) {
+                var copy = object
+                copy[key] = edited.tree
+                trees.append((edited.said, copy))
+            }
+        }
+        return trees
+    case let array as [Any]:
+        var trees: [(said: String, tree: Any)] = []
+        for (offset, element) in array.enumerated() {
+            for edited in everyObject(in: element, at: "\(path)[\(offset)]", edits) {
+                var copy = array
+                copy[offset] = edited.tree
+                trees.append((edited.said, copy))
+            }
+        }
+        return trees
+    default:
+        return []
+    }
+}
+
 @Suite("Format: the ink container")
 struct InkContainerTests {
     @Test("Round trip, and every header field is checked")
@@ -343,7 +375,7 @@ struct InkContainerTests {
         let archive = Fixture.archive(3)
         let data = InkContainer.encode(notebookID: notebook, pageID: page, archive: archive)
         #expect(data.count == InkContainer.headerLength + archive.count)
-        #expect(try InkContainer.decode(data, expecting: notebook, page: page).archive == archive)
+        #expect(try InkContainer.decode(data, expecting: notebook, page: page) == archive)
 
         func tampered(_ mutate: (inout Data) -> Void) -> Data { var copy = data; mutate(&copy); return copy }
         #expect(throws: InkContainerFault.badMagic) { try InkContainer.decode(tampered { $0[0] = 0x58 }, expecting: notebook, page: page) }
@@ -488,6 +520,34 @@ struct StoreTests {
         #expect(bytes.faults.isEmpty)
     }
 
+    @Test("A container that does not read under hasInk=false refuses the page, never a blank")
+    func aBadContainerRefusesThePage() async throws {
+        let scratch = try Scratch("badcontainer")
+        let (store, index, _) = try await Fixture.populated(at: scratch.packageURL)
+        let page = index.pageIDs[2]
+        try Data("torn".utf8).write(to: store.layout.inkURL(page))
+        let bytes = try await store.loadPage(page)
+        #expect(bytes.faults == [.inkContainerInvalid(.tooShort)])
+        #expect(bytes.inkArchive == nil)
+        #expect(!bytes.inkRecordNeeded)
+    }
+
+    @Test("A stat that fails other than by absence throws the save, and the index keeps every page")
+    func aStatFailureIsNotAbsence() async throws {
+        let scratch = try Scratch("stat")
+        let (_, index, _) = try await Fixture.populated(at: scratch.packageURL)
+        let store = PackageStore(root: scratch.packageURL, fileSystem: FaultingFileSystem(faults: [.failStat]))
+        let batch = SaveBatch(index: index.withBookmarks([PageBookmark(page: index.pageIDs[0], title: "x")]), indexChanged: true, pages: [
+            PageWrite(file: PageFile(pageID: index.pageIDs[0], hasInk: true, inkIndex: 0, layers: []), ink: .archive(Fixture.archive(6)), layerFiles: []),
+        ])
+        // Page 0 is committed by the save; page 1 is the first the index
+        // must look for.
+        await #expect(throws: FormatFault.io(FileSystemError(.stat, store.layout.pageURL(index.pageIDs[1]).path, code: EIO))) {
+            try await store.save(batch)
+        }
+        #expect(try await PackageStore(root: scratch.packageURL).load().index == index)
+    }
+
     @Test("hasInk=true with no container is a page fault, never a blank")
     func missingInkIsAFault() async throws {
         let scratch = try Scratch("missingink")
@@ -495,7 +555,7 @@ struct StoreTests {
         try FileManager.default.removeItem(at: store.layout.inkURL(index.pageIDs[0]))
         let bytes = try await PackageStore(root: scratch.packageURL).loadPage(index.pageIDs[0])
         #expect(bytes.faults == [.missingInk])
-        #expect(bytes.isPlaceholder)
+        #expect(!bytes.faults.isEmpty)
     }
 
     @Test("Writing ink to a page whose file says hasInk=false is refused")
@@ -575,7 +635,7 @@ struct StoreTests {
 
         let free = scratch.root.appendingPathComponent("free", isDirectory: true)
         try fs.publishExclusive(staged, to: free)
-        #expect(!fs.exists(staged))
+        #expect(try !fs.exists(staged))
         #expect(try fs.read(free.appendingPathComponent("a")) == Data("new".utf8))
     }
 
@@ -599,7 +659,20 @@ struct StoreTests {
         let missing = scratch.root.appendingPathComponent("Staging/missing", isDirectory: true)
         #expect(throws: FileSystemError(.rename, live.path, code: ENOENT)) { try fs.exchange(missing, live) }
         #expect(try fs.read(live.appendingPathComponent("a")) == Data("new".utf8))
-        #expect(!fs.exists(missing))
+        #expect(try !fs.exists(missing))
+    }
+
+    @Test("Duplicate's rewrite stops when the ink listing fails, and leaves the package on its old identity")
+    func aFailedListingStopsDuplicate() async throws {
+        let scratch = try Scratch("rewrite-list")
+        let (_, index, _) = try await Fixture.populated(at: scratch.packageURL)
+        let store = PackageStore(root: scratch.packageURL, fileSystem: FaultingFileSystem(faults: [.failList]))
+        await #expect(throws: FormatFault.io(FileSystemError(.list, store.layout.inkDirectory.path, code: EIO))) {
+            try await store.rewriteNotebookID(NotebookID())
+        }
+        let reopened = PackageStore(root: scratch.packageURL)
+        #expect(try await reopened.load().index.notebookID == index.notebookID)
+        #expect(try await reopened.loadPage(index.pageIDs[0]).faults.isEmpty)
     }
 
     @Test("Duplicate's rewrite changes the notebook identity everywhere and keeps page identities")
@@ -718,9 +791,9 @@ struct CompactTests {
             PageWrite(file: PageFile(pageID: index.pageIDs[1], hasInk: true, inkIndex: 0, layers: []), ink: .unchanged, layerFiles: []),
         ])
         _ = try await store.save(batch)
-        #expect(PosixFileSystem().exists(layout.layerURL(layer.id)))
+        #expect(try PosixFileSystem().exists(layout.layerURL(layer.id)))
         let asset = layer.payload.asset!
-        #expect(PosixFileSystem().exists(layout.assetURL(asset)))
+        #expect(try PosixFileSystem().exists(layout.assetURL(asset)))
         // A stray temp and an orphan page file, both old.
         let temp = layout.pagesDirectory.appendingPathComponent("\(PackageStore.tempPrefix)stale")
         try Data([1]).write(to: temp)
@@ -732,13 +805,13 @@ struct CompactTests {
         // The orphan layer file stays young.
         var report = try await store.compact()
         #expect(!report.layerReclamationSuspended && !report.assetReclamationSuspended)
-        #expect(!PosixFileSystem().exists(temp))
-        #expect(!PosixFileSystem().exists(orphanPage))
-        #expect(!PosixFileSystem().exists(layout.assetURL(asset)))
-        #expect(PosixFileSystem().exists(layout.layerURL(layer.id)), "young orphan kept")
+        #expect(try !PosixFileSystem().exists(temp))
+        #expect(try !PosixFileSystem().exists(orphanPage))
+        #expect(try !PosixFileSystem().exists(layout.assetURL(asset)))
+        #expect(try PosixFileSystem().exists(layout.layerURL(layer.id)), "young orphan kept")
         try scratch.backdate(layout.layerURL(layer.id), by: 2 * 86_400)
         report = try await store.compact()
-        #expect(!PosixFileSystem().exists(layout.layerURL(layer.id)))
+        #expect(try !PosixFileSystem().exists(layout.layerURL(layer.id)))
         #expect(report.removed.count == 1)
     }
 
@@ -759,8 +832,8 @@ struct CompactTests {
 
         let report = try await store.compact()
         #expect(!report.assetReclamationSuspended)
-        #expect(PosixFileSystem().exists(store.layout.assetURL(paperAsset)), "paper asset kept")
-        #expect(!PosixFileSystem().exists(stale))
+        #expect(try PosixFileSystem().exists(store.layout.assetURL(paperAsset)), "paper asset kept")
+        #expect(try !PosixFileSystem().exists(stale))
     }
 
     @Test("An asset named only in the keep-set stays; an orphan beside it goes")
@@ -772,7 +845,7 @@ struct CompactTests {
         try await store.writeAsset(Fixture.archive(1, count: 64), held)
         try await store.writeAsset(Fixture.archive(2, count: 64), orphan)
         let report = try await store.compact(now: .now + 2 * 86_400, keeping: [held])
-        #expect(PosixFileSystem().exists(store.layout.assetURL(held)))
+        #expect(try PosixFileSystem().exists(store.layout.assetURL(held)))
         #expect(report.removed == [orphan.fileName])
     }
 
@@ -785,7 +858,7 @@ struct CompactTests {
         #expect(report.removed.isEmpty)
         let live = index.pageIDs.map(layout.pageURL) + index.pageIDs.prefix(2).map(layout.inkURL) + [layout.layerURL(layer.id)]
         for url in live {
-            #expect(PosixFileSystem().exists(url), "\(url.lastPathComponent)")
+            #expect(try PosixFileSystem().exists(url), "\(url.lastPathComponent)")
         }
     }
 
@@ -802,6 +875,6 @@ struct CompactTests {
         try scratch.backdate(orphanAsset, by: 2 * 86_400)
         let report = try await store.compact()
         #expect(report.assetReclamationSuspended)
-        #expect(PosixFileSystem().exists(orphanAsset))
+        #expect(try PosixFileSystem().exists(orphanAsset))
     }
 }
