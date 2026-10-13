@@ -867,25 +867,27 @@ and handed to the system; no file is written.
 **One `Notebook` per package, and the ledger says which.** `Library`
 keeps one ledger from path to checkout, and a checkout is one of two
 things: opening, which holds the task that is opening it, or open, which
-holds the `Notebook`. A checkout claims its entry on the main actor
-before its first await, so the path is held from the tap on. A second
-checkout of an open path gets `.alreadyOpen` with the notebook's
-identity, and one of a path still opening waits on that open's own task
-and reports what it reported: `.alreadyOpen` when it opened, and the same
-fault when it failed. Nothing polls for the first open, and no failed
-open is reported as anything but its fault: the second tap of a double
-tap once polled every 10 ms, kept polling after its caller was cancelled,
-and when the first open failed reported the notebook as not found, so the
-banner named the wrong reason. The open runs inside the opening entry's
-task, in this order: the collision refusal (*A `NotebookID` is minted
-once and never rewritten*), then the ladder (*An older notebook is
-migrated on open*), then `Notebook.open`. The collision comes first
-because its refusal writes nothing and a migration writes. The sweep on
-leaving the foreground takes the open entries and passes over one still
-opening, which has no notebook yet to say what it can restore (*Leaving
-the foreground compacts every open package*). Renaming, moving,
-trashing, or duplicating a notebook that is open or opening, or any
-folder above it, is refused with the notebook's name.
+holds the `Notebook`. A checkout claims its entry on the main actor in
+the same turn that finds its path free of a mutation in flight (*A
+checkout waits for a mutation in flight*), with no await between, so the
+path is held from then on. A second checkout of an open path gets
+`.alreadyOpen` with the notebook's identity, and one of a path still
+opening waits on that open's own task and reports what it reported:
+`.alreadyOpen` when it opened, and the same fault when it failed. Nothing
+polls for the first open, and no failed open is reported as anything but
+its fault: the second tap of a double tap once polled every 10 ms, kept
+polling after its caller was cancelled, and when the first open failed
+reported the notebook as not found, so the banner named the wrong reason.
+The open runs inside the opening entry's task, in this order: the
+collision refusal (*A `NotebookID` is minted once and never rewritten*),
+then the ladder (*An older notebook is migrated on open*), then
+`Notebook.open`. The collision comes first because its refusal writes
+nothing and a migration writes. The sweep on leaving the foreground takes
+the open entries and passes over one still opening, which has no notebook
+yet to say what it can restore (*Leaving the foreground compacts every
+open package*). Renaming, moving, trashing, or duplicating a notebook
+that is open or opening, or any folder above it, is refused with the
+notebook's name.
 
 **A checkout waits for a mutation in flight.** A rename, a move, a trash
 and a duplicate each hold their path in a set beside the ledger, from
@@ -894,11 +896,12 @@ path, or of one under a folder the set names, waits until the set no
 longer holds it before it claims its entry. Then it opens whatever is at
 the path: a package the mutation moved away is refused by `Notebook.open`
 as no package, and the library reads nothing from the disk to find out
-first, because file I/O is the stores' (*Structure*). Each side claims on
-the main actor before any await, so neither slips past the other across
-the store's: a mutation that finds the path checked out is refused, and a
-checkout that finds it in flight waits. The reason is a checkout that won
-the race. The mutation checked the ledger and awaited the store, and in
+first, because file I/O is the stores' (*Structure*). Each side checks
+and claims in one turn on the main actor, with no await between the check
+and the claim, so neither slips past the other across the store's await:
+a mutation that finds the path checked out is refused, and a checkout
+that finds it in flight waits. The reason is a checkout that won the
+race. The mutation checked the ledger and awaited the store, and in
 that await a tap opened the package on a `PackageStore` whose root is
 fixed at checkout; the mutation then moved the package out from under the
 open notebook, so every save failed, or, once the old name was reused,
