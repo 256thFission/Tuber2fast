@@ -78,8 +78,11 @@ copy that the notebook can overwrite, for example on undo.
 
 The notebook
 never fetches ink from a canvas, and unsaved ink is never held only by a
-view. A canvas that sends ink for a page the notebook has not loaded is a
-bug, and the app traps.
+view. A canvas that sends ink for a page the notebook holds in any state
+but ready is a bug, and the app traps, the final ink at retire included.
+The one report let fall is final ink for a page the notebook has already
+deleted: the page went first, and its ink went with it (decided I2, card
+09 C1).
 
 **The canvas is told, never asks.** `TNCanvas` receives commands through
 `CanvasSurface` and sends reports through `CanvasReporting`. It knows
@@ -103,8 +106,10 @@ properties for views to read: `pageCount`, `currentPageID`,
 
 ## The seam
 
-`Modules/TNModel/Seam.swift` defines the two protocols. This section
-describes them; if the two disagree, the file is wrong.
+`Modules/TNModel/Seam.swift` defines the two protocols, and
+`Modules/TNEditor/EditorBinding.swift` defines `CanvasRuntime`, which
+refines `CanvasSurface` with what the binding needs of the runtime itself.
+This section describes all three; where they disagree, the file is wrong.
 
 Commands, `CanvasSurface`:
 
@@ -114,8 +119,10 @@ Commands, `CanvasSurface`:
   placeholder with the faults that refused the page.
 - `restoreInk`: ink to put back, with the `InkSeq` the canvas will echo.
 - `scroll(to:)`.
-- `retire`: returns `.retired`, or `.deferred` when a stroke is in
-  progress.
+- `unload`: the notebook dropped this page's content in `prune()`. The
+  runtime forgets its snapshot of the page, which waits as a placeholder
+  until a later `installContent` gives it content again. Never sent for a
+  page with a canvas; the runtime traps if it is (decided I2, card 09 C1).
 - `updateComposite`: a sharper or refreshed backdrop for a live page, with
   the layer list it was rendered from, so the runtime's hit rects match
   the picture. Ink is untouched.
@@ -126,6 +133,24 @@ Commands, `CanvasSurface`:
 - `apply`: the tool.
 - `undoTyping`, `redoTyping`: one-way. The text view's own manager answers
   and nothing is reported back.
+
+The runtime, `CanvasRuntime`. `EditorBinding` holds the runtime as one of
+these and nothing narrower, so the close path a test proves is the one
+production runs; there is no fallback for a surface that cannot answer
+(decided I2; deepen-canvas-02, deepen-editor-02, simple-canvas-02):
+
+- `retireAll`: retires every live page and returns the pages whose retire
+  a stroke deferred; each of those reports `retired` when its stroke ends.
+  There is no per-page retire on the seam, because nothing outside the
+  runtime retires one page.
+- `setUndoAvailability`: whether undo and redo are available, as the
+  notebook says; see Undo.
+- `isStrokeInFlight`: whether any canvas, a departing one included, has a
+  stroke in flight. This is the one fact the binding asks of the runtime
+  rather than is told. It reads the answer at the moment an undo or an ink
+  report arrives and keeps no copy, because the stroke is PencilKit's and
+  only the runtime can say whether one is open. `TNCanvas` itself still
+  asks nothing (decided I1).
 
 Reports, `CanvasReporting`:
 
@@ -335,6 +360,18 @@ page it happened on, whichever page is showing, and scrolls to it. If that
 page has been unloaded, the restore waits as a pending revision and is
 adopted when the scroll loads it.
 
+**Undo waits for the stroke.** An undo or redo that arrives while any
+canvas has a stroke in flight is ignored, whichever way it came, the bar
+or the system gesture. `EditorBinding` asks the runtime `isStrokeInFlight`
+at that moment and touches nothing: the stack is as it was, and the undo
+after the stroke lands removes exactly that stroke. An ink report that
+arrives while a stroke is in flight runs no gesture: it is a commit
+landing under the next stroke, and it is kept as plain ink. So no restore
+reaches a canvas mid-stroke, and the canvas traps if one does. The reason
+is custody: the drawing under the Pencil is PencilKit's until it commits,
+and a restore under it would replace ink the notebook has never seen
+(decided I1; card 09 C2).
+
 The canvas hands the responder chain a `FilteringUndoManager`. It records
 nothing and undoes nothing itself: PencilKit's registrations are dropped,
 and the system undo and redo gestures are forwarded as `undoRequested` and
@@ -365,7 +402,14 @@ leaves the window it reports its final ink at once and is released. If a
 stroke is in progress, the release waits for the stroke to end. The
 notebook drops content for a page that is outside the window, has reported
 its final ink, and is clean; this happens in `prune()`, which has one
-caller.
+caller, and which tells the runtime with `unload`. The runtime then forgets
+its snapshot, and the page comes back as a placeholder until the notebook
+pushes its content again. A canvas is built only from an install, never
+from a snapshot the notebook has let go, so a canvas exists only for a
+page the notebook holds ready. The reason is the first stroke on a page
+revisited by a navigator jump: built over a snapshot while the notebook
+was still reloading, the canvas sent ink the notebook could not take
+(decided I2, card 09 C1; contract-01, ink-01, durability-03).
 
 Swiping past the last page adds one. The runtime reports the boundary with
 a sequence number and rubber-bands until a `setPages` answering that number
@@ -535,9 +579,14 @@ TNCore <- TNModel <- TNFormat <- TNRender <- TNNotebook <- TNEditor <- App
 
 ## Forbidden
 
-- A second copy of ink anywhere other than the notebook and the live
-  canvas. A drawing decoded for a render and discarded when the render
-  ends is not a copy.
+- A second copy of ink anywhere other than the notebook, the live canvas,
+  and the runtime's snapshot of a page the notebook has pushed and not
+  told it to unload. That snapshot is the last install, brought up to date
+  by the final ink the page's canvas reported when it retired. It is kept
+  so a page that leaves the live window and comes back is rebuilt without
+  a reload, and it is dropped the moment `unload` arrives, so it never
+  outlives the notebook's own copy (decided I2, card 09 C1). A drawing
+  decoded for a render and discarded when the render ends is not a copy.
 - A field reserved for a future feature.
 - A file in the package that restates what other files already say.
   `hasInk` is the one exception: it records whether ink was ever
