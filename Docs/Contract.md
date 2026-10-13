@@ -62,6 +62,7 @@ Each piece of state has one owner, and the owner holds the value.
 | The current page | `Notebook` | `view.json` |
 | Which pages have canvases, the scroll position, the selected object | `PagedCanvasController` | in memory; rebuilt from one `setPages` and the installs that follow |
 | The tool in hand, and the text style typed with | `EditorViewModel`, per tab | in memory; the runtime is told and keeps a copy for canvases built later; a canvas with a tool use open takes the new tool when the use ends |
+| The theme | `Workspace` | in memory, resolved from the choice and the system's appearance; each editor is told and tells its runtime with the tool, and the runtime is built with one, so it never lacks one, and keeps a copy for canvases built later |
 | Tool presets, colour recents, the last-used tool | `ToolPalette` | `UserDefaults`, through `ToolPaletteDefaults`; never in the package |
 | The drawing during a stroke | `PKCanvasView` | until its commit lands, or its use is ended without one |
 | The draft of a text box being edited | `PageCanvasController` | until the session ends |
@@ -87,10 +88,11 @@ deleted: the page went first, and its ink went with it (decided I2, card
 **The canvas is told, never asks.** `TNCanvas` receives commands through
 `CanvasSurface` and sends reports through `CanvasReporting`. It knows
 nothing about notebooks, files, or rendering; it knows only the list of
-pages it was last given. When it needs something, such as a new page at
-the end or a layer moved, it reports the event, and the answer comes back
-as a command in the same pass of the main loop. `EditorBinding` is the
-only type that uses both protocols. The tool picker is the app's.
+pages it was last given, and the tool and the theme it was last told. When
+it needs something, such as a new page at the end or a layer moved, it
+reports the event, and the answer comes back as a command in the same pass
+of the main loop. `EditorBinding` is the only type that uses both
+protocols. The tool picker is the app's.
 `PKToolPicker` is not used, because it would be a second writer of the tool.
 
 **No dirty flag.** A page is dirty when its edit counter is ahead of its
@@ -130,7 +132,16 @@ Commands, `CanvasSurface`:
   that omits the layer, and the runtime raises a live text view over it.
 - `endTextEditing`: arrives with the composite that has the committed
   text; the runtime takes the live view down.
-- `apply`: the tool.
+- `apply`: the tool and the theme, as one `CanvasEnvironment`. The
+  runtime acts on what changed and on nothing else. A changed tool goes to
+  the canvases, each taking it when its use ends. A changed theme repaints
+  the ground, every page's paper and outline, every placeholder and an
+  open selection frame, and sends no tool. A canvas handed a tool is not
+  left as it was: an ink tool commits an open text session and clears a
+  selection, and the text tool restyles the words selected in an open box.
+  Under the system choice the theme changes at sunset, under whatever the
+  hand is doing, so a theme that re-sent the tool would do one of those to
+  work nobody touched (decided I5; ink-06, deepen-canvas-03).
 - `undoTyping`, `redoTyping`: one-way. The text view's own manager answers
   and nothing is reported back.
 
@@ -705,6 +716,14 @@ TNCore <- TNModel <- TNFormat <- TNRender <- TNNotebook <- TNEditor <- App
   not named anywhere (*The canvas is told, never asks*). A second
   assignment by any spelling is a second writer of the tool, so the
   checker counts the assignments, not only the picker's name.
+- No source in `TNCanvas` names `Theme.current` or `Theme.changed`. The
+  theme reaches the canvas through `apply` and no other way: a global the
+  canvas reads is the canvas asking, and the notification that once told
+  it to repaint was a second route beside the seam, which reached the
+  ground and the placeholders but not an open selection frame, and whose
+  observer was never removed. The names are gone from `TNModel`, so the
+  build refuses them today; the checker keeps them gone (decided I5;
+  contract-16, theme-04).
 - File I/O happens in `PosixFileSystem`, `LibraryStore`, and
   `ImportReader`, and nowhere else. The app's `ToolPaletteDefaults` and
   `LibraryViewDefaults` write preferences to `UserDefaults`; a preference
