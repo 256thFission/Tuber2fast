@@ -510,13 +510,21 @@ page has been unloaded, the restore waits as a pending revision and is
 adopted when the scroll loads it.
 
 **A pending revision is unsaved work.** The forced save, `flush()`,
-settles every pending revision before it judges what is dirty: it cancels
-the page's load if one is in flight, reads the page itself, adopts the
-revision, holds the page ready and marks it dirty, and pushes the content
-to the runtime as any load does, so the pass that follows writes the
+settles every pending revision before it judges what is dirty: it reads
+the page itself, as a load would, with the revision adopted; then, if the
+revision is still parked, it cancels the page's load if one is still in
+flight, holds the page ready, pushes the content to the runtime as any
+load does, and marks it dirty, so the pass that follows writes the
 revision and the runtime's snapshot of the page is the restored one. A
-page is dirty by its counter and nothing else (*No dirty flag*), and a
-revision parked for a page not in custody moves no counter, so until it is
+load that landed during the read adopted the revision itself, and the
+settle leaves that page as the load left it. A page that cannot be read
+keeps its revision parked, and its own load refuses it, as before. The
+read comes before the cancel because the read can fail and the cancel
+cannot be undone: a page whose load was in flight, cancelled first and
+then not read, would stay marked loading with no task behind it, and the
+window restarts only unloaded pages, so it would never load. A page is
+dirty by its counter and nothing else (*No dirty flag*), and a revision
+parked for a page not in custody moves no counter, so until it is
 adopted the notebook reports clean with an undo unsaved. That is what
 happened: an undo into a page outside the decoded window, then a close or
 a kill before that page's load landed, reported clean and lost the undone
@@ -1033,17 +1041,27 @@ ink-02).
 released.** A notebook closes one of two ways: the clean close above, or a
 discard. `isClosed` is the latch, set at the end of a clean close and by a
 discard, and never unset; a refused close leaves it unset, because that
-notebook is still open. From the latch on, nothing of the notebook's
-reaches the disk: no save is armed, the `view.json` write is cancelled,
-and a load that lands is dropped where it lands, as a result from an old
-generation is, so it installs nothing, marks nothing dirty and starts no
-save. That is a drop, not a trap: a load the close did not wait for is a
-result arriving late, not an invalid state, and a trap on it would be a
-crash reachable from an ordinary close. A discard is the close without its
-final pass: `Notebook.discard()` cancels the debounce, every load and the
-view write, then latches, and the unsaved pages are abandoned on purpose;
-`Library.discard` calls it and drops the checkout, and "discard unsaved
-and close" is that call. `Library.release` closes nothing: it requires
+notebook is still open. From the latch on, nothing the notebook starts
+reaches the disk: no save is armed and none begins, a flush returns at
+once, a second close answers clean and writes nothing, not even
+`view.json` again, and a load that lands is dropped where it lands, as a
+result from an old generation is, so it installs nothing, marks nothing
+dirty and starts no save. That is a drop, not a trap: a load the close
+did not wait for is a result arriving late, not an invalid state, and a
+trap on it would be a crash reachable from an ordinary close. A write
+already under way when the latch is set finishes, because nothing can
+call it back: a save pass runs to its exit, where the latch refuses its
+re-arm, and a `view.json` write already past its delay lands, a page
+number and no ink. A discard is the close without its final pass:
+`Notebook.discard()` cancels the debounce, every load and the view write,
+latches, then waits for a pass already running before it returns, so the
+checkout ends with that pass finished and nothing armed behind it; the
+unsaved pages are abandoned on purpose. `Library.discard` calls it and
+drops the checkout, and "discard unsaved and close" is that call. The
+wait is there because a pass can be running when "discard" is tapped,
+since the backoff keeps retrying the save that brought the banner, and a
+checkout that ended under it would hand the library a package something
+was still writing into. `Library.release` closes nothing: it requires
 `isClosed`, traps when a notebook still open reaches it, and drops the
 checkout. So a close is decided in one place, the editor's `close`, whose
 outcome `Workspace` acts on, and the library runs no second final pass
