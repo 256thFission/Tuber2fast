@@ -68,6 +68,13 @@ struct ThemeTests {
         near(theme.seatBody, "#FFE5EC", "seat body", within: 5)
     }
 
+    @Test("After dark the seat body is the accent most of the way to the ground")
+    func darkSeatBodyIsToned() {
+        let dark = Theme.macaronDark
+        #expect(dark.seatBody == Theme.mix(dark.accent, toward: dark.ground, 0.80))
+        #expect(dark.seatBody.hex == "#513032FF")
+    }
+
     @Test("The paper is white and the ground line is a step off the ground")
     func groundAndPaper() {
         #expect(theme.paper.hex == "#FFFFFFFF")
@@ -194,20 +201,19 @@ struct ThemeTests {
 
     @Test("Dark mode is the same rule with the target inverted, and the paper stays white")
     func inverted() {
-        let dark = Theme(
-            ground: colour("#26211B"),
-            chrome: colour("#332C24"),
-            accent: theme.accent,
-            secondary: theme.secondary,
-            ink: colour("#F4EADA"),
-            palette: Theme.macaronDark.palette,
-            invertsMix: true
-        )
+        let dark = Theme.macaronDark
         #expect(dark.paper.hex == "#FFFFFFFF")
         // The chrome is dark, so its outline has to come up, not go down.
         #expect(Theme.luminance(dark.outline(of: dark.chrome)) > Theme.luminance(dark.chrome))
-        // And the escape, which after dark runs to the ground: the ink is a
-        // cream, so an outline mixed toward it would land on the ink itself.
-        #expect(Theme.luminance(dark.outline(of: dark.ink)) < Theme.luminance(dark.ink))
+    }
+
+    @Test("After dark the paper escape lands on the ground")
+    func invertedEscapeLandsOnTheGround() {
+        let dark = Theme.macaronDark
+        // The paper and the cream ink are both too light to come up toward
+        // white, so both go down to the ground, at the pale percentage.
+        for fill in [dark.paper, dark.ink] {
+            #expect(dark.outline(of: fill) == Theme.mix(fill, toward: dark.ground, dark.outlineMixPale))
+        }
     }
 }

@@ -98,8 +98,10 @@ package struct Theme: Equatable, Sendable {
     /// own table names, which is the only number the document gives for it.
     package var ground2: RGBA8 { Self.mix(ground, toward: mixTarget(of: ground), 0.08) }
 
-    /// The seat's body: the accent most of the way to the paper.
-    package var seatBody: RGBA8 { Self.mix(accent, toward: paper, 0.80) }
+    /// The seat's body: the accent most of the way to the paper. After dark
+    /// the paper is still white, and a seat mixed toward it would be the
+    /// one near-white panel on a dark chrome, so it goes to the ground.
+    package var seatBody: RGBA8 { Self.mix(accent, toward: invertsMix ? ground : paper, 0.80) }
 
     /// A fill's outline, and the colour of the keycap wall under it.
     ///

@@ -144,8 +144,11 @@ struct MacaronSeat: View {
                         .padding(.horizontal, 10)
                         .padding(.vertical, 7)
                         .background {
+                            // After dark the row's lettering has come up
+                            // toward white, so the row is the chrome, not
+                            // the paper it would vanish on.
                             RoundedRectangle(cornerRadius: Macaron.chipRadius, style: .continuous)
-                                .fill(page.isCurrent ? theme.paper.color : .clear)
+                                .fill(page.isCurrent ? (theme.invertsMix ? theme.chrome : theme.paper).color : .clear)
                         }
                     }
                     .buttonStyle(.plain)
