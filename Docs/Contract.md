@@ -470,11 +470,14 @@ next bring back an empty box. So the notebook refuses an insert that
 records an entry, an image or a link, on any page whose session is open,
 however it came to be open: a canvas still opening its box at the commit
 has nothing to commit and leaves the session standing, and a text tap
-during the insert's own waits opens one after the commit. The notebook
-likewise refuses to duplicate a page whose session is open, because the
-copy would hold the box without the words the session ends with. The rest
+during the insert's own waits opens one after the commit. An image is
+refused before its asset is written when the session is already open, so
+that refusal publishes nothing, and again at the insert when one opened
+during the write. The notebook likewise refuses to duplicate or flatten a
+page whose session is open, because the copy, or the flattened image,
+would hold the box without the words the session ends with. The rest
 record nothing and are not refused on the session's account (decided
-R2-08; policy-03).
+R2-08; policy-03, deepen-editor-01).
 
 The canvas hands the responder chain a `FilteringUndoManager`. It records
 nothing and undoes nothing itself: PencilKit's registrations are dropped,
