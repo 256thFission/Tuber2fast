@@ -205,32 +205,22 @@ struct WritingBar: View {
     @ViewBuilder private var contents: some View {
         ForEach(Array(BarEntry.defaultRow.enumerated()), id: \.offset) { _, entry in
             switch entry {
-            case .grab: grabPill
+            case .grab:
+                // Flat: it is a handle, not a button, and a wall would say
+                // "press me".
+                FlatChip {
+                    Image(systemName: "line.3.horizontal")
+                        .font(Macaron.body(.text))
+                        .rotationEffect(.degrees(isHorizontal ? 0 : 90))
+                }
+                .gesture(grab)
+                .accessibilityLabel("Move the writing bar")
             case .instrument(let kind): InstrumentCap(editor: editor, kind: kind)
             case .divider: MacaronDivider(vertical: !isHorizontal)
             case .widths: widths
             case .swatches: swatches
             }
         }
-    }
-
-    /// Flat: it is a handle, not a button, and a wall would say "press me".
-    private var grabPill: some View {
-        RoundedRectangle(cornerRadius: Macaron.chipRadius, style: .continuous)
-            .fill(theme.chrome.color)
-            .overlay {
-                RoundedRectangle(cornerRadius: Macaron.chipRadius, style: .continuous)
-                    .strokeBorder(theme.outline(of: theme.chrome).color, lineWidth: Macaron.line)
-            }
-            .overlay {
-                Image(systemName: "line.3.horizontal")
-                    .font(Macaron.body(13))
-                    .foregroundStyle(theme.outline(of: theme.chrome).color)
-                    .rotationEffect(.degrees(isHorizontal ? 0 : 90))
-            }
-            .frame(width: Macaron.chip, height: Macaron.chip)
-            .gesture(grab)
-            .accessibilityLabel("Move the writing bar")
     }
 
     private var grab: some Gesture {
@@ -307,9 +297,28 @@ struct WritingBar: View {
             }
         } else {
             // One chip standing for the width in hand; the other two live in
-            // the bubble it opens.
+            // the bubble it opens. The system picks the bubble's side, which
+            // is the page's: a side named here sent it off the screen.
             widthChip(editor.tool.width ?? .medium, isHeld: false)
-                .popover(isPresented: $isShowingWidths, arrowEdge: .leading) { widthBubble }
+                .macaronBubble(isPresented: $isShowingWidths) { widthChoices }
+        }
+    }
+
+    /// The three widths in the standing bar's bubble.
+    private var widthChoices: some View {
+        HStack(spacing: Macaron.rowGap) {
+            ForEach(ToolWidth.allCases, id: \.self) { width in
+                Button {
+                    take(width)
+                    isShowingWidths = false
+                } label: {
+                    FlatChip(fill: width == editor.tool.width ? theme.accent : nil, isRound: true) {
+                        Circle().frame(width: dot(width), height: dot(width))
+                    }
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(Text(verbatim: "\(width.rawValue) width"))
+            }
         }
     }
 
@@ -348,47 +357,6 @@ struct WritingBar: View {
         editor.setWidth(width)
     }
 
-    /// A speech bubble with a tail pointing at the chip that owns it. No
-    /// wall on the selectors: the bubble is a transient, not a keyboard.
-    private var widthBubble: some View {
-        HStack(spacing: Macaron.rowGap) {
-            ForEach(ToolWidth.allCases, id: \.self) { width in
-                Button {
-                    take(width)
-                    isShowingWidths = false
-                } label: {
-                    Circle()
-                        .fill(width == editor.tool.width ? theme.accent.color : theme.chrome.color)
-                        .overlay {
-                            Circle().strokeBorder(
-                                theme.outline(of: width == editor.tool.width ? theme.accent : theme.chrome).color,
-                                lineWidth: Macaron.line
-                            )
-                        }
-                        .overlay {
-                            Circle()
-                                .fill(theme.outline(of: theme.chrome).color)
-                                .frame(width: dot(width), height: dot(width))
-                        }
-                        .frame(width: Macaron.chip, height: Macaron.chip)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(Text(verbatim: "\(width.rawValue) width"))
-            }
-        }
-        .padding(Macaron.shellPadding)
-        .background {
-            RoundedRectangle(cornerRadius: 19, style: .continuous)
-                .fill(theme.chrome.color)
-                .overlay {
-                    RoundedRectangle(cornerRadius: 19, style: .continuous)
-                        .strokeBorder(theme.outline(of: theme.chrome).color, lineWidth: Macaron.line)
-                }
-        }
-        .padding(Macaron.line)
-        .presentationCompactAdaptation(.popover)
-    }
-
     // MARK: Swatches
 
     /// The palette's run for the theme choice and the tool in hand, in one
@@ -415,6 +383,7 @@ struct WritingBar: View {
                 guard editor.tool.color != nil else { return }
                 editor.setColor(colour)
             }
+            .accessibilityLabel(Text(verbatim: "Colour \(index + 1)"))
             .accessibilityAddTraits(isHeld ? .isSelected : [])
             .accessibilityAction(named: "Change colour") { openTray(at: index) }
             .macaronBubble(isPresented: Binding { tray == index } set: { if !$0 { tray = nil } }) {
