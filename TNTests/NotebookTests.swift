@@ -56,6 +56,18 @@ final class RefusingLoadStore: ForwardingStore, @unchecked Sendable {
     }
 }
 
+/// A real store whose `save` throws while told to refuse, as a pass fails
+/// on a full disk or a write the file system refused.
+final class FailingSaveStore: ForwardingStore, @unchecked Sendable {
+    private let refusing = Gate()
+    func refuse() async { await refusing.close() }
+    func accept() async { await refusing.open() }
+    override func save(_ batch: SaveBatch) async throws(FormatFault) -> SaveReport {
+        if !(await refusing.isOpen) { throw .corruptJSON("refused by the test") }
+        return try await base.save(batch)
+    }
+}
+
 /// A real store whose `writeAsset` waits until released, so an import can
 /// be caught between two of its asset writes.
 final class HeldAssetStore: ForwardingStore, @unchecked Sendable {
@@ -128,9 +140,15 @@ final class PermanentlyRefusingStore: ForwardingStore, @unchecked Sendable {
 }
 
 /// A real store whose `readAsset` parks every call until the test releases
-/// it by index, so a render can be held while the notebook moves on.
+/// it by index, so a render can be held while the notebook moves on, and
+/// whose `loadPage` waits while `loadGate` is closed.
 final class GatedAssetStore: ForwardingStore, @unchecked Sendable {
     let gate = CallGate()
+    let loadGate = Gate()
+    override func loadPage(_ page: PageID) async throws(FormatFault) -> PageBytes {
+        await loadGate.wait()
+        return try await base.loadPage(page)
+    }
     override func readAsset(_ ref: AssetRef) async throws(FormatFault) -> Data {
         await gate.park()
         return try await base.readAsset(ref)
@@ -358,7 +376,7 @@ struct NotebookTests {
         #expect(try PKDrawing(data: try #require(bytes.inkArchive)).strokes.count == 2)
     }
 
-    @Test("Close returns clean only after a held save completes, and reports dirty pages otherwise")
+    @Test("Close returns clean only after a held save completes")
     func closeWaitsForTheWrite() async throws {
         let scratch = try Scratch("nb-close")
         let store = HeldStore(try await PackageStore.create(root: scratch.packageURL, index: Fixture.index(pages: 1)))
@@ -369,12 +387,73 @@ struct NotebookTests {
         await store.hold()
         notebook.inkChanged(on: page, Ink.drawing(strokes: 5))
         let closing = Task { await notebook.close() }
+        // Passes without proving anything if the close has not reached the
+        // held save within the sleep, as on a starved simulator.
         try await Task.sleep(for: .milliseconds(60))
         #expect(!notebook.isClosed)
         await store.release()
         #expect(await closing.value == .clean)
         #expect(notebook.isClosed)
         #expect(try await store.base.loadPage(page).inkArchive != nil)
+    }
+
+    @Test("A failed save keeps the page dirty and names the fault; the pass it re-arms lands the ink without a flush")
+    func aFailingSaveStaysDirtyAndRetries() async throws {
+        let scratch = try Scratch("nb-save-fails")
+        let store = FailingSaveStore(try await PackageStore.create(root: scratch.packageURL, index: Fixture.index(pages: 1)))
+        let notebook = try await Notebook.open(store: store, schedule: fast)
+        let page = notebook.pageIDs[0]
+        notebook.windowChanged(to: [page])
+        try await waitUntil { notebook.state(of: page)?.content != nil }
+        // Refused before the stroke, so its debounce cannot land a pass first.
+        await store.refuse()
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 2))
+        await notebook.flush()
+        #expect(notebook.lastSaveError == .io(.corruptJSON("refused by the test")))
+        #expect(notebook.state(of: page)?.content?.isDirty == true)
+
+        await store.accept()
+        try await waitUntil { notebook.state(of: page)?.content?.isDirty == false }
+        #expect(notebook.lastSaveError == nil)
+        let bytes = try await store.base.loadPage(page)
+        #expect(try PKDrawing(data: try #require(bytes.inkArchive)).strokes.count == 2)
+    }
+
+    @Test("A close whose pass fails reports the dirty page and leaves the notebook open; the close after recovery is clean")
+    func aDirtyCloseReportsItsPages() async throws {
+        let scratch = try Scratch("nb-dirty-close")
+        let store = FailingSaveStore(try await PackageStore.create(root: scratch.packageURL, index: Fixture.index(pages: 1)))
+        let notebook = try await Notebook.open(store: store, schedule: fast)
+        let page = notebook.pageIDs[0]
+        notebook.windowChanged(to: [page])
+        try await waitUntil { notebook.state(of: page)?.content != nil }
+        await store.refuse()
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 3))
+        #expect(await notebook.close() == .dirty(pages: [page], indexUnsaved: false))
+        #expect(!notebook.isClosed)
+
+        // The close runs its own pass rather than waiting for the re-armed one.
+        await store.accept()
+        #expect(await notebook.close() == .clean)
+        #expect(notebook.isClosed)
+        let bytes = try await store.base.loadPage(page)
+        #expect(try PKDrawing(data: try #require(bytes.inkArchive)).strokes.count == 3)
+    }
+
+    /// Every other test runs the engine at `fast`, and the bound tests read
+    /// the constants back; this is where `Docs/Contract.md`'s numbers are
+    /// written out.
+    @Test("The save schedule and the undo bounds are the Contract's numbers")
+    func theContractsNumbers() {
+        let schedule = SaveSchedule()
+        #expect(schedule.idleFloor == .milliseconds(500))
+        #expect(schedule.idleCeiling == .seconds(2))
+        #expect(schedule.serializeFactor == 4)
+        #expect(schedule.dirtyCeiling == .seconds(5))
+        #expect(schedule.backoffCap == .seconds(5))
+        #expect(schedule.retryBufferBytes == 64 * 1024 * 1024)
+        #expect(EditHistory.maximumEntries == 100)
+        #expect(EditHistory.maximumBytes == 64 * 1024 * 1024)
     }
 
     @Test("A load that lands after a clean close installs nothing and arms no save")
@@ -772,6 +851,8 @@ struct NotebookTests {
         notebook.inkChanged(on: page, Ink.drawing(strokes: 2))
         _ = notebook.drainChanges()
         #expect(notebook.undo() == page)
+        // Passes without proving anything if a late result has not arrived
+        // within the sleep, as on a starved simulator.
         try await Task.sleep(for: .milliseconds(100))
         let changes = notebook.drainChanges()
         let restores = changes.filter { if case .inkRestored = $0 { true } else { false } }
@@ -1106,16 +1187,39 @@ struct NotebookTests {
         #expect(changes.contains { if case .textEditingEnded(let p, let l) = $0 { p == page && l == text.id } else { false } }, "\(changes)")
     }
 
-    @Test("A load whose page left the window is dropped on arrival")
+    @Test("A load that a newer load replaced while it rendered is dropped on arrival, and the newer ink installs")
     func staleLoadIsDropped() async throws {
         let scratch = try Scratch("nb-stale")
-        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
-        let page = notebook.pageIDs[0]
+        let created = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        let page = created.pageIDs[0]
+        created.windowChanged(to: [page])
+        try await waitUntil { created.state(of: page)?.content != nil }
+        try await created.addLayer(Fixture.imageLayer(), assetData: try Fixture.imageData(width: 40, height: 30), on: page)
+        created.inkChanged(on: page, Ink.drawing(strokes: 1))
+        #expect(await created.close() == .clean)
+
+        let store = GatedAssetStore(PackageStore(root: scratch.packageURL))
+        let notebook = try await Notebook.open(store: store, schedule: fast)
+        // The first load reads one stroke, then parks in its render's asset
+        // read, past every cancellation check: leaving the window cannot stop it.
         notebook.windowChanged(to: [page])
+        try await notebook.waitForArrivals(store.gate, 1)
+        let first = try #require(notebook.loads[page])
         notebook.windowChanged(to: [])
-        try await Task.sleep(for: .milliseconds(100))
-        if case .unloaded = notebook.state(of: page)! {} else { Issue.record("expected unloaded, got \(String(describing: notebook.state(of: page)))") }
-        #expect(!notebook.drainChanges().contains { if case .content = $0 { true } else { false } })
+        try InkContainer.encode(notebookID: notebook.index.notebookID, pageID: page, archive: Ink.drawing(strokes: 3).dataRepresentation())
+            .write(to: store.base.layout.inkURL(page))
+        // The second load is held before its render, so the first lands
+        // while the page is loading again and only the generation tells them apart.
+        await store.loadGate.close()
+        notebook.windowChanged(to: [page])
+        try await notebook.waitForArrivals(store.loadGate, 2)
+        await store.gate.release(0)
+        await first.value
+        if case .loading = notebook.state(of: page)! {} else { Issue.record("the stale load installed: \(String(describing: notebook.state(of: page)))") }
+
+        await store.loadGate.open()
+        try await waitUntil { notebook.state(of: page)?.content != nil }
+        #expect(notebook.state(of: page)?.content?.ink.strokes.count == 3)
     }
 
     @Test("A refused new page is absent from the committed index and stays dirty in memory")
@@ -1208,6 +1312,96 @@ struct NotebookTests {
         if case .unloaded = notebook.state(of: ids[0])! {} else { Issue.record("clean retired page not pruned") }
         #expect(notebook.state(of: ids[1])?.content != nil, "dirty page kept")
         #expect(notebook.state(of: ids[2])?.content != nil, "wanted page kept")
+    }
+
+    @Test("A torn-down canvas's final ink lands in custody as an edit and keeps the page from pruning until it is saved")
+    func finalInkAtTeardownLandsInCustody() async throws {
+        let scratch = try Scratch("nb-final-ink")
+        let store = try await PackageStore.create(root: scratch.packageURL, index: Fixture.index(pages: 1))
+        let notebook = try await Notebook.open(store: store, schedule: fast)
+        let page = notebook.pageIDs[0]
+        notebook.windowChanged(to: [page])
+        try await waitUntil { notebook.state(of: page)?.content != nil }
+        #expect(!notebook.canUndo)
+
+        notebook.retired(page, finalInk: Ink.drawing(strokes: 2))
+        #expect(notebook.state(of: page)?.content?.ink.strokes.count == 2)
+        #expect(notebook.state(of: page)?.content?.isDirty == true)
+        #expect(notebook.canUndo)
+        notebook.windowChanged(to: [])
+        notebook.prune()
+        #expect(notebook.state(of: page)?.content != nil, "a dirty page is not pruned")
+
+        await notebook.flush()
+        notebook.prune()
+        if case .unloaded = notebook.state(of: page)! {} else { Issue.record("a saved retired page is pruned") }
+        let bytes = try await store.loadPage(page)
+        #expect(try PKDrawing(data: try #require(bytes.inkArchive)).strokes.count == 2)
+    }
+
+    @Test("A torn-down canvas's final ink equal to custody is no edit")
+    func equalFinalInkIsNotAnEdit() async throws {
+        let scratch = try Scratch("nb-equal-final-ink")
+        let store = try await PackageStore.create(root: scratch.packageURL, index: Fixture.index(pages: 1))
+        let notebook = try await Notebook.open(store: store, schedule: fast)
+        let page = notebook.pageIDs[0]
+        notebook.windowChanged(to: [page])
+        try await waitUntil { notebook.state(of: page)?.content != nil }
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 1))
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 2))
+        // An edit would clear the redo this undo leaves.
+        #expect(notebook.undo() == page)
+        await notebook.flush()
+        let held = notebook.state(of: page)!.content!
+        #expect(notebook.canRedo)
+
+        notebook.retired(page, finalInk: held.ink)
+        let after = notebook.state(of: page)!.content!
+        #expect(after.editSeq == held.editSeq)
+        #expect(!after.isDirty)
+        #expect(notebook.canRedo, "no entry recorded")
+    }
+
+    @Test("A page erased to nothing reopens empty, its ink container written and present")
+    func anErasedPageReopensEmpty() async throws {
+        let scratch = try Scratch("nb-erased")
+        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        let page = notebook.pageIDs[0]
+        notebook.windowChanged(to: [page])
+        try await waitUntil { notebook.state(of: page)?.content != nil }
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 2))
+        await notebook.flush()
+        notebook.inkChanged(on: page, PKDrawing())
+        #expect(await notebook.close() == .clean)
+
+        try await Self.expectReopensEmpty(page, at: scratch.packageURL)
+    }
+
+    @Test("A page whose only stroke was undone reopens empty")
+    func anUndoneOnlyStrokeReopensEmpty() async throws {
+        let scratch = try Scratch("nb-undone")
+        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        let page = notebook.pageIDs[0]
+        notebook.windowChanged(to: [page])
+        try await waitUntil { notebook.state(of: page)?.content != nil }
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 1))
+        await notebook.flush()
+        #expect(notebook.undo() == page)
+        #expect(notebook.state(of: page)?.content?.ink.strokes.isEmpty == true)
+        #expect(await notebook.close() == .clean)
+
+        try await Self.expectReopensEmpty(page, at: scratch.packageURL)
+    }
+
+    private static func expectReopensEmpty(_ page: PageID, at url: URL) async throws {
+        let bytes = try await PackageStore(root: url).loadPage(page)
+        #expect(bytes.faults.isEmpty)
+        #expect(try PKDrawing(data: try #require(bytes.inkArchive, "the container is present")).strokes.isEmpty)
+        let reopened = try await Notebook.open(store: PackageStore(root: url), schedule: fast)
+        reopened.windowChanged(to: [page])
+        try await waitUntil { reopened.state(of: page)?.content != nil }
+        #expect(reopened.state(of: page)?.content?.ink.strokes.isEmpty == true)
+        #expect(reopened.state(of: page)?.content?.hasInk == true)
     }
 
     @Test("Structure intentions dirty the index and emit a structure change; a page turn dirties nothing")
@@ -1370,6 +1564,8 @@ struct NotebookTests {
         #expect(notebook.undo() == nil)
         #expect(notebook.redo() == nil)
         await store.release()
+        // Passes without proving anything if a late result has not arrived
+        // within the sleep, as on a starved simulator.
         try await Task.sleep(for: .milliseconds(100))
         #expect(notebook.state(of: a) == nil)
         #expect(notebook.pageIDs == [b])
@@ -2411,6 +2607,8 @@ struct NotebookTests {
         guard case .text(let value) = try #require(notebook.state(of: page)?.content?.layers.last?.payload) else { Issue.record("not text"); return }
         notebook.endTextEditing(on: page, layer: text.id, value)
         // The commit's render waits on the begin's read instead of opening one.
+        // Passes without proving anything if a late result has not arrived
+        // within the sleep, as on a starved simulator.
         try await Task.sleep(for: .milliseconds(100))
         #expect(await store.gate.arrivals == 2)
         #expect(notebook.drainChanges().isEmpty, "nothing lands while the read is parked")
@@ -2418,6 +2616,8 @@ struct NotebookTests {
         // The read lands both renders, in either order; the begin's is stale.
         await store.gate.release(1)
         try await waitUntil { notebook.state(of: page)?.content?.afterRender.isEmpty == true }
+        // Passes without proving anything if a late result has not arrived
+        // within the sleep, as on a starved simulator.
         try await Task.sleep(for: .milliseconds(100))
         let changes = notebook.drainChanges()
         let composites = changes.filter { if case .compositeUpdated = $0 { true } else { false } }
