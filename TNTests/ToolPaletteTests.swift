@@ -210,19 +210,61 @@ struct ToolPaletteTests {
 
     // MARK: used
 
-    @Test("Recents are most recent first, deduplicated, and capped")
-    func recentsAreOrderedDeduplicatedAndCapped() {
+    @Test("Drawn and picked, the recents are one run: most recent first, deduplicated, and eight at most")
+    func recentsCapAtEight() {
         let palette = ToolPalette(store: MemoryPaletteStore())
-        for index in 0..<12 { palette.used(swatch(UInt8(index))) }
+        for index in 0..<12 {
+            if index.isMultiple(of: 2) {
+                palette.used(swatch(UInt8(index)))
+            } else {
+                palette.picked(swatch(UInt8(index)))
+            }
+        }
 
-        #expect(palette.recentColors.count == ToolPalette.recentLimit)
+        #expect(ToolPalette.recentLimit == 8)
         #expect(palette.recentColors == (0..<8).reversed().map { swatch(UInt8($0 + 4)) })
 
-        // A colour drawn with again moves to the front rather than doubling.
+        // A colour drawn with or picked again moves to the front rather than
+        // doubling.
         palette.used(swatch(5))
         #expect(palette.recentColors.first == swatch(5))
+        palette.picked(swatch(6))
+        #expect(palette.recentColors.first == swatch(6))
         #expect(palette.recentColors.count == ToolPalette.recentLimit)
         #expect(Set(palette.recentColors.map(\.rgba.hex)).count == ToolPalette.recentLimit)
+    }
+
+    /// The tray puts every colour the wheel lands on into the hand and over
+    /// its swatch, and records one recent when it closes (decided U3, round
+    /// two): a drag across the wheel is not eight colours drawn with.
+    @Test("A tray session is one recent: the colour it closed on")
+    func aTrayPickIsOneRecent() async throws {
+        let store = MemoryPaletteStore()
+        let palette = ToolPalette(store: store)
+        let scratch = try Scratch("palette-tray")
+        let editor = EditorViewModel(
+            binding: EditorBinding(
+                notebook: try await Notebook.create(at: scratch.packageURL, schedule: fast),
+                surface: RecordingSurface()
+            ),
+            palette: palette,
+            theme: .macaron
+        )
+        let key = SwatchKey(.system, .pen)
+        palette.used(swatch(0x01))
+
+        for colour in [swatch(0xA1), swatch(0xA2), swatch(0xA3)] {
+            editor.pick(colour, over: 2, of: key, in: .macaron)
+        }
+
+        #expect(editor.tool.color == swatch(0xA3), "the last colour picked is in the hand")
+        #expect(palette.swatches(for: key, in: .macaron)[2] == swatch(0xA3), "and over the swatch that opened the tray")
+        #expect(palette.recentColors == [swatch(0x01)], "a colour on its way is no recent")
+
+        editor.trayClosed(on: swatch(0xA3))
+        #expect(palette.recentColors == [swatch(0xA3), swatch(0x01)])
+        #expect(ToolPalette(store: store).recentColors == [swatch(0xA3), swatch(0x01)])
+        withExtendedLifetime(scratch) {}
     }
 
     @Test("A colour a theme offers is recorded, and drawing on in it writes once")

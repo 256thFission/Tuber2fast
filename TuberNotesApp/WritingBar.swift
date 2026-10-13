@@ -128,6 +128,8 @@ struct WritingBar: View {
     @State private var target: SnapPoint?
     @State private var measured: CGSize = .zero
     @State private var isShowingWidths = false
+    /// Which swatch the colour tray hangs off, while it is open.
+    @State private var tray: Int?
     /// The editor surface, as the last layout reported it: what the eight
     /// candidate centres are measured in.
     @State private var boundsGuess: CGSize = .zero
@@ -174,6 +176,14 @@ struct WritingBar: View {
             .onGeometryChange(for: CGSize.self) { _ in bounds } action: { boundsGuess = $0 }
         }
         .ignoresSafeArea(.keyboard)
+        .task {
+            // A screenshot of the open tray needs no hold to get to it. Late,
+            // because a popover asked for before the bar is on screen is not
+            // shown.
+            guard LaunchHooks.arguments.contains("-TNColourTray") else { return }
+            try? await Task.sleep(for: .seconds(1))
+            tray = 0
+        }
     }
 
     // MARK: The shell
@@ -383,10 +393,11 @@ struct WritingBar: View {
 
     /// The palette's run for the theme choice and the tool in hand, in one
     /// run of keycaps. The run is a row when the bar lies down and a column
-    /// when it stands up, and never a column inside a row.
+    /// when it stands up, and never a column inside a row. A hold on one
+    /// opens the colour tray off it.
     @ViewBuilder private var swatches: some View {
         let key = SwatchKey(workspace.choice, editor.tool.swatchRun)
-        ForEach(Array(editor.palette.swatches(for: key, in: theme).enumerated()), id: \.offset) { _, colour in
+        ForEach(Array(editor.palette.swatches(for: key, in: theme).enumerated()), id: \.offset) { index, colour in
             let isHeld = colour == editor.tool.color
             Keycap(
                 fill: colour.rgba,
@@ -397,14 +408,26 @@ struct WritingBar: View {
                 radius: Macaron.swatchRadius,
                 wall: Macaron.swatchWall,
                 isHeld: isHeld,
-                isEnabled: editor.tool.color != nil
+                isEnabled: editor.tool.color != nil,
+                hold: { openTray(at: index) }
             ) {
                 // Read again at the tap, as a width is.
                 guard editor.tool.color != nil else { return }
                 editor.setColor(colour)
             }
             .accessibilityAddTraits(isHeld ? .isSelected : [])
+            .accessibilityAction(named: "Change colour") { openTray(at: index) }
+            .macaronBubble(isPresented: Binding { tray == index } set: { if !$0 { tray = nil } }) {
+                ColourTray(editor: editor, index: index, colour: colour)
+            }
         }
+    }
+
+    /// Read again at the hold, as a tap is: a tray opened over a tool with
+    /// no colour would offer colours nothing takes.
+    private func openTray(at index: Int) {
+        guard editor.tool.color != nil else { return }
+        tray = index
     }
 }
 

@@ -132,9 +132,8 @@ package protocol ToolPaletteStore: Sendable {
     package var inks: [InkKind: InkPreset] { record.inks }
     package var eraserMode: EraserMode { record.eraserMode }
     package var pixelEraserWidth: ToolWidth { record.pixelEraserWidth }
-    /// Simply the colours drawn with: most recent first, at most
-    /// `recentLimit`, no duplicates. A colour becomes recent when a stroke
-    /// lands in it, not when it is picked.
+    /// The colours drawn with and the colours the tray closed on: most
+    /// recent first, at most `recentLimit`, no duplicates.
     package var recentColors: [ToolColor] { record.recentColors }
     /// The style and alignment the text tool last typed with.
     package var text: TextPreset { record.text }
@@ -228,6 +227,11 @@ package protocol ToolPaletteStore: Sendable {
         guard recentColors.first != color else { return }
         record.recentColors = Array(([color] + recentColors.filter { $0 != color }).prefix(Self.recentLimit))
     }
+
+    /// The colour a session of the colour tray closed on, recorded as one
+    /// drawn with is. Once per session, however many colours the wheel
+    /// passed through on the way to it (decided U3, round two).
+    package func picked(_ color: ToolColor) { used(color) }
 
     // MARK: The swatches
 

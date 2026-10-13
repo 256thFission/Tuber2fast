@@ -240,6 +240,19 @@ package final class EditorViewModel {
         tool = .ink(kind, InkPreset(color: color, width: preset.width))
     }
 
+    /// A colour from the colour tray: into the hand, and over the swatch
+    /// that opened the tray. No recent yet; the tray records the one colour
+    /// it closes on.
+    package func pick(_ color: ToolColor, over index: Int, of key: SwatchKey, in theme: Theme) {
+        setColor(color)
+        palette.replaceSwatch(at: index, with: color, for: key, in: theme)
+    }
+
+    /// The colour tray closed, and `color` is the last it picked.
+    package func trayClosed(on color: ToolColor) {
+        palette.picked(color)
+    }
+
     /// The gestures that apply to a stroke drawn with the tool in hand. A
     /// gesture is a property of an ink stroke, so an eraser or a lasso pass
     /// is never examined; which ink kind it is makes no difference.

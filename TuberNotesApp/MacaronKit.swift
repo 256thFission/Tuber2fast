@@ -150,12 +150,16 @@ struct Keycap<Label: View>: View {
     /// What VoiceOver calls a cap whose label is only a symbol. A cap with a
     /// word on it is called by the word.
     var name: String?
+    /// A second thing the cap does when held for 450 ms rather than tapped.
+    /// While the hold charges, the cap squashes toward 88%.
+    var hold: (() -> Void)?
     var action: () -> Void
     @ViewBuilder var label: () -> Label
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var phase = 0
     @State private var trampoline = 0
+    @State private var isCharging = false
 
     /// A tool becoming held throws the cap above its rest for a moment,
     /// leaving a taller wall under it, and lands sunk.
@@ -191,9 +195,12 @@ struct Keycap<Label: View>: View {
             y: squash.height * (trampoline == 1 ? 0.86 : 1),
             anchor: .bottom
         )
+        .scaleEffect(isCharging ? 0.88 : 1, anchor: .bottom)
+        .animation(isCharging ? .linear(duration: 0.45) : MacaronCurve.settle, value: isCharging)
         .opacity(isEnabled ? 1 : 0.4)
         .contentShape(.rect)
         .onTapGesture { if isEnabled { press() } }
+        .modifier(HoldGesture(hold: isEnabled ? hold : nil, isCharging: $isCharging, squashes: !reduceMotion))
         .accessibilityElement(children: .combine)
         .accessibilityLabel(Text(name ?? ""), isEnabled: name != nil)
         .accessibilityAddTraits(.isButton)
@@ -231,6 +238,27 @@ struct Keycap<Label: View>: View {
     }
 }
 
+/// A cap's hold, on the caps that have one. Every other cap takes no long
+/// press, so a cap held a long time still taps on lift.
+private struct HoldGesture: ViewModifier {
+    let hold: (() -> Void)?
+    @Binding var isCharging: Bool
+    let squashes: Bool
+
+    func body(content: Content) -> some View {
+        if let hold {
+            content.onLongPressGesture(minimumDuration: 0.45) {
+                isCharging = false
+                hold()
+            } onPressingChanged: { pressing in
+                isCharging = pressing && squashes
+            }
+        } else {
+            content
+        }
+    }
+}
+
 extension Keycap where Label == Color {
     init(
         fill: RGBA8,
@@ -239,11 +267,12 @@ extension Keycap where Label == Color {
         wall: CGFloat = Macaron.chipWall,
         isHeld: Bool = false,
         isEnabled: Bool = true,
+        hold: (() -> Void)? = nil,
         action: @escaping () -> Void
     ) {
         self.init(
             fill: fill, size: size, radius: radius, wall: wall, isHeld: isHeld,
-            isEnabled: isEnabled, action: action, label: { Color.clear }
+            isEnabled: isEnabled, hold: hold, action: action, label: { Color.clear }
         )
     }
 }
