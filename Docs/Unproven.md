@@ -748,4 +748,5 @@ Not gaps — properties of the tooling that read as project defects when hit.
   diff only. Owed: hold a swatch half a second and the tray opens on a tail
   at it; drag the wheel and the slider and the swatch and the pen take the
   colour; close it and the colour is the first recent; drag the bar by its
-  grab pill and no tray opens.
+  grab pill and no tray opens; take the pen, then the eraser, then the pen,
+  and the held swatch sinks, rises and trampolines as before.
