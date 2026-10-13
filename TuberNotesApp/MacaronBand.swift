@@ -27,7 +27,6 @@ struct MacaronBand: View {
         HStack(spacing: Self.gap) {
             libraryChip
             tabs
-            if overflow > 0 { overflowChip }
             Spacer(minLength: Self.gap)
             readout
             MacaronDivider()
@@ -66,15 +65,9 @@ struct MacaronBand: View {
     /// Round, and flat: it leaves the notebook rather than acting on it.
     private var libraryChip: some View {
         Button { workspace.showLibrary() } label: {
-            Circle()
-                .fill(theme.chrome.color)
-                .overlay { Circle().strokeBorder(theme.outline(of: theme.chrome).color, lineWidth: Macaron.line) }
-                .overlay {
-                    Image(systemName: "books.vertical.fill")
-                        .font(Macaron.body(14))
-                        .foregroundStyle(theme.outline(of: theme.chrome).color)
-                }
-                .frame(width: Macaron.chip, height: Macaron.chip)
+            FlatChip(isRound: true) {
+                Image(systemName: "books.vertical.fill").font(Macaron.body(.label))
+            }
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Library")
@@ -88,6 +81,20 @@ struct MacaronBand: View {
         HStack(spacing: Self.gap) {
             ForEach(shown) { tab in
                 tabCap(tab)
+            }
+            if overflow > 0 {
+                Menu {
+                    ForEach(workspace.tabs.dropFirst(shown.count)) { tab in
+                        Button(tab.name) { workspace.activeTabID = tab.id }
+                    }
+                } label: {
+                    // In the ground colour, so four tabs and a count do not
+                    // read as five tabs.
+                    FlatChip(fill: theme.ground) {
+                        Text(verbatim: "+\(overflow)").font(Macaron.title(.text))
+                    }
+                }
+                .accessibilityLabel(Text(verbatim: "\(overflow) more notebooks"))
             }
         }
     }
@@ -103,10 +110,10 @@ struct MacaronBand: View {
         } label: {
             HStack(spacing: 6) {
                 Text(tab.name)
-                    .font(Macaron.title(13))
+                    .font(Macaron.title(.text))
                     .lineLimit(1)
                 Text(callsign(of: tab))
-                    .font(Macaron.body(10))
+                    .font(Macaron.body(.detail))
                     .padding(.horizontal, 5)
                     .padding(.vertical, 2)
                     .background {
@@ -135,39 +142,12 @@ struct MacaronBand: View {
         Circle()
             .fill(theme.secondary.color)
             .overlay {
-                Circle().strokeBorder(
-                    Theme.mix(theme.secondary, toward: theme.ink, theme.outlineMixPale).color,
-                    lineWidth: 1.5
-                )
+                Circle().strokeBorder(theme.outline(of: theme.secondary).color, lineWidth: 1.5)
             }
             .frame(width: 11, height: 11)
             .offset(x: 4, y: -4)
             .transition(.scale(scale: 1.5).combined(with: .opacity))
             .accessibilityLabel("Unsaved")
-    }
-
-    /// In the ground colour, so four tabs and a count do not read as five
-    /// tabs.
-    private var overflowChip: some View {
-        Menu {
-            ForEach(workspace.tabs.dropFirst(shown.count)) { tab in
-                Button(tab.name) { workspace.activeTabID = tab.id }
-            }
-        } label: {
-            RoundedRectangle(cornerRadius: Macaron.chipRadius, style: .continuous)
-                .fill(theme.ground.color)
-                .overlay {
-                    RoundedRectangle(cornerRadius: Macaron.chipRadius, style: .continuous)
-                        .strokeBorder(theme.outline(of: theme.ground).color, lineWidth: Macaron.line)
-                }
-                .overlay {
-                    Text(verbatim: "+\(overflow)")
-                        .font(Macaron.title(13))
-                        .foregroundStyle(theme.outline(of: theme.ground).color)
-                }
-                .frame(width: Macaron.chip, height: Macaron.chip)
-        }
-        .accessibilityLabel(Text(verbatim: "\(overflow) more notebooks"))
     }
 
     /// A letter off the name and two digits off the identity, in the shape
@@ -187,20 +167,33 @@ struct MacaronBand: View {
     /// A readout, so it is flat and has no wall.
     private var readout: some View {
         Text(verbatim: "\(editor.currentPageIndex + 1) / \(editor.pageCount)")
-            .font(Macaron.body(14).monospacedDigit())
+            .font(Macaron.body(.label).monospacedDigit())
             .foregroundStyle(theme.outline(of: theme.chrome).color)
             .fixedSize()
     }
 
     private var undoRedo: some View {
         HStack(spacing: Self.gap) {
-            flatChip("arrow.uturn.backward", "Undo", enabled: editor.canUndo) { editor.undo() }
-            flatChip("arrow.uturn.forward", "Redo", enabled: editor.canRedo) { editor.redo() }
+            Button { editor.undo() } label: {
+                FlatChip { Image(systemName: "arrow.uturn.backward").font(Macaron.body(.label)) }
+            }
+            .disabled(!editor.canUndo)
+            .accessibilityLabel("Undo")
+            Button { editor.redo() } label: {
+                FlatChip { Image(systemName: "arrow.uturn.forward").font(Macaron.body(.label)) }
+            }
+            .disabled(!editor.canRedo)
+            .accessibilityLabel("Redo")
         }
+        .buttonStyle(.plain)
     }
 
     @ViewBuilder private func chip(_ action: BandAction) -> some View {
-        let chip = flatChip(action.symbol, action.label, tint: action.tint(theme)) { tap(action) }
+        let chip = Button { tap(action) } label: {
+            FlatChip(fill: action.tint(theme)) { Image(systemName: action.symbol).font(Macaron.body(.label)) }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(action.label)
         if action == .text {
             chip.macaronBubble(isPresented: $isStylingText) {
                 TextStylePopover(editor: editor)
@@ -219,34 +212,6 @@ struct MacaronBand: View {
         } else {
             self.action(action)
         }
-    }
-
-    private func flatChip(
-        _ symbol: String,
-        _ label: String,
-        tint: RGBA8? = nil,
-        enabled: Bool = true,
-        tap: @escaping () -> Void
-    ) -> some View {
-        let fill = tint ?? theme.chrome
-        return Button(action: tap) {
-            RoundedRectangle(cornerRadius: Macaron.chipRadius, style: .continuous)
-                .fill(fill.color)
-                .overlay {
-                    RoundedRectangle(cornerRadius: Macaron.chipRadius, style: .continuous)
-                        .strokeBorder(theme.outline(of: fill).color, lineWidth: Macaron.line)
-                }
-                .overlay {
-                    Image(systemName: symbol)
-                        .font(Macaron.body(14))
-                        .foregroundStyle(theme.outline(of: fill).color)
-                }
-                .frame(width: Macaron.chip, height: Macaron.chip)
-                .opacity(enabled ? 1 : 0.4)
-        }
-        .buttonStyle(.plain)
-        .disabled(!enabled)
-        .accessibilityLabel(label)
     }
 }
 
