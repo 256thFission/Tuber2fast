@@ -15,7 +15,13 @@ package enum PaperRenderer {
         package static let topMargin: Double = 72
     }
 
-    private static let markColor = CGColor(srgbRed: 0.58, green: 0.65, blue: 0.75, alpha: 1)
+    private static let markColor: CGColor = {
+        let mark = DrawnPaper.markColor
+        return CGColor(
+            srgbRed: CGFloat(mark.red) / 255, green: CGFloat(mark.green) / 255,
+            blue: CGFloat(mark.blue) / 255, alpha: CGFloat(mark.alpha) / 255
+        )
+    }()
 
     /// The context is in page space: origin top-left, y down, one unit per
     /// page point. Only the marks: the page under them is already white.

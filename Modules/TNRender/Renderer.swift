@@ -20,51 +20,6 @@ package struct ThumbnailKey: Hashable, Sendable {
     }
 }
 
-/// One shape for every bounded in-memory cache in this project: values by
-/// key, oldest evicted first once the byte total passes the bound. A value
-/// larger than the bound is not kept and evicts nothing for it. Each
-/// instance still declares its owner, bound, and evictor where it is
-/// declared, as the contract requires; this type is the mechanism, not the
-/// declaration.
-package struct BoundedCache<Key: Hashable, Value> {
-    package let bound: Int
-    package let cost: (Value) -> Int
-    private var values: [Key: Value] = [:]
-    private var order: [Key] = []
-    package private(set) var bytes = 0
-
-    package init(bound: Int, cost: @escaping (Value) -> Int) {
-        self.bound = bound
-        self.cost = cost
-    }
-
-    package subscript(key: Key) -> Value? { values[key] }
-
-    /// A key already present is replaced and becomes the newest. An oversize
-    /// value still removes the old one, so a key never answers with a value
-    /// it was told to replace.
-    package mutating func insert(_ value: Value, for key: Key) {
-        if let replaced = values.removeValue(forKey: key) {
-            bytes -= cost(replaced)
-            order.removeAll { $0 == key }
-        }
-        guard cost(value) <= bound else { return }
-        values[key] = value
-        order.append(key)
-        bytes += cost(value)
-        while bytes > bound, let oldest = order.first {
-            order.removeFirst()
-            if let removed = values.removeValue(forKey: oldest) { bytes -= cost(removed) }
-        }
-    }
-
-    package mutating func removeAll() {
-        values.removeAll()
-        order.removeAll()
-        bytes = 0
-    }
-}
-
 /// Composites and thumbnails, off the main actor. A composite is paper plus
 /// every static layer as pixels; the ink is never in it.
 ///
@@ -124,30 +79,40 @@ package actor Renderer {
     package func composite(geometry: PageGeometry, paper: Paper, layers: [Layer], scale requested: CGFloat) async -> Composite? {
         let scale = Self.cappedScale(for: geometry, requested: requested)
         let width = Int((geometry.width * scale).rounded(.up)), height = Int((geometry.height * scale).rounded(.up))
-        guard let image = await compose(geometry: geometry, paper: paper, layers: layers, scale: scale, width: width, height: height) else { return nil }
+        guard let image = await compose(geometry: geometry, paper: paper, layers: layers, ink: nil, scale: scale, width: width, height: height) else { return nil }
         return Composite(image: image)
     }
 
-    /// Paper and layers into one bitmap of exactly `width` by `height`
-    /// pixels, drawn at `scale`. A composite rounds the pixels up from its
-    /// scale; a thumbnail picks its pixels first and derives the scale.
-    /// `whole` refuses a page with an asset that did not draw, which a page
-    /// leaving the app wants and the screen does not.
-    private func compose(geometry: PageGeometry, paper: Paper, layers: [Layer], scale: CGFloat, width: Int, height: Int, whole: Bool = false) async -> CGImage? {
+    /// Paper, layers, and an ink raster if there is one, into one bitmap of
+    /// exactly `width` by `height` pixels, drawn at `scale`. A composite
+    /// rounds the pixels up from its scale; a thumbnail picks its pixels
+    /// first and derives the scale. `whole` refuses a page with an asset that
+    /// did not draw, which a page leaving the app wants and the screen does
+    /// not.
+    private func compose(geometry: PageGeometry, paper: Paper, layers: [Layer], ink: CGImage?, scale: CGFloat, width: Int, height: Int, whole: Bool = false) async -> CGImage? {
         guard width > 0, height > 0, let context = Self.bitmap(width: width, height: height) else { return nil }
         // Page space: origin top-left, y down.
         context.translateBy(x: 0, y: CGFloat(height))
         context.scaleBy(x: scale, y: -scale)
-        let drewAll = await drawPage(geometry: geometry, paper: paper, layers: layers, ink: nil, in: context)
+        let drewAll = await drawPage(geometry: geometry, paper: paper, layers: layers, ink: ink, in: context)
         guard drewAll || !whole else { return nil }
         return context.makeImage()
     }
 
+    /// The page and its ink as one bitmap: the ink rasterized at `scale`
+    /// first, then drawn by the one draw path over the paper and layers.
+    private func flatten(geometry: PageGeometry, paper: Paper, layers: [Layer], ink: PKDrawing, scale: CGFloat, width: Int, height: Int, whole: Bool = false) async -> CGImage? {
+        let pageRect = CGRect(x: 0, y: 0, width: geometry.width, height: geometry.height)
+        let inkImage = await Self.rasterize(ink, in: pageRect, scale: scale)
+        return await compose(geometry: geometry, paper: paper, layers: layers, ink: inkImage, scale: scale, width: width, height: height, whole: whole)
+    }
+
     /// One page into a context already in page space: the white ground, the
     /// paper, every layer, and an ink raster if there is one. The one draw
-    /// path, so a composite and an exported page cannot disagree — a
-    /// composite passes no ink because the live canvas draws it, and an
-    /// export passes the raster because a PDF page has no canvas over it.
+    /// path, so a composite and a page leaving the canvas cannot disagree —
+    /// a composite passes no ink because the live canvas draws it, and an
+    /// export, a thumbnail, or a flatten passes the raster because nothing
+    /// draws ink over it.
     ///
     /// False when the paper or a layer names an asset that did not draw. A
     /// composite shows what it can; an export refuses, because a worksheet
@@ -161,29 +126,25 @@ package actor Renderer {
         for layer in layers {
             if await !draw(layer, in: context) { drewAll = false }
         }
-        guard let ink else { return drewAll }
-        context.saveGState()
-        // CGImage draws y-up; flip within the page rectangle, as asset paper does.
-        context.translateBy(x: 0, y: geometry.height)
-        context.scaleBy(x: 1, y: -1)
-        context.draw(ink, in: pageRect)
-        context.restoreGState()
+        if let ink { Self.drawUpright(ink, in: pageRect, context: context) }
         return drewAll
     }
 
-    private static func bitmap(width: Int, height: Int) -> CGContext? {
-        CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
-                  space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+    /// A CGImage into `rect` of a y-down context: CGImage draws y-up, so it
+    /// is flipped within the rect.
+    private static func drawUpright(_ image: CGImage, in rect: CGRect, context: CGContext) {
+        context.saveGState()
+        context.translateBy(x: 0, y: rect.minY + rect.maxY)
+        context.scaleBy(x: 1, y: -1)
+        context.draw(image, in: rect)
+        context.restoreGState()
     }
 
-    /// The ink over the composite, pixel for pixel.
-    private static func overlay(_ ink: CGImage?, on composite: CGImage) -> CGImage? {
-        guard let ink else { return composite }
-        guard let context = bitmap(width: composite.width, height: composite.height) else { return nil }
-        let pixels = CGRect(x: 0, y: 0, width: composite.width, height: composite.height)
-        context.draw(composite, in: pixels)
-        context.draw(ink, in: pixels)
-        return context.makeImage()
+    /// Also ImageImport's, so an imported image and a render share one
+    /// pixel format.
+    static func bitmap(width: Int, height: Int) -> CGContext? {
+        CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                  space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
     }
 
     // MARK: Thumbnails
@@ -200,26 +161,23 @@ package actor Renderer {
 
     package func cachedThumbnail(_ key: ThumbnailKey) -> CGImage? { thumbnails[key] }
 
-    /// The page rendered small: the compose step, then the ink rasterized in
-    /// the caller's task, so a cell that scrolls away cancels the work it
-    /// asked for. A cancelled render caches nothing.
+    /// The page rendered small, the ink rasterized in the caller's task, so
+    /// a cell that scrolls away cancels the work it asked for. A cancelled
+    /// render caches nothing.
     package func thumbnail(_ key: ThumbnailKey, geometry: PageGeometry, paper: Paper, layers: [Layer], ink: PKDrawing) async -> CGImage? {
         if let hit = thumbnails[key] { return hit }
         let (width, height) = Self.thumbnailPixels(for: geometry)
         let scale = CGFloat(max(width, height)) / max(geometry.width, geometry.height)
         if Task.isCancelled { return nil }
-        guard let composite = await compose(geometry: geometry, paper: paper, layers: layers, scale: scale, width: width, height: height) else { return nil }
+        guard let image = await flatten(geometry: geometry, paper: paper, layers: layers, ink: ink, scale: scale, width: width, height: height) else { return nil }
         if Task.isCancelled { return nil }
-        let pageRect = CGRect(x: 0, y: 0, width: geometry.width, height: geometry.height)
-        let inkImage = await Self.rasterize(ink, in: pageRect, scale: scale)
-        if Task.isCancelled { return nil }
-        guard let image = Self.overlay(inkImage, on: composite) else { return nil }
         thumbnails.insert(image, for: key)
         return image
     }
 
-    /// PencilKit rasterizes the ink on the generic executor, in the caller's
-    /// task: a thumbnail is droppable work, so it must inherit cancellation.
+    /// PencilKit rasterizes the ink on the generic executor, off this actor
+    /// and off the main one, in the caller's task: a thumbnail is droppable
+    /// work, so it must inherit cancellation.
     private nonisolated static func rasterize(_ ink: PKDrawing, in rect: CGRect, scale: CGFloat) async -> CGImage? {
         ink.image(from: rect, scale: scale).cgImage
     }
@@ -234,17 +192,9 @@ package actor Renderer {
             PaperRenderer.draw(drawn, geometry: geometry, in: context)
         case .image(let ref):
             guard case .image(let image, _)? = await decodedAsset(ref) else { return false }
-            context.saveGState()
-            // CGImage draws y-up; flip within the page rectangle.
-            context.translateBy(x: 0, y: geometry.height)
-            context.scaleBy(x: 1, y: -1)
-            context.draw(image, in: CGRect(x: 0, y: 0, width: geometry.width, height: geometry.height))
-            context.restoreGState()
+            Self.drawUpright(image, in: CGRect(x: 0, y: 0, width: geometry.width, height: geometry.height), context: context)
         case .pdf(let ref, let sourcePageIndex):
-            guard case .pdf(let source, _)? = await decodedAsset(ref),
-                  let page = source.page(at: sourcePageIndex),
-                  let extent = PDFSource.displayExtent(of: page)
-            else { return false }
+            guard case let (page, extent)? = await pdfPage(ref, index: sourcePageIndex) else { return false }
             context.saveGState()
             context.concatenate(CGAffineTransform(scaleX: geometry.width, y: geometry.height))
             PDFSource.draw(page, extent: extent, in: context)
@@ -269,12 +219,19 @@ package actor Renderer {
             else { return nil }
             return Double(height) / Double(width)
         case .pdf(let ref, let sourcePageIndex):
-            guard case .pdf(let source, _)? = await decodedAsset(ref),
-                  let page = source.page(at: sourcePageIndex),
-                  let extent = PDFSource.displayExtent(of: page), extent.width > 0
-            else { return nil }
+            guard case let (_, extent)? = await pdfPage(ref, index: sourcePageIndex), extent.width > 0 else { return nil }
             return extent.height / extent.width
         }
+    }
+
+    /// One page of a PDF asset and its displayed extent, or nil when the
+    /// asset did not decode or has no such page.
+    private func pdfPage(_ ref: AssetRef, index: Int) async -> (CGPDFPage, SourceExtent)? {
+        guard case .pdf(let source, _)? = await decodedAsset(ref),
+              let page = source.page(at: index),
+              let extent = PDFSource.displayExtent(of: page)
+        else { return nil }
+        return (page, extent)
     }
 
     /// A page's composite and its ink as one image at asset resolution: the
@@ -289,23 +246,18 @@ package actor Renderer {
     package func flattened(geometry: PageGeometry, paper: Paper, layers: [Layer], ink: PKDrawing, as type: CFString) async -> Data? {
         let scale = Self.cappedScale(for: geometry, requested: .greatestFiniteMagnitude)
         let width = Int((geometry.width * scale).rounded(.up)), height = Int((geometry.height * scale).rounded(.up))
-        guard let composite = await compose(geometry: geometry, paper: paper, layers: layers, scale: scale, width: width, height: height, whole: true) else { return nil }
-        let pageRect = CGRect(x: 0, y: 0, width: geometry.width, height: geometry.height)
-        // PencilKit rasterizes the ink itself, off this actor and off the
-        // main one: a flatten is an intention, never a frame.
-        let inkImage = await Task.detached(priority: .userInitiated) { () -> CGImage? in
-            ink.image(from: pageRect, scale: scale).cgImage
-        }.value
-        guard let image = Self.overlay(inkImage, on: composite) else { return nil }
+        guard let image = await flatten(geometry: geometry, paper: paper, layers: layers, ink: ink, scale: scale, width: width, height: height, whole: true) else { return nil }
         return Self.encode(image, as: type)
     }
 
+    private static let heicQuality = 0.9
+
     /// The quality key is set for every type and read only by the lossy
-    /// ones: PNG ignores it, HEIC uses it.
-    private static func encode(_ image: CGImage, as type: CFString) -> Data? {
+    /// ones: PNG ignores it, HEIC uses it. Also ImageImport's encoder.
+    static func encode(_ image: CGImage, as type: CFString) -> Data? {
         let output = NSMutableData()
         guard let destination = CGImageDestinationCreateWithData(output, type, 1, nil) else { return nil }
-        CGImageDestinationAddImage(destination, image, [kCGImageDestinationLossyCompressionQuality: 0.9] as CFDictionary)
+        CGImageDestinationAddImage(destination, image, [kCGImageDestinationLossyCompressionQuality: heicQuality] as CFDictionary)
         guard CGImageDestinationFinalize(destination) else { return nil }
         return output as Data
     }
@@ -353,9 +305,9 @@ package actor Renderer {
             // transparent image, and a PDF context records that draw as an
             // Image XObject: pixels on a page that has none, which is what
             // "paper, text, and an imported PDF page are vector" promises
-            // against. A bitmap does not care — a transparent overlay
-            // changes no pixel — so `compose` and `thumbnail` are left as
-            // they are.
+            // against. A bitmap does not care — a transparent raster
+            // changes no pixel — so `flatten` draws it whatever the page
+            // holds.
             let inkImage = source.ink.strokes.isEmpty ? nil : await Self.rasterize(source.ink, in: box, scale: scale)
             if Task.isCancelled { return nil }
             context.beginPage(mediaBox: &box)
@@ -380,10 +332,7 @@ package actor Renderer {
             guard case .image(let cgImage, _)? = await decodedAsset(image.asset) else { return false }
             context.saveGState()
             context.concatenate(affine)
-            // CGImage draws y-up; flip inside the unit square.
-            context.translateBy(x: 0, y: 1)
-            context.scaleBy(x: 1, y: -1)
-            context.draw(cgImage, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+            Self.drawUpright(cgImage, in: CGRect(x: 0, y: 0, width: 1, height: 1), context: context)
             context.restoreGState()
         case .pdf(let pdf):
             guard case .pdf(let source, _)? = await decodedAsset(pdf.asset), let page = source.page(at: pdf.sourcePageIndex) else { return false }
@@ -467,48 +416,5 @@ package actor Renderer {
             guard let source = PDFSource(data: data) else { return nil }
             return .pdf(source, bytes: data.count)
         }
-    }
-}
-
-/// Import-time normalization: any image becomes an upright HEIC with its
-/// pixel size known; a PDF is kept as received and its pages measured.
-package enum ImageImport {
-    package struct Normalized: Sendable {
-        package let heic: Data
-        package let size: PixelSize
-    }
-
-    package static func normalize(_ data: Data) -> Normalized? {
-        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
-              let image = CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCache: false] as CFDictionary)
-        else { return nil }
-        // Orientation: bake it in so the stored pixels are upright.
-        let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
-        let orientation = (properties?[kCGImagePropertyOrientation] as? UInt32).flatMap(CGImagePropertyOrientation.init(rawValue:)) ?? .up
-        let upright = Self.upright(image, orientation: orientation) ?? image
-        let output = NSMutableData()
-        guard let destination = CGImageDestinationCreateWithData(output, "public.heic" as CFString, 1, nil) else { return nil }
-        CGImageDestinationAddImage(destination, upright, [kCGImageDestinationLossyCompressionQuality: 0.9] as CFDictionary)
-        guard CGImageDestinationFinalize(destination) else { return nil }
-        return Normalized(heic: output as Data, size: PixelSize(width: upright.width, height: upright.height))
-    }
-
-    private static func upright(_ image: CGImage, orientation: CGImagePropertyOrientation) -> CGImage? {
-        guard orientation != .up else { return image }
-        let rotated = [CGImagePropertyOrientation.left, .right, .leftMirrored, .rightMirrored].contains(orientation)
-        let width = rotated ? image.height : image.width, height = rotated ? image.width : image.height
-        guard let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
-                                      space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
-        else { return nil }
-        context.translateBy(x: CGFloat(width) / 2, y: CGFloat(height) / 2)
-        switch orientation {
-        case .down, .downMirrored: context.rotate(by: .pi)
-        case .left, .leftMirrored: context.rotate(by: .pi / 2)
-        case .right, .rightMirrored: context.rotate(by: -.pi / 2)
-        default: break
-        }
-        if [.upMirrored, .downMirrored, .leftMirrored, .rightMirrored].contains(orientation) { context.scaleBy(x: -1, y: 1) }
-        context.draw(image, in: CGRect(x: -CGFloat(image.width) / 2, y: -CGFloat(image.height) / 2, width: CGFloat(image.width), height: CGFloat(image.height)))
-        return context.makeImage()
     }
 }
