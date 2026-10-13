@@ -762,3 +762,12 @@ Not gaps — properties of the tooling that read as project defects when hit.
   on a PDF page, Insert > Change this page's paper shows every choice
   dimmed with the reason; on a blank page, Lined applies; in a one-page
   notebook, Insert's Delete page is dimmed.
+- **A pinch with an object selected (U47, I3 line 16).** The canvas no
+  longer guards a zero zoom or a selection frame with zero extents: the
+  zoom floor is the page's fit, above zero, and a validated layer's extents
+  are above zero, so neither can arise. The hosted suites establish the
+  zoom, select, scale and rotate under the new code, but no simulator test
+  pinches, so a real pinch's rubber band below the floor is reviewed by
+  diff only. Owed: select an image with the lasso and pinch-zoom the page
+  in and out past both ends; nothing traps, and the frame and the page's
+  edge stay drawn.
