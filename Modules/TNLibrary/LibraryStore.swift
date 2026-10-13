@@ -769,7 +769,7 @@ package actor LibraryStore {
     /// and one exchange swaps it in for the original (*An older notebook is
     /// migrated on open*). A current package, and one whose index does not
     /// read, are left to the open; a newer one is refused. Only
-    /// `Library.checkout` calls it, inside its reservation.
+    /// `Library.checkout` calls it, inside the opening entry's task.
     package func upgradePackage(at relativePath: String) async throws(LibraryError) {
         let live = url(of: relativePath)
         let steps = try migrationSteps(forPackageAt: live)

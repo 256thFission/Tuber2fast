@@ -18,17 +18,24 @@ package enum CheckoutOutcome: Sendable {
 /// The library on the main actor: the checkout ledger, the identity index,
 /// and every mutation gated by the ledger. All I/O is `LibraryStore`'s.
 ///
-/// One `Notebook` per package. The ledger reserves synchronously before the
-/// asynchronous open, so two taps arriving before the first open completes
-/// resolve to `.alreadyOpen` rather than a second writer. A re-entrant
-/// checkout of a path this turn already holds is the programmer error.
+/// One `Notebook` per package. A checkout claims its entry before its first
+/// await, so a second tap during the open waits on that open's task and
+/// reports what it reported rather than making a second writer
+/// (`Docs/Contract.md`, Library).
 @MainActor @Observable
 package final class Library {
+    private enum Checkout {
+        case opening(Task<CheckoutOutcome, Never>)
+        case open(notebook: Notebook)
+    }
+
     @ObservationIgnored package let store: LibraryStore
-    @ObservationIgnored private var openNotebooks: [String: Notebook] = [:]
-    @ObservationIgnored private var reservations: Set<String> = []
+    @ObservationIgnored private var checkouts: [String: Checkout] = [:]
+    /// The paths a rename, a move, a trash or a duplicate is in flight on,
+    /// once per mutation, and the checkouts waiting for one to end.
+    @ObservationIgnored private var mutating: [String] = []
+    @ObservationIgnored private var waitingForMutation: [CheckedContinuation<Void, Never>] = []
     package private(set) var identities = IdentityIndex()
-    package private(set) var openCount = 0
 
     /// Cache: covers by path and package modification time. Owner: this
     /// object. Bound: `coverCacheBound` bytes, evicting oldest first.
@@ -47,87 +54,93 @@ package final class Library {
 
     // MARK: The ledger
 
-    package func isCheckedOut(_ relativePath: String) -> Bool {
-        openNotebooks[relativePath] != nil || reservations.contains(relativePath)
-    }
+    /// Open or still opening.
+    package func isCheckedOut(_ relativePath: String) -> Bool { checkouts[relativePath] != nil }
 
     /// True when the path is checked out or is a folder holding one.
     package func isLocked(_ relativePath: String) -> Bool { openPath(under: relativePath) != nil }
 
     /// The path checked out at `relativePath` or below it, or nil. A
-    /// reservation counts: the checkout is promised before the notebook is.
+    /// checkout still opening counts: the path is held from the tap on.
     private func openPath(under relativePath: String) -> String? {
         if isCheckedOut(relativePath) { return relativePath }
         guard !relativePath.isEmpty else { return nil }
         let prefix = relativePath + "/"
-        return openNotebooks.keys.first { $0.hasPrefix(prefix) }
-            ?? reservations.first { $0.hasPrefix(prefix) }
+        return checkouts.keys.first { $0.hasPrefix(prefix) }
     }
 
-    package func openNotebook(at relativePath: String) -> Notebook? { openNotebooks[relativePath] }
+    private func notebook(at relativePath: String) -> Notebook? {
+        if case .open(let notebook) = checkouts[relativePath] { notebook } else { nil }
+    }
 
     package func checkout(_ relativePath: String, schedule: SaveSchedule = SaveSchedule()) async -> CheckoutOutcome {
-        if let open = openNotebooks[relativePath] { return .alreadyOpen(open.notebookID) }
-        if reservations.contains(relativePath) {
-            // A reservation with no notebook yet: the first open is in flight.
-            while reservations.contains(relativePath), openNotebooks[relativePath] == nil {
-                try? await Task.sleep(for: .milliseconds(10))
-            }
-            if let open = openNotebooks[relativePath] { return .alreadyOpen(open.notebookID) }
-            return .failed(.itemNotFound(relativePath))
+        while mutating.contains(where: { relativePath == $0 || relativePath.hasPrefix($0 + "/") }) {
+            await withCheckedContinuation { waitingForMutation.append($0) }
         }
+        switch checkouts[relativePath] {
+        case .open(let notebook):
+            return .alreadyOpen(notebook.notebookID)
+        case .opening(let first):
+            let outcome = await first.value
+            if case .opened(let notebook) = outcome { return .alreadyOpen(notebook.notebookID) }
+            return outcome
+        case nil:
+            let opening = Task { await openPackage(at: relativePath, schedule: schedule) }
+            checkouts[relativePath] = .opening(opening)
+            return await opening.value
+        }
+    }
+
+    /// The opening entry's task. The collision refusal writes nothing, so it
+    /// comes before the ladder, which writes. The entry settles as the task
+    /// ends, in the same turn as the identity check against the open ones.
+    private func openPackage(at relativePath: String, schedule: SaveSchedule) async -> CheckoutOutcome {
+        var opened: Notebook?
+        defer { checkouts[relativePath] = opened.map { .open(notebook: $0) } }
         if identities.collisions[relativePath] != nil { return .failed(.identityCollision(relativePath)) }
-        reservations.insert(relativePath)
-        defer { reservations.remove(relativePath) }
-        // Inside the reservation, so no rename, move, trash or duplicate meets
-        // the package while it is swapped.
         do { try await store.upgradePackage(at: relativePath) } catch { return .failed(error) }
         let packageStore = PackageStore(root: store.url(of: relativePath), fileSystem: store.fileSystem)
-        do {
-            let notebook = try await Notebook.open(store: packageStore, schedule: schedule)
-            // Tabs are keyed by identity. The index may predate this package,
-            // so the ledger is asked too; the refused notebook was only read.
-            if openNotebooks.values.contains(where: { $0.notebookID == notebook.notebookID }) {
-                return .failed(.identityCollision(relativePath))
-            }
-            openNotebooks[relativePath] = notebook
-            openCount = openNotebooks.count
-            return .opened(notebook)
-        } catch {
-            return .failed(.format(error))
+        let notebook: Notebook
+        do { notebook = try await Notebook.open(store: packageStore, schedule: schedule) } catch { return .failed(.format(error)) }
+        // Tabs are keyed by identity. The index may predate this package,
+        // so the ledger is asked too; the refused notebook was only read.
+        if checkouts.keys.contains(where: { self.notebook(at: $0)?.notebookID == notebook.notebookID }) {
+            return .failed(.identityCollision(relativePath))
         }
+        opened = notebook
+        return .opened(notebook)
     }
 
     /// The checkout of a closed notebook ends. The close was decided by the
     /// editor's `close`, whose outcome the caller acted on; a notebook still
     /// open here would be dropped with its unsaved pages.
     package func release(_ relativePath: String) {
-        guard let notebook = openNotebooks[relativePath] else { return }
+        guard let notebook = notebook(at: relativePath) else { return }
         TNPrecondition.require(notebook.isClosed, "\(relativePath) was released while still open")
-        openNotebooks[relativePath] = nil
-        openCount = openNotebooks.count
+        checkouts[relativePath] = nil
     }
 
     /// The notebook's saves stop, then its checkout ends; the unsaved pages
     /// are abandoned on purpose.
     package func discard(_ relativePath: String) async {
-        guard let notebook = openNotebooks[relativePath] else { return }
+        guard let notebook = notebook(at: relativePath) else { return }
         await notebook.discard()
-        openNotebooks[relativePath] = nil
-        openCount = openNotebooks.count
+        checkouts[relativePath] = nil
     }
 
     /// Sweeps every open package through its notebook's own store, keeping
     /// what that notebook can still restore: the one production caller of
-    /// `compact()` (`Docs/Contract.md`, Lifecycle). The keep-set is read as
-    /// each sweep begins, because the person can be editing again between
-    /// one package and the next. A sweep that throws is logged and left for
-    /// the next one; nothing the person asked for failed.
+    /// `compact()` (`Docs/Contract.md`, Lifecycle). One still opening is
+    /// passed over, with no notebook yet to say what it can restore. The
+    /// keep-set is read as each sweep begins, because the person can be
+    /// editing again between one package and the next. A sweep that throws
+    /// is logged and left for the next one; nothing the person asked for
+    /// failed.
     @discardableResult
     package func compactOpenPackages() async -> [NotebookID: CompactReport] {
         var reports: [NotebookID: CompactReport] = [:]
-        for path in Array(openNotebooks.keys) {
-            guard let notebook = openNotebooks[path] else { continue }
+        for path in Array(checkouts.keys) {
+            guard let notebook = notebook(at: path) else { continue }
             do throws(FormatFault) {
                 let report = try await notebook.store.compact(now: Date(), keeping: notebook.assetsInUse)
                 TNLog.event(.library, "compact \(notebook.notebookID) removed \(report.removed.count) kept \(report.kept)")
@@ -161,23 +174,45 @@ package final class Library {
         }
     }
 
-    package func rename(at relativePath: String, to newName: String) async throws(LibraryError) -> LibraryItem {
+    /// A mutation holds its path from before its first await until the store
+    /// returns, so a checkout of it, or of anything under it, waits rather
+    /// than opening a package the mutation is about to move.
+    private func beginMutation(at relativePath: String) throws(LibraryError) {
         try requireUnlocked(relativePath)
+        mutating.append(relativePath)
+    }
+
+    private func endMutation(at relativePath: String) {
+        guard let held = mutating.firstIndex(of: relativePath) else {
+            TNPrecondition.fail("\(relativePath) ended a mutation it never began")
+        }
+        mutating.remove(at: held)
+        let waiting = waitingForMutation
+        waitingForMutation = []
+        for checkout in waiting { checkout.resume() }
+    }
+
+    package func rename(at relativePath: String, to newName: String) async throws(LibraryError) -> LibraryItem {
+        try beginMutation(at: relativePath)
+        defer { endMutation(at: relativePath) }
         return try await store.rename(at: relativePath, to: newName)
     }
 
     package func move(at relativePath: String, toFolder folder: String) async throws(LibraryError) -> LibraryItem {
-        try requireUnlocked(relativePath)
+        try beginMutation(at: relativePath)
+        defer { endMutation(at: relativePath) }
         return try await store.move(at: relativePath, toFolder: folder)
     }
 
     package func trash(at relativePath: String) async throws(LibraryError) -> TrashEntry {
-        try requireUnlocked(relativePath)
+        try beginMutation(at: relativePath)
+        defer { endMutation(at: relativePath) }
         return try await store.trash(at: relativePath)
     }
 
     package func duplicateNotebook(at relativePath: String) async throws(LibraryError) -> LibraryItem {
-        try requireUnlocked(relativePath)
+        try beginMutation(at: relativePath)
+        defer { endMutation(at: relativePath) }
         return try await store.duplicateNotebook(at: relativePath)
     }
 
@@ -193,7 +228,7 @@ package final class Library {
     /// and there is one per package, so a cover cannot open one.
     package func cover(of item: LibraryItem) async -> CGImage? {
         guard item.kind == .notebook else { return nil }
-        if let notebook = openNotebooks[item.relativePath] {
+        if let notebook = notebook(at: item.relativePath) {
             guard let first = notebook.pageIDs.first else { return nil }
             return await notebook.thumbnail(of: first)
         }

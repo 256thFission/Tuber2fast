@@ -121,21 +121,73 @@ struct LibraryTests {
         ])
     }
 
-    @Test("Checkout is exclusive: a second checkout says alreadyOpen, mutations refuse, release lifts both")
+    @Test("Checkout is exclusive: a second checkout, during the open or after it, says alreadyOpen, mutations refuse, release lifts both")
     func ledger() async throws {
         let (scratch, library) = try makeLibrary("lib-ledger")
         defer { withExtendedLifetime(scratch) {} }
         let item = try await library.store.createNotebook(named: "Notes", in: "")
-        guard case .opened(let notebook) = await library.checkout(item.relativePath) else { Issue.record("open failed"); return }
+        let first = Task { await library.checkout(item.relativePath) }
+        await Task.yield()
+        try #require(library.isCheckedOut(item.relativePath), "the first open is in flight")
+        guard case .alreadyOpen(let waited) = await library.checkout(item.relativePath),
+              case .opened(let notebook) = await first.value else {
+            Issue.record("the first checkout must open and the second wait for it"); return
+        }
+        #expect(waited == notebook.notebookID)
         guard case .alreadyOpen(let id) = await library.checkout(item.relativePath) else { Issue.record("second checkout opened"); return }
         #expect(id == notebook.notebookID)
         await #expect(throws: LibraryError.notebookIsOpen(name: "Notes")) { try await library.rename(at: item.relativePath, to: "Other") }
         await #expect(throws: LibraryError.notebookIsOpen(name: "Notes")) { try await library.trash(at: item.relativePath) }
-        #expect(library.openCount == 1)
+        #expect(library.isCheckedOut(item.relativePath))
         #expect(await notebook.close() == .clean)
         library.release(item.relativePath)
-        #expect(library.openCount == 0)
+        #expect(!library.isCheckedOut(item.relativePath))
         _ = try await library.rename(at: item.relativePath, to: "Other")
+    }
+
+    @Test("Two checkouts of an unreadable package both report its format fault")
+    func concurrentCheckoutsReportTheRealFault() async throws {
+        let (scratch, library) = try makeLibrary("lib-concurrent-fault")
+        defer { withExtendedLifetime(scratch) {} }
+        let item = try await library.store.createNotebook(named: "Broken", in: "")
+        try Data("{".utf8).write(to: PackageLayout(root: library.store.url(of: item.relativePath)).indexURL)
+
+        let first = Task { await library.checkout(item.relativePath) }
+        await Task.yield()
+        try #require(library.isCheckedOut(item.relativePath), "the first open is in flight")
+        let second = await library.checkout(item.relativePath)
+        guard case .failed(let fault) = await first.value, case .failed(let waited) = second else {
+            Issue.record("an unreadable package must not open"); return
+        }
+        guard case .format = fault else { Issue.record("the open must refuse by the format, got \(fault)"); return }
+        #expect(waited == fault)
+        #expect(!library.isCheckedOut(item.relativePath))
+    }
+
+    @Test("A checkout racing a trash of its path never opens a package the trash moved away")
+    func checkoutWaitsForAnInFlightTrash() async throws {
+        let (scratch, library) = try makeLibrary("lib-trash-race")
+        defer { withExtendedLifetime(scratch) {} }
+        for round in 0..<50 {
+            let path = try await library.store.createNotebook(named: "Notes", in: "").relativePath
+            let trash = Task { try await library.trash(at: path) }
+            async let outcome = library.checkout(path)
+            let trashed = await trash.result
+            let exists = FileManager.default.fileExists(atPath: library.store.url(of: path).path)
+            switch await outcome {
+            case .opened(let notebook):
+                #expect(exists, "round \(round): an open notebook's package is where it was opened")
+                #expect(throws: LibraryError.notebookIsOpen(name: "Notes")) { try trashed.get() }
+                #expect(await notebook.close() == .clean)
+                library.release(path)
+                _ = try await library.trash(at: path)
+            case .failed(.format(.noPackage)):
+                #expect(!exists, "round \(round)")
+                #expect(throws: Never.self) { try trashed.get() }
+            case let other:
+                Issue.record("round \(round): \(other)")
+            }
+        }
     }
 
     @Test("A discard after a failing save stops the save engine before the checkout ends, and nothing more is written")
@@ -670,7 +722,7 @@ struct LibraryTests {
             Issue.record("a second checkout under one identity must refuse")
             return
         }
-        #expect(library.openCount == 1)
+        #expect(library.isCheckedOut("Two.tubernotes") && !library.isCheckedOut("One.tubernotes"))
         #expect(await two.close() == .clean)
         library.release("Two.tubernotes")
 
