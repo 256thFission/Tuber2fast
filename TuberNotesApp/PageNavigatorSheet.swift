@@ -171,7 +171,7 @@ struct PageNavigatorSheet: View {
                 if page.bookmark != nil {
                     Image(systemName: "bookmark.fill")
                         .font(Macaron.body(13))
-                        .foregroundStyle(theme.outline(of: theme.secondary).color)
+                        .foregroundStyle(theme.outlineOnPaper(of: theme.secondary).color)
                         .padding(5)
                         .accessibilityLabel("Marked")
                 }

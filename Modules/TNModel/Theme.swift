@@ -120,6 +120,18 @@ package struct Theme: Equatable, Sendable {
         Self.mix(fill, toward: mixTarget(of: fill), isPale(fill) ? outlineMixPale : outlineMixSaturated)
     }
 
+    /// A fill's outline where it is drawn over the paper rather than over
+    /// the chrome: the lasso's frame, a bookmark on a page.
+    ///
+    /// By day that is `outline(of:)`. After dark the ordinary outline comes
+    /// up toward white, and the paper is still white, so it would vanish on
+    /// the very page it marks. Over the paper the dark end is the ground, at
+    /// the same percentage. Where the paper escape fires the two agree.
+    package func outlineOnPaper(of fill: RGBA8) -> RGBA8 {
+        guard invertsMix else { return outline(of: fill) }
+        return Self.mix(fill, toward: ground, isPale(fill) ? outlineMixPale : outlineMixSaturated)
+    }
+
     /// The paper escape. A fill the ink cannot be told apart from mixes
     /// toward the paper at the same percentage.
     ///

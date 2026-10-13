@@ -230,10 +230,11 @@ final class LayerSelectionView: UIView {
     /// the frame belongs to the theme and never borrows the ink it sits over.
     /// Locked, the box drops to the accent's own outline tint: the document
     /// names no locked treatment, and that is the dimmer end of the one
-    /// colour the lasso is allowed.
+    /// colour the lasso is allowed. The frame sits on the paper, so the tint
+    /// is the outline over the paper, which after dark is not the chrome's.
     private func applyTheme() {
         let accent = theme.accent.uiColor
-        let tint = theme.outline(of: theme.accent).uiColor
+        let tint = theme.outlineOnPaper(of: theme.accent).uiColor
         box.fillColor = accent.withAlphaComponent(Self.fillAlpha).cgColor
         box.strokeColor = (isLocked ? tint : accent).cgColor
         for handle in handles.values {

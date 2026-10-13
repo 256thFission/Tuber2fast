@@ -191,6 +191,37 @@ struct ThemeTests {
         }
     }
 
+    @Test("What the frame and the bookmark draw over the paper reads on it, by day and after dark")
+    func outlineOnPaperReadsOnPaper() {
+        // Changing a light preset's hex is a taste call, not this test's, so
+        // a pair that misses is named here with its reason. One that comes
+        // to read is struck from the list.
+        let exempt: [String: String] = [
+            "meadow secondary": "the sky's outline lands at 2.92 on white; a deeper sky is a palette call",
+        ]
+        for preset in Theme.presets {
+            let subject = preset.theme
+            for (role, fill) in [("accent", subject.accent), ("secondary", subject.secondary)] {
+                let outline = subject.outlineOnPaper(of: fill)
+                let ratio = Theme.contrast(outline, subject.paper)
+                let key = "\(preset.id.rawValue) \(role)"
+                if exempt[key] != nil {
+                    #expect(ratio < 3, "\(key) reads at \(ratio) now; strike its exemption")
+                } else {
+                    #expect(ratio >= 3, "\(preset.name)'s \(role) outline is \(ratio) on the paper")
+                }
+                if !subject.invertsMix {
+                    #expect(outline == subject.outline(of: fill), "by day the paper takes the ordinary outline")
+                }
+            }
+        }
+        let dark = Theme.macaronDark
+        #expect(dark.outlineOnPaper(of: dark.accent).hex == "#A44B5DFF")
+        #expect(dark.outlineOnPaper(of: dark.secondary).hex == "#88632FFF")
+        // Where the escape already runs to the ground, the two agree.
+        #expect(dark.outlineOnPaper(of: dark.paper) == dark.outline(of: dark.paper))
+    }
+
     private func preset(_ id: String) throws -> Theme {
         try #require(Theme.preset(ThemeID(rawValue: id))).theme
     }
