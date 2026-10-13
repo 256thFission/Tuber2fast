@@ -259,6 +259,12 @@ package struct EditHistory: Sendable {
     /// because a record clears it and nothing else grows it.
     package var byteEstimate: Int { undoStack.reduce(0) { $0 + $1.byteEstimate } }
 
+    /// Every asset a layer names in either revision of an entry on either
+    /// stack: what an undo or a redo can bring back.
+    package var assets: Set<AssetRef> {
+        Set((undoStack + redoStack).flatMap { $0.before.layers + $0.after.layers }.compactMap(\.payload.asset))
+    }
+
     /// A new edit clears redo, and evicts the oldest entries past either
     /// bound. The entry just recorded is never the one evicted: an edit
     /// larger than the whole bound is still undoable once.

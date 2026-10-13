@@ -117,6 +117,28 @@ package final class Library {
         openCount = openNotebooks.count
     }
 
+    /// Sweeps every open package through its notebook's own store, keeping
+    /// what that notebook can still restore: the one production caller of
+    /// `compact()` (`Docs/Contract.md`, Lifecycle). The keep-set is read as
+    /// each sweep begins, because the person can be editing again between
+    /// one package and the next. A sweep that throws is logged and left for
+    /// the next one; nothing the person asked for failed.
+    @discardableResult
+    package func compactOpenPackages() async -> [NotebookID: CompactReport] {
+        var reports: [NotebookID: CompactReport] = [:]
+        for path in Array(openNotebooks.keys) {
+            guard let notebook = openNotebooks[path] else { continue }
+            do {
+                let report = try await notebook.store.compact(now: Date(), keeping: notebook.assetsInUse)
+                TNLog.event(.library, "compact \(notebook.notebookID) removed \(report.removed.count) kept \(report.kept)")
+                reports[notebook.notebookID] = report
+            } catch {
+                TNLog.event(.library, "compact \(notebook.notebookID) refused: \(error)")
+            }
+        }
+        return reports
+    }
+
     // MARK: The identity index
 
     package func refreshIdentities() async throws(LibraryError) {

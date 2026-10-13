@@ -460,13 +460,14 @@ package actor PackageStore {
 
     /// The one deletion authority. Reads every page and layer file, deletes
     /// what no committed page reaches, and only if it is older than a day.
-    package func compact(now: Date = Date()) throws(FormatFault) -> CompactReport {
+    /// `keeping` is the assets an open notebook can still restore, which no
+    /// file on disk may name (`Docs/Contract.md`, One save).
+    package func compact(now: Date = Date(), keeping: Set<AssetRef> = []) throws(FormatFault) -> CompactReport {
         var report = CompactReport()
         let index = try load().index
-        let indexPages = Set(index.pageIDs)
 
         var reachableLayers = Set<LayerID>()
-        var reachableAssets = Set<String>()
+        var reachableAssets = Set(keeping.map(\.fileName))
         for page in index.pageIDs {
             guard let data = try? fs.read(layout.pageURL(page)),
                   let file = try? Codecs.decodeStrict(PageFile.self, from: data, expectedKeys: DurableKeys.pageFile)
@@ -498,7 +499,9 @@ package actor PackageStore {
 
         func consider(_ url: URL, keep: Bool) {
             if keep { return }
-            if let mtime = try? fs.modificationTime(url), now.timeIntervalSince(mtime) < Self.compactMinimumAge {
+            // An age that cannot be read is not an old one: the one deletion
+            // authority does not fail open.
+            guard let mtime = try? fs.modificationTime(url), now.timeIntervalSince(mtime) >= Self.compactMinimumAge else {
                 report.kept += 1
                 return
             }
@@ -510,21 +513,23 @@ package actor PackageStore {
             }
         }
 
+        // The names the layout writes, so a live file is matched by the same
+        // spelling that made it and never parsed back.
+        let livePages = Set(index.pageIDs.map { layout.pageURL($0).lastPathComponent })
+        let liveInk = Set(index.pageIDs.map { layout.inkURL($0).lastPathComponent })
+        let liveLayers = Set(reachableLayers.map { layout.layerURL($0).lastPathComponent })
         for directory in layout.directories {
             for name in (try? fs.list(directory)) ?? [] {
                 let url = directory.appendingPathComponent(name)
                 if name.hasPrefix(Self.tempPrefix) { consider(url, keep: false); continue }
                 switch directory {
                 case layout.pagesDirectory:
-                    let id: PageID? = PackageLayout.identity(fromFileName: name, extension: "json")
-                    consider(url, keep: id.map(indexPages.contains) ?? false)
+                    consider(url, keep: livePages.contains(name))
                 case layout.inkDirectory:
-                    let id: PageID? = PackageLayout.identity(fromFileName: name, extension: "tnink")
-                    consider(url, keep: id.map(indexPages.contains) ?? false)
+                    consider(url, keep: liveInk.contains(name))
                 case layout.layersDirectory:
                     if report.layerReclamationSuspended { continue }
-                    let id: LayerID? = PackageLayout.identity(fromFileName: name, extension: "json")
-                    consider(url, keep: id.map(reachableLayers.contains) ?? false)
+                    consider(url, keep: liveLayers.contains(name))
                 case layout.assetsDirectory:
                     if report.assetReclamationSuspended { continue }
                     consider(url, keep: reachableAssets.contains(name))
@@ -533,7 +538,6 @@ package actor PackageStore {
                 }
             }
         }
-        TNLog.event(.format, "compact removed \(report.removed.count), kept \(report.kept)")
         return report
     }
 }

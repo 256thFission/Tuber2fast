@@ -327,9 +327,12 @@ final class Workspace {
     }
 
     /// The lease outlives the write. Every open notebook runs one forced pass,
-    /// active tab first, and the lease ends when no write is outstanding. An
-    /// expired lease is only logged: the format is resumable, so the next open
-    /// recovers whatever the pass did not finish.
+    /// active tab first, then every open package is compacted, and the lease
+    /// ends when no write is outstanding. An expired lease is only logged: the
+    /// format is resumable, so the next open recovers whatever the pass did
+    /// not finish, and the next sweep takes what this one left. The sweep is
+    /// last because a save that does not land loses work, and a sweep that
+    /// does not run only costs disk.
     private func flushUnderLease() async {
         let editors = orderedEditors
         guard !editors.isEmpty else { return }
@@ -343,6 +346,7 @@ final class Workspace {
         for editor in editors {
             await editor.flush()
         }
+        await library.compactOpenPackages()
         lease.end()
     }
 

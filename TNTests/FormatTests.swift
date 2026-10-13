@@ -756,6 +756,32 @@ struct CompactTests {
         #expect(!PosixFileSystem().exists(stale))
     }
 
+    @Test("An asset named only in the keep-set stays; an orphan beside it goes")
+    func compactKeepsANamedAsset() async throws {
+        let scratch = try Scratch("compact-keeping")
+        let store = try await PackageStore.create(root: scratch.packageURL, index: Fixture.index(pages: 1))
+        let held = AssetRef(id: AssetID(), format: .heic)
+        let orphan = AssetRef(id: AssetID(), format: .heic)
+        try await store.writeAsset(Fixture.archive(1, count: 64), held)
+        try await store.writeAsset(Fixture.archive(2, count: 64), orphan)
+        let report = try await store.compact(now: .now + 2 * 86_400, keeping: [held])
+        #expect(PosixFileSystem().exists(store.layout.assetURL(held)))
+        #expect(report.removed == [orphan.fileName])
+    }
+
+    @Test("Live page, ink and layer files are kept by the names the layout writes, however old")
+    func compactKeepsLiveFilesByForwardSpelling() async throws {
+        let scratch = try Scratch("compact-live")
+        let (store, index, layer) = try await Fixture.populated(at: scratch.packageURL)
+        let layout = store.layout
+        let report = try await store.compact(now: .now + 2 * 86_400)
+        #expect(report.removed.isEmpty)
+        let live = index.pageIDs.map(layout.pageURL) + index.pageIDs.prefix(2).map(layout.inkURL) + [layout.layerURL(layer.id)]
+        for url in live {
+            #expect(PosixFileSystem().exists(url), "\(url.lastPathComponent)")
+        }
+    }
+
     @Test("A layer this build cannot open suspends asset reclamation for the whole notebook")
     func unknownKindSuspends() async throws {
         let scratch = try Scratch("suspend")

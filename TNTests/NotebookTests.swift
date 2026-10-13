@@ -19,6 +19,7 @@ class ForwardingStore: PackageStoring, @unchecked Sendable {
     func readAsset(_ ref: AssetRef) async throws(FormatFault) -> Data { try await base.readAsset(ref) }
     func readView() async -> ViewState? { await base.readView() }
     func writeView(_ view: ViewState) async throws(FormatFault) { try await base.writeView(view) }
+    func compact(now: Date, keeping: Set<AssetRef>) async throws(FormatFault) -> CompactReport { try await base.compact(now: now, keeping: keeping) }
 }
 
 /// A real store whose `save` waits until released.
@@ -1994,6 +1995,55 @@ struct NotebookTests {
         await notebook.flush()
         let after = try await PackageStore(root: scratch.packageURL).loadPage(page)
         #expect(after.file.layers.isEmpty && after.file.inkIndex == 0)
+    }
+
+    @Test("An undo of a deleted image after a compact brings back its asset too, and the page saves")
+    func undoOfADeletedImageAfterCompactSaves() async throws {
+        let scratch = try Scratch("nb-compact-undo")
+        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        let page = notebook.pageIDs[0]
+        notebook.windowChanged(to: [page])
+        try await waitUntil { notebook.state(of: page)?.content != nil }
+        let layer = Fixture.imageLayer()
+        let layout = PackageLayout(root: scratch.packageURL)
+        try await notebook.addLayer(layer, assetData: Fixture.archive(1, count: 128), on: page)
+        await notebook.flush()
+        #expect(notebook.deleteLayer(layer.id, on: page) == .accepted)
+        await notebook.flush()
+
+        _ = try await notebook.store.compact(now: .now + 2 * 86_400, keeping: notebook.assetsInUse)
+        #expect(!PosixFileSystem().exists(layout.layerURL(layer.id)), "the orphaned layer file went")
+        #expect(PosixFileSystem().exists(layout.assetURL(layer.payload.asset!)), "the undo stack names the asset")
+
+        #expect(notebook.undo() == page)
+        await notebook.flush()
+        #expect(notebook.lastSaveError == nil)
+        #expect(PosixFileSystem().exists(layout.layerURL(layer.id)), "the restore rewrote the layer file")
+        #expect(await notebook.close() == .clean)
+    }
+
+    @Test("A redo of an undone image insert after a compact brings back its asset too, and the page saves")
+    func redoOfAnUndoneInsertAfterCompactSaves() async throws {
+        let scratch = try Scratch("nb-compact-redo")
+        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        let page = notebook.pageIDs[0]
+        notebook.windowChanged(to: [page])
+        try await waitUntil { notebook.state(of: page)?.content != nil }
+        let layer = Fixture.imageLayer()
+        let layout = PackageLayout(root: scratch.packageURL)
+        try await notebook.addLayer(layer, assetData: Fixture.archive(1, count: 128), on: page)
+        await notebook.flush()
+        #expect(notebook.undo() == page)
+        await notebook.flush()
+
+        _ = try await notebook.store.compact(now: .now + 2 * 86_400, keeping: notebook.assetsInUse)
+        #expect(!PosixFileSystem().exists(layout.layerURL(layer.id)), "the orphaned layer file went")
+        #expect(PosixFileSystem().exists(layout.assetURL(layer.payload.asset!)), "the redo stack names the asset")
+
+        #expect(notebook.redo() == page)
+        await notebook.flush()
+        #expect(notebook.lastSaveError == nil)
+        #expect(await notebook.close() == .clean)
     }
 
     @Test("A page appended at a stated size and paper lands that record and survives a reopen")

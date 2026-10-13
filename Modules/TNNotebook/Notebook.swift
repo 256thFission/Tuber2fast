@@ -382,6 +382,17 @@ package final class Notebook {
     package var canUndo: Bool { history.canUndo }
     package var canRedo: Bool { history.canRedo }
 
+    /// Every asset this notebook can still bring back, which compact keeps
+    /// (`Docs/Contract.md`, One save): what the history names, a restore
+    /// parked for an unloaded page, a ready page's layers, and the held
+    /// index's paper.
+    package var assetsInUse: Set<AssetRef> {
+        let layers = pendingRestores.values.flatMap(\.layers) + states.values.compactMap(\.content).flatMap(\.layers)
+        return history.assets
+            .union(layers.compactMap(\.payload.asset))
+            .union(index.pages.compactMap(\.paperAsset))
+    }
+
     /// Whether any page has a text session open. The binding routes undo by
     /// it, whichever page the session is on.
     package var hasTextSession: Bool {
