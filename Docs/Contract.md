@@ -41,10 +41,10 @@ commit subject starts with `CONTRACT:`.
 A **library** is a tree of folders and **notebooks** under one root. A
 notebook is a package of ordered **pages**. A page has **paper**, a stack
 of **layers**, and **ink**. Ink is a `PKDrawing` in page coordinates. It is
-not a layer, and it is drawn above every layer. A **composite** is
-the paper and every layer rendered to one image. A **thumbnail** is a
-page's composite and ink rendered small. It is derived, never saved in the
-package.
+not a layer, and it is drawn above every layer but a text layer being
+edited. A **composite** is the paper and every layer rendered to one
+image. A **thumbnail** is a page's composite and ink rendered small. It is
+derived, never saved in the package.
 
 Identities are separate types: `NotebookID`, `PageID`, `LayerID`,
 `AssetID`, `FolderID`. Each wraps a UUID and is written as the uppercase
@@ -371,8 +371,12 @@ deepen-notebook-06, arch-canvas-06).
 is the stack, bottom to top, and the ink sits over the whole of it: an
 insert appends to the list, the canvas draws the ink live over the
 composite, and a thumbnail and an export draw every layer and then the
-ink. No file records where the ink sits, because there is one place it
-can be. `hasInk` never goes back to false.
+ink. The one exception is a text layer open for editing: the composite
+leaves it out, and the runtime draws its draft above the ink until the
+edit commits, because the draft is typed into and dragged by its border,
+and a view beneath the `PKCanvasView` receives no touch (*Rendering*). No
+file records where the ink sits, because there is one place it can be.
+`hasInk` never goes back to false.
 Once it is true, the ink file is written whenever the ink changes, an
 empty drawing included, and is deleted only with the page. A save that
 changes only layers does not rewrite the ink file. The reason no position
