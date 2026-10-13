@@ -242,7 +242,7 @@ is 3.5:1.
 | magic lasso | the loop you drew, filled **28% of the accent**, dashed accent outline, 8pt anchor dot; never borrows the ink colour |
 | bar mid-drag | **lifted peel, solid line**: keeps its outline, tips −4°, lifts 5pt, casts a real blurred shadow (0 12 18 at 42%) |
 | snap-slot ghost | **dashed** outline of the exact shell the bar will become at the target corner (56 × 366 or 424 × 56), radius 16, so an orientation change is previewed before release |
-| dirty dot | 11pt in `secondary` with a 1.5pt line in its own outline, derived by §3.2's *outline of anything* row like every other line in the chrome, so no preset gets a tint fixed by hand (U39; theme-matrix `u-dirtydot`); hung off the tab's top-right corner, no wall; overshoots to 150% on arrival, collapses to zero on save |
+| dirty dot | 11pt in `secondary` with a 1.5pt line in `secondary`'s own outline (§3.2, *outline of anything*, paper escape included), so no preset gets a tint fixed by hand (decided U5; theme-matrix `u-dirtydot`); hung off the tab's top-right corner, no wall; overshoots to 150% on arrival, collapses to zero on save |
 | seat resize | the body holds its committed frame; a dashed accent-pale target runs ahead to the requested size; the grip squashes like any held cap and travels with the dash; on release the body takes the frame in one step |
 
 ## 7. Motion
