@@ -550,17 +550,39 @@ of the current page get a `PKCanvasView`; pages within two get a decoded
 placeholder. Every page has a slot; only the near ones have a canvas, so
 the number of canvases does not grow with the notebook. When a canvas
 leaves the window it reports its final ink at once and is released. If a
-stroke is in progress, the release waits for the stroke to end. The
-notebook drops content for a page that is outside the window, has reported
-its final ink, and is clean; this happens in `prune()`, which has one
-caller, and which tells the runtime with `unload`. The runtime then forgets
-its snapshot, and the page comes back as a placeholder until the notebook
-pushes its content again. A canvas is built only from an install, never
-from a snapshot the notebook has let go, so a canvas exists only for a
-page the notebook holds ready. The reason is the first stroke on a page
-revisited by a navigator jump: built over a snapshot while the notebook
-was still reloading, the canvas sent ink the notebook could not take
-(decided I2, card 09 C1; contract-01, ink-01, durability-03).
+stroke is in progress, the release waits for the stroke to end. A page the
+runtime holds with no canvas, one only ever a placeholder in the outer
+ring after a navigator jump or a fling, reports `retired` with no ink when
+the window leaves it behind, ahead of the window report, so the prune
+that report brings sees it. The notebook drops content for a page that is
+outside the window, is clean, and either has reported `retired`, with its
+final ink or with none, or was never pushed to the runtime; this happens
+in `prune()`, which has one caller, and which tells the runtime with
+`unload`. The runtime then forgets its snapshot, and the page comes back
+as a placeholder until the notebook pushes its content again. A canvas is
+built only from an install, never from a snapshot the notebook has let go,
+so a canvas exists only for a page the notebook holds ready. The reason is
+the first stroke on a page revisited by a navigator jump: built over a
+snapshot while the notebook was still reloading, the canvas sent ink the
+notebook could not take (decided I2, card 09 C1; contract-01, ink-01,
+durability-03).
+
+**An import pushes only the pages the window shows.** A page entering the
+window is loaded if the notebook does not hold it, and pushed if it does:
+ready with its composite, rendered then if it has none, or refused with
+its faults, so a placeholder that comes back says why instead of that it
+is loading. The pages an import creates start retired, outside the window
+and without a composite, and the import pushes none of them; the window
+report that answers its structure push names the ones the runtime shows,
+and those are pushed as any page entering the window is. The rest are
+dirty, so they are saved and then pruned like any page outside the window.
+The reason is a 100-page lecture PDF, which held a full-page bitmap per
+page, about 780 MB, for the whole session: its pages were pushed and
+rendered at import, and never having had a canvas, never reported
+`retired`, so `prune()` never dropped them. This enforces the window bound
+stated above and leaves I6's bounds as they are (decided I2, I6, card 09
+section 6; round-three call: evict page images outside the window; ink-03,
+durability-03, simple-canvas-01, arch-canvas-01, deepen-canvas-01).
 
 **Every tool use ends.** A use is open from PencilKit's
 `canvasViewDidBeginUsingTool`, and one of three things ends it. Its commit
