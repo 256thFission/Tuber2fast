@@ -208,7 +208,7 @@ package struct HistoryEntry: Sendable {
 /// nothing here reads a page.
 ///
 /// The bound is a count because the cost is measured and the count holds:
-/// `TuberNotesTests/HistoryEntryCostTests` puts a stroke appended to a
+/// `TNTests/HistoryEntryCostTests` puts a stroke appended to a
 /// 20k-stroke drawing at 406 KB an entry, twenty bytes a stroke, and a
 /// transform beside a long text layer at 400 bytes. A hundred entries is
 /// tens of megabytes. Every drawing that reaches custody comes from
@@ -226,7 +226,10 @@ package struct HistoryEntry: Sendable {
 /// edit this app makes for itself is the gesture path, and the byte bound
 /// below is what that measurement bought: `HistoryEntry.byteEstimate` from
 /// the two figures, summed at record time, evicting the oldest past
-/// `maximumBytes`. That test stays the tripwire. Such an edit also needs
+/// `maximumBytes`. That test stays the tripwire, asserting both figures:
+/// it runs only in the opt-in `TuberNotesBenchmarks` scheme, so run it
+/// alone, on an idle machine, after a PencilKit or SDK update and after any
+/// change to what an entry holds. Such an edit also needs
 /// its own answer to equality,
 /// which is on stroke identity: two rebuilds of one stroke array compare
 /// unequal, so "record iff the revision differs" would record a lasso that

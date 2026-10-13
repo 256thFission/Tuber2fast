@@ -81,11 +81,11 @@ the `TuberNotesBenchmarks` scheme does. Run them alone, on an idle machine:
 
 ```bash
 xcodebuild test -project TuberNotes.xcodeproj -scheme TuberNotesBenchmarks \
-  -only-testing:TuberNotesTests/HistoryEntryCostTests \
+  -only-testing:TNTests/HistoryEntryCostTests \
   -destination "platform=iOS Simulator,name=$(< Tools/pinned-simulator)"
 ```
 
-`-only-testing` keeps the other hosted suites out of the measurement. The
+`-only-testing` keeps the other suites out of the measurement. The
 scheme cannot select the suite itself; its comment in `project.yml` says why.
 
 **CI calls no script in `Tools/`, deliberately.** What "green" means has to stay

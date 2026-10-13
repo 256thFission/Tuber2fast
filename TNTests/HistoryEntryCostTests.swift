@@ -6,10 +6,7 @@ import Testing
 @testable import TNNotebook
 
 /// What a history entry costs, measured rather than guessed. This is the
-/// lever behind the `KNOWN DEFECT` at `EditHistory`: the count bound stands
-/// in for a byte bound nobody had measured, and this test is the
-/// measurement. It is hosted because the numbers come from real PencilKit
-/// storage, not from a model of it.
+/// measurement behind EditHistory's byte bound.
 ///
 /// Each shape is run a hundred times over the same fixture twice: once
 /// keeping only the newest revision, once recording every entry into an
@@ -155,7 +152,7 @@ struct HistoryEntryCostTests {
           compare at \(Self.strokeCount) strokes, result and time: same storage \(compare.identical), rebuilt from the same strokes \(compare.rebuiltEqual), one stroke apart \(compare.oneStrokeApart), decoded from the same bytes \(compare.independentEqual)
         """)
 
-        // The assertion is the shape of the answer, not a byte count. A
+        // The first assertions are the shape of the answer, not a byte count. A
         // hundred appended-stroke entries share the base strokes, so they
         // must cost a small fraction of a hundred independent drawings; if
         // sharing broke, an entry would cost a whole drawing and this fails
@@ -167,6 +164,13 @@ struct HistoryEntryCostTests {
         for cost in costs {
             #expect(cost.hundredEntries.mallocInUse < hundredCopies.mallocInUse, "\(cost.name) retains \(Self.mb(cost.hundredEntries.mallocInUse)), no less than a hundred copies")
         }
+        // The estimates EditHistory's byte bound sums, with half again as
+        // slack: an entry that costs more than that has outgrown the bound.
+        let setter = costs[2]
+        let sharedEstimate = Int64(HistoryEntry.sharedEntryBytes)
+        let rebuiltEstimate = sharedEstimate + Int64(HistoryEntry.rebuiltBytesPerStroke * Self.strokeCount)
+        #expect(append.perEntryMalloc * 2 < sharedEstimate * 3, "an appended entry retains \(Self.kb(append.perEntryMalloc)) against an estimate of \(Self.kb(sharedEstimate))")
+        #expect(setter.perEntryMalloc * 2 < rebuiltEstimate * 3, "a rebuilt entry retains \(Self.kb(setter.perEntryMalloc)) against an estimate of \(Self.kb(rebuiltEstimate))")
         // A walk over 160,000 points would take longer than this even on a
         // fast Mac; the compare is on stroke identity, so it does not.
         #expect(compare.independentEqual.1 < .milliseconds(10), "an equal-content compare at \(Self.strokeCount) strokes took \(compare.independentEqual.1)")
@@ -256,8 +260,8 @@ struct HistoryEntryCostTests {
         // The fixture's strokes run from x 10 to x 150, one y a stroke, so a
         // scratch-out the size of a word crosses the rows it covers, and the
         // same shape out past x 150 crosses nothing.
-        let (overInk, overInkMatch, overInkTime) = recognition(of: Self.zigzag(over: CGRect(x: 40, y: 100, width: 60, height: 20), turns: 4))
-        let (clearOfInk, clearOfInkMatch, clearOfInkTime) = recognition(of: Self.zigzag(over: CGRect(x: 400, y: 100, width: 60, height: 20), turns: 4))
+        let (overInk, overInkMatch, overInkTime) = recognition(of: Ink.zigzag(over: CGRect(x: 40, y: 100, width: 60, height: 20), turns: 4))
+        let (clearOfInk, clearOfInkMatch, clearOfInkTime) = recognition(of: Ink.zigzag(over: CGRect(x: 400, y: 100, width: 60, height: 20), turns: 4))
 
         print("""
         gesture recognition, \(Self.strokeCount) strokes plus the zigzag, both triggers bound, fastest of five, simulator
@@ -272,44 +276,6 @@ struct HistoryEntryCostTests {
         #expect(clearOfInk.hits == [], "the zigzag clear of the ink hit \(clearOfInk.hits.map { String($0.count) } ?? "nothing, having failed the shape thresholds")")
         #expect(clearOfInkMatch == nil, "a trigger with no subject is ink")
         #expect(overInkTime < .milliseconds(50), "recognition at \(Self.strokeCount) strokes took \(overInkTime), of which \(clearOfInkTime) is the page scan with no candidate")
-    }
-
-    /// A scratch-out over `rect`: `turns` sharp reversals across its width,
-    /// descending its height. The interior vertices are repeated, because
-    /// PencilKit interpolates through the control points and a repeat is what
-    /// makes a corner a cusp rather than a curve. The same construction as
-    /// `Ink.zigzag` in `TNTests/NotebookTests.swift`, copied because hostless
-    /// fixtures are not on this target.
-    static func zigzag(over rect: CGRect, turns: Int) -> PKStroke {
-        // A corner at every vertex but the two ends, so `turns` of them needs
-        // two more points than turns.
-        let count = turns + 2
-        let step = rect.height / CGFloat(count - 1)
-        let vertices = (0..<count).map { i in
-            CGPoint(x: i.isMultiple(of: 2) ? rect.minX : rect.maxX, y: rect.minY + CGFloat(i) * step)
-        }
-        var locations = [vertices[0]]
-        for (i, pair) in zip(vertices, vertices.dropFirst()).enumerated() {
-            let (a, b) = pair
-            let steps = max(Int(hypot(b.x - a.x, b.y - a.y) / 3), 1)
-            for leg in 1...steps {
-                let t = CGFloat(leg) / CGFloat(steps)
-                locations.append(CGPoint(x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t))
-            }
-            if i + 2 < vertices.count { locations += Array(repeating: b, count: 2) }
-        }
-        let points = locations.enumerated().map { i, location in
-            PKStrokePoint(
-                location: location,
-                timeOffset: Double(i) * 0.01,
-                size: CGSize(width: 2, height: 2),
-                opacity: 1,
-                force: 1,
-                azimuth: 0,
-                altitude: .pi / 2
-            )
-        }
-        return PKStroke(ink: PKInk(.pen, color: .black), path: PKStrokePath(controlPoints: points, creationDate: Date()))
     }
 
     // MARK: - Measurement
