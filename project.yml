@@ -8,7 +8,6 @@ options:
   deploymentTarget:
     iOS: "26.0"
   createIntermediateGroups: true
-  generateEmptyDirectories: false
 
 # Per-developer signing lives in Local.xcconfig, which is gitignored and
 # written by Tools/setup. A team ID committed here would make every
@@ -31,11 +30,6 @@ settings:
     # API", and nothing in this repository ships a framework.
     SWIFT_PACKAGE_NAME: TuberNotes
   configs:
-    # DEBUG in Debug and nothing in Release, which is all this has ever
-    # needed to be. There was a `$(TN_SPIKE_CONDITIONS)` interpolation here,
-    # so that a device spike could be compiled in from the command line; the
-    # two spikes it gated are deleted, and a build setting that gates nothing
-    # is a setting the next reader has to rule out.
     Debug:
       SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
     Release:
@@ -48,7 +42,8 @@ settings:
 #
 # TNCanvas depends on TNModel and TNCore only: the runtime cannot name the
 # format, the notebook, or the library. The app depends on TNEditor and
-# never on TNCanvas. Both are compile errors, not review notes.
+# never on TNCanvas. The build does not refuse either import, because every
+# framework resolves from one products directory; ContractStructureTests does.
 targetTemplates:
   # Every framework target below the app. Same product shape, same warnings.
   Framework:
@@ -59,22 +54,19 @@ targetTemplates:
         PRODUCT_BUNDLE_IDENTIFIER: $(TN_BUNDLE_ID_PREFIX).${target_name}
         TARGETED_DEVICE_FAMILY: "2"
         GENERATE_INFOPLIST_FILE: YES
-        # A framework nobody outside this repository links needs no stable
-        # ABI and no generated .swiftinterface.
-        BUILD_LIBRARY_FOR_DISTRIBUTION: NO
         DEFINES_MODULE: YES
-        # No SwiftUI below the app target — the compiler's answer to golden
-        # rule 2's import half.
+        # No SwiftUI below the app target — the compiler's answer to the
+        # Contract's Structure rule that nothing below the app imports SwiftUI.
         #
         # It is spelled as a module alias, not as an absent link, because an
         # absent link does not forbid anything: Swift autolinks an imported
         # system framework and the linker finds it in the SDK, so a framework
         # target that never lists SwiftUI still builds if a file imports it.
         # `-module-alias SwiftUI=<nothing>` makes `import SwiftUI` resolve to
-        # a module that does not exist. Observed, on a planted violation in
-        # `InkCanvasView.swift`:
+        # a module that does not exist. A planted `import SwiftUI` in a
+        # framework fails with:
         #
-        #   Modules/TuberCanvas/InkCanvasView.swift:1:8: error: unable to
+        #   Modules/TNCanvas/PageCanvasController.swift:1:8: error: unable to
         #   resolve module dependency: 'TuberSwiftUIIsNotBelowTheAppTarget'
         #
         # — which is why the alias is named a sentence rather than a letter:
@@ -89,8 +81,6 @@ targetTemplates:
         OTHER_SWIFT_FLAGS: $(inherited) -module-alias SwiftUI=TuberSwiftUIIsNotBelowTheAppTarget
 
 targets:
-
-  # ---- v2 modules (D14: coexist beside Tuber*, swap in 6a, delete Tuber* in 6c) ----
 
   # Logging and the one trap. Foundation + os.
   TNCore:
@@ -110,8 +100,8 @@ targets:
       - target: TNCore
 
   # The package format: layout, codecs, the ink container, the planner, the
-  # store actor, and the file-primitive seam. The only v2 module that names a
-  # file API.
+  # store actor, and the file-primitive seam. Names a file API only in
+  # PosixFileSystem.swift.
   TNFormat:
     templates: [Framework]
     sources:
@@ -259,7 +249,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: $(TN_BUNDLE_ID_PREFIX).tests
         GENERATE_INFOPLIST_FILE: YES
 
-  # v2 logic tests: no host app, so a run is the frameworks and the tests and
+  # Logic tests: no host app, so a run is the frameworks and the tests and
   # nothing else. Frameworks are embedded because there is no app to carry
   # them.
   TNTests:

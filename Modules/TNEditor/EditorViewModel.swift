@@ -39,7 +39,8 @@ package final class EditorViewModel {
     @ObservationIgnored private let binding: EditorBinding
 
     /// The canvas, as a plain view controller. The app never names
-    /// `TNCanvas`, which is a compile error and not a review note.
+    /// `TNCanvas`; the build would allow it, and ContractStructureTests
+    /// refuses it.
     @ObservationIgnored package let canvasHost: UIViewController
 
     /// The active tool. Setting it applies to the runtime at once and tells
