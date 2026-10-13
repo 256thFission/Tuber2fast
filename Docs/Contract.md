@@ -61,9 +61,9 @@ Each piece of state has one owner, and the owner holds the value.
 | Undo and redo history | `Notebook` | `EditHistory` |
 | The current page | `Notebook` | `view.json` |
 | Which pages have canvases, the scroll position, the selected object | `PagedCanvasController` | in memory; rebuilt from one `setPages` and the installs that follow |
-| The tool in hand, and the text style typed with | `EditorViewModel`, per tab | in memory; the runtime is told and keeps a copy for canvases built later |
+| The tool in hand, and the text style typed with | `EditorViewModel`, per tab | in memory; the runtime is told and keeps a copy for canvases built later; a canvas with a tool use open takes the new tool when the use ends |
 | Tool presets, colour recents, the last-used tool | `ToolPalette` | `UserDefaults`, through `ToolPaletteDefaults`; never in the package |
-| The drawing during a stroke | `PKCanvasView` | until the stroke ends |
+| The drawing during a stroke | `PKCanvasView` | until its commit lands, or its use is ended without one |
 | The draft of a text box being edited | `PageCanvasController` | until the session ends |
 | Page thumbnails | `Renderer` | in memory, keyed by `ThumbnailKey`; rebuilt from the page |
 | The saved package | `PackageStore` | see Durable form |
@@ -139,10 +139,11 @@ these and nothing narrower, so the close path a test proves is the one
 production runs; there is no fallback for a surface that cannot answer
 (decided I2; deepen-canvas-02, deepen-editor-02, simple-canvas-02):
 
-- `retireAll`: retires every live page and returns the pages whose retire
-  a stroke deferred; each of those reports `retired` when its stroke ends.
-  There is no per-page retire on the seam, because nothing outside the
-  runtime retires one page.
+- `retireAll`: tears the runtime down, which is terminal (see Lifecycle),
+  and retires every live page. It returns the pages whose retire a stroke
+  deferred; each of those reports `retired` when its use ends. There is no
+  per-page retire on the seam, because nothing outside the runtime retires
+  one page.
 - `setUndoAvailability`: whether undo and redo are available, as the
   notebook says; see Undo.
 - `isStrokeInFlight`: whether any canvas, a departing one included, has a
@@ -151,6 +152,9 @@ production runs; there is no fallback for a surface that cannot answer
   report arrives and keeps no copy, because the stroke is PencilKit's and
   only the runtime can say whether one is open. `TNCanvas` itself still
   asks nothing (decided I1).
+- `endToolUses`: the app left the foreground, so nothing can touch the
+  canvases, and a tool use PencilKit did not end, ends. Told, never asked;
+  see *Every tool use ends* (decided I2, card 09 C3).
 
 Reports, `CanvasReporting`:
 
@@ -416,6 +420,31 @@ revisited by a navigator jump: built over a snapshot while the notebook
 was still reloading, the canvas sent ink the notebook could not take
 (decided I2, card 09 C1; contract-01, ink-01, durability-03).
 
+**Every tool use ends.** A use is open from PencilKit's
+`canvasViewDidBeginUsingTool`, and one of three things ends it. Its commit
+lands: the drawing change that follows `canvasViewDidEndUsingTool` is the
+stroke, and the use is idle as that report leaves. Nothing commits: a pen
+use, which is any `PKInkingTool`, waits for its change up to `commitBound`,
+500 ms, because PencilKit commits a pen stroke after the use ends and the
+iPad has shown that commit landing later than one turn of the main loop;
+any other tool's changes land during the use, so it ends one turn after
+PencilKit ends it. Only a pen use that commits nothing reaches the bound,
+and reaching it is logged, so a session on the iPad can show whether a real
+stroke ever does. Nothing can touch its canvas any more: the runtime left
+the window, or the app left the foreground. Either door ends a use that is
+still drawing, after one turn so PencilKit's own cancel goes first, and
+leaves a use that is already committing to its commit or its bound, so a
+forced exit never pre-empts PencilKit. Each use carries a number, and a
+timer or a hop armed for one use ends no other. A tool told to a canvas
+while its use is open is held and applied when the use ends, after the
+stroke's report has left: PencilKit's stroke is never handed a new tool
+mid-flight, because the text tool turns the drawing gesture off, which
+cancels the stroke under the Pencil. A use must end because everything
+waits on it: installs, composites, window refreshes and the release of the
+canvas wait for the use, and *Undo waits for the stroke*, so a use nothing
+ended would freeze page turns and undo for the whole tab (decided I2, card
+09 C3; ink-04, tests-hosted-05).
+
 Swiping past the last page adds one. The runtime reports the boundary with
 a sequence number and rubber-bands until a `setPages` answering that number
 arrives in the same pass. If the notebook refuses to add a page, no answer
@@ -600,10 +629,48 @@ outstanding. It runs one forced save per open notebook, active tab first.
 If the lease expires it is logged; the format recovers on next open. A
 forced save runs on backgrounding and on close.
 
-Close tears down every canvas first, then runs the final save. If pages
-are still dirty after it, the notebook stays open, the checkout stays
-held, and a banner shows. The only way past it is "discard unsaved and
-close". Only a clean close releases the checkout.
+**Leaving the foreground ends every open tool use before the forced
+save.** Leaving cancels every touch, and PencilKit may not end the use it
+was in, so `Workspace` tells every editor `endToolUses` on the phase
+change, before the flush: no tab comes back wedged on a use nothing would
+end (decided I2, card 09 C3).
+
+**A phase change during the flush makes it run again.** A phase change
+that arrives while the flush runs is noted, not dropped, and when the pass
+ends the task runs another; the lease ends only after a pass during which
+nothing arrived. The reason is the pair `.inactive` then `.background`:
+the first starts the flush, and a cancelled touch's late commit lands after
+that pass has captured its pages, so the page is dirty when the lease ends
+and a suspension kill loses the ink that the dropped second change would
+have saved (decided I2, card 09 C6; round-two call: the lease takes a
+second pass).
+
+**Close tears down every canvas first, and the teardown is terminal.**
+`retireAll` marks the runtime torn down: from then on it builds no canvas,
+whatever install, settle, layout pass or stroke end arrives, and it does
+not scroll; an install still stores its snapshot. A use still drawing on a
+canvas outside any window is ended in the teardown, at once, because
+nothing can touch that canvas and nothing else would end its use; a use
+that is committing is left to its commit or its bound. Close then waits,
+with no deadline, until every retire the teardown deferred has reported
+`retired` for this close; a report from an earlier retire of the same page
+counts for nothing. Then it runs the final save. If pages are still dirty
+after it, the notebook stays open, the checkout stays held, and a banner
+shows; the runtime stays torn down, placeholders and no scrolling, until
+the close is retried or the notebook discarded, because more ink would not
+save either. The only way past the banner is "discard unsaved and close",
+which finds the runtime already empty, so it has nothing to retire. Only a
+clean close releases the checkout. The reasons are two crashes. A canvas
+built after the teardown, by a load landing during the final save or a
+page turn after a refused close, went out with the tab without its final
+report and trapped in `deinit`. And the two seconds close once gave a
+deferred retire released a canvas still mid-use, so the stroke was lost
+and the app trapped; the close glyph is only in the library, where no
+canvas is in a window, so a use still drawing at close is one PencilKit
+never ended, and a wait on it would never finish (decided I2, card 09 C4;
+round-two calls: close waits for the lift, a refused close leaves the tab
+torn down; arch-canvas-02, arch-app-01, thermo-canvas-01, contract-04,
+ink-02).
 
 Open reads the index and `view.json`, and no pages. A page's ink loads when
 the window reaches it, tagged with a generation. A result from an old
