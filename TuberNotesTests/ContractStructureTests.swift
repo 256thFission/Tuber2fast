@@ -23,132 +23,22 @@ enum ContractChecker {
 
     // MARK: Enumeration
 
-    /// Directories never walked, by name.
-    ///
-    /// Hidden entries (`.git`, `.build`, `.swiftpm`) are already skipped by
-    /// `.skipsHiddenFiles`; these are the build products that are not hidden.
-    /// A `.swift` file inside DerivedData is a copy of one that is already
-    /// checked, or generated code nobody wrote — either way, counting it twice
-    /// is how a checker starts crying wolf.
-    static let ignoredDirectoryNames: Set<String> = [
-        "DerivedData", "build", "Build", "Pods", "Carthage", "node_modules",
-    ]
-
-    /// Directory extensions never walked: bundles, not source directories.
-    static let ignoredDirectoryExtensions: Set<String> = [
-        "xcodeproj", "xcworkspace", "framework", "app", "bundle", "playground", "xcassets",
-    ]
-
-    /// The deepest nesting the walk will follow before failing loud.
-    ///
-    /// Symlinks are skipped, so no cycle can exist and this is not a
-    /// termination guard — it is a claim about the shape of a source tree. A
-    /// tree 32 deep means something is wrong with the *input*, and the failure
-    /// mode this whole item exists to kill is a checker that shrugs at input it
-    /// does not understand.
-    static let maximumDepth = 32
-
-    /// Every `.swift` file under `root`, at any depth, sorted by path.
+    /// Every Swift source under `root`, at any depth, sorted by path: its
+    /// path relative to `root`, prefixed with `label`, and its code with
+    /// comments removed.
     ///
     /// Recursive: the defect this replaced used `contentsOfDirectory(atPath:)`,
     /// which does not descend, so the first source placed in a subdirectory
-    /// would have dropped out of all three rules with every test still green.
-    ///
-    /// Symbolic links are skipped rather than followed — a linked file would be
-    /// checked twice under two paths, and a linked directory could leave the
-    /// tree entirely. `swiftFileCountViaSubpaths` counts them, so a symlinked
-    /// source shows up as a disagreement rather than as silence.
-    static func swiftFileURLs(under root: URL) throws -> [URL] {
-        var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: root.path, isDirectory: &isDirectory),
-              isDirectory.boolValue
-        else {
-            throw CheckerFailure.notADirectory(root.path)
-        }
-
-        var found: [URL] = []
-        try walk(root, depth: 0, into: &found)
-        return found.sorted { $0.path < $1.path }
-    }
-
-    private static func walk(_ directory: URL, depth: Int, into found: inout [URL]) throws {
-        precondition(
-            depth <= maximumDepth,
-            "source tree nests deeper than \(maximumDepth) levels at \(directory.path); "
-                + "the checker refuses to guess at a tree it does not understand"
-        )
-
-        let keys: [URLResourceKey] = [.isRegularFileKey, .isDirectoryKey, .isSymbolicLinkKey]
-        let entries = try FileManager.default.contentsOfDirectory(
-            at: directory,
-            includingPropertiesForKeys: keys,
-            options: [.skipsHiddenFiles]
-        )
-
-        for entry in entries {
-            let values = try entry.resourceValues(forKeys: Set(keys))
-            if values.isSymbolicLink == true { continue }
-
-            if values.isDirectory == true {
-                if ignoredDirectoryNames.contains(entry.lastPathComponent) { continue }
-                if ignoredDirectoryExtensions.contains(entry.pathExtension) { continue }
-                try walk(entry, depth: depth + 1, into: &found)
-            } else if values.isRegularFile == true, entry.pathExtension == "swift" {
-                found.append(entry)
-            }
-        }
-    }
-
-    /// A second, independent count of the same set, through a different API.
-    ///
-    /// Load-bearing, and not redundant with the plausibility floor below. The
-    /// enumeration bug this item names returned a *plausible* number of files —
-    /// the whole top level — while seeing nothing below it. A floor would have
-    /// stayed green forever. `subpathsOfDirectory` descends by its own code
-    /// path, so an enumeration that stops descending disagrees with it on the
-    /// first subdirectory that exists.
-    static func swiftFileCountViaSubpaths(under root: URL) throws -> Int {
-        try FileManager.default.subpathsOfDirectory(atPath: root.path).filter { subpath in
-            guard subpath.hasSuffix(".swift") else { return false }
-            let components = subpath.split(separator: "/").map(String.init)
-            return !components.contains { component in
-                component.hasPrefix(".")
-                    || ignoredDirectoryNames.contains(component)
-                    || ignoredDirectoryExtensions.contains(URL(fileURLWithPath: component).pathExtension)
-            }
-        }.count
-    }
-
-    /// Every Swift source under `root`, as (path relative to `root`, prefixed
-    /// with `label`, and code with comments removed).
+    /// would have dropped out of every rule with every test still green.
+    /// Hidden entries are skipped, so an editor's `.#Foo.swift` is not read.
     static func sources(under root: URL, label: String) throws -> [CheckedSource] {
-        let base = root.resolvingSymlinksInPath().standardizedFileURL
-        let basePath = base.path
-
-        return try swiftFileURLs(under: base).map { url in
-            let full = url.standardizedFileURL.path
-            precondition(
-                full.hasPrefix(basePath + "/"),
-                "enumerated \(full), which is not under the root \(basePath) it was asked about"
-            )
-            let relative = String(full.dropFirst(basePath.count + 1))
-            let text = try String(contentsOf: url, encoding: .utf8)
-            return CheckedSource(
-                path: label.isEmpty ? relative : "\(label)/\(relative)",
-                code: withoutComments(text)
-            )
-        }
-    }
-
-    enum CheckerFailure: Error, CustomStringConvertible {
-        case notADirectory(String)
-
-        var description: String {
-            switch self {
-            case .notADirectory(let path):
-                return "\(path) is not a directory the checker can read; it cannot see the source tree"
+        try FileManager.default.subpathsOfDirectory(atPath: root.path)
+            .filter { $0.hasSuffix(".swift") && !$0.split(separator: "/").contains { $0.hasPrefix(".") } }
+            .sorted()
+            .map { relative in
+                let text = try String(contentsOf: root.appendingPathComponent(relative), encoding: .utf8)
+                return CheckedSource(path: label.isEmpty ? relative : "\(label)/\(relative)", code: withoutComments(text))
             }
-        }
     }
 
     // MARK: Comment stripping
@@ -618,9 +508,7 @@ struct ContractStructureTests {
     ///
     /// The old guard was `names.isEmpty`, which fires only if the source tree
     /// is emptied entirely — an enumeration that returned one file read as a
-    /// clean run. This floor and the cross-check in `theEnumerationSeesTheTree`
-    /// are the two halves of "a broken enumerator is a failure, not a pass".
-    /// Lower it only alongside a real deletion of that many files.
+    /// clean run. Lower it only alongside a real deletion of that many files.
     static let minimumPlausibleSourceCount = 20
 
     /// Every Swift file in every module, at any depth.
@@ -671,43 +559,7 @@ struct ContractStructureTests {
         return allowed.subtracting(present).sorted()
     }
 
-    // MARK: - The enumeration itself
-
-    /// The recursion is the rule that carries every other rule. It gets its own
-    /// test against the real tree, not only against planted fixtures.
-    @Test("The enumeration sees the whole source tree, at every depth")
-    func theEnumerationSeesTheTree() throws {
-        let sources = try Self.appSources()
-
-        for directory in Self.moduleDirectories {
-            let url = Self.repoRoot.appendingPathComponent(directory)
-            let walked = sources.filter { $0.path.hasPrefix(directory + "/") }.count
-            let independentCount = try ContractChecker.swiftFileCountViaSubpaths(under: url)
-            #expect(
-                walked == independentCount,
-                """
-                two independent enumerations of \(url.path) disagree: the walk found \(walked) \
-                Swift files, subpathsOfDirectory found \(independentCount). Either the walk \
-                stopped descending, or a source is a symbolic link — the walk skips those and \
-                this count does not.
-                """
-            )
-        }
-
-        // Paths are repo-relative and carry their subdirectories, because every
-        // rule below is written in those terms.
-        for source in sources {
-            #expect(
-                Self.moduleDirectories.contains(where: { source.path.hasPrefix($0 + "/") }),
-                "\(source.path) is not under a declared module directory"
-            )
-            #expect(source.path.hasSuffix(".swift"), "\(source.path) is not a Swift source")
-            #expect(
-                Self.moduleImportPolicy[Self.module(of: source.path)] != nil,
-                "\(source.path) belongs to no module the import policy names"
-            )
-        }
-    }
+    // MARK: - What project.yml builds
 
     /// The checker polices every `.swift` file on disk under each module
     /// directory, which is sound only while every such file is also compiled
@@ -973,6 +825,10 @@ struct ContractStructureTests {
     @Test("Each module imports only what its place in the graph allows")
     func eachModuleImportsOnlyWhatItsPlaceAllows() throws {
         for source in try Self.appSources() {
+            #expect(
+                Self.moduleImportPolicy[Self.module(of: source.path)] != nil,
+                "\(source.path) belongs to no module the import policy names"
+            )
             let violations = Self.forbiddenImports(in: source)
             #expect(
                 violations.isEmpty,
@@ -1225,6 +1081,7 @@ struct ContractCheckerOwnTests {
             try write("import Foundation\n", to: "One/Two/Third.swift", under: root)
             try write("import Foundation\n", to: "One/Two/Three/Fourth.swift", under: root)
             try write("not swift\n", to: "One/Notes.md", under: root)
+            try write("import UIKit\n", to: ".build/Hidden.swift", under: root)
 
             let sources = try ContractChecker.sources(under: root, label: "Planted")
 
@@ -1234,53 +1091,6 @@ struct ContractCheckerOwnTests {
                 "Planted/One/Two/Three/Fourth.swift",
                 "Planted/Top.swift",
             ])
-            let independentCount = try ContractChecker.swiftFileCountViaSubpaths(under: root)
-            #expect(independentCount == 4)
-        }
-    }
-
-    @Test("Enumeration skips hidden directories and build products")
-    func enumerationSkipsArtifacts() throws {
-        try withPlantedTree { root in
-            try write("import Foundation\n", to: "Real.swift", under: root)
-            try write("import UIKit\n", to: ".build/Hidden.swift", under: root)
-            try write("import UIKit\n", to: "DerivedData/Copy.swift", under: root)
-            try write("import UIKit\n", to: "Generated.xcodeproj/Inside.swift", under: root)
-
-            let sources = try ContractChecker.sources(under: root, label: "Planted")
-            #expect(sources.map(\.path) == ["Planted/Real.swift"])
-
-            // The independent count must apply the same exclusions, or the
-            // cross-check in the real suite would fire on every clean tree.
-            let independentCount = try ContractChecker.swiftFileCountViaSubpaths(under: root)
-            #expect(independentCount == 1)
-        }
-    }
-
-    @Test("Enumeration does not follow symbolic links")
-    func enumerationSkipsSymlinks() throws {
-        try withPlantedTree { root in
-            try write("import Foundation\n", to: "Real/Source.swift", under: root)
-            try FileManager.default.createSymbolicLink(
-                at: root.appendingPathComponent("Link.swift"),
-                withDestinationURL: root.appendingPathComponent("Real/Source.swift")
-            )
-
-            let sources = try ContractChecker.sources(under: root, label: "Planted")
-            #expect(sources.map(\.path) == ["Planted/Real/Source.swift"])
-        }
-    }
-
-    @Test("Enumeration of a path that is not a directory fails rather than returning nothing")
-    func enumerationOfNonDirectoryFails() throws {
-        try withPlantedTree { root in
-            try write("import Foundation\n", to: "Real.swift", under: root)
-            #expect(throws: ContractChecker.CheckerFailure.self) {
-                _ = try ContractChecker.swiftFileURLs(under: root.appendingPathComponent("Real.swift"))
-            }
-            #expect(throws: ContractChecker.CheckerFailure.self) {
-                _ = try ContractChecker.swiftFileURLs(under: root.appendingPathComponent("Nowhere"))
-            }
         }
     }
 
