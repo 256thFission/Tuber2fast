@@ -1,6 +1,7 @@
 import CoreGraphics
 import Foundation
 import PencilKit
+import TNCore
 
 /// Monotonic sequence numbers that cross the seam. Each is its own type so a
 /// structure sequence cannot be passed where an ink sequence is expected.
@@ -128,8 +129,11 @@ package struct PageSnapshot: Sendable, Equatable {
         PageSnapshot(id: id, ink: ink, layers: layers, composite: composite, faults: [], inkSeq: inkSeq)
     }
 
+    /// At least one fault: with none, `isEditable` would say yes to a page
+    /// with no ink.
     package static func placeholder(id: PageID, faults: [PageFault]) -> PageSnapshot {
-        PageSnapshot(id: id, ink: nil, layers: [], composite: nil, faults: faults, inkSeq: nil)
+        TNPrecondition.require(!faults.isEmpty, "page \(id) was made a placeholder with no fault")
+        return PageSnapshot(id: id, ink: nil, layers: [], composite: nil, faults: faults, inkSeq: nil)
     }
 
     package var isEditable: Bool { faults.isEmpty }

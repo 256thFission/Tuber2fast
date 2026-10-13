@@ -636,11 +636,14 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
             return
         }
 
+        guard let ink = snapshot.ink, let inkSeq = snapshot.inkSeq else {
+            TNPrecondition.fail("page \(page) is editable with no ink")
+        }
         let canvas = PageCanvasController(
             pageID: page,
             geometry: descriptor.geometry,
-            ink: snapshot.ink ?? PKDrawing(),
-            inkSeq: snapshot.inkSeq,
+            ink: ink,
+            inkSeq: inkSeq,
             composite: snapshot.composite,
             layers: snapshot.layers,
             environment: environment,
