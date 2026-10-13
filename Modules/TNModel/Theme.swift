@@ -29,8 +29,9 @@ package struct ThemePreset: Equatable, Sendable {
 /// Five hexes, a palette, two percentages and a dark flag are the whole of
 /// a theme: nothing else in the editor's chrome carries a colour of its
 /// own, bar the red of a save that did not land. Outlines, keycap walls,
-/// the grid line, and the seat's body are all computed here, so a new
-/// theme is a row of the preset table and never a sweep through the views.
+/// the grid line, and the seat's body and current row are all computed
+/// here, so a new theme is a row of the preset table and never a sweep
+/// through the views.
 ///
 /// No UIKit and no SwiftUI: this is a durable value, and the bridges to
 /// `UIColor` and `Color` live with the views that need them.
@@ -103,6 +104,11 @@ package struct Theme: Equatable, Sendable {
     /// the paper is still white, and a seat mixed toward it would be the
     /// one near-white panel on a dark chrome, so it goes to the ground.
     package var seatBody: RGBA8 { Self.mix(accent, toward: invertsMix ? ground : paper, 0.80) }
+
+    /// The current page's row in the seat: the paper by day. After dark the
+    /// seat's lettering has come up toward white and would vanish on the
+    /// paper, so the row is the chrome.
+    package var seatRow: RGBA8 { invertsMix ? chrome : paper }
 
     /// A fill's outline, and the colour of the keycap wall under it.
     ///

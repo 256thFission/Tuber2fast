@@ -75,6 +75,14 @@ struct ThemeTests {
         #expect(dark.seatBody.hex == "#513032FF")
     }
 
+    @Test("The seat's current row is the paper by day and the chrome after dark")
+    func seatRow() {
+        #expect(theme.seatRow == theme.paper)
+        let dark = Theme.macaronDark
+        #expect(dark.seatRow == dark.chrome)
+        #expect(Theme.contrast(dark.outline(of: dark.seatBody), dark.seatRow) > 4.0)
+    }
+
     @Test("The paper is white and the ground line is a step off the ground")
     func groundAndPaper() {
         #expect(theme.paper.hex == "#FFFFFFFF")
