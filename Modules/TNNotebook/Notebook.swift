@@ -813,15 +813,20 @@ package final class Notebook {
     /// caller's task, so a cancelled render stops mid-decode; nothing is
     /// installed, nothing is marked dirty, and the state does not move. A
     /// pending restore is preferred over the ink on disk, because it is the
-    /// ink the page will have. A page with no record, or one whose files do
-    /// not decode, is nil.
+    /// ink the page will have. A page with no record, one the notebook
+    /// refused, or one whose files do not decode, is nil: a page refused for
+    /// its paper asset has page files that decode, and drawn from them it
+    /// would be ink on blank paper.
     ///
     /// A drawing decoded here and dropped when the render ends is not a
     /// second copy of the ink: nothing keeps it.
     package func revision(of page: PageID) async -> PageRevision? {
         guard index.record(of: page) != nil else { return nil }
-        if case .ready(let content) = states[page] { return content.revision }
-        return await unloadedContent(of: page)?.revision
+        switch states[page] {
+        case .ready(let content): return content.revision
+        case .unloaded, .loading: return await unloadedContent(of: page)?.revision
+        case .unreadable, nil: return nil
+        }
     }
 
     /// A page decoded from its own files and installed nowhere, with any

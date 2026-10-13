@@ -786,9 +786,10 @@ struct ContractStructureTests {
         ],
         // The binding and the editor view model: the one module that names
         // both the canvas and the notebook.
+        // UniformTypeIdentifiers names what an export's bytes are.
         "TNEditor": [
             "TNCanvas", "TNNotebook", "TNRender", "TNFormat", "TNModel", "TNCore",
-            "Foundation", "Observation", "UIKit", "PencilKit", "CoreGraphics",
+            "Foundation", "Observation", "UIKit", "PencilKit", "CoreGraphics", "UniformTypeIdentifiers",
         ],
     ]
 

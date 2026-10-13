@@ -211,21 +211,6 @@ struct RendererExportTests {
 
     private func xobjectSubtypes(of page: CGPDFPage) -> [String] { xobjects(of: page).map(\.subtype) }
 
-    /// An exported page drawn back into a bitmap, white ground, `scale`
-    /// pixels per point. A CGImage's first row is the top of the page.
-    private func rasterized(_ page: CGPDFPage, scale: Double) throws -> CGImage {
-        let box = page.getBoxRect(.mediaBox)
-        let context = try #require(CGContext(
-            data: nil, width: Int(box.width * scale), height: Int(box.height * scale),
-            bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
-        context.setFillColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1))
-        context.fill(CGRect(x: 0, y: 0, width: box.width * scale, height: box.height * scale))
-        context.scaleBy(x: scale, y: scale)
-        context.drawPDFPage(page)
-        return try #require(context.makeImage())
-    }
-
     @Test("Two pages are two PDF pages, each with its own geometry as its media box")
     func pagesCarryTheirGeometry() async throws {
         let renderer = Renderer(assets: NoAssets())
@@ -360,14 +345,21 @@ struct RendererExportTests {
             geometry: letter, paper: .drawn(.blank), layers: [], ink: Ink.drawing(strokes: 1), as: "public.png" as CFString))
         let source = try #require(CGImageSourceCreateWithData(data as CFData, nil))
         #expect(CGImageSourceGetType(source) as String? == "public.png")
-        let image = try #require(CGImageSourceCreateImageAtIndex(source, 0, nil))
-        let scale = Double(image.height) / letter.height
-        let redrawn = try #require(CGContext(
-            data: nil, width: image.width, height: image.height, bitsPerComponent: 8, bytesPerRow: 0,
-            space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
-        redrawn.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
-        let flat = try #require(redrawn.makeImage())
+        let flat = try redrawn(png: data)
+        let scale = Double(flat.height) / letter.height
         #expect(luminance(of: flat, x: Int(40 * scale), y: Int(10 * scale)) < 128)
+    }
+
+    @Test("A page whose paper or layer asset does not draw refuses the export, and the screen still draws what it can")
+    func pdfRefusesAMissingAsset() async throws {
+        let renderer = Renderer(assets: NoAssets())
+        let worksheet = Paper.pdf(AssetRef(id: AssetID(), format: .pdf), sourcePageIndex: 0)
+        let paper = await renderer.pdf(pageCount: 1) { _ in (self.letter, worksheet, [], Ink.drawing(strokes: 1)) }
+        #expect(paper == nil, "a worksheet whose PDF is missing is not ink on blank paper")
+        let layer = await renderer.pdf(pageCount: 1) { _ in (self.letter, .drawn(.blank), [Fixture.imageLayer()], PKDrawing()) }
+        #expect(layer == nil, "nor is a page whose photo is missing")
+        #expect(await renderer.flattened(geometry: letter, paper: worksheet, layers: [], ink: PKDrawing(), as: "public.png" as CFString) == nil)
+        #expect(await renderer.composite(geometry: letter, paper: worksheet, layers: [Fixture.imageLayer()], scale: 1) != nil, "a composite for the screen draws what it can")
     }
 
     /// The number in `pdf`'s doc comment. A page is mostly transparent ink

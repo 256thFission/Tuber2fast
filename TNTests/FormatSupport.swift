@@ -168,6 +168,33 @@ func luminance(of image: CGImage, x: Int, y: Int) -> Int {
     return (Int(data[offset]) + Int(data[offset + 1]) + Int(data[offset + 2])) / 3
 }
 
+/// An exported page drawn back into a bitmap, white ground, `scale`
+/// pixels per point. A CGImage's first row is the top of the page.
+func rasterized(_ page: CGPDFPage, scale: Double) throws -> CGImage {
+    let box = page.getBoxRect(.mediaBox)
+    let context = try #require(CGContext(
+        data: nil, width: Int(box.width * scale), height: Int(box.height * scale),
+        bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+    context.setFillColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1))
+    context.fill(CGRect(x: 0, y: 0, width: box.width * scale, height: box.height * scale))
+    context.scaleBy(x: scale, y: scale)
+    context.drawPDFPage(page)
+    return try #require(context.makeImage())
+}
+
+/// A PNG drawn into the four-byte layout `luminance(of:x:y:)` reads,
+/// whatever layout the file decodes to.
+func redrawn(png data: Data) throws -> CGImage {
+    let source = try #require(CGImageSourceCreateWithData(data as CFData, nil))
+    let image = try #require(CGImageSourceCreateImageAtIndex(source, 0, nil))
+    let context = try #require(CGContext(
+        data: nil, width: image.width, height: image.height, bitsPerComponent: 8, bytesPerRow: 0,
+        space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+    context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+    return try #require(context.makeImage())
+}
+
 func jsonObject(_ data: Data) throws -> [String: Any] {
     try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
 }

@@ -131,12 +131,15 @@ package actor Renderer {
     /// Paper and layers into one bitmap of exactly `width` by `height`
     /// pixels, drawn at `scale`. A composite rounds the pixels up from its
     /// scale; a thumbnail picks its pixels first and derives the scale.
-    private func compose(geometry: PageGeometry, paper: Paper, layers: [Layer], scale: CGFloat, width: Int, height: Int) async -> CGImage? {
+    /// `whole` refuses a page with an asset that did not draw, which a page
+    /// leaving the app wants and the screen does not.
+    private func compose(geometry: PageGeometry, paper: Paper, layers: [Layer], scale: CGFloat, width: Int, height: Int, whole: Bool = false) async -> CGImage? {
         guard width > 0, height > 0, let context = Self.bitmap(width: width, height: height) else { return nil }
         // Page space: origin top-left, y down.
         context.translateBy(x: 0, y: CGFloat(height))
         context.scaleBy(x: scale, y: -scale)
-        await drawPage(geometry: geometry, paper: paper, layers: layers, ink: nil, in: context)
+        let drewAll = await drawPage(geometry: geometry, paper: paper, layers: layers, ink: nil, in: context)
+        guard drewAll || !whole else { return nil }
         return context.makeImage()
     }
 
@@ -145,21 +148,27 @@ package actor Renderer {
     /// path, so a composite and an exported page cannot disagree — a
     /// composite passes no ink because the live canvas draws it, and an
     /// export passes the raster because a PDF page has no canvas over it.
-    private func drawPage(geometry: PageGeometry, paper: Paper, layers: [Layer], ink: CGImage?, in context: CGContext) async {
+    ///
+    /// False when the paper or a layer names an asset that did not draw. A
+    /// composite shows what it can; an export refuses, because a worksheet
+    /// handed in as ink on blank paper is worse than no export.
+    @discardableResult
+    private func drawPage(geometry: PageGeometry, paper: Paper, layers: [Layer], ink: CGImage?, in context: CGContext) async -> Bool {
         let pageRect = CGRect(x: 0, y: 0, width: geometry.width, height: geometry.height)
         context.setFillColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1))
         context.fill(pageRect)
-        await draw(paper, geometry: geometry, in: context)
+        var drewAll = await draw(paper, geometry: geometry, in: context)
         for layer in layers {
-            await draw(layer, in: context)
+            if await !draw(layer, in: context) { drewAll = false }
         }
-        guard let ink else { return }
+        guard let ink else { return drewAll }
         context.saveGState()
         // CGImage draws y-up; flip within the page rectangle, as asset paper does.
         context.translateBy(x: 0, y: geometry.height)
         context.scaleBy(x: 1, y: -1)
         context.draw(ink, in: pageRect)
         context.restoreGState()
+        return drewAll
     }
 
     private static func bitmap(width: Int, height: Int) -> CGContext? {
@@ -215,15 +224,16 @@ package actor Renderer {
         ink.image(from: rect, scale: scale).cgImage
     }
 
-    /// The page's paper. An asset fills the page rectangle exactly: the
-    /// geometry was set from the asset's aspect when the paper was applied,
-    /// so filling is not stretching.
-    private func draw(_ paper: Paper, geometry: PageGeometry, in context: CGContext) async {
+    /// The page's paper, and false when its asset did not draw. An asset
+    /// fills the page rectangle exactly: the geometry was set from the
+    /// asset's aspect when the paper was applied, so filling is not
+    /// stretching.
+    private func draw(_ paper: Paper, geometry: PageGeometry, in context: CGContext) async -> Bool {
         switch paper {
         case .drawn(let drawn):
             PaperRenderer.draw(drawn, geometry: geometry, in: context)
         case .image(let ref):
-            guard case .image(let image, _)? = await decodedAsset(ref) else { return }
+            guard case .image(let image, _)? = await decodedAsset(ref) else { return false }
             context.saveGState()
             // CGImage draws y-up; flip within the page rectangle.
             context.translateBy(x: 0, y: geometry.height)
@@ -234,12 +244,13 @@ package actor Renderer {
             guard case .pdf(let source, _)? = await decodedAsset(ref),
                   let page = source.page(at: sourcePageIndex),
                   let extent = PDFSource.displayExtent(of: page)
-            else { return }
+            else { return false }
             context.saveGState()
             context.concatenate(CGAffineTransform(scaleX: geometry.width, y: geometry.height))
             PDFSource.draw(page, extent: extent, in: context)
             context.restoreGState()
         }
+        return true
     }
 
     /// Height over width of an asset paper: an image's from the file's own
@@ -273,17 +284,19 @@ package actor Renderer {
     /// `type` is a UTI: `"public.heic"` for a flatten, which becomes an
     /// asset in the package, and `"public.png"` for a page exported as an
     /// image, which leaves the device lossless. One function, because the
-    /// pixels are the same and only the encoder differs.
+    /// pixels are the same and only the encoder differs. A page with an
+    /// asset that did not draw is nil, as an exported PDF page is.
     package func flattened(geometry: PageGeometry, paper: Paper, layers: [Layer], ink: PKDrawing, as type: CFString) async -> Data? {
         let scale = Self.cappedScale(for: geometry, requested: .greatestFiniteMagnitude)
-        guard let composite = await composite(geometry: geometry, paper: paper, layers: layers, scale: scale) else { return nil }
+        let width = Int((geometry.width * scale).rounded(.up)), height = Int((geometry.height * scale).rounded(.up))
+        guard let composite = await compose(geometry: geometry, paper: paper, layers: layers, scale: scale, width: width, height: height, whole: true) else { return nil }
         let pageRect = CGRect(x: 0, y: 0, width: geometry.width, height: geometry.height)
         // PencilKit rasterizes the ink itself, off this actor and off the
         // main one: a flatten is an intention, never a frame.
         let inkImage = await Task.detached(priority: .userInitiated) { () -> CGImage? in
             ink.image(from: pageRect, scale: scale).cgImage
         }.value
-        guard let image = Self.overlay(inkImage, on: composite.image) else { return nil }
+        guard let image = Self.overlay(inkImage, on: composite) else { return nil }
         return Self.encode(image, as: type)
     }
 
@@ -307,8 +320,9 @@ package actor Renderer {
     /// The document and its data are locals, so there is no export state on
     /// this actor: it is reentrant at every `await page(n)`, and composites
     /// for the live canvas are served between pages. A page the source
-    /// cannot give, or a cancellation between pages, returns nil — an export
-    /// with a hole in it is worse than no export.
+    /// cannot give, a page with an asset that did not draw, or a
+    /// cancellation between pages, returns nil — an export with a hole in it
+    /// is worse than no export.
     ///
     /// Measured: one US Letter page carrying 300 strokes is 161 KB, so two
     /// hundred such pages are about 32 MB in one `Data` — inside an iPad's
@@ -348,20 +362,22 @@ package actor Renderer {
             // Page space: origin top-left, y down, in points.
             context.translateBy(x: 0, y: geometry.height)
             context.scaleBy(x: 1, y: -1)
-            await drawPage(geometry: geometry, paper: source.paper, layers: source.layers, ink: inkImage, in: context)
+            let drewAll = await drawPage(geometry: geometry, paper: source.paper, layers: source.layers, ink: inkImage, in: context)
             context.endPage()
+            guard drewAll else { return nil }
         }
         if Task.isCancelled { return nil }
         context.closePDF()
         return output as Data
     }
 
-    private func draw(_ layer: Layer, in context: CGContext) async {
+    /// One layer, and false when it names an asset that did not draw.
+    private func draw(_ layer: Layer, in context: CGContext) async -> Bool {
         let t = layer.transform
         let affine = CGAffineTransform(a: t.a, b: t.b, c: t.c, d: t.d, tx: t.tx, ty: t.ty)
         switch layer.payload {
         case .image(let image):
-            guard case .image(let cgImage, _)? = await decodedAsset(image.asset) else { return }
+            guard case .image(let cgImage, _)? = await decodedAsset(image.asset) else { return false }
             context.saveGState()
             context.concatenate(affine)
             // CGImage draws y-up; flip inside the unit square.
@@ -370,10 +386,10 @@ package actor Renderer {
             context.draw(cgImage, in: CGRect(x: 0, y: 0, width: 1, height: 1))
             context.restoreGState()
         case .pdf(let pdf):
-            guard case .pdf(let source, _)? = await decodedAsset(pdf.asset), let page = source.page(at: pdf.sourcePageIndex) else { return }
+            guard case .pdf(let source, _)? = await decodedAsset(pdf.asset), let page = source.page(at: pdf.sourcePageIndex) else { return false }
             guard PDFSource.displayExtent(of: page) == pdf.sourceExtent else {
                 TNLog.event(.format, "pdf layer \(layer.id) extent disagrees with the asset; not drawn")
-                return
+                return false
             }
             context.saveGState()
             context.concatenate(affine)
@@ -397,6 +413,7 @@ package actor Renderer {
         case .text(let text):
             Self.drawText(text, in: context)
         }
+        return true
     }
 
     /// One builder with the live text view, so the two engines lay the same

@@ -49,7 +49,7 @@ struct ExportSheet: View {
     /// presentation.
     let anchor: () -> (rect: CGRect, view: UIView)?
 
-    @State private var scope = ExportScope.thisPage
+    @State private var scope = ExportScope.allPages
     @State private var first: Int
     @State private var last: Int
 
@@ -74,15 +74,24 @@ struct ExportSheet: View {
                 choices
             }
         }
+        // A refusal from before the sheet opened is not the export's, and
+        // one the sheet showed is not left for the bar under the band.
+        .onAppear { editor.clearContentError() }
         // A sheet dismissed mid-walk stops it; a result the sheet is done
         // with is not kept for the next opening.
         .onDisappear {
             editor.cancelExport()
             editor.clearExport()
+            editor.clearContentError()
         }
     }
 
     @ViewBuilder private var choices: some View {
+        // Said here, where the person tapped, not under the band behind the
+        // sheet.
+        if let fault = editor.lastContentError {
+            MacaronNote(text: "Couldn't export: \(fault.description)")
+        }
         MacaronHeading(text: "Pages")
         HStack(spacing: Macaron.rowGap) {
             scopeCap("This page", .thisPage)
@@ -95,9 +104,12 @@ struct ExportSheet: View {
         }
 
         MacaronHeading(text: "Export")
-        MacaronButton(title: "Export PDF", fill: theme.accent) { editor.exportPDF(pages: pages) }
-        MacaronButton(title: "Export image of this page", fill: theme.secondary) {
-            editor.exportCurrentPageImage()
+        // The first offered is the one the sheet exists for, so it takes the
+        // accent; the rest are second-rank.
+        ForEach(Array(EditorViewModel.ExportRequest.offered(pages: pages).enumerated()), id: \.element) { position, request in
+            MacaronButton(title: request.title, fill: position == 0 ? theme.accent : theme.secondary) {
+                editor.export(request)
+            }
         }
         footer("Handwriting is exported as pixels; paper, text, and imported PDF pages stay sharp at any size.")
     }
@@ -184,28 +196,27 @@ struct ExportSheet: View {
     }
 
     @ViewBuilder private func result(_ file: EditorViewModel.ExportedFile) -> some View {
+        let fileName = "\(name).\(file.kind.fileExtension)"
         MacaronHeading(text: "Ready")
+        // The one switch on the kind: which `Transferable` carries the bytes,
+        // because a representation's content type is fixed per type.
         switch file.kind {
-        case .pdf:
-            ShareLink(
-                item: ExportedPDF(data: file.data, name: "\(name).pdf"),
-                preview: SharePreview("\(name).pdf", image: Image(systemName: "doc.richtext"))
-            ) {
-                cap("Share PDF", icon: "square.and.arrow.up", fill: theme.accent)
-            }
-            .accessibilityLabel("Share PDF")
+        case .pdf: share(ExportedPDF(data: file.data, name: fileName), file.kind, named: fileName, symbol: "doc.richtext")
+        case .png: share(ExportedImage(data: file.data, name: fileName), file.kind, named: fileName, symbol: "photo")
+        }
+        if file.kind.isPrintable {
             MacaronButton(title: "Print", icon: "printer") { presentPrintPanel(file.data) }
-        case .png:
-            ShareLink(
-                item: ExportedImage(data: file.data, name: "\(name).png"),
-                preview: SharePreview("\(name).png", image: Image(systemName: "photo"))
-            ) {
-                cap("Share image", icon: "square.and.arrow.up", fill: theme.accent)
-            }
-            .accessibilityLabel("Share image")
         }
         MacaronButton(title: "Export something else", fill: theme.ground) { editor.clearExport() }
         footer("\(file.data.count / 1024) KB, kept in memory until this sheet closes.")
+    }
+
+    private func share(_ item: some Transferable, _ kind: EditorViewModel.ExportedFile.Kind, named fileName: String, symbol: String) -> some View {
+        let title = "Share \(kind.title)"
+        return ShareLink(item: item, preview: SharePreview(fileName, image: Image(systemName: symbol))) {
+            cap(title, icon: "square.and.arrow.up", fill: theme.accent)
+        }
+        .accessibilityLabel(title)
     }
 
     /// A `ShareLink` owns its own tap, so its label is drawn as the cap a
