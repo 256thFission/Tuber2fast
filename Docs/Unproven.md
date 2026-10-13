@@ -571,3 +571,14 @@ Not gaps — properties of the tooling that read as project defects when hit.
   used to wait 60 ms for the stretch. The simulator shows the tool change;
   whether a finger tap on a bar tool or a band chip feels right, and whether
   the trampoline still plays as the tool lands, is a hand's verdict.
+- **Undo under a held Pencil (U04, I3 line 1).** The simulator drives
+  PencilKit's delegate calls by hand, so that undo is ignored while a stroke
+  is in flight, and that no restore then reaches a canvas mid-stroke (one
+  would trap), is proven for the calls and not for PencilKit's real order.
+  Owed: with the Pencil down, tap Undo on the bar with a finger, lift, and
+  see the stroke whole; the next Undo removes exactly that stroke.
+- **A jump back to a pruned page (U04, I3 line 3).** That a canvas waits for
+  the notebook's reload is proven in the simulator; that nothing traps when a
+  person writes at once is not. Owed: in a 20-page PDF, go to page 6, wait
+  3 s, jump to page 1 from the navigator and write at once, then turn away
+  and back.
