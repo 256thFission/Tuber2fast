@@ -4,7 +4,7 @@ import Testing
 // MARK: - The checker
 
 /// One Swift source as the checker sees it: a repo-relative path and its code
-/// with comments and string literals removed.
+/// with comments removed and string contents kept.
 struct CheckedSource: Sendable, Equatable {
     let path: String
     let code: String
@@ -120,7 +120,7 @@ enum ContractChecker {
     }
 
     /// Every Swift source under `root`, as (path relative to `root`, prefixed
-    /// with `label`, and code with comments and strings removed).
+    /// with `label`, and code with comments removed).
     static func sources(under root: URL, label: String) throws -> [CheckedSource] {
         let base = root.resolvingSymlinksInPath().standardizedFileURL
         let basePath = base.path
@@ -135,7 +135,7 @@ enum ContractChecker {
             let text = try String(contentsOf: url, encoding: .utf8)
             return CheckedSource(
                 path: label.isEmpty ? relative : "\(label)/\(relative)",
-                code: codeOnly(text)
+                code: withoutComments(text)
             )
         }
     }
@@ -151,9 +151,9 @@ enum ContractChecker {
         }
     }
 
-    // MARK: Comment and string stripping
+    // MARK: Comment stripping
 
-    /// Source with comments and string literals removed.
+    /// Source with comments removed and string contents kept.
     ///
     /// Load-bearing: the deleted shell gate's file-I/O rule once failed on a
     /// *comment* reading "fputs, not FileHandle.write(to:)". A checker that
@@ -161,15 +161,16 @@ enum ContractChecker {
     /// disabled by the next person in a hurry — which is worse than not having
     /// it.
     ///
-    /// KNOWN DEFECT: this is a scanner, not a lexer, and two constructs are
-    /// beyond it. A `\(...)` interpolation is discarded with the string that
-    /// contains it, so `"\(FileManager.default)"` is invisible to every rule.
-    /// Multi-line literals (`"""`) are read as a pair of empty strings around
-    /// the body, which usually swallows the body the same way but is not the
-    /// same thing. Both under-report rather than cry wolf, which is the wrong
-    /// direction for this item — recorded rather than fixed because the fix is
-    /// a Swift lexer and no application source does either today.
-    static func codeOnly(_ source: String) -> String {
+    /// Strings are tracked only so that `//` and `/*` inside a literal are not
+    /// read as comments. Their contents are kept, quotes aside, because an
+    /// interpolation is code: `"\(FileManager.default)"` reaches the file
+    /// system, and so does the same call in a `"""` body or a raw string's
+    /// `\#(...)`. The price is that a string naming a forbidden token trips
+    /// its rule; no source does that today. This is still a scanner, not a
+    /// lexer: a quote it miscounts (a lone `"` in a `"""` body, a string nested
+    /// in an interpolation) can make a later comment read as code, or a `//`
+    /// in a later string read as a comment.
+    static func withoutComments(_ source: String) -> String {
         var out = ""
         let chars = Array(source)
         var i = 0
@@ -188,6 +189,7 @@ enum ContractChecker {
             } else if inString {
                 if c == "\\" { i += 1 }            // skip the escaped character
                 else if c == "\"" { inString = false }
+                else { out.append(c) }
             } else if c == "/", next == "/" {
                 inLineComment = true; i += 1
             } else if c == "/", next == "*" {
@@ -202,25 +204,22 @@ enum ContractChecker {
         return out
     }
 
-    // MARK: Rule — UI framework imports
+    // MARK: Rule — imports
 
-    /// The framework imports this checker can see, and which it therefore
-    /// decides the placement of. `Docs/Contract.md`, *Structure*: UIKit is
-    /// imported only by `TNCanvas`, `TNEditor`, and the app.
+    /// The frameworks that bring drawing or UI vocabulary with them, which a
+    /// file placed by design takes from its own row rather than its module's
+    /// (`ContractStructureTests.filesPlacedByDesign`). `Docs/Contract.md`,
+    /// *Structure*: UIKit is imported only by `TNCanvas`, `TNEditor`, and the
+    /// app.
     ///
     /// `CoreGraphics` is not a UI framework, and it is here because importing
     /// it acquires a graphics framework's whole vocabulary: `CGPDFDocument`
     /// arrives with `CGContext`, `CGImage`, and every drawing call attached.
-    /// Without the entry, any file could import it and the checker would say
-    /// nothing.
     ///
-    /// **`SwiftUI` is deliberately absent, and the reason changed with the
-    /// module split.** It used to be absent because a flat allowlist would have
-    /// had to name the SwiftUI files. It is absent now because the *compiler*
-    /// refuses it: no target below the app aliases `SwiftUI` to anything that
-    /// exists (`project.yml`, the `Framework` template), so `import SwiftUI` in
-    /// the canvas runtime is a build failure, not a test failure. A rule the
-    /// link graph holds does not belong in a token scanner.
+    /// `SwiftUI` is absent because no file below the app can import it at all:
+    /// no target below the app aliases `SwiftUI` to anything that exists
+    /// (`project.yml`, the `Framework` template), so the compiler refuses it
+    /// before any row is read.
     static let uiFrameworkModules: Set<String> = ["UIKit", "PencilKit", "CoreGraphics", "CoreText"]
 
     /// Declaration kinds Swift permits in a scoped import: `import struct UIKit.X`.
@@ -229,7 +228,8 @@ enum ContractChecker {
         "actor", "macro", "precedencegroup", "operator", "init", "subscript",
     ]
 
-    /// The UI frameworks a source imports, however it spells the import.
+    /// The modules a source imports, ours and the system's, however it spells
+    /// the import.
     ///
     /// A plain `trimmed == "import UIKit"` comparison missed every real spelling
     /// but one: `@preconcurrency import UIKit`, `@_exported import UIKit`,
@@ -237,7 +237,7 @@ enum ContractChecker {
     /// statement after a semicolon, and doubled whitespace all slipped past it.
     /// Each of those is a way to acquire the whole framework's vocabulary, so
     /// each is the violation the rule names.
-    static func importedUIFrameworks(in code: String) -> [String] {
+    static func importedModules(in code: String) -> [String] {
         var found: [String] = []
 
         for line in code.split(separator: "\n", omittingEmptySubsequences: false) {
@@ -257,16 +257,31 @@ enum ContractChecker {
                 guard let path = tokens.first else { continue }
 
                 // `UIKit.UIView` is UIKit. The first component names the module.
-                let module = String(path.split(separator: ".").first ?? "")
-                if uiFrameworkModules.contains(module) { found.append(module) }
+                found.append(String(path.split(separator: ".").first ?? ""))
             }
         }
 
         return found
     }
 
+    static func importedUIFrameworks(in code: String) -> [String] {
+        importedModules(in: code).filter(uiFrameworkModules.contains)
+    }
+
     static func importsUIFramework(_ code: String) -> Bool {
         !importedUIFrameworks(in: code).isEmpty
+    }
+
+    // MARK: Rule — UIKit's vocabulary
+
+    /// Identifiers spelled the way UIKit spells its types: `UI` and a capital.
+    ///
+    /// PencilKit and PDFKit re-export UIKit, so a module allowed PencilKit for
+    /// `PKDrawing` can write `UIBezierPath` without an `import UIKit` anywhere.
+    /// The import rule cannot see that; the vocabulary can. `UInt` and `UUID`
+    /// do not match.
+    static func uiKitIdentifiers(in code: String) -> [String] {
+        code.matches(of: #/\bUI[A-Z]\w*/#.wordBoundaryKind(.simple)).map { String($0.output) }
     }
 
     // MARK: Rule — file I/O
@@ -359,28 +374,47 @@ enum ContractChecker {
 
     // MARK: Rule — one PKCanvasView construction site
 
-    /// The type names that name a live ink surface.
-    ///
-    /// `InkCanvasView` is this project's `PKCanvasView` subclass — it exists to
-    /// refuse PencilKit's editing menu and adds no state — so constructing one
-    /// *is* constructing a canvas, and the rule below must see it. Adding it
-    /// here closes half of the KNOWN DEFECT this scan used to carry: a subclass
-    /// constructed by its own name was invisible. It is invisible no longer,
-    /// but only for the subclass this list knows about, which is why a new one
-    /// belongs here on the same commit that introduces it.
-    static let canvasTypeNames = ["PKCanvasView", "InkCanvasView"]
+    /// The live ink surface every canvas type descends from.
+    static let canvasBaseTypeName = "PKCanvasView"
 
-    /// How many times this source constructs a live canvas.
+    /// `PKCanvasView` and every class in `sources` that inherits from it, at
+    /// any depth.
     ///
-    /// Counts `T(`, `T (`, and `T.init(` for each name in `canvasTypeNames`;
-    /// `PKCanvasViewDelegate`, a superclass clause, and a bare type reference
-    /// are not construction.
+    /// A subclass is the same surface under another name, so constructing one
+    /// *is* constructing a canvas. The names are found, not listed: the list
+    /// this replaced still named a subclass deleted with the old engine, and
+    /// would have missed the next one. A class joins when any name in its
+    /// inheritance clause has already joined, until none does, so the order
+    /// the files are read in does not matter.
+    static func canvasTypeNames(in sources: [CheckedSource]) -> Set<String> {
+        // `class Name<Generics>: inheritance clause {`
+        let classDeclaration = #/\bclass\s+(\w+)\s*(?:<[^>]*>)?\s*:([^{]*)\{/#.wordBoundaryKind(.simple)
+        let declarations = sources.flatMap { source in
+            source.code.matches(of: classDeclaration).map { match in
+                (
+                    name: String(match.output.1),
+                    inherits: Set(match.output.2.matches(of: #/\w+/#).map { String($0.output) })
+                )
+            }
+        }
+        var names: Set<String> = [canvasBaseTypeName]
+        while let joining = declarations.first(where: {
+            !names.contains($0.name) && !$0.inherits.isDisjoint(with: names)
+        }) {
+            names.insert(joining.name)
+        }
+        return names
+    }
+
+    /// How many times this source constructs one of `typeNames`.
     ///
-    /// KNOWN DEFECT: `let v: PKCanvasView = .init()` is still invisible here,
-    /// as is a subclass this file has not been told about. Both are visible to
-    /// review, and both would need a type checker rather than a token scan.
-    static func canvasConstructionCount(in code: String) -> Int {
-        canvasTypeNames.reduce(0) { $0 + constructionCount(of: $1, in: code) }
+    /// Counts `T(`, `T (`, `T.init(`, and an annotation's shorthand: `: T =
+    /// .init(`, with `T!` and `T?` as well. `PKCanvasViewDelegate`, a
+    /// superclass clause, and a bare type reference are not construction.
+    /// Construction through a metatype or a typealias is out of reach of a
+    /// token scan.
+    static func canvasConstructionCount(in code: String, of typeNames: Set<String> = [canvasBaseTypeName]) -> Int {
+        typeNames.reduce(0) { $0 + constructionCount(of: $1, in: code) }
     }
 
     private static func constructionCount(of typeName: String, in code: String) -> Int {
@@ -388,6 +422,12 @@ enum ContractChecker {
         var searchStart = code.startIndex
 
         while let hit = code.range(of: typeName, range: searchStart..<code.endIndex) {
+            searchStart = hit.upperBound
+            // `MyPKCanvasView(` constructs another type.
+            if hit.lowerBound > code.startIndex {
+                let before = code[code.index(before: hit.lowerBound)]
+                if before.isLetter || before.isNumber || before == "_" { continue }
+            }
             var i = hit.upperBound
             func skipWhitespace() {
                 while i < code.endIndex, code[i] == " " || code[i] == "\t" || code[i] == "\n" {
@@ -395,25 +435,35 @@ enum ContractChecker {
                 }
             }
             skipWhitespace()
+            if code[i...].hasPrefix("!") || code[i...].hasPrefix("?") || code[i...].hasPrefix("=") {
+                if code[i] != "=" {
+                    i = code.index(after: i)
+                    skipWhitespace()
+                }
+                guard code[i...].hasPrefix("="), !code[i...].hasPrefix("==") else { continue }
+                i = code.index(after: i)
+                skipWhitespace()
+                guard code[i...].hasPrefix(".init") else { continue }
+            }
             if code[i...].hasPrefix(".init") {
                 i = code.index(i, offsetBy: 5)
                 skipWhitespace()
             }
             if i < code.endIndex, code[i] == "(" { count += 1 }
-            searchStart = hit.upperBound
         }
 
         return count
     }
 
     static func canvasConstructionSites(in sources: [CheckedSource]) -> [CanvasConstructionSite] {
-        sources.compactMap { source in
-            let count = canvasConstructionCount(in: source.code)
+        let typeNames = canvasTypeNames(in: sources)
+        return sources.compactMap { source in
+            let count = canvasConstructionCount(in: source.code, of: typeNames)
             return count > 0 ? CanvasConstructionSite(path: source.path, count: count) : nil
         }
     }
 
-    // MARK: Rule — the tool picker is the app's
+    // MARK: Rule — one writer of the tool
 
     /// The system tool picker observes a first-responder canvas and writes
     /// `canvasView.tool` itself, which makes it a second writer of the tool.
@@ -438,9 +488,27 @@ enum ContractChecker {
     static func toolPickerSites(in sources: [CheckedSource]) -> [String] {
         sources.filter { namesToolPicker(in: $0.code) }.map(\.path)
     }
+
+    /// Assignments of the canvas's tool: `canvasView.tool =`, through
+    /// `self.`, `?` or `!` as well.
+    ///
+    /// The picker is one second writer; an assignment is the plainer one. A
+    /// Pencil double-tap handler that sets `PKEraserTool` on the canvas it
+    /// was handed leaves the other live canvases on the old tool, the same
+    /// way a picker would. The receiver is matched by the name it has at the
+    /// one site and in every delegate callback, `canvasView`; an assignment
+    /// through another name is out of reach of a token scan.
+    static func toolAssignmentCount(in code: String) -> Int {
+        code.matches(of: #/\bcanvasView\s*[?!]?\s*\.\s*tool\s*=(?!=)/#.wordBoundaryKind(.simple)).count
+    }
+
+    /// One path per assignment of the canvas's tool.
+    static func toolAssignmentSites(in sources: [CheckedSource]) -> [String] {
+        sources.flatMap { Array(repeating: $0.path, count: toolAssignmentCount(in: $0.code)) }
+    }
 }
 
-/// One file that constructs `PKCanvasView`, and how many times.
+/// One file that constructs a canvas, and how many times.
 struct CanvasConstructionSite: Sendable, Equatable {
     let path: String
     let count: Int
@@ -504,11 +572,14 @@ struct ContractStructureTests {
         "Modules/TNEditor",
     ]
 
-    /// The module a policed path belongs to: the last component of its
-    /// directory, which is the target name for every entry above.
+    /// The module a policed path belongs to: the last component of the
+    /// longest entry above that contains it, at any depth, or "" when none
+    /// does. That name is the key of every table below.
     static func module(of path: String) -> String {
-        let components = path.split(separator: "/").map(String.init)
-        return components.count >= 2 ? components[components.count - 2] : ""
+        let directory = moduleDirectories
+            .filter { path.hasPrefix($0 + "/") }
+            .max { $0.count < $1.count }
+        return directory?.split(separator: "/").last.map(String.init) ?? ""
     }
 
     /// The fewest Swift sources the application can plausibly have, across
@@ -601,7 +672,7 @@ struct ContractStructureTests {
             )
             #expect(source.path.hasSuffix(".swift"), "\(source.path) is not a Swift source")
             #expect(
-                Self.moduleUIFrameworkPolicy[Self.module(of: source.path)] != nil,
+                Self.moduleImportPolicy[Self.module(of: source.path)] != nil,
                 "\(source.path) belongs to no module the import policy names"
             )
         }
@@ -655,7 +726,7 @@ struct ContractStructureTests {
             project.yml declares source paths this checker does not police: \
             \(declared.subtracting(Self.moduleDirectories).subtracting(["TuberNotesTests", "TNTests"]).sorted()). \
             A new module policed by nothing is the silence the split was supposed to end — add it \
-            to moduleDirectories and to moduleUIFrameworkPolicy.
+            to moduleDirectories and to moduleImportPolicy.
             """
         )
 
@@ -697,11 +768,22 @@ struct ContractStructureTests {
 
     // MARK: - Rules
 
-    /// Which of the three scanned frameworks each module may import.
+    /// Every module each module may import, ours and the system's.
+    /// `Docs/Contract.md`, *Structure*.
     ///
-    /// `Docs/Contract.md`, *Structure*: "UIKit is imported only by `TNCanvas`,
-    /// `TNEditor`, and the app." PencilKit and CoreGraphics reach further
-    /// down, because `TNModel` carries `PKDrawing` and `CGImage` as values.
+    /// The rows of ours are each target's `dependencies:` in `project.yml`,
+    /// copied rather than read: the graph is the rule, and a test that read it
+    /// from the project would let one added line there permit what the
+    /// Contract forbids. The app's row leaves out `TNCanvas`, and `TNCanvas`'s
+    /// row has only `TNModel` and `TNCore`. Neither is a build error: every
+    /// target compiles against one products directory, and
+    /// `transitivelyLinkDependencies` embeds `TNCanvas` in the app, so this
+    /// table is what refuses both imports.
+    ///
+    /// The system rows are what each module imports today, and a framework
+    /// joins one by an edit here or not at all. `import PDFKit` or `import
+    /// ImageIO` looks like a narrow need and brings UIKit's or CoreGraphics's
+    /// whole vocabulary with it.
     ///
     /// **This replaced a twenty-three-entry allowlist of file paths.** The
     /// allowlist could not express the rule it was enforcing: it was one flat
@@ -711,33 +793,53 @@ struct ContractStructureTests {
     /// property of where it lives, which is the same fact the link graph
     /// already carries, and there is nothing left to keep in sync per file.
     ///
-    /// The scanner is still the enforcement for these three because the
-    /// compiler cannot be: PencilKit requires UIKit and Foundation requires
-    /// CoreGraphics, so aliasing either away (the trick `project.yml` uses for
-    /// SwiftUI) breaks the transitive load as well as the written import.
-    static let moduleUIFrameworkPolicy: [String: Set<String>] = [
-        // The SwiftUI shell and the workspace. This module is where SwiftUI
-        // is allowed, and it is allowed nowhere else by the compiler rather
-        // than by this table.
-        "TuberNotesApp": ["UIKit", "PencilKit", "CoreGraphics"],
-        // v2. TNModel carries PencilKit and CoreGraphics for value types that
-        // cross the seams (PKDrawing, CGImage); the format touches files in
-        // Foundation and POSIX and draws nothing.
-        "TNCore": [],
-        "TNModel": ["PencilKit", "CoreGraphics"],
-        "TNFormat": [],
+    /// The scanner is the enforcement because the compiler cannot be:
+    /// PencilKit requires UIKit and Foundation requires CoreGraphics, so
+    /// aliasing either away (the trick `project.yml` uses for SwiftUI) breaks
+    /// the transitive load as well as the written import.
+    static let moduleImportPolicy: [String: Set<String>] = [
+        // The SwiftUI shell and the workspace. It holds the canvas as a
+        // UIViewController through TNEditor and never names TNCanvas.
+        "TuberNotesApp": [
+            "TNEditor", "TNLibrary", "TNNotebook", "TNRender", "TNFormat", "TNModel", "TNCore",
+            "Foundation", "Observation", "SwiftUI", "UIKit", "PencilKit", "CoreGraphics",
+            "PhotosUI", "VisionKit", "UniformTypeIdentifiers",
+        ],
+        "TNCore": ["Foundation", "os"],
+        // PencilKit and CoreGraphics for value types that cross the seams
+        // (PKDrawing, CGImage).
+        "TNModel": ["TNCore", "Foundation", "PencilKit", "CoreGraphics"],
+        // The format touches files in Foundation and POSIX and draws nothing.
+        "TNFormat": ["TNModel", "TNCore", "Foundation", "Synchronization"],
+        // Composites and thumbnails: CoreGraphics, CoreText, ImageIO,
+        // PencilKit for a thumbnail's ink. No UIKit.
+        "TNRender": [
+            "TNFormat", "TNModel", "TNCore",
+            "Foundation", "CoreGraphics", "CoreText", "ImageIO", "PencilKit",
+        ],
         // Custody holds PKDrawing values; nothing here draws or touches a file.
-        "TNNotebook": ["PencilKit"],
-        // The tree and the trash, in Foundation. Holds Notebooks (PencilKit
-        // arrives transitively) but writes no UI import.
-        "TNLibrary": ["PencilKit"],
-        // Composites and thumbnails: CoreGraphics, CoreText (ImageIO is not
-        // policed), PencilKit for a thumbnail's ink. No UIKit.
-        "TNRender": ["CoreGraphics", "PencilKit", "CoreText"],
-        // The driven runtime: everything that owns frame-frequency state.
-        "TNCanvas": ["UIKit", "PencilKit", "CoreGraphics", "CoreText"],
-        // The binding and the editor view model.
-        "TNEditor": ["UIKit", "PencilKit", "CoreGraphics"],
+        "TNNotebook": [
+            "TNRender", "TNFormat", "TNModel", "TNCore",
+            "Foundation", "Observation", "PencilKit",
+        ],
+        // The tree and the trash, in Foundation. Holds Notebooks, so PencilKit
+        // for their ink, but writes no UI.
+        "TNLibrary": [
+            "TNNotebook", "TNRender", "TNFormat", "TNModel", "TNCore",
+            "Foundation", "Observation", "PencilKit",
+        ],
+        // The driven runtime: everything that owns frame-frequency state. It
+        // cannot name the format, the notebook, or the library.
+        "TNCanvas": [
+            "TNModel", "TNCore",
+            "Foundation", "UIKit", "PencilKit", "CoreGraphics", "CoreText",
+        ],
+        // The binding and the editor view model: the one module that names
+        // both the canvas and the notebook.
+        "TNEditor": [
+            "TNCanvas", "TNNotebook", "TNRender", "TNFormat", "TNModel", "TNCore",
+            "Foundation", "Observation", "UIKit", "PencilKit", "CoreGraphics",
+        ],
     ]
 
     /// Files whose **module** is the claim, not merely their imports.
@@ -750,8 +852,9 @@ struct ContractStructureTests {
     /// durable value, so the vocabulary it may not acquire is all of it,
     /// CoreGraphics included, however `TNModel`'s row above reads.
     ///
-    /// The third entry made this a rule: a file named here is governed by
-    /// its own row and not by its module's. `TextTypesetting.swift` is the
+    /// The third entry made this a rule: a file named here takes the four
+    /// `uiFrameworkModules` from its own row and not from its module's.
+    /// `TextTypesetting.swift` is the
     /// one typesetting builder the renderer and the live text view share,
     /// and `TNModel` is the only module both can see, so it imports UIKit
     /// where nothing else in `TNModel` may. No entry can outlive its file:
@@ -763,14 +866,24 @@ struct ContractStructureTests {
         "TextTypesetting.swift": ("TNModel", ["PencilKit"]),
     ]
 
-    /// What a source may import: its own row when it is placed by design,
-    /// its module's row otherwise.
-    static func permittedUIFrameworks(for path: String) -> Set<String> {
+    /// What a source may import: its module's row, except that a file placed
+    /// by design takes the four `uiFrameworkModules` from its own row.
+    static func permittedImports(for path: String) -> Set<String> {
+        let row = moduleImportPolicy[module(of: path)] ?? []
         let name = String(path.split(separator: "/").last ?? "")
-        if let rule = filesPlacedByDesign[name] {
-            return ContractChecker.uiFrameworkModules.subtracting(rule.forbidden)
-        }
-        return moduleUIFrameworkPolicy[module(of: path)] ?? []
+        guard let rule = filesPlacedByDesign[name] else { return row }
+        let ui = ContractChecker.uiFrameworkModules
+        return row.subtracting(ui).union(ui.subtracting(rule.forbidden))
+    }
+
+    /// The imports a source makes that its row does not permit.
+    static func forbiddenImports(in source: CheckedSource) -> Set<String> {
+        Set(ContractChecker.importedModules(in: source.code)).subtracting(permittedImports(for: source.path))
+    }
+
+    /// UIKit's vocabulary in a source whose row does not permit UIKit.
+    static func uiKitVocabulary(in source: CheckedSource) -> [String] {
+        permittedImports(for: source.path).contains("UIKit") ? [] : ContractChecker.uiKitIdentifiers(in: source.code)
     }
 
     @Test("A template is a name in the model and marks in the renderer, and nowhere else")
@@ -833,20 +946,36 @@ struct ContractStructureTests {
         "TuberNotesApp/ThemeDefaults.swift",
     ]
 
-    @Test("Each module imports only the frameworks its place in the graph allows")
+    @Test("Each module imports only what its place in the graph allows")
     func eachModuleImportsOnlyWhatItsPlaceAllows() throws {
         for source in try Self.appSources() {
-            let module = Self.module(of: source.path)
-            let permitted = Self.permittedUIFrameworks(for: source.path)
-            let violations = Set(ContractChecker.importedUIFrameworks(in: source.code))
-                .subtracting(permitted)
+            let violations = Self.forbiddenImports(in: source)
             #expect(
                 violations.isEmpty,
                 """
-                \(source.path) imports \(violations.sorted().joined(separator: ", ")), which \(module) \
-                may not. Either the file is in the wrong module — move it — or the module's place in \
-                the graph changed, which is a contract change: update Docs/Contract.md, project.yml, \
-                and moduleUIFrameworkPolicy together.
+                \(source.path) imports \(violations.sorted().joined(separator: ", ")), which \
+                \(Self.module(of: source.path)) may not. Either the file is in the wrong module — move \
+                it — or the module's place in the graph changed, which is a contract change: update \
+                Docs/Contract.md, project.yml, and moduleImportPolicy together.
+                """
+            )
+        }
+    }
+
+    /// PencilKit re-exports UIKit, so below `TNCanvas`, `TNEditor` and the app
+    /// the import line alone cannot keep UIKit out. `Docs/Contract.md`,
+    /// *Structure*.
+    @Test("No module below the UIKit modules names a UIKit type")
+    func uiKitVocabularyStaysInTheUIKitModules() throws {
+        for source in try Self.appSources() {
+            let names = Set(Self.uiKitVocabulary(in: source))
+            #expect(
+                names.isEmpty,
+                """
+                \(source.path) names \(names.sorted().joined(separator: ", ")), which \
+                \(Self.module(of: source.path)) may not: UIKit belongs to TNCanvas, TNEditor and the \
+                app, and PencilKit brought it here unseen. Move the code up the graph, or hand this \
+                module a value it may hold.
                 """
             )
         }
@@ -884,7 +1013,7 @@ struct ContractStructureTests {
         #expect(
             sites.count == 1,
             """
-            expected exactly one file constructing PKCanvasView, found: \
+            expected exactly one file constructing PKCanvasView or a subclass of it, found: \
             \(described.isEmpty ? "none" : described.joined(separator: ", "))
             """
         )
@@ -906,6 +1035,22 @@ struct ContractStructureTests {
             canvasView.tool itself. PagedCanvasController.apply is the one writer of the tool, \
             across every live canvas and every canvas built after; a picker driving the first \
             responder would leave the others stale.
+            """
+        )
+    }
+
+    /// `Docs/Contract.md`, *Structure*: the canvas's tool is assigned at
+    /// exactly one site, where `apply` lands.
+    @Test("The canvas's tool is assigned at exactly one site")
+    func theToolHasOneWriter() throws {
+        let sites = ContractChecker.toolAssignmentSites(in: try Self.appSources())
+        #expect(
+            sites.count == 1,
+            """
+            expected exactly one assignment of canvasView.tool, found \(sites.count): \
+            \(sites.joined(separator: ", ")). PageCanvasController.apply(tool:) is where a tool \
+            lands, and PagedCanvasController.apply fans it out to every live canvas; a second \
+            assignment changes one canvas and leaves the others on the old tool.
             """
         )
     }
@@ -1161,7 +1306,7 @@ struct ContractCheckerOwnTests {
         // `CheckedSource.code` is what the rule reads.
         #expect(
             ContractChecker.testOnlyMembersOutsideDebug(
-                in: ContractChecker.codeOnly("// a comment about somethingForTesting\nlet x = 1\n")
+                in: ContractChecker.withoutComments("// a comment about somethingForTesting\nlet x = 1\n")
             ).isEmpty
         )
     }
@@ -1186,7 +1331,7 @@ struct ContractCheckerOwnTests {
         // `CheckedSource.code`, which has the comments taken out.
         #expect(
             !ContractChecker.namesToolPicker(
-                in: ContractChecker.codeOnly("// PKToolPicker is deliberately not used.\nlet x = 1\n")
+                in: ContractChecker.withoutComments("// PKToolPicker is deliberately not used.\nlet x = 1\n")
             )
         )
     }
@@ -1194,11 +1339,11 @@ struct ContractCheckerOwnTests {
     @Test("A file placed by design is judged by its own row, not its module's")
     func placedFilesAreJudgedByTheirOwnRow() {
         let placed = "Modules/TNModel/TextTypesetting.swift"
-        #expect(ContractStructureTests.permittedUIFrameworks(for: placed).contains("UIKit"))
-        #expect(!ContractStructureTests.permittedUIFrameworks(for: placed).contains("PencilKit"))
-        #expect(!ContractStructureTests.permittedUIFrameworks(for: "Modules/TNModel/Layer.swift").contains("UIKit"))
+        #expect(ContractStructureTests.permittedImports(for: placed).contains("UIKit"))
+        #expect(!ContractStructureTests.permittedImports(for: placed).contains("PencilKit"))
+        #expect(!ContractStructureTests.permittedImports(for: "Modules/TNModel/Layer.swift").contains("UIKit"))
         let violating = Set(ContractChecker.importedUIFrameworks(in: "import PencilKit\n"))
-            .subtracting(ContractStructureTests.permittedUIFrameworks(for: placed))
+            .subtracting(ContractStructureTests.permittedImports(for: placed))
         #expect(violating == ["PencilKit"])
     }
 
@@ -1211,6 +1356,214 @@ struct ContractCheckerOwnTests {
                 in: sources
             ) == ["TuberNotesApp/Gone.swift"]
         )
+    }
+
+    // MARK: The module graph, planted where it lives
+
+    /// Each planted source's imports that its row does not permit, by path.
+    private func forbiddenImports(under root: URL) throws -> [String: Set<String>] {
+        let sources = try ContractChecker.sources(under: root, label: "")
+        return Dictionary(uniqueKeysWithValues: sources.map {
+            ($0.path, ContractStructureTests.forbiddenImports(in: $0))
+        })
+    }
+
+    @Test("The app importing TNCanvas is caught, and so is TNCanvas reaching past TNModel")
+    func appMayNotImportTNCanvas() throws {
+        try withPlantedTree { root in
+            try write("import SwiftUI\nimport TNEditor\n", to: "TuberNotesApp/Fine.swift", under: root)
+            try write("import SwiftUI\nimport TNCanvas\n", to: "TuberNotesApp/Rogue.swift", under: root)
+            try write(
+                "@preconcurrency import class TNCanvas.PagedCanvasController\n",
+                to: "TuberNotesApp/Scoped.swift", under: root
+            )
+            try write("import TNModel\nimport TNNotebook\n", to: "Modules/TNCanvas/Reach.swift", under: root)
+
+            #expect(try forbiddenImports(under: root) == [
+                "TuberNotesApp/Fine.swift": [],
+                "TuberNotesApp/Rogue.swift": ["TNCanvas"],
+                "TuberNotesApp/Scoped.swift": ["TNCanvas"],
+                "Modules/TNCanvas/Reach.swift": ["TNNotebook"],
+            ])
+        }
+    }
+
+    @Test("TNRender importing PDFKit is caught")
+    func tnRenderMayNotImportPDFKit() throws {
+        try withPlantedTree { root in
+            try write(
+                "import CoreGraphics\nimport ImageIO\nimport TNFormat\n",
+                to: "Modules/TNRender/Fine.swift", under: root
+            )
+            try write(
+                "import Foundation\nimport PDFKit\n",
+                to: "Modules/TNRender/PDFSource.swift", under: root
+            )
+
+            #expect(try forbiddenImports(under: root) == [
+                "Modules/TNRender/Fine.swift": [],
+                "Modules/TNRender/PDFSource.swift": ["PDFKit"],
+            ])
+        }
+    }
+
+    @Test("A source in a module's subdirectory belongs to that module")
+    func moduleOfSubdirectory() throws {
+        #expect(ContractStructureTests.module(of: "Modules/TNRender/Sub/Deeper/Composite.swift") == "TNRender")
+        #expect(ContractStructureTests.module(of: "TuberNotesApp/Library/Cells.swift") == "TuberNotesApp")
+        #expect(ContractStructureTests.module(of: "Modules/TNRenderer/Composite.swift") == "")
+
+        try withPlantedTree { root in
+            try write("import CoreGraphics\n", to: "Modules/TNRender/Sub/Deeper/Composite.swift", under: root)
+            try write("import UIKit\n", to: "Modules/TNRender/Sub/Rogue.swift", under: root)
+
+            #expect(try forbiddenImports(under: root) == [
+                "Modules/TNRender/Sub/Deeper/Composite.swift": [],
+                "Modules/TNRender/Sub/Rogue.swift": ["UIKit"],
+            ])
+        }
+    }
+
+    @Test("UIKit's vocabulary below the UIKit modules is caught without an import")
+    func noUIKitIdentifiersBelowUIKitModules() throws {
+        try withPlantedTree { root in
+            try write(
+                "import PencilKit\nlet lasso = UIBezierPath(rect: .zero)\n",
+                to: "Modules/TNNotebook/StrokeGestures.swift", under: root
+            )
+            // Not UIKit's, though they start with a U.
+            try write(
+                "let n: UInt8 = 1\nlet id = UUID()\n",
+                to: "Modules/TNNotebook/Clean.swift", under: root
+            )
+            try write(
+                "// The UIColor bridge lives in TNEditor.\nlet x = 1\n",
+                to: "Modules/TNModel/RGBA8.swift", under: root
+            )
+            // The one file below them that may, and a module that may.
+            try write(
+                "import UIKit\nlet font = UIFont.systemFont(ofSize: 12)\n",
+                to: "Modules/TNModel/TextTypesetting.swift", under: root
+            )
+            try write("import UIKit\nlet view = UIView()\n", to: "Modules/TNCanvas/Host.swift", under: root)
+
+            let sources = try ContractChecker.sources(under: root, label: "")
+            let found = sources.filter { !ContractStructureTests.uiKitVocabulary(in: $0).isEmpty }
+            #expect(found.map(\.path) == ["Modules/TNNotebook/StrokeGestures.swift"])
+        }
+    }
+
+    // MARK: The canvas, planted where it lives
+
+    @Test("A PKCanvasView subclass is a canvas, at any depth, wherever it is declared")
+    func canvasSubclassesAreCounted() throws {
+        try withPlantedTree { root in
+            // Read before its superclass: the derivation must not depend on
+            // the order of the files.
+            try write("final class DeeperCanvas: HoverPreviewCanvas {}\n", to: "A/Deeper.swift", under: root)
+            try write(
+                "import PencilKit\nclass HoverPreviewCanvas: PencilKit.PKCanvasView, @unchecked Sendable {}\n",
+                to: "B/Hover.swift", under: root
+            )
+            // A delegate is not a canvas.
+            try write(
+                "final class Host: UIViewController, PKCanvasViewDelegate {}\nlet host = Host()\n",
+                to: "C/Host.swift", under: root
+            )
+            try write(
+                "let a = HoverPreviewCanvas()\nlet b = DeeperCanvas.init(frame: .zero)\n",
+                to: "D/Use.swift", under: root
+            )
+
+            let sources = try ContractChecker.sources(under: root, label: "Planted")
+            #expect(
+                ContractChecker.canvasTypeNames(in: sources) == ["PKCanvasView", "HoverPreviewCanvas", "DeeperCanvas"]
+            )
+            #expect(ContractChecker.canvasConstructionSites(in: sources) == [
+                CanvasConstructionSite(path: "Planted/D/Use.swift", count: 2),
+            ])
+        }
+    }
+
+    @Test("An annotation's .init shorthand is a construction")
+    func initShorthandIsCounted() throws {
+        try withPlantedTree { root in
+            try write("let v: PKCanvasView = .init()\n", to: "Plain.swift", under: root)
+            try write("var w: PKCanvasView! = .init(frame: .zero)\n", to: "Unwrapped.swift", under: root)
+            try write("var x: PKCanvasView? = .init()\n", to: "Optional.swift", under: root)
+            // Not constructions: a default of nil, a comparison, a metatype.
+            try write(
+                "func f(_ v: PKCanvasView? = nil) {}\n"
+                    + "let same = t == PKCanvasView.self\n"
+                    + "let m: PKCanvasView.Type = PKCanvasView.self\n",
+                to: "Neither.swift", under: root
+            )
+
+            let sources = try ContractChecker.sources(under: root, label: "Planted")
+            #expect(ContractChecker.canvasConstructionSites(in: sources) == [
+                CanvasConstructionSite(path: "Planted/Optional.swift", count: 1),
+                CanvasConstructionSite(path: "Planted/Plain.swift", count: 1),
+                CanvasConstructionSite(path: "Planted/Unwrapped.swift", count: 1),
+            ])
+        }
+    }
+
+    @Test("A second assignment of the canvas's tool is caught")
+    func oneToolWriter() throws {
+        try withPlantedTree { root in
+            try write("canvasView.tool = pkTool\n", to: "Apply.swift", under: root)
+            try write(
+                "self.canvasView.tool = PKEraserTool(.vector)\ncanvasView?.tool=PKLassoTool()\n",
+                to: "Deep/DoubleTap.swift", under: root
+            )
+            // Not assignments of the canvas's tool.
+            try write(
+                "self.tool = tool\nif canvasView.tool == other {}\nlet t = canvasView.tool\n",
+                to: "Reads.swift", under: root
+            )
+
+            let sources = try ContractChecker.sources(under: root, label: "Planted")
+            #expect(ContractChecker.toolAssignmentSites(in: sources) == [
+                "Planted/Apply.swift",
+                "Planted/Deep/DoubleTap.swift",
+                "Planted/Deep/DoubleTap.swift",
+            ])
+        }
+    }
+
+    // MARK: Strings
+
+    /// An interpolation is code, so what a string holds reaches every rule.
+    /// The scanner still tracks strings: the last file proves a `//` inside
+    /// one is not read as a comment.
+    @Test("A string's contents count, and a // inside a string is not a comment")
+    func stringLiteralsCount() throws {
+        try withPlantedTree { root in
+            try write(
+                #"let message = "FileManager could not open PKCanvasView(""# + "\n",
+                to: "Plain.swift", under: root
+            )
+            try write(
+                #"let path = "\(FileManager.default.temporaryDirectory)""# + "\n",
+                to: "Interpolated.swift", under: root
+            )
+            try write(
+                "let body = \"\"\"\n    \\(FileManager.default)\n    \"\"\"\n",
+                to: "MultiLine.swift", under: root
+            )
+            try write(##"let raw = #"\#(FileManager.default)"#"## + "\n", to: "Raw.swift", under: root)
+            try write(#"let quoted = "a \" // FileManager""# + "\n", to: "EscapedQuote.swift", under: root)
+
+            let sources = try ContractChecker.sources(under: root, label: "Planted")
+            #expect(sources.count == 5)
+            for source in sources {
+                #expect(
+                    ContractChecker.fileIOTokens(in: source.code) == ["FileManager"],
+                    "\(source.path) hid FileManager in a string: \(source.code)"
+                )
+            }
+            #expect(ContractChecker.canvasConstructionSites(in: sources).map(\.path) == ["Planted/Plain.swift"])
+        }
     }
 
     // MARK: The rules, on synthetic source
@@ -1233,7 +1586,7 @@ struct ContractCheckerOwnTests {
         ]
         for line in caught {
             #expect(
-                ContractChecker.importsUIFramework(ContractChecker.codeOnly(line + "\n")),
+                ContractChecker.importsUIFramework(ContractChecker.withoutComments(line + "\n")),
                 "the import rule missed \(line)"
             )
         }
@@ -1241,8 +1594,7 @@ struct ContractCheckerOwnTests {
         let ignored = [
             "import Foundation",
             "import os",
-            // Not an oversight: SwiftUI is the compiler's to refuse below the
-            // app target, so the scanner has no opinion about it anywhere.
+            // Not one of the four: the compiler refuses SwiftUI below the app.
             "import SwiftUI",
             "let importUIKit = 1",
             "#if canImport(UIKit)",
@@ -1250,7 +1602,7 @@ struct ContractCheckerOwnTests {
         ]
         for line in ignored {
             #expect(
-                !ContractChecker.importsUIFramework(ContractChecker.codeOnly(line + "\n")),
+                !ContractChecker.importsUIFramework(ContractChecker.withoutComments(line + "\n")),
                 "the import rule tripped on \(line)"
             )
         }
@@ -1295,7 +1647,7 @@ struct ContractCheckerOwnTests {
         ]
         for line in caught {
             #expect(
-                !ContractChecker.fileIOTokens(in: ContractChecker.codeOnly(line + "\n")).isEmpty,
+                !ContractChecker.fileIOTokens(in: ContractChecker.withoutComments(line + "\n")).isEmpty,
                 "the file-I/O rule missed \(line)"
             )
         }
@@ -1304,9 +1656,9 @@ struct ContractCheckerOwnTests {
         #expect(ContractChecker.fileIOTokens(in: "fputs(message, stderr)").isEmpty)
     }
 
-    /// Prose is not code. A comment or a string that mentions a forbidden token
-    /// must not trip any rule — this is the exact false positive that made the
-    /// old shell gate cry wolf.
+    /// Prose is not code. A comment that mentions a forbidden token must not
+    /// trip any rule — this is the exact false positive that made the old
+    /// shell gate cry wolf. A string is not prose: `stringLiteralsCount`.
     @Test("A comment does not trip the checker")
     func aCommentDoesNotTripTheChecker() {
         let source = """
@@ -1314,13 +1666,14 @@ struct ContractCheckerOwnTests {
         // We use fputs, not FileHandle.write(to:), because the stream is not storage.
         /* A block comment mentioning FileManager.default.removeItem and
            PKCanvasView() and even import UIKit on its own line. */
-        let message = "FileManager could not open PKCanvasView("
-        let escaped = "a quote \\" then FileManager again"
+        // canvasView.tool = PKEraserTool(.vector) would be a second writer.
         """
-        let code = ContractChecker.codeOnly(source)
+        let code = ContractChecker.withoutComments(source)
 
         #expect(!ContractChecker.importsUIFramework(code), "an import named inside a comment was read as code")
-        #expect(ContractChecker.canvasConstructionCount(in: code) == 0, "a comment or string was read as a construction site")
-        #expect(ContractChecker.fileIOTokens(in: code).isEmpty, "a comment or string was read as file I/O")
+        #expect(ContractChecker.canvasConstructionCount(in: code) == 0, "a comment was read as a construction site")
+        #expect(ContractChecker.fileIOTokens(in: code).isEmpty, "a comment was read as file I/O")
+        #expect(ContractChecker.uiKitIdentifiers(in: code).isEmpty, "a comment was read as UIKit's vocabulary")
+        #expect(ContractChecker.toolAssignmentCount(in: code) == 0, "a comment was read as a tool assignment")
     }
 }
