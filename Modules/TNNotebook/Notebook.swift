@@ -367,11 +367,6 @@ package final class Notebook {
         states.values.contains { $0.content?.textEditing != nil }
     }
 
-    /// An insert on a page with a session open is refused until it ends.
-    package func hasTextSession(on page: PageID) -> Bool {
-        states[page]?.content?.textEditing != nil
-    }
-
     /// Every edit records through here, and only when the revision moved:
     /// an entry that restores nothing would still clear redo on the way in.
     /// `rebuilt` says the new revision's drawing was built here rather than

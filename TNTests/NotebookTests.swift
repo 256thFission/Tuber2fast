@@ -1609,7 +1609,7 @@ struct NotebookTests {
         notebook.windowChanged(to: [page])
         try await waitUntil { notebook.state(of: page)?.content != nil }
         notebook.createTextBox(on: page, at: PagePoint(x: 40, y: 40), style: .body, alignment: .leading)
-        #expect(notebook.hasTextSession(on: page))
+        #expect(notebook.state(of: page)?.content?.textEditing != nil)
 
         await #expect(throws: FormatFault.self) { try await notebook.duplicatePage(page) }
         #expect(notebook.pageCount == 1, "a refused duplicate inserts nothing")
@@ -2059,11 +2059,12 @@ struct NotebookTests {
         #expect(!notebook.hasTextSession)
         notebook.createTextBox(on: page, at: PagePoint(x: 30, y: 40), style: .body, alignment: .leading)
         #expect(notebook.hasTextSession)
-        #expect(notebook.hasTextSession(on: page) && !notebook.hasTextSession(on: other))
+        #expect(notebook.state(of: page)?.content?.textEditing != nil)
+        #expect(notebook.state(of: other)?.content?.textEditing == nil)
         #expect(notebook.state(of: page)?.content?.textEditing?.before.layers.isEmpty == true, "captured ahead of the insert")
         let box = try #require(notebook.state(of: page)?.content?.textEditing?.layer)
         notebook.endTextEditing(on: page, layer: box, TextLayer(rect: PageRect(x: 30, y: 40, width: 240, height: 96), runs: [], alignment: .leading))
-        #expect(!notebook.hasTextSession && !notebook.hasTextSession(on: page))
+        #expect(!notebook.hasTextSession && notebook.state(of: page)?.content?.textEditing == nil)
         _ = await notebook.close()
         _ = scratch
     }
