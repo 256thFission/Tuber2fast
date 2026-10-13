@@ -126,6 +126,10 @@ package enum RetireOutcome: Sendable, Equatable {
     func installContent(_ snapshot: PageSnapshot)
     func restoreInk(on page: PageID, _ ink: PKDrawing, seq: InkSeq)
     func scroll(to page: PageID)
+    /// The notebook dropped this page's content (`prune`). The runtime
+    /// forgets its snapshot; the page gets a canvas again only from a later
+    /// `installContent`. Never sent for a page with a canvas.
+    func unload(_ page: PageID)
     func retire(_ page: PageID) -> RetireOutcome
     /// A sharper or refreshed backdrop for a live page, with the layer list
     /// it was rendered from, so the runtime's hit rects match the picture.

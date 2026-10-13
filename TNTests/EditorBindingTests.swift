@@ -15,6 +15,7 @@ enum SurfaceCall: Sendable, Equatable {
     case restoreInk(PageID, seq: InkSeq)
     case scroll(PageID)
     case retire(PageID)
+    case unload(PageID)
     case updateComposite(PageID)
     case beginTextEditing(PageID, LayerID)
     case endTextEditing(PageID, LayerID)
@@ -52,6 +53,8 @@ final class RecordingSurface: CanvasSurface {
         calls.append(.retire(page))
         return deferring.contains(page) ? .deferred : .retired
     }
+
+    func unload(_ page: PageID) { calls.append(.unload(page)) }
 
     func updateComposite(on page: PageID, _ composite: Composite, layers: [Layer]) {
         calls.append(.updateComposite(page))
@@ -149,6 +152,26 @@ struct EditorBindingTests {
         #expect(surface.calls.allSatisfy {
             if case .installContent(_, let editable) = $0 { editable } else { true }
         })
+        _ = await notebook.close()
+        _ = scratch
+    }
+
+    @Test("Pruning a page tells the runtime to forget its content, and the page comes back by a new install")
+    func pruneTellsTheRuntimeWhatItDropped() async throws {
+        let (scratch, notebook) = try await reopened("editor-prune", pages: 3)
+        let surface = RecordingSurface()
+        let binding = EditorBinding(notebook: notebook, surface: surface)
+        let (first, second) = (notebook.pageIDs[0], notebook.pageIDs[1])
+        binding.windowChanged(to: [first])
+        try await waitUntil { surface.installed.contains(first) }
+        binding.retired(first, finalInk: nil)
+
+        binding.windowChanged(to: [second])
+        #expect(surface.calls.contains(.unload(first)))
+        if case .unloaded = notebook.state(of: first) {} else { Issue.record("page is \(String(describing: notebook.state(of: first)))") }
+
+        binding.windowChanged(to: [first])
+        try await waitUntil { surface.installed.count { $0 == first } == 2 }
         _ = await notebook.close()
         _ = scratch
     }

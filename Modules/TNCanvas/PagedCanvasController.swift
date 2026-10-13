@@ -27,8 +27,9 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
     private var descriptors: [PageID: PageDescriptor] = [:]
 
     /// What the notebook has pushed down for a page, kept whether or not the
-    /// page currently has a canvas: a page outside the live window keeps its
-    /// snapshot and builds a canvas when it enters.
+    /// page currently has a canvas, until the notebook unloads the page: a
+    /// page outside the live window keeps its snapshot and builds a canvas
+    /// when it enters.
     private var snapshots: [PageID: PageSnapshot] = [:]
 
     /// The live canvases, by page. Internal rather than private so a test can
@@ -347,6 +348,19 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
             return
         }
         scrollView.setContentOffset(CGPoint(x: target, y: 0), animated: true)
+    }
+
+    /// The page waits, as a placeholder if it is in the decoded window, for
+    /// an install. A canvas built from a snapshot the notebook has dropped
+    /// would be ink the notebook cannot take: it reloads the page only when
+    /// the window report arrives, after the canvas exists.
+    package func unload(_ page: PageID) {
+        TNPrecondition.require(
+            canvases[page] == nil && retiring[page] == nil,
+            "page \(page) was unloaded while it has a canvas"
+        )
+        snapshots[page] = nil
+        placeholders[page]?.text = PlaceholderCopy.waiting
     }
 
     package func retire(_ page: PageID) -> RetireOutcome {
@@ -715,9 +729,9 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
     ///
     /// The stored snapshot takes the same value, so a page that leaves the live
     /// window and comes back is rebuilt from the ink it left with rather than
-    /// from the ink the last install described. The notebook will usually push
-    /// content again first; this is what makes the case where it does not a
-    /// stale composite rather than lost strokes.
+    /// from the ink the last install described. The notebook pushes content
+    /// again only for a page it unloaded, and `unload` has dropped this
+    /// snapshot by then; a page it kept is rebuilt from here.
     func pageDidRetire(_ page: PageID, finalInk: PKDrawing) {
         if let snapshot = snapshots[page], snapshot.isEditable, let inkSeq = snapshot.inkSeq {
             snapshots[page] = PageSnapshot.editable(

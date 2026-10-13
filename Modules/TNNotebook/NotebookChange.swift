@@ -8,6 +8,7 @@ import TNModel
 package enum NotebookChange: Sendable {
     case structure([PageDescriptor], seq: StructureSeq, answering: ReportSeq?)
     case content(PageSnapshot)
+    case unloaded(PageID)
     case inkRestored(PageID, PKDrawing, seq: InkSeq)
     case compositeUpdated(PageID, Composite, layers: [Layer])
     case textEditingBegan(PageID, TextEditStart)

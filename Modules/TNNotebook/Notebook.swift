@@ -447,20 +447,26 @@ package final class Notebook {
     /// The runtime's final report for a retired canvas. `finalInk` nil means
     /// the canvas was a placeholder and held nothing.
     package func retired(_ page: PageID, finalInk: PKDrawing?) {
-        if let finalInk, case .ready(let content) = states[page], content.ink != finalInk {
-            inkChanged(on: page, finalInk, echoOf: nil)
+        switch states[page] {
+        case nil:
+            return  // a deleted page: its ink went with it (deletePage)
+        case .ready(let content):
+            if let finalInk, content.ink != finalInk { inkChanged(on: page, finalInk, echoOf: nil) }
+            withContent(page) { $0.retired = true }
+        case .unloaded, .loading, .unreadable:
+            TNPrecondition.require(finalInk == nil, "page \(page) retired with ink the notebook does not hold: \(String(describing: states[page]))")
         }
-        withContent(page) { $0.retired = true }
     }
 
     /// Drops content for pages the runtime has retired, that are outside the
-    /// window, and that are clean. History does not go with it: the stack is
-    /// notebook-wide, and an undo into a pruned page loads it back and
-    /// restores on arrival.
+    /// window, and that are clean, and tells the runtime, which forgets its
+    /// snapshot. History does not go with it: the stack is notebook-wide,
+    /// and an undo into a pruned page loads it back and restores on arrival.
     package func prune() {
         for (page, state) in states {
             guard case .ready(let content) = state, content.retired, !wanted.contains(page), !content.isDirty else { continue }
             states[page] = .unloaded
+            changes.append(.unloaded(page))
         }
     }
 

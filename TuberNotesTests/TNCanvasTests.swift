@@ -352,6 +352,25 @@ struct TNCanvasTests {
         _ = runtime.retireAll()
     }
 
+    @Test("An unloaded page waits: no canvas and a waiting placeholder until a new install")
+    func unloadForgetsTheSnapshot() throws {
+        let reporter = RecordingReporter()
+        let (runtime, ids) = sixInstalledPages(reporter)
+        settle(runtime, at: 5)
+
+        runtime.unload(ids[0])
+        settle(runtime, at: 0)
+
+        #expect(runtime.canvases[ids[0]] == nil)
+        #expect(runtime.placeholders[ids[0]]?.text == PlaceholderCopy.waiting)
+        #expect(runtime.canvases[ids[1]] != nil, "a page the notebook kept is rebuilt from its snapshot")
+
+        runtime.installContent(.editable(id: ids[0], ink: strokeDrawing(strokes: 2), layers: [], composite: nil, inkSeq: InkSeq(9)))
+        let canvas = try #require(runtime.canvases[ids[0]])
+        #expect(canvas.inkSeq == InkSeq(9))
+        _ = runtime.retireAll()
+    }
+
     // MARK: - The end boundary
 
     @Test("A pull past the last page asks for one, and the answer lands on it")

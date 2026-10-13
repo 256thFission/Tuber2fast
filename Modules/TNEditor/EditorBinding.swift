@@ -174,6 +174,8 @@ import UIKit
             surface.setPages(pages, seq: seq, answering: answering)
         case .content(let snapshot):
             surface.installContent(snapshot)
+        case .unloaded(let page):
+            surface.unload(page)
         case .inkRestored(let page, let ink, let seq):
             surface.restoreInk(on: page, ink, seq: seq)
         case .compositeUpdated(let page, let composite, let layers):

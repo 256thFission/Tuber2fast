@@ -1,11 +1,36 @@
 import Foundation
 import PencilKit
+import Testing
 @testable import TNCanvas
 @testable import TNModel
+@testable import TNNotebook
 import UIKit
 
 // What the hosted canvas suites share: page fixtures, a window to host a
 // runtime in, and the moves a test makes in place of a finger and a Pencil.
+
+let testEnvironment = CanvasEnvironment(tool: .ink(PKInkingTool(.pen)))
+
+// `fast` and `waitUntil` are TNTests' own, copied: that target is not
+// linked here.
+
+var fast: SaveSchedule {
+    var schedule = SaveSchedule()
+    schedule.idleFloor = .milliseconds(10)
+    schedule.idleCeiling = .milliseconds(20)
+    schedule.backoffCap = .milliseconds(50)
+    return schedule
+}
+
+@MainActor
+func waitUntil(_ timeout: Duration = .seconds(5), _ condition: @MainActor () -> Bool) async throws {
+    let clock = ContinuousClock()
+    let deadline = clock.now + timeout
+    while !condition() {
+        try #require(clock.now < deadline, "timed out")
+        try await Task.sleep(for: .milliseconds(5))
+    }
+}
 
 func descriptors(_ count: Int) -> [PageDescriptor] {
     (0..<count).map { _ in
