@@ -369,9 +369,10 @@ deepen-notebook-06, arch-canvas-06).
 
 **Ink is not a layer, and it is drawn above every layer.** The layer list
 is the stack, bottom to top, and the ink sits over the whole of it: an
-insert appends to the list, and a composite, a thumbnail and an export
-draw every layer and then the ink. No file records where the ink sits,
-because there is one place it can be. `hasInk` never goes back to false.
+insert appends to the list, the canvas draws the ink live over the
+composite, and a thumbnail and an export draw every layer and then the
+ink. No file records where the ink sits, because there is one place it
+can be. `hasInk` never goes back to false.
 Once it is true, the ink file is written whenever the ink changes, an
 empty drawing included, and is deleted only with the page. A save that
 changes only layers does not rewrite the ink file. The reason no position
