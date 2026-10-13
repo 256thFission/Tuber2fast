@@ -69,7 +69,7 @@ turns up that this document does not name, derive its treatment from these.
 | `chrome` | band, writing bar, chips, readouts — one fill for all of them |
 | `accent` | held tool, active tab, seat title strip, lasso, page margin |
 | `secondary` | seat toggle, resize grip, dirty dot, rule lines |
-| `ink` | what every outline is mixed toward, and the one colour the chrome uses straight: the words typed into a field, the tray knob's ring, the bar's shadow in flight |
+| `ink` | what every outline is mixed toward, and, unmixed, the colour of the words typed into a field, the tray knob's ring and the bar's shadow in flight |
 | `outlineMix` | two percentages, saturated and pale; defaults 42 / 55 |
 | `palette` | seven colours a line of handwriting can be read in, the ink's darkest first; the pen's four swatches are seeded from its first four (§4.1) |
 | `dark` | the one flag that makes a theme dark: the mix target turns toward white, the escape runs to the ground, and the seat body and its current row follow (derived, §3.2; the seat, §4.3) |
