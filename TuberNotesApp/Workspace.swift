@@ -290,6 +290,9 @@ final class Workspace {
 
     func scenePhaseChanged(_ phase: ScenePhase) {
         guard phase != .active else { return }
+        // Leaving the foreground cancels every touch. A tool use PencilKit did
+        // not end, ends, so the tab is not wedged when it comes back.
+        for tab in tabs { tab.editor.endToolUses() }
         guard leaseFlush == nil else { return }
         leaseFlush = Task {
             await self.flushUnderLease()

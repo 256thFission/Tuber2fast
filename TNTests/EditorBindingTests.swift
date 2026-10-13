@@ -21,6 +21,7 @@ enum SurfaceCall: Sendable, Equatable {
     case endTextEditing(PageID, LayerID)
     case undoTyping
     case redoTyping
+    case endToolUses
 }
 
 /// A surface that records instead of drawing. It stands where
@@ -77,6 +78,8 @@ final class RecordingSurface: CanvasRuntime {
     }
 
     func setUndoAvailability(canUndo: Bool, canRedo: Bool) {}
+
+    func endToolUses() { calls.append(.endToolUses) }
 
     // MARK: What a test asks
 

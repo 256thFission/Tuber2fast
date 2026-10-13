@@ -648,6 +648,9 @@ package final class EditorViewModel {
 
     package func flush() async { await notebook.flush() }
 
+    /// The app left the foreground.
+    package func endToolUses() { binding.endToolUses() }
+
     /// Close: the runtime lets go of every page first, then the notebook
     /// runs its final pass. A retire deferred by a stroke in flight is
     /// waited for, because the ink that stroke carries is not in custody

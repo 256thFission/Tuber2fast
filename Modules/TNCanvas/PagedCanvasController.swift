@@ -133,6 +133,11 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
         ])
     }
 
+    package override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        endToolUses(because: "the canvas left the window")
+    }
+
     private func repaintGround() {
         scrollView.backgroundColor = MacaronGround.grid(
             Theme.current, scale: view.traitCollection.displayScale
@@ -406,6 +411,16 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
         tool = environment.tool
         for canvas in canvases.values {
             canvas.apply(tool: environment.tool)
+        }
+    }
+
+    /// Told when the app leaves the foreground: every touch was cancelled,
+    /// and a tool use PencilKit did not end, ends.
+    package func endToolUses() { endToolUses(because: "the app left the foreground") }
+
+    private func endToolUses(because reason: String) {
+        for canvas in Array(canvases.values) + Array(retiring.values) {
+            canvas.endUntouchableToolUse(reason)
         }
     }
 

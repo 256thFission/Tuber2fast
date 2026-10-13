@@ -9,12 +9,13 @@ import UIKit
 ///
 /// `CanvasSurface` in `TNModel` is the value channel: descriptors,
 /// snapshots, composites. Retiring every live canvas at once, telling the
-/// runtime whether undo is available, and asking whether a stroke is in
-/// flight are about the runtime itself, so they live here rather than
-/// widening the seam. The binding holds the runtime as one of these and
-/// nothing narrower, so the close a test proves is the one production
-/// runs. `TNCanvas` adopts this in `CanvasRuntime.swift`, the one file in
-/// this target that names `TNCanvas`.
+/// runtime whether undo is available, asking whether a stroke is in
+/// flight, and ending the tool uses nothing can touch are about the
+/// runtime itself, so they live here rather than widening the seam. The
+/// binding holds the runtime as one of these and nothing narrower, so the
+/// close a test proves is the one production runs. `TNCanvas` adopts this
+/// in `CanvasRuntime.swift`, the one file in this target that names
+/// `TNCanvas`.
 @MainActor package protocol CanvasRuntime: CanvasSurface {
     /// Retires every live page. Returns the pages whose retire was
     /// deferred by a stroke in flight; each of those reports later.
@@ -23,6 +24,9 @@ import UIKit
     /// Whether any canvas, a departing one included, has a tool use open.
     /// Asked, never mirrored: the stroke is PencilKit's.
     var isStrokeInFlight: Bool { get }
+    /// Nothing can touch the canvases: a tool use PencilKit did not end,
+    /// ends.
+    func endToolUses()
 }
 
 /// Forwards the runtime's reports to the binding.
@@ -206,6 +210,11 @@ import UIKit
     /// Delivers the tool to the runtime.
     package func apply(_ environment: CanvasEnvironment) {
         surface.apply(environment)
+    }
+
+    /// The app left the foreground.
+    package func endToolUses() {
+        surface.endToolUses()
     }
 
     // MARK: Closing

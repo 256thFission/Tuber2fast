@@ -622,6 +622,135 @@ struct TNCanvasTests {
         _ = runtime.retireAll()
     }
 
+    @Test("A use still drawing when the runtime leaves the window ends there, and what waited for it runs")
+    func aToolUseEndsWhenTheRuntimeLeavesTheWindow() async throws {
+        let reporter = RecordingReporter()
+        let runtime = PagedCanvasController(reporter: reporter)
+        let window = host(runtime)
+        let (canvas, waiting) = try aUseWithAnInstallWaiting(on: runtime, tool: PKInkingTool(.pen))
+
+        window.rootViewController = UIViewController()
+        try await waitUntil { !canvas.isStrokeInFlight }
+        #expect(runtime.canvases[waiting] != nil)
+        _ = runtime.retireAll()
+    }
+
+    @Test("A use still drawing when the app leaves the foreground ends a turn later, and what waited for it runs")
+    func aToolUseEndsWhenTheAppLeavesTheForeground() async throws {
+        let reporter = RecordingReporter()
+        let runtime = hosted(reporter)
+        let (canvas, waiting) = try aUseWithAnInstallWaiting(on: runtime, tool: PKInkingTool(.pen))
+
+        runtime.endToolUses()
+        #expect(canvas.isStrokeInFlight, "PencilKit's own cancel has the turn first")
+        try await waitUntil { !canvas.isStrokeInFlight }
+        #expect(runtime.canvases[waiting] != nil)
+        _ = runtime.retireAll()
+    }
+
+    @Test("A forced exit never pre-empts PencilKit's own commit")
+    func anUntouchableExitLeavesACommittingUseToItsCommit() async throws {
+        let reporter = RecordingReporter()
+        let runtime = hosted(reporter)
+        runtime.apply(testEnvironment)
+        let pages = descriptors(1)
+        runtime.setPages(pages, seq: StructureSeq(1), answering: nil)
+        runtime.installContent(.editable(id: pages[0].id, ink: PKDrawing(), layers: [], composite: nil, inkSeq: InkSeq(1)))
+        let canvas = try #require(runtime.canvases[pages[0].id])
+
+        canvas.canvasViewDidBeginUsingTool(canvas.canvasView)
+        canvas.canvasViewDidEndUsingTool(canvas.canvasView)
+        runtime.endToolUses()
+        await hop()
+        #expect(canvas.isStrokeInFlight, "the use is committing, and only its change or its bound ends it")
+
+        draw(strokeDrawing(strokes: 1), on: canvas)
+        canvas.canvasViewDrawingDidChange(canvas.canvasView)
+        #expect(!canvas.isStrokeInFlight)
+        #expect(reporter.inkChanges.map { $0.ink.strokes.count } == [1])
+        _ = runtime.retireAll()
+    }
+
+    @Test("A pen use waits for its commit past one turn, and the commit is the stroke")
+    func aPenUseWaitsForItsCommitPastOneTurn() async throws {
+        let reporter = RecordingReporter()
+        let runtime = hosted(reporter)
+        runtime.apply(testEnvironment)
+        let pages = descriptors(1)
+        runtime.setPages(pages, seq: StructureSeq(1), answering: nil)
+        runtime.installContent(.editable(id: pages[0].id, ink: PKDrawing(), layers: [], composite: nil, inkSeq: InkSeq(1)))
+        let canvas = try #require(runtime.canvases[pages[0].id])
+        await hop()
+
+        canvas.canvasViewDidBeginUsingTool(canvas.canvasView)
+        draw(strokeDrawing(strokes: 1), on: canvas)
+        canvas.canvasViewDidEndUsingTool(canvas.canvasView)
+        await hop()
+        #expect(canvas.isStrokeInFlight, "PencilKit commits a pen stroke after the use ends, and it has not yet")
+
+        canvas.canvasViewDrawingDidChange(canvas.canvasView)
+        #expect(!canvas.isStrokeInFlight)
+        #expect(reporter.inkChanges.map { $0.ink.strokes.count } == [1])
+        _ = runtime.retireAll()
+    }
+
+    @Test("A pen use that commits nothing ends at the bound, and what waited for it runs")
+    func aPenUseThatCommitsNothingEndsAtTheBound() async throws {
+        let reporter = RecordingReporter()
+        let runtime = hosted(reporter)
+        let (canvas, waiting) = try aUseWithAnInstallWaiting(on: runtime, tool: PKInkingTool(.pen))
+
+        canvas.canvasViewDidEndUsingTool(canvas.canvasView)
+        try await waitUntil(.seconds(5)) { !canvas.isStrokeInFlight }
+        #expect(runtime.canvases[waiting] != nil)
+        _ = runtime.retireAll()
+    }
+
+    @Test("An eraser use that commits nothing ends after one turn, as every tool but a pen does")
+    func anEraserUseThatCommitsNothingEndsAfterOneTurn() async throws {
+        let reporter = RecordingReporter()
+        let runtime = hosted(reporter)
+        runtime.apply(CanvasEnvironment(tool: .ink(PKEraserTool(.vector))))
+        let pages = descriptors(1)
+        runtime.setPages(pages, seq: StructureSeq(1), answering: nil)
+        runtime.installContent(.editable(id: pages[0].id, ink: PKDrawing(), layers: [], composite: nil, inkSeq: InkSeq(1)))
+        let canvas = try #require(runtime.canvases[pages[0].id])
+
+        canvas.canvasViewDidBeginUsingTool(canvas.canvasView)
+        canvas.canvasViewDidEndUsingTool(canvas.canvasView)
+        await hop()
+        #expect(!canvas.isStrokeInFlight)
+        _ = runtime.retireAll()
+    }
+
+    @Test("A tool told during a stroke reaches the other canvases at once, and that canvas when the stroke ends")
+    func aToolToldMidStrokeWaitsForTheStroke() throws {
+        let reporter = RecordingReporter()
+        let runtime = hosted(reporter)
+        runtime.apply(testEnvironment)
+        let pages = descriptors(2)
+        runtime.setPages(pages, seq: StructureSeq(1), answering: nil)
+        for page in pages {
+            runtime.installContent(.editable(id: page.id, ink: PKDrawing(), layers: [], composite: nil, inkSeq: InkSeq(1)))
+        }
+        let a = try #require(runtime.canvases[pages[0].id])
+        let b = try #require(runtime.canvases[pages[1].id])
+        a.canvasViewDidBeginUsingTool(a.canvasView)
+
+        // The text tool turns the drawing gesture off, and turning it off
+        // under the Pencil cancels the stroke.
+        runtime.apply(CanvasEnvironment(tool: .text(.body, .leading)))
+        #expect(!b.canvasView.drawingGestureRecognizer.isEnabled)
+        #expect(a.canvasView.drawingGestureRecognizer.isEnabled, "the stroke keeps the tool it began with")
+
+        draw(strokeDrawing(strokes: 1), on: a)
+        a.canvasViewDidEndUsingTool(a.canvasView)
+        a.canvasViewDrawingDidChange(a.canvasView)
+        #expect(!a.canvasView.drawingGestureRecognizer.isEnabled)
+        #expect(reporter.inkChanges.last?.ink.strokes.count == 1, "the stroke was reported before the tool changed")
+        _ = runtime.retireAll()
+    }
+
     private func backdrop(of canvas: PageCanvasController) -> UIImage? {
         canvas.paperView.subviews.compactMap { $0 as? UIImageView }.first?.image
     }

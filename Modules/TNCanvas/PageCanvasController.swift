@@ -118,19 +118,35 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
     private var keyboardOverlap: CGFloat = 0
     private var keyboardObservers: [any NSObjectProtocol] = []
 
-    /// Set at `canvasViewDidBeginUsingTool`, cleared after the drawing change
-    /// that follows `canvasViewDidEndUsingTool`. Installs, window changes, and
-    /// teardown wait for it: the stroke under the Pencil right now is the one
-    /// piece of ink no report can carry until it commits.
-    private(set) var isStrokeInFlight = false
+    /// What PencilKit is doing on this canvas. The number names one tool use,
+    /// so a timer or a hop armed for one use can never end the next.
+    private enum ToolUse: Equatable {
+        case idle
+        /// Between `canvasViewDidBeginUsingTool` and `canvasViewDidEndUsingTool`.
+        case drawing(UInt64)
+        /// The use ended and its drawing change has not landed.
+        case committing(UInt64)
+    }
+
+    /// Installs, window changes and teardown wait while a use is open, and the
+    /// editor ignores undo: the stroke under the Pencil is the one piece of ink
+    /// no report can carry until it commits.
+    private var toolUse: ToolUse = .idle
+    private var toolUsesBegun: UInt64 = 0
+    var isStrokeInFlight: Bool { toolUse != .idle }
+
+    /// A tool told while a use is open, applied when it ends.
+    private var toolAwaitingStrokeEnd: CanvasTool?
+
+    /// How long a pen use waits for its commit. PencilKit commits a pen stroke
+    /// after the use ends; only a use that commits nothing reaches this, and
+    /// the log line says when one does.
+    static let commitBound: DispatchTimeInterval = .milliseconds(500)
 
     /// The sequence of the ink this canvas last took from the notebook, at
     /// build or restore. The owner reads it against the snapshot's to find
     /// ink pushed that this canvas has not taken.
     private(set) var inkSeq: InkSeq?
-
-    /// The tool use ended and its drawing change has not arrived yet.
-    private var awaitingChangeAfterToolUse = false
 
     /// The sequence number of an install whose PencilKit callback has not
     /// arrived. The next drawing change carries it as `echoOf:` and the latch
@@ -380,7 +396,15 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
     /// window where the text tool is selected and the Pencil draws. Switching
     /// to ink commits an open session before the gesture comes back, so a
     /// stroke never lands under a live overlay.
+    ///
+    /// A use that is open keeps the tool it began with, and takes this one
+    /// when it ends: the text tool turns the drawing gesture off, which
+    /// cancels the stroke under the Pencil.
     func apply(tool: CanvasTool) {
+        guard !isStrokeInFlight else {
+            toolAwaitingStrokeEnd = tool
+            return
+        }
         self.tool = tool
         switch tool {
         case .ink(let pkTool):
@@ -517,7 +541,8 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
     func restoreInk(_ ink: PKDrawing, seq: InkSeq) {
         TNPrecondition.require(
             !isStrokeInFlight,
-            "ink was installed on page \(pageID) while a stroke was in flight"
+            "ink was installed on page \(pageID) while a stroke was in flight "
+                + "(undo is gated and gestures are skipped under a stroke; see EditorBinding)"
         )
         inkSeq = seq
         pendingEcho = seq
@@ -785,22 +810,29 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
     // MARK: - PKCanvasViewDelegate
 
     package func canvasViewDidBeginUsingTool(_ canvasView: PKCanvasView) {
-        isStrokeInFlight = true
-        awaitingChangeAfterToolUse = false
+        toolUsesBegun &+= 1
+        toolUse = .drawing(toolUsesBegun)
     }
 
     package func canvasViewDidEndUsingTool(_ canvasView: PKCanvasView) {
-        guard isStrokeInFlight else { return }
-        awaitingChangeAfterToolUse = true
-        // The drawing change that commits the stroke normally follows in this
-        // same turn. A tool use that commits nothing — a tap with the eraser on
-        // empty paper — fires no change at all, and without this the flag would
-        // stay set and every deferred install would wait forever.
-        DispatchQueue.main.async { @MainActor [weak self] in
-            guard let self, self.awaitingChangeAfterToolUse else { return }
-            self.awaitingChangeAfterToolUse = false
-            self.isStrokeInFlight = false
-            self.owner.pageStrokeDidEnd(self.pageID)
+        guard case .drawing(let use) = toolUse else { return }
+        toolUse = .committing(use)
+        // A pen's stroke commits after the use ends, so a pen waits for it up
+        // to the bound. Any other tool's changes land during the use, and a use
+        // that changes nothing (an eraser tap on empty paper) fires no change at
+        // all: one turn.
+        let isPen = if case .ink(let pkTool) = tool { pkTool is PKInkingTool } else { false }
+        if isPen {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.commitBound) { @MainActor [weak self] in
+                guard let self, self.toolUse == .committing(use) else { return }
+                TNLog.event(.canvas, "pen use on page \(self.pageID) ended by the bound, with no commit")
+                self.endToolUse()
+            }
+        } else {
+            DispatchQueue.main.async { @MainActor [weak self] in
+                guard let self, self.toolUse == .committing(use) else { return }
+                self.endToolUse()
+            }
         }
     }
 
@@ -813,18 +845,47 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         pendingEcho = nil
 
         // The state change finishes before the report leaves: a handler that
-        // installs, retires, or turns the page must see a canvas with no stroke
-        // in flight.
-        let strokeEnded = awaitingChangeAfterToolUse
-        if strokeEnded {
-            awaitingChangeAfterToolUse = false
-            isStrokeInFlight = false
-        }
-
+        // installs, retires, or turns the page must see the use idle.
+        let strokeEnded = if case .committing = toolUse { true } else { false }
+        if strokeEnded { toolUse = .idle }
         owner.pageDidChangeInk(pageID, canvasView.drawing, echoOf: echo)
-        if strokeEnded {
-            owner.pageStrokeDidEnd(pageID)
+        if strokeEnded { finishToolUse() }
+    }
+
+    /// The bound, and the untouchable exit.
+    private func endToolUse() {
+        toolUse = .idle
+        finishToolUse()
+    }
+
+    /// After the use is idle and any report has left.
+    private func finishToolUse() {
+        if let tool = toolAwaitingStrokeEnd {
+            toolAwaitingStrokeEnd = nil
+            apply(tool: tool)
         }
+        owner.pageStrokeDidEnd(pageID)
+    }
+
+    /// Nothing can touch this canvas: the runtime left the window, or the app
+    /// left the foreground. Only a use PencilKit never ended is ended here; a
+    /// committing one is left to its change or its bound. A hop, so
+    /// PencilKit's own cancel runs first and nothing is retired inside UIKit's
+    /// appearance pass.
+    func endUntouchableToolUse(_ reason: String) {
+        guard case .drawing = toolUse else { return }
+        let use = toolUse
+        DispatchQueue.main.async { @MainActor [weak self] in
+            guard let self, self.toolUse == use else { return }
+            self.endUntouchableToolUseNow(reason)
+        }
+    }
+
+    /// The same exit with no hop, for a teardown that retires next.
+    func endUntouchableToolUseNow(_ reason: String) {
+        guard case .drawing = toolUse else { return }
+        TNLog.event(.canvas, "tool use on page \(pageID) ended: \(reason)")
+        endToolUse()
     }
 }
 

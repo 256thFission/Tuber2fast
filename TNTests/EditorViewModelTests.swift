@@ -528,3 +528,32 @@ struct EditorViewModelContentTests {
         _ = await notebook.close()
     }
 }
+
+/// Leaving the foreground and closing, over a recording surface that can
+/// defer a retire the way a stroke on screen does.
+@Suite("Editor view model: lifecycle")
+@MainActor
+struct EditorViewModelLifecycleTests {
+    /// A one-page notebook with its page in the window and loaded. The
+    /// binding is the test's, so the test can report a deferred retire.
+    private func opened(_ name: String) async throws -> (Scratch, Notebook, RecordingSurface, EditorBinding, EditorViewModel) {
+        let scratch = try Scratch(name)
+        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        let surface = RecordingSurface()
+        let binding = EditorBinding(notebook: notebook, surface: surface)
+        let editor = EditorViewModel(binding: binding, palette: ToolPalette(store: MemoryPaletteStore()))
+        let page = notebook.pageIDs[0]
+        binding.windowChanged(to: [page])
+        try await waitUntil { notebook.state(of: page)?.content != nil }
+        return (scratch, notebook, surface, binding, editor)
+    }
+
+    @Test("Leaving the foreground tells the runtime to end the tool uses nothing can touch")
+    func leavingTheForegroundEndsToolUses() async throws {
+        let (scratch, notebook, surface, _, editor) = try await opened("vm-foreground")
+        editor.endToolUses()
+        #expect(surface.calls.last == .endToolUses)
+        _ = await notebook.close()
+        withExtendedLifetime(scratch) {}
+    }
+}
