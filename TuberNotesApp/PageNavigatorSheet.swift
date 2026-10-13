@@ -132,12 +132,8 @@ struct PageNavigatorSheet: View {
 
     /// The pages this tab shows, as *enumerated pairs*.
     ///
-    /// The filter is over the pairs and not the array, so a page keeps the
-    /// ordinal it has in the whole notebook: the label under a marked cell is
-    /// its own page number, and the tap — which uses that number as an
-    /// absolute index — lands on that page. Filtering the array first would
-    /// renumber from 1 and send the third mark of a forty-page notebook to
-    /// page 3.
+    /// The filter is over the pairs and not the array, so the label under a
+    /// marked cell is its own page number, not its place among the marks.
     private var shown: [(offset: Int, element: NavigatorPage)] {
         let pairs = Array(editor.navigatorPages.enumerated())
         return tab == .all ? pairs : pairs.filter { $0.element.bookmark != nil }
@@ -163,7 +159,7 @@ struct PageNavigatorSheet: View {
                 name: "Page \(number)",
                 action: {
                     dismiss()
-                    editor.scroll(toPageIndex: number - 1)
+                    editor.scroll(to: page.id)
                 }
             ) {
                 PageThumbnail(editor: editor, page: page)

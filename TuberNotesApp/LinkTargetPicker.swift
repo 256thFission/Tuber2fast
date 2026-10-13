@@ -45,7 +45,7 @@ struct LinkTargetPicker: View {
     /// already in. A `sorted` would not be stable, so the two halves are
     /// filtered and joined instead.
     private var tabs: [Workspace.Tab] {
-        let mine = editor.notebook.notebookID
+        let mine = editor.notebookID
         return workspace.tabs.filter { $0.id == mine } + workspace.tabs.filter { $0.id != mine }
     }
 
@@ -53,7 +53,7 @@ struct LinkTargetPicker: View {
     /// into this notebook must stay internal even when it is minted from a
     /// tab that is not the front one.
     private func choose(_ tab: Workspace.Tab, _ page: NavigatorPage) {
-        let target: LinkTarget = tab.id == editor.notebook.notebookID
+        let target: LinkTarget = tab.id == editor.notebookID
             ? .internalPage(page.id)
             : .externalPage(notebook: tab.id, page: page.id)
         dismiss()

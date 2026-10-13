@@ -790,3 +790,9 @@ Not gaps — properties of the tooling that read as project defects when hit.
   echo. The simulator never sees PencilKit report a stroke, so that the
   device delivers those reports is unproven. Owed: draw, and the colour you
   drew with shows as a recent; Undo removes the stroke.
+- **A link opens on its page in the notebook it names (U44, I3 line 16).**
+  The view model suite proves a scroll to a page the notebook does not
+  hold is refused and reaches no runtime. The path from a tapped link
+  through the workspace's open to the opened tab's scroll has no test,
+  because the workspace is not built in one. Owed: tap a link into another
+  notebook, and it opens on the linked page.

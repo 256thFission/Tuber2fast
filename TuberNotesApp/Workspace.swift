@@ -165,10 +165,7 @@ final class Workspace {
     /// assets and thumbnails. Ink and pages are untouched; the library's
     /// covers go the same way, next door.
     private func purgeRenderers() {
-        for tab in tabs {
-            let renderer = tab.editor.notebook.renderer
-            Task { await renderer.purge() }
-        }
+        for tab in tabs { tab.editor.purgeCaches() }
     }
 
     // MARK: Identity
@@ -206,24 +203,32 @@ final class Workspace {
         return tabs.first { $0.id == activeTabID }
     }
 
-    func open(path: String, name: String) async {
+    /// The editor it opened or focused, or nil when the open failed or the
+    /// tab that holds it is not built yet.
+    @discardableResult
+    func open(path: String, name: String) async -> EditorViewModel? {
         if let existing = tabs.first(where: { $0.path == path }) {
             activeTabID = existing.id
-            return
+            return existing.editor
         }
         switch await library.checkout(path) {
         case .alreadyOpen(let id):
             // The ledger holds it, so some tab does too; a double tap that
             // arrives mid-open lands here and focuses that tab.
             activeTabID = id
+            return tabs.first { $0.id == id }?.editor
         case .opened(let notebook):
+            weak var reporter: EditorViewModel?
             let editor = EditorViewModel(notebook: notebook, palette: palette, theme: theme) { [weak self] target in
-                self?.activate(target)
+                self?.activate(target, reportedBy: reporter)
             }
+            reporter = editor
             tabs.append(Tab(id: notebook.notebookID, path: path, name: name, editor: editor))
             activeTabID = notebook.notebookID
+            return editor
         case .failed(let error):
             banner = "Can't open \(name): \(error.description)"
+            return nil
         }
     }
 
@@ -265,10 +270,11 @@ final class Workspace {
 
     // MARK: Links
 
-    private func activate(_ target: LinkTarget) {
+    private func activate(_ target: LinkTarget, reportedBy reporter: EditorViewModel?) {
         switch target {
         case .internalPage(let page):
-            scrollActiveEditor(to: page)
+            guard let reporter else { return }
+            follow(page, in: reporter)
         case .externalPage(let notebookID, let page):
             guard identitiesReady else {
                 banner = "Still loading your library."
@@ -277,8 +283,9 @@ final class Workspace {
             switch library.identities.resolve(notebookID) {
             case .live(let path):
                 Task {
-                    await self.open(path: path, name: LibraryStore.displayName(ofPath: path))
-                    self.scrollActiveEditor(to: page)
+                    // A failed open has set its own banner.
+                    guard let editor = await self.open(path: path, name: LibraryStore.displayName(ofPath: path)) else { return }
+                    self.follow(page, in: editor)
                 }
             case .trashed:
                 banner = "That notebook is in the trash. Recover it to open the link."
@@ -290,13 +297,10 @@ final class Workspace {
         }
     }
 
-    private func scrollActiveEditor(to page: PageID) {
-        guard let editor = activeTab?.editor else { return }
-        guard let index = editor.notebook.pageIDs.firstIndex(of: page) else {
+    private func follow(_ page: PageID, in editor: EditorViewModel) {
+        if !editor.scroll(to: page) {
             banner = "The linked page is no longer in your library."
-            return
         }
-        editor.scroll(toPageIndex: index)
     }
 
     // MARK: The lease

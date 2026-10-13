@@ -35,7 +35,7 @@ package struct NavigatorPage: Identifiable, Sendable, Equatable {
 /// push the result to the runtime.
 @MainActor @Observable
 package final class EditorViewModel {
-    @ObservationIgnored package let notebook: Notebook
+    @ObservationIgnored let notebook: Notebook
     @ObservationIgnored private let binding: EditorBinding
 
     /// The canvas, as a plain view controller. The app never names
@@ -87,6 +87,13 @@ package final class EditorViewModel {
     /// would flicker at every pass; this is "work outstanding".
     package var isSaving: Bool { notebook.dirtyPageCount > 0 }
     package var lastSaveError: SaveFailure? { notebook.lastSaveError }
+    package var notebookID: NotebookID { notebook.notebookID }
+
+    /// Drops what the renderer can rebuild, on memory pressure.
+    package func purgeCaches() {
+        let renderer = notebook.renderer
+        Task { await renderer.purge() }
+    }
 
     package convenience init(
         notebook: Notebook,
@@ -479,10 +486,13 @@ package final class EditorViewModel {
         }
     }
 
-    package func scroll(toPageIndex index: Int) {
-        let pages = notebook.pageIDs
-        guard pages.indices.contains(index) else { return }
-        binding.surface.scroll(to: pages[index])
+    /// False for a page this notebook does not hold, which the runtime
+    /// would trap on; a link names pages from anywhere.
+    @discardableResult
+    package func scroll(to page: PageID) -> Bool {
+        guard notebook.pageIDs.contains(page) else { return false }
+        binding.surface.scroll(to: page)
+        return true
     }
 
     // MARK: Content

@@ -130,8 +130,8 @@ struct MacaronSeat: View {
     private var tenant: some View {
         ScrollView {
             VStack(spacing: Macaron.rowGap) {
-                ForEach(Array(editor.navigatorPages.enumerated()), id: \.offset) { index, page in
-                    Button { editor.scroll(toPageIndex: index) } label: {
+                ForEach(Array(editor.navigatorPages.enumerated()), id: \.element.id) { index, page in
+                    Button { editor.scroll(to: page.id) } label: {
                         HStack {
                             Text(verbatim: "\(index + 1)")
                                 .font(Macaron.title(.text))

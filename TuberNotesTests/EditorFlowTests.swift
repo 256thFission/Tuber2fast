@@ -30,11 +30,11 @@ final class EditorFlowTests: HostingSuite {
     @MainActor
     private struct Tab {
         let editor: EditorViewModel
+        let notebook: Notebook
         let runtime: PagedCanvasController
         let canvas: PageCanvasController
         let window: UIWindow
 
-        var notebook: Notebook { editor.notebook }
         var strokesOnCanvas: Int { canvas.canvasView.drawing.strokes.count }
         var content: PageContent? { notebook.state(of: canvas.pageID)?.content }
         var strokesInCustody: Int? { content?.ink.strokes.count }
@@ -78,7 +78,7 @@ final class EditorFlowTests: HostingSuite {
         // The install's echo latch clears at the end of its turn, so the
         // first stroke is reported as the edit it is.
         await hop()
-        return Tab(editor: editor, runtime: runtime, canvas: try #require(runtime.canvases[page]), window: window)
+        return Tab(editor: editor, notebook: notebook, runtime: runtime, canvas: try #require(runtime.canvases[page]), window: window)
     }
 
     @Test("The tool chosen on the bar reaches the live canvas, and a second eraser tap switches the mode there")

@@ -462,6 +462,20 @@ struct EditorViewModelContentTests {
         _ = await notebook.close()
     }
 
+    @Test("Scrolling to a page this notebook does not hold returns false and asks the runtime nothing")
+    func scrollingToAPageNotHeldReturnsFalse() async throws {
+        let (scratch, notebook, surface, editor) = try await loaded("vm-scroll-unknown")
+        let before = surface.calls.count
+
+        #expect(!editor.scroll(to: PageID()))
+        #expect(surface.calls.count == before)
+        #expect(editor.scroll(to: notebook.pageIDs[0]))
+        #expect(surface.calls.last == .scroll(notebook.pageIDs[0]))
+
+        withExtendedLifetime(scratch) {}
+        _ = await notebook.close()
+    }
+
     @Test("A bookmark reaches `navigatorPages` through the drain with no structure change")
     func aBookmarkReachesTheMirrors() async throws {
         let (scratch, notebook, surface, editor) = try await loaded("vm-bookmark")

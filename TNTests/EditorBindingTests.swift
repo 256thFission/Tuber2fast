@@ -510,7 +510,7 @@ struct EditorBindingTests {
         #expect(editor.navigatorPages.map(\.isLoading) == [false, false])
         #expect(editor.navigatorPages.map(\.isCurrent) == [true, false])
 
-        editor.scroll(toPageIndex: 1)
+        editor.scroll(to: b)
         #expect(surface.calls.last == .scroll(b))
         binding.pageBecameCurrent(b)
         #expect(editor.navigatorPages.map(\.isCurrent) == [false, true])
