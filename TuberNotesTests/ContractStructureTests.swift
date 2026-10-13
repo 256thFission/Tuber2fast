@@ -199,14 +199,26 @@ enum ContractChecker {
         ".write(to:",
         ".write(toFile:",
         "Data(contentsOf:",
-        "Data(contentsOfFile:",
         "String(contentsOf:",
-        "String(contentsOfFile:",
+        "contentsOfFile:",
+        "URL.temporaryDirectory",
+        ".documentsDirectory",
+        "NSTemporaryDirectory",
+        "NSHomeDirectory",
+        // A transferable the share sheet reads from a file, and UIKit's PDF
+        // writer, which writes one.
+        "FileRepresentation",
+        "writePDF(to:",
+        // CoreGraphics and ImageIO reach a file through a CFURL.
+        "as CFURL",
+        "CreateWithURL",
+        "CGDataConsumer(url:",
+        "CGDataProvider(url:",
         "fopen(",
         "freopen(",
-        // POSIX, qualified: the v2 commit protocol needs a barrier the
-        // Foundation APIs above cannot issue, and the qualification is what
-        // keeps `rename(` from matching the library's rename intention.
+        // POSIX: the v2 commit protocol needs a barrier the Foundation APIs
+        // above cannot issue. A qualified call is a token; `fileIOTokens`
+        // matches an unqualified one.
         "fcntl(",
         "fsync(",
         "Darwin.open(",
@@ -216,8 +228,15 @@ enum ContractChecker {
         "opendir(",
     ]
 
+    /// The tokens above in `code`, and each POSIX call without `Darwin.`,
+    /// which compiles anywhere Foundation is imported: a POSIX name and a
+    /// first argument with no label. A labelled call, such as the library's
+    /// `rename(at:to:)`, does not match. A Swift method of the same name with
+    /// one unlabelled argument does, and is called through `self.` instead.
     static func fileIOTokens(in code: String) -> [String] {
-        forbiddenFileIOTokens.filter { code.contains($0) }
+        let unqualifiedPOSIXCall = #/(?:^|[^\w.])(open|creat|rename|unlink|mkdir|rmdir|remove|truncate)\(\s*[^\s:(),]+\s*[,)(]/#
+        return forbiddenFileIOTokens.filter { code.contains($0) }
+            + code.matches(of: unqualifiedPOSIXCall).map { "\($0.output.1)(" }
     }
 
     // MARK: Rule — test-only members exist only in Debug
@@ -874,7 +893,9 @@ struct ContractStructureTests {
                 """
                 \(source.path) performs file I/O (\(hits.joined(separator: ", "))). \
                 PackageStore and LibraryStore are the writers of durable state, one per storage \
-                domain; everything else receives and returns values.
+                domain; everything else receives and returns values. A POSIX name called with an \
+                unlabelled argument is read as POSIX: move a real call into PosixFileSystem, and \
+                call a Swift method of that name through self.
                 """
             )
         }
@@ -1560,10 +1581,22 @@ struct ContractCheckerOwnTests {
             "let d = try Data(contentsOf: url)",
             "let s = try String(contentsOf: url, encoding: .utf8)",
             "let s = try String(contentsOfFile: p, encoding: .utf8)",
+            "let d = NSData(contentsOf: url)",
             "let out = OutputStream(url: url, append: false)",
             "let f = fopen(path, \"w\")",
             "UserDefaults.standard.set(1, forKey: \"k\")",
             "let names = try fm.contentsOfDirectory(atPath: p)",
+            "let tmp = URL.temporaryDirectory.appending(path: name)",
+            "let docs = URL.documentsDirectory",
+            "let tmp = NSTemporaryDirectory()",
+            "let home = NSHomeDirectory()",
+            "FileRepresentation(exportedContentType: .pdf) { pdf in SentTransferredFile(pdf.url) }",
+            "try renderer.writePDF(to: url) { _ in }",
+            "let document = CGPDFDocument(url as CFURL)",
+            "let destination = CGImageDestinationCreateWithURL(u, type, 1, nil)",
+            "let consumer = CGDataConsumer(url: u)",
+            "let provider = CGDataProvider(url: u)",
+            "let fd = open(url.path(percentEncoded: false), O_RDONLY)",
         ]
         for line in caught {
             #expect(
@@ -1571,9 +1604,24 @@ struct ContractCheckerOwnTests {
                 "the file-I/O rule missed \(line)"
             )
         }
+        #expect(
+            ContractChecker.fileIOTokens(
+                in: "open(p, 0); creat(p, 0); rename(a, b); unlink(p); mkdir(p, 0); rmdir(p); remove(p); truncate(p, 0)"
+            ) == ["open(", "creat(", "rename(", "unlink(", "mkdir(", "rmdir(", "remove(", "truncate("]
+        )
 
-        // A stream is not storage: TNLog's stderr mirror must stay legal.
-        #expect(ContractChecker.fileIOTokens(in: "fputs(message, stderr)").isEmpty)
+        let ignored = [
+            // A stream is not storage: TNLog's stderr mirror must stay legal.
+            "fputs(message, stderr)",
+            // A labelled call, a member call, or a declaration is not POSIX.
+            "let notebook = try await Notebook.open(store: store)",
+            "pages.remove(page)",
+            "func remove(_ page: Page) {}",
+            "let reopened = reopen(notebook)",
+        ]
+        for line in ignored {
+            #expect(ContractChecker.fileIOTokens(in: line).isEmpty, "the file-I/O rule tripped on \(line)")
+        }
     }
 
     /// Prose is not code. A comment that mentions a forbidden token must not
