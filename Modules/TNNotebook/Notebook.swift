@@ -846,8 +846,8 @@ package final class Notebook {
     /// picture or not.
     ///
     /// One scale, always: the contract's Rendering rule is a composite
-    /// rendered once and scaled by the scroll view, and says nothing about a
-    /// sharper render at zoom.
+    /// rendered once and scaled to the zoom on each tick, so a zoom renders
+    /// nothing.
     package func rerenderComposite(of page: PageID) {
         guard case .ready(var content) = states[page], let record = index.record(of: page) else { return }
         content.renderGeneration += 1
@@ -1402,6 +1402,7 @@ package final class Notebook {
 
     /// Runs a pass now and waits for it, and for any pass already running.
     /// Every pending revision is in custody first, so the pass writes it.
+    /// A closed notebook runs and waits for nothing.
     package func flush() async {
         guard !isClosed else { return }
         await settlePendingRestores()
@@ -1446,7 +1447,7 @@ package final class Notebook {
         onAsyncChange?()
     }
 
-    /// The final pass. After this, no write is outstanding.
+    /// The final pass. A clean answer means nothing more is armed or started.
     package func close() async -> CloseOutcome {
         guard !isClosed else { return .clean }
         await flush()
@@ -1463,7 +1464,8 @@ package final class Notebook {
 
     /// The close without its final pass: the unsaved pages are abandoned on
     /// purpose. A pass already running cannot be called back, so it is waited
-    /// for, and the checkout ends with no write outstanding.
+    /// for: the checkout ends with no pass running and nothing armed. A write
+    /// already in the store still lands.
     package func discard() async {
         debounce?.cancel()
         debounce = nil
