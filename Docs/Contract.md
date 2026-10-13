@@ -921,10 +921,21 @@ ink drawn at asset resolution and an image as it was decoded, at no more
 than `maximumLongEdgePixels` on its long side, so an exported or
 flattened photo is at most 2800 pixels there and a layer stretched past
 the page is drawn from that decode (arch-canvas-03). A ready page is drawn
-from custody, unsaved ink included; any other page from its files, decoded
-and discarded, installing nothing. Exporting marks nothing dirty, records
-nothing, and is cancelled between pages. The document is built in memory
-and handed to the system; no file is written.
+from custody, unsaved ink included; an unloaded or loading page from its
+files, decoded and discarded, installing nothing. A page the notebook
+refused, or one whose paper or layer names an asset that does not draw,
+refuses the export or the flatten rather than leaving a hole in it
+(*Refuse at the narrowest scope*: nothing is dropped). The reason is the
+homework: a page refused for its missing worksheet has page files that
+decode, and drawn from them it is the answers on blank paper, which
+handed in is worse than no export. A composite or a thumbnail for the
+screen still draws what it can, because a page that stays in the app is
+better seen with a gap than not seen, and a page leaving the app must be
+whole (contract-14). Exporting marks nothing dirty, records nothing, and
+is cancelled between pages; a walk the person cancelled leaves no file
+and no refusal, even when the cancel cut a page's read short
+(deepen-editor-03). The document is built in memory and handed to the
+system; no file is written.
 
 ## Library
 
