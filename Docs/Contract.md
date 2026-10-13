@@ -226,10 +226,11 @@ the index never change name or type, at any version: `formatVersion`,
 a package, so a notebook keeps its identity in the listing, in stars and
 in the trash at a version this build cannot open, and a migration can
 tell what it holds before it reads anything else. Adding or removing a
-key changes the key-set pins in `TNTests/FormatTests.swift`, which fail
+key changes the key-set pins, in `TNTests/FormatTests.swift` for the
+package and in `TNTests/LibraryTests.swift` for a sidecar, which fail
 until every file that carries the key round-trips, and once *Burn things
 down with permission* has ended it bumps the version too (decided R2, F1,
-F2, F3).
+F2, F3; tests-hostless-01).
 
 **Layer kinds are `image`, `pdf`, `link`, `text`, and nothing else.** The
 payload object is keyed by the kind name, so an unknown kind is detected
@@ -308,7 +309,8 @@ notebook. A missing page file, a bad ink file, an unknown paper, or a bad
 layer refuses that page only. A page with a refused layer is shown as a
 placeholder that names the fault and cannot be edited. The only way out is
 the user removing that layer. Nothing is dropped, adapted, or written back
-unread.
+unread. In the library the scope is the item a sidecar describes (*An
+unreadable sidecar refuses only the item it describes*).
 
 **`nil` is not an answer.** A missing package is an error, a missing
 `view.json` means the first page, and nothing else is optional.
@@ -541,6 +543,48 @@ identity cannot be read goes under a fresh UUID, and a notebook's entry
 then carries no `NotebookID`: the trash does not invent one, because an
 invented identity is a default for a value the package failed to give
 (decided F2; *Forbidden*).
+
+**An unreadable sidecar refuses only the item it describes, and says so.**
+`Favorites.json` describes the stars; `.folder.json` describes one
+folder's identity, colour and symbol; `origin.json` describes where one
+trashed item came from and when. A sidecar this build cannot read refuses
+exactly that and nothing around it, and the refusal is shown, never
+swallowed: a line in the library that names the file and the fault. It is
+not a log line, and it is not a trap, because a file that will not read is
+a fact about the disk, not an invalid state of the program. The writes
+above leave no torn sidecar, so an unreadable one was written by another
+build or damaged since, and either way the rest of the library is whole
+and is shown. Per file:
+
+- The stars. The listing shows none, the Favorites section is refused,
+  and Documents, search and Trash list as usual. Starring and unstarring
+  are refused the same way and the file is not written over: a set written
+  from what could not be read would be a default for the set the file
+  failed to give.
+- A folder. It is listed, with the fault beside it, and has no identity,
+  no colour and no symbol, so no star shows for it and a colour or symbol
+  set on it is refused with that fault. The folder and what it holds are
+  listed as they are, because they are not what the sidecar describes.
+- A trash entry. It is listed, its name and kind taken from the one item
+  inside its container and the fault in place of its date, and it can be
+  recovered: the recovery lands at the root under that name, suffixed if
+  the name is taken, since where the item came from is what the file could
+  not say. Every container that holds an item is an entry, so Empty Trash
+  offers the count of what it removes and takes nothing a person could not
+  see; a container that holds no item is not an entry (*Trash deletes
+  nothing that holds an item*).
+
+A sidecar's version is read before any key, as the index's is, and a
+sidecar has no ladder: one at any other version is refused the same way,
+by its number. A list the library could not read is shown as refused,
+never as empty, wherever it is shown, the move picker's folders included:
+an empty list says there is nothing, and that is not what happened. This
+is the scope *Refuse at the narrowest scope* gives a page, brought to the
+library. Before it, one unreadable `Favorites.json` refused every section
+and left no way in but a reinstall, and a trash entry whose record would
+not read was hidden from the list and deleted unseen by the next Empty
+(decided F4; format-06, format-07, durability-04, deepen-notebook-04,
+format-04, policy-10, thermo-data-02).
 
 **Staging is scratch, and an item enters the tree by one exclusive
 rename.** `Staging/` sits beside `Notebooks/` and `Trash/`, outside the
