@@ -811,18 +811,53 @@ mean to touch; what a step means to do is proved against a package
 written at the version it leaves (decided F1, R2; format-02, format-03,
 durability-07).
 
-The identity index maps `NotebookID` to path. It is built off the main
-thread and marks notebooks in the trash. If two packages share an
-identity, the second one found gets a new one. A link followed before the
-index is built is refused with "still loading".
+**A `NotebookID` is minted once and never rewritten; a collision is
+refused.** The library mints a notebook's identity when it makes the
+notebook, by a create or by a duplicate, and from then on the identity
+stands: the one rewrite the format has, `rewriteNotebookID`, has one
+caller, the duplicate, which gives its copy the new identity in Staging
+before the copy is published (*Staging is scratch*). No package crosses
+the sandbox: nothing imports one and nothing shares one, so every
+identity in the tree was minted here, and two packages under one
+identity are a fault in the library, not an arrival. The identity index
+maps `NotebookID` to path. It is built off the main thread and marks
+notebooks in the trash. It takes the packages in the listing's order,
+and the first found under an identity holds it; each later package under
+that identity is a collision, recorded by its path and left out of the
+map, so an identity resolves to one path or to none. A collided package
+stays listed, and the library acts on it by path as on any item, but it
+does not open: `Library.checkout` refuses a path the index recorded as a
+collision, and refuses a path whose identity another checkout holds; a
+link to a collided identity is refused with a banner that says so. The
+refusal writes nothing: neither package is rewritten, re-minted or
+deleted. A link followed before the index is built is refused with
+"still loading". A future import mints new identities at the boundary,
+in Staging and before the publish, as a duplicate does: what comes in
+never keeps the identity it arrived with, and nothing already listed is
+rewritten to make room for it. The reason is what the re-mint in its
+place did. It ran after every library mutation, never consulted the
+checkout ledger, and rewrote the second package where it stood, the
+index and every ink header one file at a time: a notebook open in a tab
+kept saving under the identity its files no longer carried, and a
+process dying mid-rewrite left ink headers under two identities, where a
+header that does not match its index refuses the page (*Durable form*).
+And tabs are keyed by `NotebookID`, so two open packages under one
+identity would release each other's tab and leave one checkout held with
+no tab to save it on backgrounding; refusing the second at checkout is
+what keeps that key one-to-one. A second item under one identity is
+already what *Trash deletes nothing that holds an item* refuses, and
+this is the same refusal in the tree (decided F2; durability-06,
+arch-data-05, contract-12).
 
 ## Links and tabs
 
 A link layer points at a page, in this notebook or another. Tapping it is
 a report; the editor turns the layer into a target; the app opens or
 focuses that notebook's tab and scrolls to the page. Each notebook has at
-most one tab. A missing target says so; so does a target in the trash.
-Backlinks, if ever built, are computed and never saved.
+most one tab. A missing target says so; so does a target in the trash,
+and so does one whose identity two packages share (*A `NotebookID` is
+minted once and never rewritten*). Backlinks, if ever built, are computed
+and never saved.
 
 ## Lifecycle
 
