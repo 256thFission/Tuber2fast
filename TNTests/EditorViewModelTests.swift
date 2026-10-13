@@ -10,8 +10,9 @@ import Testing
 /// each intention does to it.
 ///
 /// These assert `editor.tool`, and at most the environment a recording
-/// surface was told. That every live canvas hears it is the hosted suite's
-/// job.
+/// surface was told. That the tool reaches a live canvas is proven hosted:
+/// `EditorFlowTests` from the view model, `TNCanvasRuntimeTests` for every
+/// canvas the runtime holds or builds.
 @Suite("Editor view model: the tool")
 @MainActor
 struct EditorViewModelTests {
