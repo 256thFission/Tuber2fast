@@ -597,6 +597,15 @@ Not gaps — properties of the tooling that read as project defects when hit.
   builds nothing and close waits for a deferred retire is proven against
   a recorder and a hosted runtime. Owed: write a stroke, go to the library,
   tap that notebook's close at once, reopen, and see the stroke.
+- **An undo into an unloaded page, then close (U18, I3 line 6).** That the
+  flush adopts a parked revision, and that a closed notebook drops a late
+  load, is proven against a held load in the notebook alone; the path from
+  the bar's Undo through the scroll to the library's close is not, and
+  "discard unsaved and close" needs a failing save the device cannot make
+  on demand, so its route through `Library.discard` is reviewed by diff
+  only. Owed: write on page 1, go to page 8, tap Undo (it scrolls back)
+  and at once close the notebook from the library; reopen, and the undone
+  stroke stays undone.
 - **The lease's second pass (U08, I3 line 10).** No seam drives the
   workspace's lease, so the re-run is reviewed by diff only. Owed: put the
   Pencil down mid-stroke and swipe Home, wait 5 s, reopen, and see Undo and
