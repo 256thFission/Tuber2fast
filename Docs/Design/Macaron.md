@@ -57,7 +57,7 @@ turns up that this document does not name, derive its treatment from these.
 - **A theme is five hexes, two mix percentages, a row of seven drawing
   colours and a dark flag, and it carries its ground tile.** It cannot
   reach a number: the tile it carries is the design's grid 34, the one
-  tile there is (§5).
+  ground tile there is (§5).
 
 ## 3. Tokens
 
@@ -72,17 +72,17 @@ turns up that this document does not name, derive its treatment from these.
 | `ink` | what every outline is mixed toward, and the one colour the chrome uses straight: the words typed into a field, the tray knob's ring, the bar's shadow in flight |
 | `outlineMix` | two percentages, saturated and pale; defaults 42 / 55 |
 | `palette` | seven colours a line of handwriting can be read in, the ink's darkest first; the pen's four swatches are seeded from its first four (§4.1) |
-| `dark` | the one flag that makes a theme dark: the mix target turns toward white, the escape runs to the ground, and the seat body and its current row follow (§3.2, §4.3) |
+| `dark` | the one flag that makes a theme dark: the mix target turns toward white, the escape runs to the ground, and the seat body and its current row follow (derived, §3.2; the seat, §4.3) |
 
 **The ink is what outlines mix toward, not what the hand writes in.** A
 stroke keeps the colour it was drawn in, and no module the ink passes
 through can name a theme. What a theme offers for writing is its palette
 row; the swatches seeded from it are the palette's to keep (*The swatches
 are the palette's*, in the Contract); and a theme change changes what the
-bar offers and nothing on the page. The row above once said the ink was
-the handwriting's colour, and it never was: left standing, the sentence
-was an invitation to wire the token up and repaint work somebody already
-did (decided U3; docs-04).
+bar offers and nothing on the page. Wiring the token to the hand would
+repaint strokes somebody already drew the moment the theme changed, which
+is why no rule here calls the ink the handwriting's colour (decided U3;
+docs-04).
 
 **No two of the five colours a theme sets are the same hex.** `ground`,
 `chrome`, `accent`, `secondary` and `ink` differ in every preset, and a
@@ -177,12 +177,12 @@ row is the only row there is.** The layout container is what changes
 between the snap states, never the entries or their order, and a bar laid
 out another way is another row, not another view: that is the seam a
 configurable bar arrives through, and until one is built nothing else is
-on the bar. The four instruments were once a ban on a fifth; they are the
-default row instead, because the bar is an open set of tools and pinned
-colours, and a ban would have made every future entry a redesign (decided
-W3; round-two call; docs-04). No undo, no redo, no lasso, no text, no
-shapes: undo lives in the band, and nothing on the bar undoes. Four
-swatches, always in **one run**.
+on the bar. The four instruments are the default row, not a limit,
+because the bar is an open set of tools and pinned colours, and a limit
+would make every future entry a redesign (decided W3; round-two call;
+docs-04). The default row has no undo, redo, lasso, text or shapes: undo
+lives in the band, and nothing on the bar undoes. Four swatches, always
+in **one run**.
 
 **The four swatches are the palette's run for the theme choice and the
 tool in hand, and a hold on one opens the colour tray off it.** The pen,
@@ -194,17 +194,17 @@ in. Which run a key names, and what a run nobody changed reads as, is the
 Contract's (*The swatches are the palette's*); the bar draws the run it is
 given, in order, and derives nothing. A tap takes the swatch's colour into
 the hand, and the held swatch is sunk and drawn at 26. A hold of 450 ms
-opens the colour tray (§6) in a bubble whose tail points at the held
-swatch, the cap squashing toward 88% while the hold charges (§7). A tool
-with no colour takes no tap and opens no tray, and the grab pill alone
-drags the bar, so a hold on a swatch never starts a drag. The colour
-picked in the tray goes into the hand and over that swatch, in that run
-and no other, and the one the tray closes on becomes a recent, once per
-session however many colours the wheel passed through; a recent is
-otherwise any colour a stroke landed in. Ink is never recoloured: a stroke
-keeps its colour, and a theme change changes what the bar offers and
-nothing on the page (decided U2, U3, R2-04, R2-05; round-two call: a pick
-is recorded once, when the tray closes; tray-a.md).
+opens the colour tray, a transient (§6), in a bubble whose tail points at
+the held swatch, the cap squashing toward 88% while the hold charges
+(motion, §7). A tool with no colour takes no tap and opens no tray, and
+the grab pill alone drags the bar, so a hold on a swatch never starts a
+drag. The colour picked in the tray goes into the hand and over that
+swatch, in that run and no other, and the one the tray closes on becomes
+a recent, once per session however many colours the wheel passed through;
+a recent is otherwise any colour a stroke landed in. Ink is never
+recoloured: a stroke keeps its colour, and a theme change changes what
+the bar offers and nothing on the page (decided U2, U3, R2-04, R2-05;
+round-two call: a pick is recorded once, when the tray closes).
 
 Two snap states, not a continuum:
 
@@ -297,7 +297,7 @@ is 3.5:1.
 | thing | treatment |
 |---|---|
 | width popover | **speech bubble with a tail** pointing at the width chip that owns it; body radius 19, three round 34pt selectors, 3pt line in the chrome's outline, no wall; vertical snap only |
-| colour tray | the same bubble, its tail at the swatch a hold opened it from (§4.1); 214 across; a COLOUR heading with the hex in tabular figures, a hue and saturation wheel ringed in 3pt with a 22pt knob ringed in the ink, a 16pt value slider from black to the full value, a 3pt rule in the outline at 35%, then RECENTLY USED: up to eight recents, the one in hand at 26, or "Nothing yet. Draw something."; nothing in it stands on a wall |
+| colour tray | the same bubble, its tail at the swatch a hold opened it from (the writing bar, §4.1); 214 across; a COLOUR heading with the hex in tabular figures, a hue and saturation wheel ringed in 3pt with a 22pt knob ringed in the ink, a 16pt value slider from black to the full value, a 3pt rule in the outline at 35%, then RECENTLY USED: up to eight recents, the one in hand at 26, or "Nothing yet. Draw something."; nothing in it stands on a wall |
 | lasso box | 3pt dashed box in the accent over a 10% accent fill; four **plain flat squares** r5, 15pt, no walls |
 | magic lasso | the loop you drew, filled **28% of the accent**, dashed accent outline, 8pt anchor dot; never borrows the ink colour |
 | bar mid-drag | **lifted peel, solid line**: keeps its outline, tips −4°, lifts 5pt, casts a real blurred shadow (0 12 18 at 42%) |
@@ -318,14 +318,13 @@ d22)`, `out-quint`, `in-out-sine`, `out-elastic(.35)`, `steps(n)`.
 | grab the bar or seat | **sticker peel** | −4° tilt, 5pt lift, shadow grows from hard to blurred; lands on one rebound |
 | release a drag | snap | nearest of eight points, `out-back(1.7)` |
 
-**A keycap acts on lift, and the squash plays after it.** An action held
-back for the stretch lands on whatever the tool has become meanwhile: a
-swatch and the band's Text chip tapped together, or the eraser cap and a
-swatch, turned a colour tap into a colour set on a tool that has none,
-and the editor traps on that. The press used to commit on the stretch,
-60 ms after touch-up; now the action runs at touch-up and the dialect
-follows it, and Reduce Motion takes the same path without the animation
-(decided I4; policy-02).
+**A keycap acts on lift, and the squash plays after it.** The action runs
+at touch-up and the dialect follows it, and Reduce Motion takes the same
+path without the animation. An action held back for the stretch would
+land on whatever the tool has become meanwhile: a swatch and the band's
+Text chip tapped together, or the eraser cap and a swatch, would turn a
+colour tap into a colour set on a tool that has none, and the editor
+traps on that (decided I4; policy-02).
 
 Budget rules: nothing animates while a Pencil touch is down; nothing touches
 the ink layer; Reduce Motion collapses every dialect to a 120ms cross-fade.
@@ -342,9 +341,8 @@ the ink layer; Reduce Motion collapses every dialect to a 120ms cross-fade.
 ## 9. What was cut, so it stays cut
 
 - Black outlines on anything but ink.
-- Undo/redo, lasso, text, or shapes on the writing bar. A fifth instrument
-  is not cut: the four are the default row, and the bar is an open set
-  (§4.1).
+- Undo/redo on the writing bar. A fifth instrument is not cut: the four
+  are the default row, and the bar is an open set (the writing bar, §4.1).
 - Seven swatches; any 2-wide swatch grid; a vertical swatch column in a
   horizontal bar.
 - Rings, halos, or glows for selection.
