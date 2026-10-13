@@ -611,14 +611,16 @@ Not gaps — properties of the tooling that read as project defects when hit.
   Pencil down mid-stroke and swipe Home, wait 5 s, reopen, and see Undo and
   a page turn work, with no `background lease expired` in the console.
 - **The sweep in the lease (U25, I3 line 10).** The library suite proves
-  each open package is swept once, through its notebook's own store, with
-  one report per notebook, and the notebook suite proves an undo or redo
+  a sweep visits each open package once, through its notebook's own store,
+  with one report per notebook, and the notebook suite proves an undo or redo
   of an image after a sweep saves. No seam drives the workspace's lease,
   so the call after the flush is reviewed by diff only, and whether every
   sweep fits inside the lease with several notebooks open is unproven.
   Owed: with several notebooks open, swipe Home; the console shows one
-  `compact <id> removed n kept m` line per open notebook and no
-  `background lease expired`.
+  `compact <id> removed n kept m` line per open notebook for each pass of
+  the lease, and no `background lease expired`. A swipe Home runs two
+  passes, one for `.inactive` and one for `.background`, so each notebook
+  logs twice, the second line usually `removed 0`.
 - **The undo gesture's route (U10, I3 line 5).** One undo filter per
   runtime answers the responder chain, and a hosted test shows every view
   under every live canvas finds it. Whether the system gesture travels that
