@@ -74,7 +74,7 @@ Each piece of state has one owner, and the owner holds the value.
 | Page thumbnails | `Renderer` | in memory, keyed by `ThumbnailKey`; rebuilt from the page |
 | The saved package | `PackageStore` | see Durable form |
 | The library tree, trash, stars, identity index | `LibraryStore` | see Library |
-| Which notebooks are open | `Library` | the checkout ledger |
+| Which notebooks are open or still opening, and which paths a rename, a move, a trash or a duplicate is in flight on | `Library` | the checkout ledger, and the set of paths in flight beside it |
 | Tabs and the background lease | `Workspace` | in memory |
 
 **The notebook holds the ink.** When a stroke ends, and again when a canvas
@@ -864,11 +864,47 @@ and handed to the system; no file is written.
 
 ## Library
 
-One `Notebook` object per package. `Library` reserves the checkout
-synchronously and then opens asynchronously, so a second tap during the
-open gets `.alreadyOpen` rather than a second `Notebook`. A re-entrant
-checkout traps. Renaming, moving, trashing, or duplicating an open
-notebook, or any folder above it, is refused with the notebook's name.
+**One `Notebook` per package, and the ledger says which.** `Library`
+keeps one ledger from path to checkout, and a checkout is one of two
+things: opening, which holds the task that is opening it, or open, which
+holds the `Notebook`. A checkout claims its entry on the main actor
+before its first await, so the path is held from the tap on. A second
+checkout of an open path gets `.alreadyOpen` with the notebook's
+identity, and one of a path still opening waits on that open's own task
+and reports what it reported: `.alreadyOpen` when it opened, and the same
+fault when it failed. Nothing polls for the first open, and no failed
+open is reported as anything but its fault: the second tap of a double
+tap once polled every 10 ms, kept polling after its caller was cancelled,
+and when the first open failed reported the notebook as not found, so the
+banner named the wrong reason. The open runs inside the opening entry's
+task, in this order: the collision refusal (*A `NotebookID` is minted
+once and never rewritten*), then the ladder (*An older notebook is
+migrated on open*), then `Notebook.open`. The collision comes first
+because its refusal writes nothing and a migration writes. The sweep on
+leaving the foreground takes the open entries and passes over one still
+opening, which has no notebook yet to say what it can restore (*Leaving
+the foreground compacts every open package*). Renaming, moving,
+trashing, or duplicating a notebook that is open or opening, or any
+folder above it, is refused with the notebook's name.
+
+**A checkout waits for a mutation in flight.** A rename, a move, a trash
+and a duplicate each hold their path in a set beside the ledger, from
+before their first await until the store returns, and a checkout of that
+path, or of one under a folder the set names, waits until the set no
+longer holds it before it claims its entry. Then it opens whatever is at
+the path: a package the mutation moved away is refused by `Notebook.open`
+as no package, and the library reads nothing from the disk to find out
+first, because file I/O is the stores' (*Structure*). Each side claims on
+the main actor before any await, so neither slips past the other across
+the store's: a mutation that finds the path checked out is refused, and a
+checkout that finds it in flight waits. The reason is a checkout that won
+the race. The mutation checked the ledger and awaited the store, and in
+that await a tap opened the package on a `PackageStore` whose root is
+fixed at checkout; the mutation then moved the package out from under the
+open notebook, so every save failed, or, once the old name was reused,
+wrote into another notebook's package, and the only way out was discard
+(decided M3 S1, F1, F2; thermo-data-12, durability-05, contract-12,
+docs-07; critique C4).
 
 Trash is `Trash/<NotebookID or FolderID>/<original name>` with an
 `origin.json` beside it. Recovery restores the original name, suffixes it
@@ -1023,10 +1059,11 @@ every version is 1 and nothing older was ever written; the ladder, the
 exchange and the sweep exist now so the first step lands as a step and
 not as a rewrite of the open path.
 
-The ladder runs in one place: inside `Library.checkout`, after the
-reservation is taken and before `Notebook.open`, where that reservation
-already refuses a rename, a move, a trash and a duplicate of the package
-for as long as it is held. It is a call of its own, never part of
+The ladder runs in one place: inside `Library.checkout`, in the opening
+entry's task, after the collision refusal and before `Notebook.open`,
+where that entry already refuses a rename, a move, a trash and a
+duplicate of the package for as long as it stands (*One `Notebook` per
+package*). It is a call of its own, never part of
 `PackageStore.load()`: a cover, a duplicate's identity rewrite and
 `compact()` all load a package, and a ladder reached from any of them
 could swap a stale copy in under a notebook that has already saved into
