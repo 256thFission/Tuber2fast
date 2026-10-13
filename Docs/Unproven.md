@@ -582,3 +582,22 @@ Not gaps — properties of the tooling that read as project defects when hit.
   person writes at once is not. Owed: in a 20-page PDF, go to page 6, wait
   3 s, jump to page 1 from the navigator and write at once, then turn away
   and back.
+- **Every tool use ends (U08, I3 lines 1, 4 and 10).** The simulator drives
+  PencilKit's delegate calls by hand, and a window's root swap delivers
+  `viewDidDisappear` there. Three things are unproven on the device: that
+  a pen's commit lands within `commitBound` (500 ms) of its use ending,
+  that PencilKit ends a use when its touches are cancelled, and that the
+  canvas host SwiftUI removes on a tab switch receives `viewDidDisappear`.
+  Owed: hold a stroke, flick to the next page with a finger, lift, turn
+  back, and see the stroke; hold a stroke, tap another notebook's tab and
+  come back, and see it whole or absent, never half; tap the Text tool
+  mid-stroke, lift, and see the stroke whole. No "ended by the bound" line
+  for a real stroke; if one shows, raise `commitBound`.
+- **Close from the library (U08, I3 line 6).** That a torn-down runtime
+  builds nothing and close waits for a deferred retire is proven against
+  a recorder and a hosted runtime. Owed: write a stroke, go to the library,
+  tap that notebook's close at once, reopen, and see the stroke.
+- **The lease's second pass (U08, I3 line 10).** No seam drives the
+  workspace's lease, so the re-run is reviewed by diff only. Owed: put the
+  Pencil down mid-stroke and swipe Home, wait 5 s, reopen, and see Undo and
+  a page turn work, with no `background lease expired` in the console.
