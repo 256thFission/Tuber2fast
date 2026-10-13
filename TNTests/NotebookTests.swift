@@ -97,6 +97,17 @@ final class GatedAssetStore: ForwardingStore, @unchecked Sendable {
     }
 }
 
+/// A real store whose `loadPage` parks every call until the test releases
+/// it by index, so a read of a page's files can be held while the notebook
+/// moves on.
+final class GatedLoadStore: ForwardingStore, @unchecked Sendable {
+    let gate = CallGate()
+    override func loadPage(_ page: PageID) async throws(FormatFault) -> PageBytes {
+        await gate.park()
+        return try await base.loadPage(page)
+    }
+}
+
 actor CallGate {
     private var parked: [CheckedContinuation<Void, Never>?] = []
     var arrivals: Int { parked.count }
@@ -1431,6 +1442,7 @@ struct NotebookTests {
     func pdfPagesArePaper() async throws {
         let scratch = try Scratch("nb-pdf-paper")
         let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        // Not loaded, so not known to be blank: the PDF follows it.
         let first = notebook.pageIDs[0]
         try await notebook.importPDF(try Fixture.pdfData(pages: 2))
         #expect(notebook.pageCount == 3)
@@ -1452,6 +1464,68 @@ struct NotebookTests {
         #expect(reopened.index.pages[1].paper == notebook.index.pages[1].paper)
         let bytes = try await PackageStore(root: scratch.packageURL).loadPage(imported[0])
         #expect(bytes.file.layers.isEmpty && bytes.file.inkIndex == 0)
+    }
+
+    @Test("A PDF with a page that has no page box is refused whole, and nothing is made or written")
+    func aPDFWithAnEmptyBoxPageIsRefused() async throws {
+        let scratch = try Scratch("nb-pdf-empty-box")
+        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        let before = notebook.pageIDs
+        _ = notebook.drainChanges()
+        let pdf = try Fixture.shapedPDF(sizes: [CGSize(width: 400, height: 600), .zero])
+
+        await #expect(throws: FormatFault.invalidWrite("PDF page 2 has no page box")) { try await notebook.importPDF(pdf) }
+
+        #expect(notebook.pageIDs == before)
+        #expect(notebook.drainChanges().isEmpty)
+        #expect(!notebook.isDirty)
+        let assets = scratch.packageURL.appendingPathComponent("assets").path
+        #expect(((try? FileManager.default.contentsOfDirectory(atPath: assets)) ?? []).isEmpty)
+    }
+
+    @Test("A turned PDF page imports turned, and a cropped one at its crop's size")
+    func rotatedAndCroppedPagesKeepTheirShape() async throws {
+        let scratch = try Scratch("nb-pdf-shape")
+        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        let size = CGSize(width: 400, height: 600)
+
+        let turned = try await notebook.importPDF(try Fixture.shapedPDF(sizes: [size], rotation: 90))
+        let cropped = try await notebook.importPDF(try Fixture.shapedPDF(sizes: [size], cropBox: CGRect(x: 50, y: 60, width: 300, height: 200)))
+
+        #expect(notebook.index.record(of: turned[0])?.geometry == PageGeometry(width: 600, height: 400))
+        #expect(notebook.index.record(of: cropped[0])?.geometry == PageGeometry(width: 300, height: 200))
+        withExtendedLifetime(scratch) {}
+    }
+
+    @Test("A PDF takes the place of a lined only page whose one stroke was drawn and undone, and the redo goes with it")
+    func aPageWhoseInkWasUndoneIsReplaced() async throws {
+        let (scratch, notebook, page) = try await readyPage("nb-pdf-undone")
+        try await notebook.setPaper(.drawn(.lined), on: page)
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 1), echoOf: nil)
+        #expect(notebook.undo() == page)
+        #expect(notebook.canRedo)
+
+        let created = try await notebook.importPDF(try Fixture.pdfData(pages: 2))
+
+        #expect(notebook.pageIDs == created)
+        #expect(notebook.currentPageID == created[0])
+        #expect(notebook.state(of: page) == nil)
+        #expect(!notebook.canRedo, "the entry named a page the notebook no longer holds")
+        _ = await notebook.close()
+        _ = scratch
+    }
+
+    @Test("A PDF page with nothing on it is not blank paper: the next PDF follows it")
+    func aPDFPageIsNotABlankPage() async throws {
+        let (scratch, notebook, _) = try await readyPage("nb-pdf-not-blank")
+        let first = try await notebook.importPDF(try Fixture.pdfData(pages: 1))
+        #expect(notebook.pageIDs == first)
+
+        let second = try await notebook.importPDF(try Fixture.pdfData(pages: 1))
+
+        #expect(notebook.pageIDs == first + second)
+        _ = await notebook.close()
+        _ = scratch
     }
 
     @Test("Asset paper needs an empty page, takes the asset's aspect, and dirties the index")
@@ -1598,6 +1672,62 @@ struct NotebookTests {
         let onDisk = try await PackageStore(root: scratch.packageURL).load()
         #expect(onDisk.pageFaults.isEmpty)
         #expect(onDisk.index.pageIDs == [source, copy])
+    }
+
+    @Test("A page deleted while its files are read for a duplicate is refused, and nothing is inserted")
+    func aPageDeletedDuringDuplicateIsRefused() async throws {
+        let scratch = try Scratch("nb-duplicate-deleted")
+        let store = GatedLoadStore(try await PackageStore.create(root: scratch.packageURL, index: Fixture.index(pages: 2)))
+        let notebook = try await Notebook.open(store: store, schedule: fast)
+        let (source, other) = (notebook.pageIDs[0], notebook.pageIDs[1])
+
+        let duplicate = Task { try await notebook.duplicatePage(source) }
+        try await notebook.waitForArrivals(store.gate, 1)
+        notebook.deletePage(source)
+        await store.gate.release(0)
+
+        await #expect(throws: FormatFault.invalidWrite("page \(source) was deleted while it was read")) { try await duplicate.value }
+        #expect(notebook.pageIDs == [other])
+        withExtendedLifetime(scratch) {}
+    }
+
+    @Test("A page deleted while a new page's asset paper is measured is refused as the page to follow")
+    func aPageDeletedDuringAnAssetAppendIsRefused() async throws {
+        let scratch = try Scratch("nb-append-deleted")
+        let store = GatedAssetStore(try await PackageStore.create(root: scratch.packageURL, index: Fixture.index(pages: 2)))
+        let notebook = try await Notebook.open(store: store, schedule: fast)
+        let (first, second) = (notebook.pageIDs[0], notebook.pageIDs[1])
+        let asset = try await notebook.storeImageAsset(try Fixture.imageData(width: 200, height: 100))
+
+        let append = Task { try await notebook.appendPage(after: first, geometry: .letter, paper: .asset(.image(asset))) }
+        try await notebook.waitForArrivals(store.gate, 1)
+        notebook.deletePage(first)
+        await store.gate.release(0)
+
+        await #expect(throws: NewPageRefusal.pageGone(first)) { try await append.value }
+        #expect(notebook.pageIDs == [second])
+        withExtendedLifetime(scratch) {}
+    }
+
+    @Test("A scan whose page to follow is deleted while it is measured inserts nothing")
+    func aScanWhosePageIsDeletedInsertsNothing() async throws {
+        let scratch = try Scratch("nb-scan-deleted")
+        let store = GatedAssetStore(try await PackageStore.create(root: scratch.packageURL, index: Fixture.index(pages: 2)))
+        let notebook = try await Notebook.open(store: store, schedule: fast)
+        let (first, second) = (notebook.pageIDs[0], notebook.pageIDs[1])
+        let image = try Fixture.imageData(width: 200, height: 100)
+        _ = notebook.drainChanges()
+
+        let scan = Task { try await notebook.importScan([image]) }
+        try await notebook.waitForArrivals(store.gate, 1)
+        notebook.deletePage(first)
+        _ = notebook.drainChanges()
+        await store.gate.release(0)
+
+        await #expect(throws: FormatFault.invalidWrite("the page the scan would follow is gone")) { try await scan.value }
+        #expect(notebook.pageIDs == [second])
+        #expect(notebook.drainChanges().isEmpty)
+        withExtendedLifetime(scratch) {}
     }
 
     @Test("A page with a text box open cannot be duplicated")
@@ -2071,11 +2201,11 @@ struct NotebookTests {
 }
 
 extension Notebook {
-    /// Waits until `count` asset reads have parked at the gate.
+    /// Waits until `count` reads have parked at the gate.
     func waitForArrivals(_ gate: CallGate, _ count: Int) async throws {
         let deadline = ContinuousClock.now + .seconds(5)
         while await gate.arrivals < count {
-            try #require(ContinuousClock.now < deadline, "timed out waiting for \(count) asset reads")
+            try #require(ContinuousClock.now < deadline, "timed out waiting for \(count) reads")
             try await Task.sleep(for: .milliseconds(5))
         }
     }

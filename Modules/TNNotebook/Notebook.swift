@@ -491,12 +491,24 @@ package final class Notebook {
     /// answers a report in the same turn and cannot await.
     @discardableResult
     package func appendPage(after: PageID? = nil, answering: ReportSeq? = nil) -> PageID {
-        let template = index.record(of: currentPageID) ?? index.pages[0]
-        // Asset paper is not copied: it belongs to the page it was applied
-        // to, whose geometry it set.
-        let inherited = template.paper.paper?.drawn ?? .blank
-        let paper = Paper.drawn(inherited == .none ? .blank : inherited)
-        return insertPage(after: after, geometry: template.geometry, paper: paper, content: .empty, answering: answering)
+        let record = PageRecord(id: PageID(), geometry: currentRecord.geometry, paper: inheritedPaper())
+        return insertPages([(record, .empty)], after: after, answering: answering)[0]
+    }
+
+    /// `currentPageID` always names a page the index holds.
+    private var currentRecord: PageRecord {
+        guard let record = index.record(of: currentPageID) else {
+            TNPrecondition.fail("the current page \(currentPageID) has no record")
+        }
+        return record
+    }
+
+    /// The current page's drawn paper, `none` becoming `blank`. Asset paper
+    /// is not copied: it belongs to the page it was applied to, whose
+    /// geometry it set.
+    private func inheritedPaper() -> Paper {
+        let inherited = currentRecord.paper.paper?.drawn ?? .blank
+        return .drawn(inherited == .none ? .blank : inherited)
     }
 
     /// A new page after `after` (or at the end), at a stated size and with a
@@ -511,10 +523,8 @@ package final class Notebook {
         let resolved: Paper
         switch paper {
         case .inheritTemplate:
-            let template = index.record(of: currentPageID) ?? index.pages[0]
-            let inherited = template.paper.paper?.drawn ?? .blank
             sized = geometry
-            resolved = .drawn(inherited == .none ? .blank : inherited)
+            resolved = inheritedPaper()
         case .drawn(let drawn):
             // Taken as typed, `.none` included: the `none` to `blank` rule
             // belongs to inheritance, not to a paper the user picked.
@@ -525,43 +535,54 @@ package final class Notebook {
                 TNPrecondition.fail("appendPage: .asset carries drawn paper \(asset)")
             }
             guard let aspect = await renderer.aspect(of: asset) else { throw .assetUnreadable(ref) }
-            // The asset fills the page rectangle, so the rectangle is the
-            // asset's shape at the chosen width, as `setPaper` sizes it.
-            let measured = PageGeometry(width: geometry.width, height: geometry.width * aspect)
+            let measured = PageGeometry.fitting(width: geometry.width, aspect: aspect)
             guard measured.isWithinBounds else {
                 throw .geometryOutOfBounds(width: measured.width, height: measured.height)
             }
             sized = measured
             resolved = asset
         }
-        return insertPage(after: after, geometry: sized, paper: resolved, content: .empty, answering: nil)
+        // Measuring the asset suspends, and the page `after` names can be
+        // deleted meanwhile.
+        if let after, index.record(of: after) == nil { throw .pageGone(after) }
+        let record = PageRecord(id: PageID(), geometry: sized, paper: resolved)
+        return insertPages([(record, .empty)], after: after, answering: nil)[0]
     }
 
-    /// The one place a page is inserted, so anything every new page must do
-    /// is written once. `content` is what the page starts with: empty for
+    /// The one place pages are inserted, so anything every new page must do
+    /// is written once, and a run of them is one structure change. They go
+    /// in together and in order after `after`, or at the end when it is nil;
+    /// a caller that suspended since it chose `after` refuses for itself
+    /// when that page is gone. Each starts with its own content: empty for
     /// every caller but a duplicate, which starts with the source's.
-    private func insertPage(after: PageID?, geometry: PageGeometry, paper: Paper, content: PageContent, answering: ReportSeq?) -> PageID {
-        let record = PageRecord(id: PageID(), geometry: geometry, paper: paper)
-        var pages = index.pages
-        if let after, let position = pages.firstIndex(where: { $0.id == after }) {
-            pages.insert(record, at: position + 1)
-        } else {
-            pages.append(record)
+    private func insertPages(_ pages: [(record: PageRecord, content: PageContent)], after: PageID?, answering: ReportSeq?) -> [PageID] {
+        var records = index.pages
+        var position = records.endIndex
+        if let after {
+            guard let found = records.firstIndex(where: { $0.id == after }) else {
+                TNPrecondition.fail("pages were inserted after page \(after), which the notebook does not hold")
+            }
+            position = found + 1
         }
-        index = index.withPages(pages)
-        var content = content
-        // A page that has just been inserted owes the disk its page file
-        // whatever is on it.
-        content.edited()
-        states[record.id] = .ready(content)
-        wanted.insert(record.id)
-        bumpContentVersion(of: record.id)
+        records.insert(contentsOf: pages.map(\.record), at: position)
+        index = index.withPages(records)
+        for (record, content) in pages {
+            var content = content
+            // A page that has just been inserted owes the disk its page file
+            // whatever is on it.
+            content.edited()
+            states[record.id] = .ready(content)
+            wanted.insert(record.id)
+            bumpContentVersion(of: record.id)
+        }
         indexSeq += 1
         emitStructure(answering: answering)
-        emitContent(record.id)
+        for (record, _) in pages {
+            emitContent(record.id)
+            rerenderComposite(of: record.id)
+        }
         markDirty()
-        rerenderComposite(of: record.id)
-        return record.id
+        return pages.map(\.record.id)
     }
 
     /// Deleting a page is navigation, not an edit, and is not itself
@@ -622,6 +643,10 @@ package final class Notebook {
             guard let read = await unloadedContent(of: source) else {
                 throw .invalidWrite("page \(source) could not be read")
             }
+            // The page can be deleted while its files are read.
+            guard index.record(of: source) != nil else {
+                throw .invalidWrite("page \(source) was deleted while it was read")
+            }
             copied = read
         case .unreadable(let faults):
             throw .invalidWrite("page \(source) is unreadable: \(faults)")
@@ -635,7 +660,8 @@ package final class Notebook {
         // `setInk` rather than the initializer's flag, so the durable flag and
         // the ink sequence agree and the first save writes the container.
         if copied.hasInk { content.setInk(copied.ink) }
-        return insertPage(after: source, geometry: record.geometry, paper: paper, content: content, answering: nil)
+        let copy = PageRecord(id: PageID(), geometry: record.geometry, paper: paper)
+        return insertPages([(copy, content)], after: source, answering: nil)[0]
     }
 
     // MARK: Bookmarks
@@ -703,7 +729,7 @@ package final class Notebook {
             guard let aspect = await renderer.aspect(of: paper) else { throw .assetUnreadable }
             // The page may have changed while the asset was being measured.
             try checkAssetPaperTarget(page)
-            let sized = PageGeometry(width: record.geometry.width, height: record.geometry.width * aspect)
+            let sized = PageGeometry.fitting(width: record.geometry.width, aspect: aspect)
             guard sized.isWithinBounds else { throw .geometryOutOfBounds }
             geometry = sized
         }
@@ -863,48 +889,46 @@ package final class Notebook {
     /// One new page per PDF page, inserted after the current page, each
     /// sized to its source extent with that PDF page as its paper. The asset
     /// is written once. No layer: the `pdf` layer kind is for a clipping
-    /// placed on a page, not for a page that *is* the PDF.
+    /// placed on a page, not for a page that *is* the PDF. Returns the pages
+    /// it made, in source order.
     ///
-    /// KNOWN DEFECT: a throw here abandons the pages it already made. The
-    /// `throw` for a page outside the bounds goes straight past the
-    /// `emitStructure`, the `emitContent`s and the `markDirty` below, so those
-    /// pages sit in the index with no one having told the canvas about them
-    /// and no save scheduled — the canvas shows the old page list until
-    /// something else restates it, and the notebook believes it is clean.
-    /// `importScan` below does the same job and does not have this defect: it
-    /// publishes what it made on the way out of every exit including a throw.
-    /// Not fixed here because this change touches no existing method, and the
-    /// fix wants a test of its own.
-    package func importPDF(_ data: Data) async throws(FormatFault) {
+    /// Every page is measured before anything is written, and a page with no
+    /// page box or outside the bounds refuses the whole import, naming it:
+    /// a worksheet handed in a page short is worse than a refusal, and a
+    /// refusal leaves no page and no asset behind.
+    ///
+    /// A notebook whose only page has nothing on it takes the PDF in that
+    /// page's place (decided R2-07).
+    @discardableResult
+    package func importPDF(_ data: Data) async throws(FormatFault) -> [PageID] {
         guard let source = PDFSource(data: data), source.pageCount > 0 else { throw .invalidWrite("PDF could not be opened") }
         let asset = AssetRef(id: AssetID(), format: .pdf)
-        try await store.writeAsset(data, asset)
-        var after = currentPageID
-        var created: [PageID] = []
+        var pages: [(record: PageRecord, content: PageContent)] = []
         for pageIndex in 0..<source.pageCount {
-            guard let page = source.page(at: pageIndex), let extent = PDFSource.displayExtent(of: page) else { continue }
+            guard let page = source.page(at: pageIndex), let extent = PDFSource.displayExtent(of: page) else {
+                throw .invalidWrite("PDF page \(pageIndex + 1) has no page box")
+            }
             let geometry = PageGeometry(width: extent.width, height: extent.height)
             guard geometry.isWithinBounds else { throw .invalidWrite("PDF page \(pageIndex + 1) is outside the page bounds") }
-            let record = PageRecord(id: PageID(), geometry: geometry, paper: .pdf(asset, sourcePageIndex: pageIndex))
-            var pages = index.pages
-            let position = pages.firstIndex { $0.id == after }.map { $0 + 1 } ?? pages.count
-            pages.insert(record, at: position)
-            index = index.withPages(pages)
-            var content = PageContent(ink: PKDrawing(), layers: [], hasInk: false, inkIndex: 0)
-            content.edited()
-            states[record.id] = .ready(content)
-            wanted.insert(record.id)
-            bumpContentVersion(of: record.id)
-            created.append(record.id)
-            after = record.id
+            pages.append((PageRecord(id: PageID(), geometry: geometry, paper: .pdf(asset, sourcePageIndex: pageIndex)), .empty))
         }
-        indexSeq += 1
-        emitStructure(answering: nil)
-        for page in created {
-            emitContent(page)
-            rerenderComposite(of: page)
-        }
-        markDirty()
+        try await store.writeAsset(data, asset)
+        let replaced = untouchedOnlyPage()
+        let created = insertPages(pages, after: currentPageID, answering: nil)
+        if let replaced { deletePage(replaced) }
+        return created
+    }
+
+    /// The notebook's only page when it has drawn paper and nothing on it:
+    /// no ink and no layer, so no text box either. What was drawn there and
+    /// undone does not count (decided R3-03); `deletePage` takes its history
+    /// with it. A page that is not loaded is not known to be blank, and stays.
+    private func untouchedOnlyPage() -> PageID? {
+        guard index.pages.count == 1, let record = index.pages.first, record.paper.paper?.drawn != nil,
+              case .ready(let content) = states[record.id],
+              content.ink.strokes.isEmpty, content.layers.isEmpty
+        else { return nil }
+        return record.id
     }
 
     /// One new page per scanned page, after the current page and in scan
@@ -912,22 +936,17 @@ package final class Notebook {
     /// aspect the way `appendPage` measures asset paper. Returns what it made.
     ///
     /// Here rather than in `TNEditor` because page order is the notebook's
-    /// (`Docs/Contract.md`, Custody), and in `importPDF`'s shape: one
-    /// `emitStructure` and one `markDirty` for the run, not the per-page storm
-    /// N calls to `appendPage` would kick, each of which ends in `insertPage`
-    /// and restates the whole page list to the canvas.
+    /// (`Docs/Contract.md`, Custody), and inserted as one run: one
+    /// `emitStructure` and one `markDirty`, not the per-page storm N calls to
+    /// `appendPage` would kick, each restating the whole page list to the
+    /// canvas.
     ///
-    /// `after` is threaded locally and re-checked against `index.pageIDs`
-    /// after every await, which `importPDF` need not do: its loop body has no
-    /// await and this one suspends twice per page, at `storeImageAsset` and at
-    /// `renderer.aspect`. If the page `after` names is deleted across a
-    /// suspension, the end of the notebook is the only answer left, and a
-    /// default is what the contract forbids, so the run stops instead.
-    ///
-    /// A page that cannot be stored or measured, or an `after` that is gone,
-    /// stops the run, and what was made is emitted and marked dirty before the
-    /// error is thrown. `importPDF` above does not do that; the block on it
-    /// says so.
+    /// A page that cannot be stored or measured stops the run, and what was
+    /// made before it is inserted before the error is thrown. The pages go in
+    /// once, after the last suspension, so the page the run follows is
+    /// checked once, there: if it was deleted while the scan was stored, the
+    /// end of the notebook is the only answer left, and a default is what the
+    /// contract forbids, so nothing is inserted.
     package func importScan(_ images: [Data]) async throws(FormatFault) -> [PageID] {
         guard !images.isEmpty else { return [] }
         // The width is the current page's, read once: every page of one scan
@@ -936,66 +955,32 @@ package final class Notebook {
             throw .invalidWrite("no current page to scan after")
         }
         let width = template.geometry.width
-        var after = currentPageID
-        var created: [PageID] = []
-
-        /// What the run owes the canvas and the store for the pages it made,
-        /// on the way out of every exit including a throw.
-        func publish() {
-            guard !created.isEmpty else { return }
-            indexSeq += 1
-            emitStructure(answering: nil)
-            for page in created {
-                emitContent(page)
-                rerenderComposite(of: page)
-            }
-            markDirty()
-        }
-
+        let after = currentPageID
+        var made: [(record: PageRecord, content: PageContent)] = []
+        var stopped: FormatFault?
         for (offset, data) in images.enumerated() {
             let number = offset + 1
             let asset: AssetRef
             do {
                 asset = try await storeImageAsset(data)
             } catch {
-                publish()
-                throw .invalidWrite("scanned page \(number) could not be stored: \(error.description)")
-            }
-            // The first re-check, after the store's suspension.
-            guard index.pageIDs.contains(after) else {
-                publish()
-                throw .invalidWrite("the page scanned page \(number) would follow is gone")
+                stopped = .invalidWrite("scanned page \(number) could not be stored: \(error.description)")
+                break
             }
             guard let aspect = await renderer.aspect(of: .image(asset)) else {
-                publish()
-                throw .invalidWrite("scanned page \(number) could not be measured")
+                stopped = .invalidWrite("scanned page \(number) could not be measured")
+                break
             }
-            // The second re-check, and the one that answers where the page
-            // goes. `importPDF` falls back to the end of the notebook here;
-            // this asks for the position and stops if there is not one, so no
-            // scanned page can silently land somewhere it was not asked to.
-            guard let position = index.pages.firstIndex(where: { $0.id == after }) else {
-                publish()
-                throw .invalidWrite("the page scanned page \(number) would follow is gone")
-            }
-            let geometry = PageGeometry(width: width, height: width * aspect)
+            let geometry = PageGeometry.fitting(width: width, aspect: aspect)
             guard geometry.isWithinBounds else {
-                publish()
-                throw .invalidWrite("scanned page \(number) is outside the page bounds")
+                stopped = .invalidWrite("scanned page \(number) is outside the page bounds")
+                break
             }
-            let record = PageRecord(id: PageID(), geometry: geometry, paper: .image(asset))
-            var pages = index.pages
-            pages.insert(record, at: position + 1)
-            index = index.withPages(pages)
-            var content = PageContent(ink: PKDrawing(), layers: [], hasInk: false, inkIndex: 0)
-            content.edited()
-            states[record.id] = .ready(content)
-            wanted.insert(record.id)
-            bumpContentVersion(of: record.id)
-            created.append(record.id)
-            after = record.id
+            made.append((PageRecord(id: PageID(), geometry: geometry, paper: .image(asset)), .empty))
         }
-        publish()
+        guard index.record(of: after) != nil else { throw .invalidWrite("the page the scan would follow is gone") }
+        let created = made.isEmpty ? [] : insertPages(made, after: after, answering: nil)
+        if let stopped { throw stopped }
         return created
     }
 
@@ -1414,11 +1399,14 @@ package enum NewPagePaper: Sendable, Equatable {
     case asset(Paper)
 }
 
-/// Why a new page was refused. Both are decided before anything is
+/// Why a new page was refused. Each is decided before anything is
 /// inserted, so a refusal leaves nothing behind.
 package enum NewPageRefusal: Error, Sendable, Equatable {
     case geometryOutOfBounds(width: Double, height: Double)
     case assetUnreadable(AssetRef)
+    /// The page the new one was to follow was deleted while its asset paper
+    /// was measured.
+    case pageGone(PageID)
 }
 
 /// Why a paper change was refused. Drawn paper is never refused on a page

@@ -499,6 +499,73 @@ struct EditorViewModelContentTests {
         _ = await notebook.close()
     }
 
+    @Test("A PDF lands after a page with ink on it, and the reader is taken to its first page")
+    func importingAPDFLandsOnItsFirstPage() async throws {
+        let (scratch, notebook, surface, editor) = try await loaded("vm-pdf-lands")
+        let first = notebook.pageIDs[0]
+        notebook.inkChanged(on: first, Ink.drawing(strokes: 1), echoOf: nil)
+
+        await editor.importPDF(try Fixture.pdfData(pages: 2))
+
+        #expect(editor.lastContentError == nil)
+        #expect(notebook.pageCount == 3)
+        #expect(notebook.pageIDs.first == first, "a page with ink on it is kept")
+        let made = Array(notebook.pageIDs.dropFirst())
+        #expect(surface.pagesSet.last == [first] + made)
+        #expect(surface.calls.last { if case .scroll = $0 { true } else { false } } == .scroll(made[0]))
+
+        withExtendedLifetime(scratch) {}
+        _ = await notebook.close()
+    }
+
+    @Test("A PDF imported into an untouched one-page notebook takes the blank page's place")
+    func importingIntoAnUntouchedNotebookReplacesTheBlankPage() async throws {
+        let (scratch, notebook, surface, editor) = try await loaded("vm-pdf-replaces")
+        let blank = notebook.pageIDs[0]
+
+        await editor.importPDF(try Fixture.pdfData(pages: 3))
+
+        #expect(editor.lastContentError == nil)
+        let made = notebook.pageIDs
+        #expect(made.count == 3)
+        #expect(!made.contains(blank))
+        for (offset, page) in made.enumerated() {
+            guard case .pdf(_, let sourcePageIndex) = try #require(notebook.paper(of: page)) else {
+                Issue.record("page \(page) is not PDF paper"); continue
+            }
+            #expect(sourcePageIndex == offset)
+        }
+        #expect(notebook.currentPageID == made[0])
+        #expect(surface.pagesSet.last == made)
+        #expect(surface.calls.last { if case .scroll = $0 { true } else { false } } == .scroll(made[0]))
+
+        withExtendedLifetime(scratch) {}
+        _ = await notebook.close()
+    }
+
+    @Test("A PDF with a page outside the bounds is refused whole: no page, no push, no asset, nothing owed")
+    func aPDFWithAPageOutsideTheBoundsMakesNothing() async throws {
+        let (scratch, notebook, surface, editor) = try await loaded("vm-pdf-bounds")
+        let pages = notebook.pageIDs
+        await notebook.flush()
+        #expect(!notebook.isDirty)
+        let ordersBefore = surface.pagesSet
+        let assets = scratch.packageURL.appendingPathComponent("assets").path
+        let assetsBefore = (try? FileManager.default.contentsOfDirectory(atPath: assets)) ?? []
+
+        await editor.importPDF(try Fixture.shapedPDF(sizes: [CGSize(width: 400, height: 600), CGSize(width: 5000, height: 600)]))
+
+        #expect(editor.lastContentError == .invalidWrite("PDF page 2 is outside the page bounds"))
+        #expect(notebook.pageIDs == pages)
+        #expect(notebook.pageCount == pages.count)
+        #expect(surface.pagesSet == ordersBefore)
+        #expect(!notebook.isDirty)
+        #expect(((try? FileManager.default.contentsOfDirectory(atPath: assets)) ?? []) == assetsBefore)
+
+        withExtendedLifetime(scratch) {}
+        _ = await notebook.close()
+    }
+
     @Test("A scan becomes one page per scanned page, in order, each taking the scan's aspect")
     func scanBecomesPages() async throws {
         let (scratch, notebook, surface, editor) = try await loaded("vm-scan")
@@ -539,7 +606,7 @@ struct EditorViewModelContentTests {
         #expect(scroll > order)
         #expect(!surface.calls.contains(.scroll(made[2])), "the first page made, not the last")
 
-        // Appending pages is navigation: `insertPage` records nothing.
+        // Appending pages is navigation: `insertPages` records nothing.
         #expect(notebook.canUndo == couldUndo)
 
         withExtendedLifetime(scratch) {}
@@ -586,8 +653,8 @@ struct EditorViewModelContentTests {
         #expect(notebook.pageCount == 2)
         let made = try #require(notebook.pageIDs.last)
         #expect(notebook.pageIDs == [first, made])
-        // The half `importPDF` drops: the canvas is told about the pages the
-        // stopped run made, and they are owed to the disk.
+        // The canvas is told about the pages the stopped run made, and they
+        // are owed to the disk.
         #expect(surface.pagesSet.last == [first, made])
         #expect(notebook.isDirty)
 

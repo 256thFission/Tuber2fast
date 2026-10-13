@@ -642,3 +642,10 @@ Not gaps — properties of the tooling that read as project defects when hit.
   cap or a card, so the press is reviewed by diff only. Owed: tap Settings
   in the library sidebar and pick a dark preset; the panel and the library
   under it repaint together.
+- **A PDF lands on its first page (U15, I3 line 7).** A recorder shows the
+  import push the new order and then scroll to the PDF's first page. When
+  the PDF takes a blank only page's place, that order follows, in the same
+  drain, one that still holds the blank page, and no hosted test drives the
+  paged canvas through the pair. Owed: new notebook, Insert > PDF (3
+  pages): the view lands on PDF page 1, the blank page is gone, 3 pages in
+  all.

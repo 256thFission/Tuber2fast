@@ -16,6 +16,13 @@ package struct PageGeometry: Codable, Sendable, Equatable {
     /// current page to copy.
     package static let letter = PageGeometry(width: 612, height: 792)
 
+    /// A page `width` wide in an asset's shape, `aspect` being its height
+    /// over its width: asset paper fills the page rectangle, so the
+    /// rectangle is the asset's shape.
+    package static func fitting(width: Double, aspect: Double) -> PageGeometry {
+        PageGeometry(width: width, height: width * aspect)
+    }
+
     package var isWithinBounds: Bool {
         PageBounds.contains(width) && PageBounds.contains(height)
     }

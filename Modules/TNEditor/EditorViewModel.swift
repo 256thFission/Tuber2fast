@@ -342,6 +342,8 @@ package final class EditorViewModel {
             .invalidWrite("page \(width) x \(height) is outside \(Self.bounds) points")
         case .assetUnreadable(let asset):
             .invalidWrite("paper asset \(asset.fileName) could not be read")
+        case .pageGone(let page):
+            .invalidWrite("page \(page), which the new page was to follow, is gone")
         }
     }
 
@@ -482,12 +484,10 @@ package final class EditorViewModel {
         binding.drain()
     }
 
-    /// One new page per PDF page, after the current one.
+    /// One new page per PDF page, after the current one, and the reader is
+    /// taken to the first of them.
     package func importPDF(_ data: Data) async {
-        lastContentError = nil
-        commitTextEditing()
-        do { try await notebook.importPDF(data) } catch { lastContentError = error }
-        binding.drain()
+        await importPages { () async throws(FormatFault) in try await notebook.importPDF(data) }
     }
 
     package func addLink(to target: LinkTarget) async {
@@ -523,19 +523,23 @@ package final class EditorViewModel {
     // MARK: Capture
 
     /// A scan: one new page per scanned page, after the current one, and the
-    /// reader is taken to the first of them, so a scan reads from its
-    /// beginning rather than from its end the way Add Page leaves it.
-    ///
-    /// `importPDF`'s seven lines plus that scroll. A run that stops partway
-    /// hands back nothing, so the reader stays where they were while the bar
-    /// says what happened — the pages it did make are already in the notebook
-    /// and already pushed, because the notebook publishes them on its way out.
-    /// An empty array is a cancel and does nothing at all.
+    /// reader is taken to the first of them. An empty array is a cancel and
+    /// makes nothing.
     package func importScan(_ images: [Data]) async {
+        await importPages { () async throws(FormatFault) in try await notebook.importScan(images) }
+    }
+
+    /// An import lands the reader on the first page it made, so it reads
+    /// from its beginning rather than from its end the way Add Page leaves
+    /// it. A refused import makes nothing, and a scan that stops partway
+    /// hands back nothing, so the reader stays where they were while the bar
+    /// says what happened; the pages a stopped scan did make are already
+    /// in the notebook and pushed by the drain.
+    private func importPages(_ make: () async throws(FormatFault) -> [PageID]) async {
         lastContentError = nil
         commitTextEditing()
         var created: [PageID] = []
-        do { created = try await notebook.importScan(images) } catch { lastContentError = error }
+        do { created = try await make() } catch { lastContentError = error }
         binding.drain()
         if let first = created.first { binding.surface.scroll(to: first) }
     }

@@ -1,6 +1,7 @@
 import CoreGraphics
 import Foundation
 import ImageIO
+import PDFKit
 import Testing
 @testable import TNFormat
 @testable import TNModel
@@ -61,6 +62,32 @@ enum Fixture {
         }
         context.closePDF()
         return output as Data
+    }
+
+    /// A PDF of blank pages the shapes `pdfData` cannot make: one page per
+    /// size, a size of zero being a page with an empty box, each turned by
+    /// `rotation` degrees and cropped to `cropBox` when one is given.
+    /// CoreGraphics writes the pages, because PDFKit will not write an empty
+    /// media box; PDFKit turns and crops them, because CoreGraphics cannot
+    /// write a rotation.
+    static func shapedPDF(sizes: [CGSize], rotation: Int = 0, cropBox: CGRect? = nil) throws -> Data {
+        let output = NSMutableData()
+        let consumer = try #require(CGDataConsumer(data: output))
+        let context = try #require(CGContext(consumer: consumer, mediaBox: nil, nil))
+        for size in sizes {
+            var box = CGRect(origin: .zero, size: size)
+            context.beginPage(mediaBox: &box)
+            context.endPage()
+        }
+        context.closePDF()
+        guard rotation != 0 || cropBox != nil else { return output as Data }
+        let document = try #require(PDFDocument(data: output as Data))
+        for index in 0..<document.pageCount {
+            let page = try #require(document.page(at: index))
+            page.rotation = rotation
+            if let cropBox { page.setBounds(cropBox, for: .cropBox) }
+        }
+        return try #require(document.dataRepresentation())
     }
 
     /// A PNG of the given pixel size, for the image-import path to normalize.
