@@ -2,7 +2,7 @@ import Foundation
 import TNCore
 import TNModel
 
-/// The undo manager a page canvas hands to the responder chain: it registers
+/// The undo manager the runtime hands to the responder chain: it registers
 /// nothing and it undoes nothing itself.
 ///
 /// Undo is the notebook's (D1): one notebook-wide stack of ink *values*, one
@@ -11,9 +11,9 @@ import TNModel
 /// authority over the same ink — the one-writer rule's exact failure — and it
 /// would die every time a page left the window, which is the state D1 exists to
 /// avoid. So every registration PencilKit makes is dropped on the floor, and
-/// the two gestures that reach a responder's undo manager (the three-finger
-/// gestures, the shake, the edit menu, a toolbar button wired to the chain) are
-/// forwarded up as intentions.
+/// every route that reaches a responder's undo manager (the three-finger
+/// gestures, the shake, the edit menu, a toolbar button wired to the chain) is
+/// forwarded up as an intention.
 ///
 /// `canUndo` and `canRedo` are told, not computed: the binding knows the depth
 /// of the notebook's stack and states it through
@@ -21,24 +21,13 @@ import TNModel
 /// manager with no registrations would otherwise answer `false` to both and the
 /// system gesture would be inert.
 ///
-/// KNOWN DEFECT: this is a best estimate of where PencilKit's registrations go,
-/// and it is not proven on a device.
-///
-/// - `UIResponder.undoManager` walks the responder chain, so the canvas view
-///   finds the one `PageCanvasController` overrides. If a build of PencilKit
-///   holds a private `UndoManager` of its own for the drawing rather than
-///   asking the chain, its registrations never pass through here and the two
-///   stacks would diverge: the system gesture would undo a stroke the notebook
-///   still believes is committed.
-/// - `prepare(withInvocationTarget:)` builds an invocation and does not route
-///   through `registerUndo(withTarget:selector:object:)`, so a registration
-///   made that way is not filtered by the overrides below. Nothing in this
-///   runtime uses it; PencilKit's own use of it is unknown.
-///
-/// The evidence that would settle both is a device session: draw, then invoke
-/// the system undo gesture, and see whether the stroke that disappears is the
-/// one the notebook popped. Until that runs, the seam's reports are the
-/// authority and this type is the funnel, not the stack.
+/// The runtime holds one and answers `undoManager` with it, so every view
+/// under every canvas finds it on the chain;
+/// `everyPencilKitViewAnswersWithTheFilter` proves that in the simulator.
+/// Whether the system gesture takes that route on a device is owed to the iPad
+/// session (`Docs/Unproven.md`). A registration that slips past the overrides
+/// below, such as one made with `prepare(withInvocationTarget:)`, holds at
+/// most one group, and nothing ever runs it.
 package final class FilteringUndoManager: UndoManager {
     /// The seam's reporter, unowned for the same reason the runtime holds it
     /// unowned: the binding owns both and outlives them.
@@ -52,6 +41,8 @@ package final class FilteringUndoManager: UndoManager {
         // Nothing is grouped because nothing is registered; stating it keeps a
         // future reader from reading the default as a decision.
         groupsByEvent = false
+        // What slips past the overrides holds one group, never a history.
+        levelsOfUndo = 1
     }
 
     /// Told by the binding, which owns the notebook's stack.
@@ -103,4 +94,7 @@ package final class FilteringUndoManager: UndoManager {
             reporter.redoRequested()
         }
     }
+
+    /// Another way in to the same intention; `super` would run the stack.
+    package override func undoNestedGroup() { undo() }
 }

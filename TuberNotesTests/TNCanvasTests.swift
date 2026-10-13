@@ -884,6 +884,73 @@ struct TNCanvasTests {
         _ = runtime.retireAll()
     }
 
+    // MARK: - The undo filter
+
+    @Test("Every view under every live canvas finds the runtime's one undo filter on the responder chain")
+    func everyPencilKitViewAnswersWithTheFilter() throws {
+        let reporter = RecordingReporter()
+        let runtime = hosted(reporter)
+        let pages = descriptors(3)
+        runtime.setPages(pages, seq: StructureSeq(1), answering: nil)
+        for page in pages.prefix(2) {
+            runtime.installContent(
+                .editable(id: page.id, ink: PKDrawing(), layers: [], composite: nil, inkSeq: InkSeq(1))
+            )
+        }
+        runtime.view.layoutIfNeeded()
+        #expect(runtime.canvases.count == 2)
+
+        let filter = try #require(runtime.undoManager as? FilteringUndoManager)
+        #expect(filter.levelsOfUndo == 1)
+        func subtree(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(subtree) }
+        for canvas in runtime.canvases.values {
+            let views = subtree(canvas.canvasView)
+            #expect(views.count > 1, "PencilKit's own views are walked, not only the canvas")
+            for view in views {
+                #expect(view.undoManager === filter, "\(type(of: view)) answers with another manager")
+            }
+        }
+        _ = runtime.retireAll()
+    }
+
+    @Test("The filter runs nothing it is handed, answers what it was told, and every way in to undo only reports")
+    func theUndoFilterOnlyReports() {
+        let reporter = RecordingReporter()
+        let filter = FilteringUndoManager(reporter: reporter)
+        filter.setAvailability(canUndo: true, canRedo: false)
+        let restorer = Restorer()
+
+        filter.beginUndoGrouping()
+        filter.registerUndo(withTarget: restorer, selector: #selector(Restorer.restore(_:)), object: NSObject())
+        filter.registerUndo(withTarget: restorer) { _ in Issue.record("a closure registration ran") }
+        filter.endUndoGrouping()
+        #expect(filter.canUndo && !filter.canRedo, "the told answer, not the stack's")
+
+        // An invocation slips past the overrides; one level means the next
+        // group lets go of it.
+        weak var slipped: NSObject?
+        autoreleasepool {
+            let argument = NSObject()
+            slipped = argument
+            filter.beginUndoGrouping()
+            (filter.prepare(withInvocationTarget: restorer) as AnyObject).restore(argument)
+            filter.endUndoGrouping()
+        }
+        #expect(slipped != nil, "the stack holds the invocation it was handed")
+        autoreleasepool {
+            filter.beginUndoGrouping()
+            (filter.prepare(withInvocationTarget: restorer) as AnyObject).restore(NSObject())
+            filter.endUndoGrouping()
+        }
+        #expect(slipped == nil, "one level: the second group pushed the first out")
+
+        filter.undo()
+        filter.undoNestedGroup()
+        filter.redo()
+        #expect(reporter.undoRequests == 2 && reporter.redoRequests == 1)
+        #expect(restorer.restored == 0)
+    }
+
     @Test("A scroll asked for before the first layout lands when the layout arrives, and reports the turn once")
     func scrollBeforeTheFirstLayoutIsKept() {
         let reporter = RecordingReporter()
@@ -1614,6 +1681,12 @@ struct TNCanvasTests {
 final class WindowKeeper {
     static let shared = WindowKeeper()
     var windows: [UIWindow] = []
+}
+
+/// An undo target that counts what ran.
+final class Restorer: NSObject {
+    var restored = 0
+    @objc func restore(_ value: AnyObject) { restored += 1 }
 }
 
 /// A reporter that records what the runtime said, in the order it said it.

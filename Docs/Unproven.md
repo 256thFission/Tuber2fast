@@ -601,3 +601,9 @@ Not gaps — properties of the tooling that read as project defects when hit.
   workspace's lease, so the re-run is reviewed by diff only. Owed: put the
   Pencil down mid-stroke and swipe Home, wait 5 s, reopen, and see Undo and
   a page turn work, with no `background lease expired` in the console.
+- **The undo gesture's route (U10, I3 line 5).** One undo filter per
+  runtime answers the responder chain, and a hosted test shows every view
+  under every live canvas finds it. Whether the system gesture travels that
+  chain, or PencilKit keeps a manager of its own, is unproven. Owed: draw
+  two strokes, three-finger swipe left, then right; only the second stroke
+  goes and Redo lights on the bar, and the swipe right brings it back.

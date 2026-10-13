@@ -65,8 +65,8 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
 
     /// The tool and the theme last told, for every canvas built after.
     private var environment: CanvasEnvironment
-    private var canUndo = false
-    private var canRedo = false
+
+    private let undoFilter: FilteringUndoManager
 
     private var lastStructureSeq: StructureSeq?
     private var nextReportSeqRaw: UInt64 = 0
@@ -98,6 +98,7 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
     package init(reporter: any CanvasReporting, environment: CanvasEnvironment) {
         self.reporter = reporter
         self.environment = environment
+        self.undoFilter = FilteringUndoManager(reporter: reporter)
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -130,6 +131,9 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
             scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
     }
+
+    /// One per runtime: every view under every canvas finds it on the chain.
+    package override var undoManager: UndoManager? { undoFilter }
 
     package override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
@@ -443,11 +447,7 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
     /// What the system undo gesture is allowed to offer. The depth of the
     /// stack is the notebook's, so the answer is told rather than computed.
     package func setUndoAvailability(canUndo: Bool, canRedo: Bool) {
-        self.canUndo = canUndo
-        self.canRedo = canRedo
-        for canvas in canvases.values {
-            canvas.setUndoAvailability(canUndo: canUndo, canRedo: canRedo)
-        }
+        undoFilter.setAvailability(canUndo: canUndo, canRedo: canRedo)
     }
 
     // MARK: - Layout
@@ -602,7 +602,6 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
             if let ink = snapshot.ink, let seq = snapshot.inkSeq, seq != canvas.inkSeq {
                 canvas.restoreInk(ink, seq: seq)
             }
-            canvas.setUndoAvailability(canUndo: canUndo, canRedo: canRedo)
             return
         }
 
@@ -614,10 +613,7 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
             composite: snapshot.composite,
             layers: snapshot.layers,
             environment: environment,
-            canUndo: canUndo,
-            canRedo: canRedo,
-            owner: self,
-            reporter: reporter
+            owner: self
         )
         addChild(canvas)
         scrollView.addSubview(canvas.view)

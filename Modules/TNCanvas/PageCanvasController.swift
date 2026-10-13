@@ -163,8 +163,6 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
     /// re-establishes it; a scroll does not.
     private var zoomRangeBounds: CGSize?
 
-    private let filteringUndoManager: FilteringUndoManager
-
     init(
         pageID: PageID,
         geometry: PageGeometry,
@@ -173,10 +171,7 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         composite: Composite?,
         layers: [Layer],
         environment: CanvasEnvironment,
-        canUndo: Bool,
-        canRedo: Bool,
-        owner: any PageCanvasOwner,
-        reporter: any CanvasReporting
+        owner: any PageCanvasOwner
     ) {
         self.pageID = pageID
         self.geometry = geometry
@@ -186,12 +181,7 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         // the tool is applied there.
         self.tool = environment.tool
         self.theme = environment.theme
-        // The one report this controller does not route through its owner: the
-        // undo manager is handed to the responder chain and answers UIKit
-        // directly, so it carries the reporter rather than a hop through here.
-        self.filteringUndoManager = FilteringUndoManager(reporter: reporter)
         super.init(nibName: nil, bundle: nil)
-        filteringUndoManager.setAvailability(canUndo: canUndo, canRedo: canRedo)
 
         // Page space is established before the view loads, and before the
         // delegate is: a canvas that has not been displayed yet must already
@@ -233,9 +223,6 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
             TNPrecondition.fail("page \(pageID) was released without delivering its final ink report")
         }
     }
-
-    /// The undo manager the responder chain finds from the canvas view.
-    package override var undoManager: UndoManager? { filteringUndoManager }
 
     package override func viewDidLoad() {
         super.viewDidLoad()
@@ -467,9 +454,9 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
 
     /// Typing's undo is the text view's own manager, which it supplies only
     /// while it is first responder. Resigned, `undoManager` walks the chain
-    /// to `filteringUndoManager`, whose undo reports back up and would
-    /// arrive here again; so a resigned view answers nothing, as `.opening`
-    /// does with no view at all.
+    /// to the runtime's `FilteringUndoManager`, whose undo reports back up
+    /// and would arrive here again; so a resigned view answers nothing, as
+    /// `.opening` does with no view at all.
     func undoTyping() {
         if case .editing(_, let view) = phase, view.isFirstResponder { view.undoManager?.undo() }
     }
@@ -522,10 +509,6 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
             let zoom = canvasView.zoomScale
             canvasView.scrollRectToVisible(overlay.frame.applying(CGAffineTransform(scaleX: zoom, y: zoom)), animated: true)
         }
-    }
-
-    func setUndoAvailability(canUndo: Bool, canRedo: Bool) {
-        filteringUndoManager.setAvailability(canUndo: canUndo, canRedo: canRedo)
     }
 
     /// The page's geometry changed under it — a re-import, a resized page. Rare
