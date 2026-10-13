@@ -839,8 +839,9 @@ struct EditorViewModelContentTests {
         #expect(notebook.pageIDs == [page])
         #expect(surface.calls.count == callsBefore, "nothing was committed or pushed")
 
-        await editor.addPage(size: .letter, orientation: .portrait)
+        editor.addPage(after: page)
         #expect(editor.canDeleteCurrentPage)
+        #expect(editor.lastContentError == .invalidWrite("the only page can't be deleted"))
         editor.deleteCurrentPage()
         #expect(editor.lastContentError == nil)
         #expect(notebook.pageCount == 1)

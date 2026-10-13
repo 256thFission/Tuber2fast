@@ -1498,7 +1498,8 @@ package enum NewPageRefusal: Error, Sendable, Equatable {
 }
 
 /// Why a paper change was refused. Drawn paper is refused only on a page
-/// whose paper is an asset; the other cases are about asset paper.
+/// the notebook does not hold (`pageNotLoaded`) or one whose paper is an
+/// asset; the rest are about asset paper.
 package enum PaperRefusal: Error, Sendable, Equatable {
     case pageNotLoaded
     case pageHasAssetPaper
