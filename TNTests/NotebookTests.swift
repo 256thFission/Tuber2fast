@@ -696,6 +696,36 @@ struct NotebookTests {
         #expect(notebook.state(of: a)?.content?.isDirty == false, "the redo's revision is what the disk holds")
     }
 
+    @Test("An undo into an unloaded page is saved by a close before the page's load lands, in the window or out of it", arguments: [false, true])
+    func undoIntoAnUnloadedPageSurvivesClose(leavesTheWindow: Bool) async throws {
+        let scratch = try Scratch("nb-undo-close")
+        let store = HeldLoadStore(try await PackageStore.create(root: scratch.packageURL, index: Fixture.index(pages: 1)))
+        let notebook = try await Notebook.open(store: store, schedule: fast)
+        let page = notebook.pageIDs[0]
+        notebook.windowChanged(to: [page])
+        try await waitUntil { notebook.state(of: page)?.content != nil }
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 1), echoOf: nil)
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 2), echoOf: nil)
+        await notebook.flush()
+        notebook.windowChanged(to: [])
+        notebook.retired(page, finalInk: nil)
+        notebook.prune()
+
+        await store.hold()
+        #expect(notebook.undo() == page)
+        // A scroll that settles elsewhere cancels the load the undo started,
+        // and nothing else would ever adopt the revision.
+        if leavesTheWindow { notebook.windowChanged(to: []) }
+        let closing = Task { await notebook.close() }
+        await store.release()
+        #expect(await closing.value == .clean)
+
+        let reopened = try await Notebook.open(store: PackageStore(root: scratch.packageURL), schedule: fast)
+        reopened.windowChanged(to: [page])
+        try await waitUntil { reopened.state(of: page)?.content != nil }
+        #expect(reopened.state(of: page)?.content?.ink.strokes.count == 1, "the undone stroke stays undone")
+    }
+
     @Test("A layer restored during a held save stays pending after the save completes")
     func restoreDuringHeldSaveKeepsTheLayerPending() async throws {
         let scratch = try Scratch("nb-undo-held-layer")

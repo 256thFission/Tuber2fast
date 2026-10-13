@@ -1369,7 +1369,9 @@ package final class Notebook {
     }
 
     /// Runs a pass now and waits for it, and for any pass already running.
+    /// Every pending revision is in custody first, so the pass writes it.
     package func flush() async {
+        await settlePendingRestores()
         debounce?.cancel()
         debounce = nil
         if let running = currentSave { await running.value }
@@ -1377,6 +1379,34 @@ package final class Notebook {
             beginSave()
             if let running = currentSave { await running.value }
         }
+    }
+
+    /// A revision parked for a page not in custody moves no counter, so
+    /// until it is adopted the notebook reports clean with an undo unsaved.
+    /// The page is read here rather than waited for, because a scroll can
+    /// cancel the window's load and then nothing would adopt the revision.
+    /// A load still in flight when the read lands is cancelled; one that
+    /// landed first adopted the revision itself. A page that cannot be read
+    /// keeps its revision parked, and its own load refuses it as before.
+    private func settlePendingRestores() async {
+        var settled = false
+        for page in Array(pendingRestores.keys) {
+            guard var content = await unloadedContent(of: page),
+                  pendingRestores.removeValue(forKey: page) != nil
+            else { continue }
+            loads[page]?.cancel()
+            loads[page] = nil
+            // A page outside the window gets no canvas, so no retire report
+            // would ever let `prune` free it.
+            content.retired = !wanted.contains(page)
+            states[page] = .ready(content)
+            emitContent(page)
+            rerenderComposite(of: page)
+            settled = true
+        }
+        guard settled else { return }
+        markDirty()
+        onAsyncChange?()
     }
 
     /// The final pass. After this, no write is outstanding.
