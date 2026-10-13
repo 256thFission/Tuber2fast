@@ -730,9 +730,16 @@ struct StoreTests {
 
 @Suite("Format: the write order survives every fault")
 struct WriteOrderSweep {
+    /// What a committed page must load as: its ink archive and its layers.
+    struct Written: Equatable {
+        let ink: Data
+        let layers: [LayerID]
+    }
+
     /// The batch under test: ink changes on an existing page, a new layer on
-    /// another, a new page with ink, and an index change.
-    static func batch(for index: NotebookIndex, existingLayer: Layer, store: PackageStore) async throws -> (SaveBatch, Layer, PageRecord) {
+    /// another, a new page with ink, and an index change; and each page's
+    /// values once it lands.
+    static func batch(for index: NotebookIndex, existingLayer: Layer, store: PackageStore) async throws -> (SaveBatch, [PageID: Written]) {
         let added = Fixture.imageLayer()
         // Through a plain store: the faulting file system counts only the save.
         try await PackageStore(root: store.layout.root).writeAsset(Fixture.archive(11, count: 256), added.payload.asset!)
@@ -744,7 +751,11 @@ struct WriteOrderSweep {
             PageWrite(file: PageFile(pageID: ids[1], hasInk: true, layers: [existingLayer.id, added.id]), ink: .unchanged, layerFiles: [added]),
             PageWrite(file: PageFile(pageID: newPage.id, hasInk: true, layers: []), ink: .archive(Fixture.archive(22)), layerFiles: []),
         ])
-        return (batch, added, newPage)
+        return (batch, [
+            ids[0]: Written(ink: Fixture.archive(21), layers: []),
+            ids[1]: Written(ink: Fixture.archive(2), layers: [existingLayer.id, added.id]),
+            newPage.id: Written(ink: Fixture.archive(22), layers: []),
+        ])
     }
 
     /// After any fault, the notebook opens, and every page the index reaches
@@ -776,7 +787,7 @@ struct WriteOrderSweep {
         let dryURL = try scratch.copyPackage(to: "dry")
         let dryStore = PackageStore(root: dryURL, fileSystem: dry)
         _ = try await dryStore.load()
-        let (dryBatch, _, _) = try await Self.batch(for: index, existingLayer: layer, store: dryStore)
+        let (dryBatch, _) = try await Self.batch(for: index, existingLayer: layer, store: dryStore)
         _ = try await dryStore.save(dryBatch)
         let counts = dry.counts
         #expect(counts.stages >= 5 && counts.publishes >= 5 && counts.syncs >= 4)
@@ -791,9 +802,10 @@ struct WriteOrderSweep {
             let fs = FaultingFileSystem(faults: [mode])
             let store = PackageStore(root: url, fileSystem: fs)
             _ = try await store.load()
-            let (batch, _, _) = try await Self.batch(for: index, existingLayer: layer, store: store)
-            var threw = false
-            do { _ = try await store.save(batch) } catch { threw = true }
+            let (batch, written) = try await Self.batch(for: index, existingLayer: layer, store: store)
+            var report: SaveReport?
+            do { report = try await store.save(batch) } catch {}
+            let threw = report == nil
 
             // Tearing the index's own bytes (a truncated stage of the last
             // file, or discarding its bytes after its publish) is the case the
@@ -813,6 +825,16 @@ struct WriteOrderSweep {
             default: contentFault = false
             }
             try await Self.assertInvariants(at: url, faultAllowed: contentFault, context: "\(mode) threw=\(threw)")
+            // A failed write is never acknowledged: the save throws or
+            // refuses, and every page it reports committed reads back as written.
+            guard !contentFault, let report else { continue }
+            #expect(!report.refusals.isEmpty, "\(mode): a failed write returned a clean report")
+            let reader = PackageStore(root: url)
+            for (page, expected) in written where report.committed.contains(page) && report.refusals[page] == nil {
+                let bytes = try await reader.loadPage(page)
+                let loaded = bytes.inkArchive.map { Written(ink: $0, layers: bytes.layers.map(\.id)) }
+                #expect(loaded == expected, "\(mode): page \(page) committed but reads back otherwise")
+            }
         }
     }
 }
