@@ -229,6 +229,35 @@ struct EditorBindingTests {
         _ = await notebook.close()
     }
 
+    @Test("A recent is a report that moved custody: new ink, stamped or not, and never ink already held")
+    func aRecentIsAReportThatMovedCustody() async throws {
+        let scratch = try Scratch("editor-ink-reported")
+        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        let surface = RecordingSurface()
+        let binding = EditorBinding(notebook: notebook, surface: surface)
+        let page = notebook.pageIDs[0]
+        var reported = 0
+        binding.onInkReported = { reported += 1 }
+        binding.windowChanged(to: [page])
+        try await waitUntil { surface.installed.contains(page) }
+        let (one, two) = (Ink.drawing(strokes: 1), Ink.drawing(strokes: 2))
+
+        binding.inkChanged(on: page, one, echoOf: nil)
+        binding.inkChanged(on: page, two, echoOf: nil)
+        #expect(reported == 2, "a stroke drawn is reported")
+        binding.inkChanged(on: page, two, echoOf: nil)
+        #expect(reported == 2, "ink already held is not")
+
+        binding.undoRequested()
+        guard case .restoreInk(_, let seq) = try #require(surface.calls.last { if case .restoreInk = $0 { true } else { false } }) else { return }
+        binding.inkChanged(on: page, one, echoOf: seq)
+        #expect(reported == 2, "the restore's echo is not")
+        binding.inkChanged(on: page, two, echoOf: seq)
+        #expect(reported == 3, "a stroke committed over the restore is")
+        _ = await notebook.close()
+        withExtendedLifetime(scratch) {}
+    }
+
     @Test("An ink report reaches the notebook with the bindings the closure answers")
     func inkReportsCarryTheBindings() async throws {
         let scratch = try Scratch("editor-gesture")

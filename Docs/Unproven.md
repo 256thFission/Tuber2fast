@@ -785,7 +785,8 @@ Not gaps — properties of the tooling that read as project defects when hit.
   image of this page offers Share image and no Print.
 - **A recent is a report that moved custody (U49, I3 line 16).** The
   notebook suite proves a report equal to custody is no edit and writes no
-  ink file. The simulator never sees PencilKit report a stroke, so that a
-  drawn stroke still marks its colour used, and that an undo's echo does
-  not, is unproven. Owed: draw, and the colour you drew with shows as a
-  recent; Undo removes the stroke.
+  ink file. The binding suite proves a report marks its colour used once
+  for new ink, stamped or not, and never for ink already held or an undo's
+  echo. The simulator never sees PencilKit report a stroke, so that the
+  device delivers those reports is unproven. Owed: draw, and the colour you
+  drew with shows as a recent; Undo removes the stroke.
