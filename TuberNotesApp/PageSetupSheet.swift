@@ -48,8 +48,9 @@ enum PageNames {
 }
 
 /// One paper, shown as the page it makes: white paper, radius 10, the 3pt
-/// derived outline, and its rules drawn small in the token that owns rule
-/// lines. Held is sunk, which is the whole of the chosen state.
+/// derived outline, and its rules drawn small in the colour a page rules
+/// in, which no theme changes. Held is sunk, which is the whole of the
+/// chosen state.
 struct PaperCap: View {
     let paper: DrawnPaper
     let isHeld: Bool
@@ -80,7 +81,7 @@ struct PaperCap: View {
     }
 
     private var marks: some View {
-        let rule = theme.secondary.color
+        let rule = DrawnPaper.markColor.color
         return Canvas { context, size in
             let step = size.width / 4
             var path = Path()

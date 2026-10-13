@@ -1,9 +1,14 @@
 import Foundation
 
-/// What a drawn paper looks like: a name and nothing more. Spacing, colour,
-/// and margins are rendering constants of the build that draws them.
+/// What a drawn paper looks like: a name and nothing more. Spacing and
+/// margins are rendering constants of the build that draws them.
 package enum DrawnPaper: String, Codable, Sendable, Hashable, CaseIterable {
     case blank, lined, grid, dotted
+
+    /// The one colour of every rule, grid line, and dot, in every theme: a
+    /// page renders and exports the same wherever it is opened, so the
+    /// app's paper preview reads it here instead of from the theme.
+    package static let markColor = RGBA8(red: 0x94, green: 0xA6, blue: 0xBF, alpha: 0xFF)
 }
 
 /// A page's paper: drawn procedurally, or an asset that fills the page.
