@@ -40,8 +40,7 @@ struct CanvasLifecycleTests {
         let notebook = try await Notebook.create(at: directory.appending(path: "Scratch.tubernotes"), schedule: fast)
         for _ in 1..<pages { notebook.appendPage() }
         await notebook.flush()
-        let binding = EditorBinding(notebook: notebook, onLinkActivated: { _ in })
-        binding.apply(testEnvironment)
+        let binding = EditorBinding(notebook: notebook, environment: testEnvironment, onLinkActivated: { _ in })
         let runtime = binding.host as! PagedCanvasController
         let window = host(runtime)
         return Editor(notebook: notebook, binding: binding, runtime: runtime, window: window, directory: directory)

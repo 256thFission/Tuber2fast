@@ -379,7 +379,7 @@ struct EditorBindingTests {
     func movePageGuards() async throws {
         let (scratch, notebook) = try await reopened("editor-move", pages: 3)
         let surface = RecordingSurface()
-        let editor = EditorViewModel(binding: EditorBinding(notebook: notebook, surface: surface), palette: ToolPalette(store: MemoryPaletteStore()))
+        let editor = EditorViewModel(binding: EditorBinding(notebook: notebook, surface: surface), palette: ToolPalette(store: MemoryPaletteStore()), theme: .macaron)
         let (a, b, c) = (notebook.pageIDs[0], notebook.pageIDs[1], notebook.pageIDs[2])
         let pushed = surface.pagesSet.count
 
@@ -402,7 +402,7 @@ struct EditorBindingTests {
         let scratch = try Scratch("editor-add-delete")
         let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
         let surface = RecordingSurface()
-        let editor = EditorViewModel(binding: EditorBinding(notebook: notebook, surface: surface), palette: ToolPalette(store: MemoryPaletteStore()))
+        let editor = EditorViewModel(binding: EditorBinding(notebook: notebook, surface: surface), palette: ToolPalette(store: MemoryPaletteStore()), theme: .macaron)
         let first = notebook.pageIDs[0]
         let pushed = surface.pagesSet.count
 
@@ -424,7 +424,7 @@ struct EditorBindingTests {
         let (scratch, notebook) = try await reopened("editor-navigator", pages: 2)
         let surface = RecordingSurface()
         let binding = EditorBinding(notebook: notebook, surface: surface)
-        let editor = EditorViewModel(binding: binding, palette: ToolPalette(store: MemoryPaletteStore()))
+        let editor = EditorViewModel(binding: binding, palette: ToolPalette(store: MemoryPaletteStore()), theme: .macaron)
         let (a, b) = (notebook.pageIDs[0], notebook.pageIDs[1])
         #expect(editor.navigatorPages.map(\.isLoading) == [false, false])
         #expect(editor.navigatorPages.map(\.isCurrent) == [true, false])
@@ -528,7 +528,7 @@ struct EditorBindingTests {
         let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
         let surface = RecordingSurface()
         let binding = EditorBinding(notebook: notebook, surface: surface)
-        let editor = EditorViewModel(binding: binding, palette: ToolPalette(store: MemoryPaletteStore()))
+        let editor = EditorViewModel(binding: binding, palette: ToolPalette(store: MemoryPaletteStore()), theme: .macaron)
         let page = notebook.pageIDs[0]
         binding.windowChanged(to: [page])
         try await waitUntil { surface.installed.contains(page) }

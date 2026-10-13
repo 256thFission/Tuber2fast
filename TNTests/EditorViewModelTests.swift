@@ -30,7 +30,7 @@ struct EditorViewModelTests {
         let scarlet = ToolColor(rgba: RGBA8(red: 0xC4, green: 0x29, blue: 0x29, alpha: 0xFF))
         let thickRedPencil = EditorTool.ink(.pencil, InkPreset(color: scarlet, width: .thick))
         let (scratch, book) = try await notebook("vm-last-tool")
-        let editor = EditorViewModel(notebook: book, palette: palette(lastTool: thickRedPencil)) { _ in }
+        let editor = EditorViewModel(notebook: book, palette: palette(lastTool: thickRedPencil), theme: .macaron) { _ in }
 
         #expect(editor.tool == thickRedPencil)
         withExtendedLifetime(scratch) {}
@@ -40,7 +40,7 @@ struct EditorViewModelTests {
     func textToolIntentions() async throws {
         let bold = TextStyle(font: "system", size: 24, bold: true, italic: false, underline: false, color: TextStyle.body.color)
         let (scratch, book) = try await notebook("vm-text")
-        let editor = EditorViewModel(notebook: book, palette: palette(lastTool: .text(bold, .center))) { _ in }
+        let editor = EditorViewModel(notebook: book, palette: palette(lastTool: .text(bold, .center)), theme: .macaron) { _ in }
         #expect(editor.tool == .text(bold, .center))
 
         editor.select(kind: .pen)
@@ -62,7 +62,7 @@ struct EditorViewModelTests {
         let (scratch, book) = try await notebook("vm-gestures")
         let binding = EditorBinding(notebook: book, surface: RecordingSurface())
         let shared = ToolPalette(store: MemoryPaletteStore())
-        let editor = EditorViewModel(binding: binding, palette: shared)
+        let editor = EditorViewModel(binding: binding, palette: shared, theme: .macaron)
 
         // Nothing has been selected yet, and `didSet` does not run for the
         // initial value: a tab that opens on the pen still gestures like one.
@@ -82,6 +82,30 @@ struct EditorViewModelTests {
         withExtendedLifetime(scratch) {}
     }
 
+    @Test("A theme the workspace sets reaches the runtime with the tool in hand, and a tool change keeps it")
+    func theThemeReachesTheRuntimeWithTheTool() async throws {
+        let (scratch, book) = try await notebook("vm-theme")
+        let surface = RecordingSurface()
+        let editor = EditorViewModel(
+            binding: EditorBinding(notebook: book, surface: surface),
+            palette: ToolPalette(store: MemoryPaletteStore()),
+            theme: .macaron
+        )
+        #expect(surface.environments.last?.theme == .macaron)
+
+        editor.apply(theme: .macaronDark)
+        #expect(surface.environments.last?.theme == .macaronDark)
+        #expect(surface.environments.last?.tool == editor.tool.canvasTool)
+
+        editor.selectEraser()
+        #expect(surface.environments.last?.theme == .macaronDark)
+
+        let told = surface.environments.count
+        editor.apply(theme: .macaronDark)
+        #expect(surface.environments.count == told, "a theme restated sends nothing")
+        withExtendedLifetime(scratch) {}
+    }
+
     @Test("Two tabs over one palette open on the same tool")
     func twoTabsOpenOnTheSameTool() async throws {
         let eraser = EditorTool.erasePixel(.thin)
@@ -89,8 +113,8 @@ struct EditorViewModelTests {
         let (firstScratch, first) = try await notebook("vm-two-tabs-a")
         let (secondScratch, second) = try await notebook("vm-two-tabs-b")
 
-        let one = EditorViewModel(notebook: first, palette: shared) { _ in }
-        let two = EditorViewModel(notebook: second, palette: shared) { _ in }
+        let one = EditorViewModel(notebook: first, palette: shared, theme: .macaron) { _ in }
+        let two = EditorViewModel(notebook: second, palette: shared, theme: .macaron) { _ in }
 
         #expect(one.tool == eraser)
         #expect(two.tool == eraser)
@@ -101,7 +125,7 @@ struct EditorViewModelTests {
     func selectingAKindRestoresItsSlot() async throws {
         let (scratch, book) = try await notebook("vm-select-kind")
         let shared = ToolPalette(store: MemoryPaletteStore())
-        let editor = EditorViewModel(notebook: book, palette: shared) { _ in }
+        let editor = EditorViewModel(notebook: book, palette: shared, theme: .macaron) { _ in }
 
         let violet = ToolColor(rgba: RGBA8(red: 0x7A, green: 0x3F, blue: 0xC4, alpha: 0xFF))
         editor.select(kind: .highlighter)
@@ -121,7 +145,7 @@ struct EditorViewModelTests {
     func theEraserRestoresItsModeAndTheLassoIsNot() async throws {
         let (scratch, book) = try await notebook("vm-eraser")
         let shared = ToolPalette(store: MemoryPaletteStore())
-        let editor = EditorViewModel(notebook: book, palette: shared) { _ in }
+        let editor = EditorViewModel(notebook: book, palette: shared, theme: .macaron) { _ in }
 
         editor.selectEraser()
         #expect(editor.tool == .eraseObject)
@@ -157,7 +181,7 @@ struct EditorViewModelExportTests {
         let scratch = try Scratch(name)
         let book = try await Notebook.create(at: scratch.packageURL, schedule: fast)
         let binding = EditorBinding(notebook: book, surface: RecordingSurface())
-        return (scratch, book, EditorViewModel(binding: binding, palette: ToolPalette(store: MemoryPaletteStore())))
+        return (scratch, book, EditorViewModel(binding: binding, palette: ToolPalette(store: MemoryPaletteStore()), theme: .macaron))
     }
 
     /// Every page in the window and loaded, so an export reads custody.
@@ -214,7 +238,7 @@ struct EditorViewModelExportTests {
         let scratch = try Scratch("vm-export-cancel")
         let store = HeldLoadStore(try await PackageStore.create(root: scratch.packageURL, index: Fixture.index(pages: 1)))
         let book = try await Notebook.open(store: store, schedule: fast)
-        let editor = EditorViewModel(binding: EditorBinding(notebook: book, surface: RecordingSurface()), palette: ToolPalette(store: MemoryPaletteStore()))
+        let editor = EditorViewModel(binding: EditorBinding(notebook: book, surface: RecordingSurface()), palette: ToolPalette(store: MemoryPaletteStore()), theme: .macaron)
         await store.hold()
         editor.exportPDF(pages: 1...1)
         #expect(editor.exportProgress != nil, "the walk started")
@@ -263,7 +287,8 @@ struct EditorViewModelContentTests {
         let surface = RecordingSurface()
         let editor = EditorViewModel(
             binding: EditorBinding(notebook: notebook, surface: surface),
-            palette: ToolPalette(store: MemoryPaletteStore())
+            palette: ToolPalette(store: MemoryPaletteStore()),
+            theme: .macaron
         )
         return (scratch, notebook, surface, editor)
     }
@@ -541,7 +566,7 @@ struct EditorViewModelLifecycleTests {
         let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
         let surface = RecordingSurface()
         let binding = EditorBinding(notebook: notebook, surface: surface)
-        let editor = EditorViewModel(binding: binding, palette: ToolPalette(store: MemoryPaletteStore()))
+        let editor = EditorViewModel(binding: binding, palette: ToolPalette(store: MemoryPaletteStore()), theme: .macaron)
         let page = notebook.pageIDs[0]
         binding.windowChanged(to: [page])
         try await waitUntil { notebook.state(of: page)?.content != nil }

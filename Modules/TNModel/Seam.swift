@@ -67,15 +67,43 @@ package struct TextEditStart: Sendable, Equatable {
 
 /// Ink is a `PKTool`; text is a style to type with, and the drawing
 /// gesture is off.
-package enum CanvasTool: @unchecked Sendable {
+///
+/// Equatable so the runtime can tell a changed tool from a restated one: a
+/// canvas handed a tool commits an open session, clears a selection, or
+/// restyles selected words.
+package enum CanvasTool: @unchecked Sendable, Equatable {
     case ink(PKTool)
     case text(TextStyle, TextAlignment)
+
+    package static func == (lhs: CanvasTool, rhs: CanvasTool) -> Bool {
+        switch (lhs, rhs) {
+        case let (.text(a, x), .text(b, y)):
+            a == b && x == y
+        case let (.ink(a), .ink(b)):
+            // `PKTool` is a protocol; the three tools the app makes are
+            // Equatable structs. Any other kind compares unequal, which
+            // costs one restatement and nothing else.
+            same(a, b, as: PKInkingTool.self) || same(a, b, as: PKEraserTool.self) || same(a, b, as: PKLassoTool.self)
+        default:
+            false
+        }
+    }
+
+    private static func same<T: PKTool & Equatable>(_ a: PKTool, _ b: PKTool, as _: T.Type) -> Bool {
+        guard let a = a as? T, let b = b as? T else { return false }
+        return a == b
+    }
 }
 
-/// What the runtime is told about the editing environment: the tool.
+/// What the runtime is told about the editing environment: the tool and
+/// the theme.
 package struct CanvasEnvironment: @unchecked Sendable {
     package let tool: CanvasTool
-    package init(tool: CanvasTool) { self.tool = tool }
+    package let theme: Theme
+    package init(tool: CanvasTool, theme: Theme) {
+        self.tool = tool
+        self.theme = theme
+    }
 }
 
 /// One page's content, pushed down as a value. Two shapes, two factories:
@@ -135,7 +163,8 @@ package enum TransformOutcome: Sendable, Equatable {
     /// Arrives with the composite that has the committed text; the runtime
     /// takes the live view down.
     func endTextEditing(on page: PageID, layer: LayerID)
-    /// The tool and any other chrome fact, pushed, never parked here.
+    /// The tool and the theme, pushed, never parked here. The runtime acts
+    /// on what changed: a theme alone sends no tool.
     func apply(_ environment: CanvasEnvironment)
     /// Typing owns undo while a box is open. One-way; the text view's own
     /// manager answers and nothing is reported back.

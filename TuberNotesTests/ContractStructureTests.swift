@@ -510,6 +510,16 @@ enum ContractChecker {
         sources.filter { namesToolPicker(in: $0.code) }.map(\.path)
     }
 
+    /// The theme global the canvas once read, and the notification that
+    /// told it to repaint. The canvas is told the theme through `apply`; a
+    /// global it reads is the canvas asking. Assembled, so a search of the
+    /// tree for the two names finds that they are gone, this file included.
+    static let themeGlobals = ["current", "changed"].map { "Theme." + $0 }
+
+    static func namesThemeGlobal(in code: String) -> Bool {
+        themeGlobals.contains { code.contains($0) }
+    }
+
     /// Assignments of the canvas's tool: `canvasView.tool =`, through
     /// `self.`, `?` or `!` as well.
     ///
@@ -1076,6 +1086,24 @@ struct ContractStructureTests {
         )
     }
 
+    /// `Docs/Contract.md`, *Structure* (decided I5): the theme reaches the
+    /// canvas through `apply` and no other way. The names are gone from
+    /// `TNModel`, so the build refuses them today; this keeps them gone.
+    @Test("The canvas is told the theme: no source in TNCanvas names a theme global")
+    func theCanvasNamesNoThemeGlobal() throws {
+        let sites = try Self.appSources()
+            .filter { Self.module(of: $0.path) == "TNCanvas" && ContractChecker.namesThemeGlobal(in: $0.code) }
+            .map(\.path)
+        #expect(
+            sites.isEmpty,
+            """
+            \(sites.joined(separator: ", ")) names \(ContractChecker.themeGlobals.joined(separator: " or ")). \
+            The canvas is told, never asks: the theme arrives with the tool in CanvasEnvironment, and a global \
+            the canvas reads is a second route that misses what apply reaches.
+            """
+        )
+    }
+
     /// Nothing written for the tests exists in the build people hold.
     ///
     /// The allowlist is empty and stays empty: a `…ForTesting` member that
@@ -1409,6 +1437,18 @@ struct ContractCheckerOwnTests {
         #expect(
             !ContractChecker.namesToolPicker(
                 in: ContractChecker.withoutComments("// PKToolPicker is deliberately not used.\nlet x = 1\n")
+            )
+        )
+    }
+
+    @Test("A theme global named in code is caught, and one named in prose is not")
+    func themeGlobalsAreCaught() {
+        let (current, changed) = (ContractChecker.themeGlobals[0], ContractChecker.themeGlobals[1])
+        #expect(ContractChecker.namesThemeGlobal(in: "let theme = \(current)\n"))
+        #expect(ContractChecker.namesThemeGlobal(in: "center.addObserver(forName: \(changed), object: nil, queue: nil) { _ in }\n"))
+        #expect(
+            !ContractChecker.namesThemeGlobal(
+                in: ContractChecker.withoutComments("// \(current) is gone.\nlet x = 1\n")
             )
         )
     }

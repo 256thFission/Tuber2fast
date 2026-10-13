@@ -51,9 +51,17 @@ package final class EditorViewModel {
     package private(set) var tool: EditorTool {
         didSet {
             guard tool != oldValue else { return }
-            binding.apply(CanvasEnvironment(tool: tool.canvasTool))
+            binding.apply(environment)
             palette.remember(tool)
         }
+    }
+
+    /// The theme the workspace last told this tab. It travels with the
+    /// tool, so a tool change never sends the runtime a stale one.
+    @ObservationIgnored private var theme: Theme
+
+    private var environment: CanvasEnvironment {
+        CanvasEnvironment(tool: tool.canvasTool, theme: theme)
     }
 
     /// The presets, the recents, and the last kind, shared by every tab.
@@ -83,20 +91,27 @@ package final class EditorViewModel {
     package convenience init(
         notebook: Notebook,
         palette: ToolPalette,
+        theme: Theme,
         onLinkActivated: @escaping @MainActor (LinkTarget) -> Void
     ) {
         self.init(
-            binding: EditorBinding(notebook: notebook, onLinkActivated: onLinkActivated),
-            palette: palette
+            binding: EditorBinding(
+                notebook: notebook,
+                environment: CanvasEnvironment(tool: palette.currentTool.canvasTool, theme: theme),
+                onLinkActivated: onLinkActivated
+            ),
+            palette: palette,
+            theme: theme
         )
     }
 
     /// The designated initializer. Production passes the binding that made
     /// the runtime; a test passes one over a recording surface.
-    package init(binding: EditorBinding, palette: ToolPalette) {
+    package init(binding: EditorBinding, palette: ToolPalette, theme: Theme) {
         self.notebook = binding.notebook
         self.palette = palette
         self.tool = palette.currentTool
+        self.theme = theme
         self.binding = binding
         self.canvasHost = binding.host
         binding.onDrained = { [weak self] in self?.refreshMirrors() }
@@ -107,9 +122,18 @@ package final class EditorViewModel {
         // and a second tab over the same palette would go stale anyway.
         binding.bindingsForStroke = { [weak self] in self?.strokeBindings ?? [:] }
         refreshMirrors()
-        // `didSet` does not run for the initial value, and the runtime
-        // starts with no tool at all.
-        binding.apply(CanvasEnvironment(tool: tool.canvasTool))
+        // `didSet` does not run for the initial value. The production runtime
+        // was built with this environment and changes nothing; a recording
+        // surface learns it here.
+        binding.apply(environment)
+    }
+
+    /// The workspace resolved a theme. It goes down with the tool in hand,
+    /// and the runtime sends the canvases no tool for it.
+    package func apply(theme: Theme) {
+        guard theme != self.theme else { return }
+        self.theme = theme
+        binding.apply(environment)
     }
 
     private func refreshMirrors() {

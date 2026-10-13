@@ -13,16 +13,13 @@ import UIKit
 final class PagePlaceholderView: UIView {
     private let label = UILabel()
 
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        backgroundColor = MacaronPage.paper
-        layer.borderColor = MacaronPage.outline.cgColor
+    init(theme: Theme) {
+        super.init(frame: .zero)
         layer.borderWidth = MacaronPage.lineWidth
         layer.cornerRadius = MacaronPage.radius
         isUserInteractionEnabled = false
 
         label.font = .preferredFont(forTextStyle: .footnote)
-        label.textColor = Theme.current.outline(of: Theme.current.paper).uiColor
         label.textAlignment = .center
         label.numberOfLines = 3
         label.translatesAutoresizingMaskIntoConstraints = false
@@ -33,6 +30,7 @@ final class PagePlaceholderView: UIView {
             label.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 16),
             label.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -16),
         ])
+        apply(theme)
     }
 
     @available(*, unavailable)
@@ -40,10 +38,10 @@ final class PagePlaceholderView: UIView {
         fatalError("PagePlaceholderView is created in code only")
     }
 
-    func repaintPaper() {
-        backgroundColor = MacaronPage.paper
-        layer.borderColor = MacaronPage.outline.cgColor
-        label.textColor = Theme.current.outline(of: Theme.current.paper).uiColor
+    func apply(_ theme: Theme) {
+        backgroundColor = MacaronPage.paper(theme)
+        layer.borderColor = MacaronPage.outline(theme).cgColor
+        label.textColor = MacaronPage.outline(theme)
     }
 
     var text: String {

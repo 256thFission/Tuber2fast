@@ -9,7 +9,7 @@ import UIKit
 // What the hosted canvas suites share: page fixtures, a window to host a
 // runtime in, and the moves a test makes in place of a finger and a Pencil.
 
-let testEnvironment = CanvasEnvironment(tool: .ink(PKInkingTool(.pen)))
+let testEnvironment = CanvasEnvironment(tool: .ink(PKInkingTool(.pen)), theme: .macaron)
 
 // `fast` and `waitUntil` are TNTests' own, copied: that target is not
 // linked here.
@@ -64,7 +64,7 @@ func strokeDrawing(strokes: Int) -> PKDrawing {
 /// what lets a text view become first responder.
 @MainActor
 func hosted(_ reporter: RecordingReporter) -> PagedCanvasController {
-    let runtime = PagedCanvasController(reporter: reporter)
+    let runtime = PagedCanvasController(reporter: reporter, environment: testEnvironment)
     host(runtime)
     return runtime
 }

@@ -74,6 +74,9 @@ final class LayerSelectionView: UIView {
     /// The flag the notebook holds, restated by every `setLayers`.
     private(set) var isLocked: Bool
 
+    /// The theme the frame draws in, restated by every theme change.
+    private(set) var theme: Theme
+
     /// Neither extent may fall below this. `Layer.validated()` refuses a
     /// determinant near zero, and a floor here is what keeps a handle from
     /// ever reaching one — the same shape as `TextEditingView.resize`
@@ -96,11 +99,12 @@ final class LayerSelectionView: UIView {
     private lazy var editMenu = UIEditMenuInteraction(delegate: self)
     private var drag: DragMode?
 
-    init(layer: LayerID, transform: PageSpaceTransform, locked: Bool) {
+    init(layer: LayerID, transform: PageSpaceTransform, locked: Bool, theme: Theme) {
         self.layerID = layer
         self.accepted = transform
         self.working = transform
         self.isLocked = locked
+        self.theme = theme
         super.init(frame: .zero)
 
         isOpaque = false
@@ -228,7 +232,6 @@ final class LayerSelectionView: UIView {
     /// names no locked treatment, and that is the dimmer end of the one
     /// colour the lasso is allowed.
     private func applyTheme() {
-        let theme = Theme.current
         let accent = theme.accent.uiColor
         let tint = theme.outline(of: theme.accent).uiColor
         box.fillColor = accent.withAlphaComponent(Self.fillAlpha).cgColor
@@ -243,6 +246,12 @@ final class LayerSelectionView: UIView {
     }
 
     // MARK: - Told
+
+    /// The theme changed. The frame stays up; only its colours change.
+    func apply(_ theme: Theme) {
+        self.theme = theme
+        applyTheme()
+    }
 
     /// The notebook restated the placement, or refused the one reported. A
     /// restatement that lands while a pan is in flight records the value and

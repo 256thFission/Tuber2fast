@@ -63,7 +63,8 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
     /// changes and never per frame.
     private var reportedWindow: [PageID] = []
 
-    private var tool: CanvasTool?
+    /// The tool and the theme last told, for every canvas built after.
+    private var environment: CanvasEnvironment
     private var canUndo = false
     private var canRedo = false
 
@@ -94,8 +95,9 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
     /// zero-sized and is silently discarded.
     private var pendingScroll: PageID?
 
-    package init(reporter: any CanvasReporting) {
+    package init(reporter: any CanvasReporting, environment: CanvasEnvironment) {
         self.reporter = reporter
+        self.environment = environment
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -116,18 +118,8 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
         scrollView.alwaysBounceVertical = false
         scrollView.alwaysBounceHorizontal = true
         scrollView.contentInsetAdjustmentBehavior = .never
-        // The one ground in the runtime. Every page controller above it is
-        // clear, so the grid is continuous across a page turn.
-        scrollView.backgroundColor = MacaronGround.grid(
-            Theme.current, scale: view.traitCollection.displayScale
-        )
+        paintGround()
         scrollView.delegate = self
-
-        NotificationCenter.default.addObserver(
-            forName: Theme.changed, object: nil, queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.repaintGround() }
-        }
 
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(scrollView)
@@ -144,12 +136,12 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
         endToolUses(because: "the canvas left the window")
     }
 
-    private func repaintGround() {
+    /// The one ground in the runtime. Every page controller above it is
+    /// clear, so the grid is continuous across a page turn.
+    private func paintGround() {
         scrollView.backgroundColor = MacaronGround.grid(
-            Theme.current, scale: view.traitCollection.displayScale
+            environment.theme, scale: view.traitCollection.displayScale
         )
-        for canvas in canvases.values { canvas.repaintPaper() }
-        for placeholder in placeholders.values { placeholder.repaintPaper() }
     }
 
     /// The viewport-change hook, and the reason it is this one: every offset in
@@ -421,12 +413,20 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
 
     // MARK: - Told
 
-    /// The editing environment: the tool, on every live canvas and on every
-    /// canvas built after this.
+    /// The editing environment, on every live canvas and on every canvas
+    /// built after this. Each half goes down only when it changed: a canvas
+    /// handed a tool commits an open session, clears a selection, or
+    /// restyles selected words, so a theme alone must not hand it one.
     package func apply(_ environment: CanvasEnvironment) {
-        tool = environment.tool
-        for canvas in canvases.values {
-            canvas.apply(tool: environment.tool)
+        let told = self.environment
+        self.environment = environment
+        if environment.theme != told.theme {
+            if isViewLoaded { paintGround() }
+            for canvas in canvases.values { canvas.apply(environment.theme) }
+            for placeholder in placeholders.values { placeholder.apply(environment.theme) }
+        }
+        if environment.tool != told.tool {
+            for canvas in canvases.values { canvas.apply(tool: environment.tool) }
         }
     }
 
@@ -613,7 +613,7 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
             inkSeq: snapshot.inkSeq,
             composite: snapshot.composite,
             layers: snapshot.layers,
-            tool: tool,
+            environment: environment,
             canUndo: canUndo,
             canRedo: canRedo,
             owner: self,
@@ -650,7 +650,7 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
             existing.text = text
             return
         }
-        let placeholder = PagePlaceholderView(frame: .zero)
+        let placeholder = PagePlaceholderView(theme: environment.theme)
         placeholder.text = text
         scrollView.addSubview(placeholder)
         placeholders[page] = placeholder

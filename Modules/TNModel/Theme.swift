@@ -309,13 +309,6 @@ package struct Theme: Equatable, Sendable {
     package static func preset(_ id: ThemeID) -> ThemePreset? {
         presets.first { $0.id == id }
     }
-
-    /// The theme the whole app draws in. One value, read wherever chrome is
-    /// drawn; set once, at the top.
-    @MainActor package static var current: Theme = .macaron
-
-    /// Posted when `current` changes, so the UIKit half repaints.
-    @MainActor package static let changed = Notification.Name("TNThemeChanged")
 }
 
 /// What the app was told to draw in. One value: a theme and a flag saying

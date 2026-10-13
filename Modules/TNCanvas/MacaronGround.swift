@@ -46,9 +46,7 @@ enum MacaronPage {
     static let radius: CGFloat = 10
     static let lineWidth: CGFloat = 3
 
-    @MainActor static var outline: UIColor {
-        Theme.current.outline(of: Theme.current.paper).uiColor
-    }
+    static func outline(_ theme: Theme) -> UIColor { theme.outline(of: theme.paper).uiColor }
 
-    @MainActor static var paper: UIColor { Theme.current.paper.uiColor }
+    static func paper(_ theme: Theme) -> UIColor { theme.paper.uiColor }
 }

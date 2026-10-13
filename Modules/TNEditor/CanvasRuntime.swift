@@ -17,12 +17,13 @@ extension EditorBinding {
     /// binding exists.
     package convenience init(
         notebook: Notebook,
+        environment: CanvasEnvironment,
         onLinkActivated: @escaping @MainActor (LinkTarget) -> Void
     ) {
         let forwarder = ReportForwarder()
         self.init(
             notebook: notebook,
-            surface: PagedCanvasController(reporter: forwarder),
+            surface: PagedCanvasController(reporter: forwarder, environment: environment),
             forwarder: forwarder,
             onLinkActivated: onLinkActivated
         )

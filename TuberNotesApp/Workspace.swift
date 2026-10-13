@@ -55,15 +55,14 @@ final class Workspace {
 
     /// The theme every piece of chrome draws from, resolved from the choice
     /// and the hour. The SwiftUI half reads it through the environment; the
-    /// canvas reads `Theme.current`, which is why setting it does both.
+    /// canvas is told, through each tab's editor.
     private(set) var theme: Theme = .macaron
 
     private let themeStore = ThemeDefaults(.standard)
 
     private func resolveTheme() {
         theme = choice.resolve(dark: colourScheme == .dark)
-        Theme.current = theme
-        NotificationCenter.default.post(name: Theme.changed, object: nil)
+        for tab in tabs { tab.editor.apply(theme: theme) }
     }
 
     /// `-TNTheme <id>` opens on a theme, so a screenshot of one needs no
@@ -205,7 +204,7 @@ final class Workspace {
             // arrives mid-open lands here and focuses that tab.
             activeTabID = id
         case .opened(let notebook):
-            let editor = EditorViewModel(notebook: notebook, palette: palette) { [weak self] target in
+            let editor = EditorViewModel(notebook: notebook, palette: palette, theme: theme) { [weak self] target in
                 self?.activate(target)
             }
             tabs.append(Tab(id: notebook.notebookID, path: path, name: name, editor: editor))

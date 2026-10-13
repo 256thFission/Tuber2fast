@@ -230,14 +230,16 @@ struct ToolPaletteTests {
                 notebook: try await Notebook.create(at: firstScratch.packageURL, schedule: fast),
                 surface: RecordingSurface()
             ),
-            palette: shared
+            palette: shared,
+            theme: .macaron
         )
         let two = EditorViewModel(
             binding: EditorBinding(
                 notebook: try await Notebook.create(at: secondScratch.packageURL, schedule: fast),
                 surface: RecordingSurface()
             ),
-            palette: shared
+            palette: shared,
+            theme: .macaron
         )
 
         one.palette.used(swatch(0x21))

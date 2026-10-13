@@ -132,6 +132,24 @@ struct EditorToolTests {
         #expect(EditorTool.text(bold, .center).pkTool == nil)
     }
 
+    @Test("A tool restated is the same tool to the runtime, and any other tool is not")
+    func aRestatedToolIsTheSameTool() {
+        let bold = TextStyle(font: "system", size: 24, bold: true, italic: false, underline: false, color: TextStyle.body.color)
+        let tools: [EditorTool] = [
+            .ink(.pen, InkPreset(color: .black, width: .medium)),
+            .ink(.pen, InkPreset(color: .black, width: .thick)),
+            .ink(.pen, InkPreset(color: .yellow, width: .medium)),
+            .ink(.highlighter, InkPreset(color: .yellow, width: .medium)),
+            .eraseObject, .erasePixel(.thin), .erasePixel(.thick), .lasso,
+            .text(.body, .leading), .text(bold, .leading), .text(.body, .center),
+        ]
+        for (i, a) in tools.enumerated() {
+            for (j, b) in tools.enumerated() {
+                #expect((a.canvasTool == b.canvasTool) == (i == j), "\(a) against \(b)")
+            }
+        }
+    }
+
     // MARK: The record
 
     @Test("A palette record round-trips through a property list")

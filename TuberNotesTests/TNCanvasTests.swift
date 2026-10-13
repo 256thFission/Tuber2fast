@@ -548,7 +548,7 @@ struct TNCanvasTests {
         #expect(reporter.inkChanges.count == 1)
         #expect(reporter.inkChanges.first?.echoOf == nil, "the stroke is an edit")
         #expect(reporter.inkChanges.first?.ink.strokes.count == 1)
-        runtime.apply(CanvasEnvironment(tool: .text(.body, .leading)))
+        runtime.apply(CanvasEnvironment(tool: .text(.body, .leading), theme: .macaron))
         canvas.tapped(at: CGPoint(x: 110, y: 110))
         #expect(reporter.textEditRequests.map(\.layer) == [box.id], "the hit rects landed with the picture")
 
@@ -594,7 +594,7 @@ struct TNCanvasTests {
     /// install builds is how a test sees the use end.
     private func aUseWithAnInstallWaiting(on runtime: PagedCanvasController, tool: PKTool) throws -> (PageCanvasController, PageID) {
         let pages = descriptors(2)
-        runtime.apply(CanvasEnvironment(tool: .ink(tool)))
+        runtime.apply(CanvasEnvironment(tool: .ink(tool), theme: .macaron))
         runtime.setPages(pages, seq: StructureSeq(1), answering: nil)
         runtime.installContent(.editable(id: pages[0].id, ink: PKDrawing(), layers: [], composite: nil, inkSeq: InkSeq(1)))
         let canvas = try #require(runtime.canvases[pages[0].id])
@@ -625,7 +625,7 @@ struct TNCanvasTests {
     @Test("A use still drawing when the runtime leaves the window ends there, and what waited for it runs")
     func aToolUseEndsWhenTheRuntimeLeavesTheWindow() async throws {
         let reporter = RecordingReporter()
-        let runtime = PagedCanvasController(reporter: reporter)
+        let runtime = PagedCanvasController(reporter: reporter, environment: testEnvironment)
         let window = host(runtime)
         let (canvas, waiting) = try aUseWithAnInstallWaiting(on: runtime, tool: PKInkingTool(.pen))
 
@@ -710,7 +710,7 @@ struct TNCanvasTests {
     func anEraserUseThatCommitsNothingEndsAfterOneTurn() async throws {
         let reporter = RecordingReporter()
         let runtime = hosted(reporter)
-        runtime.apply(CanvasEnvironment(tool: .ink(PKEraserTool(.vector))))
+        runtime.apply(CanvasEnvironment(tool: .ink(PKEraserTool(.vector)), theme: .macaron))
         let pages = descriptors(1)
         runtime.setPages(pages, seq: StructureSeq(1), answering: nil)
         runtime.installContent(.editable(id: pages[0].id, ink: PKDrawing(), layers: [], composite: nil, inkSeq: InkSeq(1)))
@@ -739,7 +739,7 @@ struct TNCanvasTests {
 
         // The text tool turns the drawing gesture off, and turning it off
         // under the Pencil cancels the stroke.
-        runtime.apply(CanvasEnvironment(tool: .text(.body, .leading)))
+        runtime.apply(CanvasEnvironment(tool: .text(.body, .leading), theme: .macaron))
         #expect(!b.canvasView.drawingGestureRecognizer.isEnabled)
         #expect(a.canvasView.drawingGestureRecognizer.isEnabled, "the stroke keeps the tool it began with")
 
@@ -792,7 +792,7 @@ struct TNCanvasTests {
     @Test("A torn-down runtime does not scroll to a page asked for before its first layout, whether asked before the teardown or after")
     func aTornDownRuntimeKeepsNoScrollForItsFirstLayout() {
         let reporter = RecordingReporter()
-        let runtime = PagedCanvasController(reporter: reporter)
+        let runtime = PagedCanvasController(reporter: reporter, environment: testEnvironment)
         let pages = descriptors(3)
         runtime.setPages(pages, seq: StructureSeq(1), answering: nil)
         runtime.scroll(to: pages[2].id)
@@ -808,7 +808,7 @@ struct TNCanvasTests {
     @Test("Close does not wait on a use nothing can touch: one still drawing outside the window ends in the teardown")
     func retireAllEndsAToolUseOutsideTheWindow() throws {
         let reporter = RecordingReporter()
-        let runtime = PagedCanvasController(reporter: reporter)
+        let runtime = PagedCanvasController(reporter: reporter, environment: testEnvironment)
         let window = host(runtime)
         let pages = descriptors(2)
         runtime.setPages(pages, seq: StructureSeq(1), answering: nil)
@@ -825,8 +825,13 @@ struct TNCanvasTests {
         #expect(reporter.retired.filter { $0.page == pages[0].id }.count == 1)
     }
 
+    /// The page itself: the backdrop that draws the paper and its edge.
+    private func paper(of canvas: PageCanvasController) -> UIImageView? {
+        canvas.paperView.subviews.compactMap { $0 as? UIImageView }.first
+    }
+
     private func backdrop(of canvas: PageCanvasController) -> UIImage? {
-        canvas.paperView.subviews.compactMap { $0 as? UIImageView }.first?.image
+        paper(of: canvas)?.image
     }
 
     private func solidImage() throws -> CGImage {
@@ -856,7 +861,7 @@ struct TNCanvasTests {
         // A width no other tool in this suite uses, so the assertion cannot
         // pass on a default somebody else set.
         let tool = PKInkingTool(.pencil, color: .red, width: 7)
-        runtime.apply(CanvasEnvironment(tool: .ink(tool)))
+        runtime.apply(CanvasEnvironment(tool: .ink(tool), theme: .macaron))
 
         let live = try #require(runtime.canvases[pages[0].id])
         let applied = try #require(live.canvasView.tool as? PKInkingTool)
@@ -882,7 +887,7 @@ struct TNCanvasTests {
     @Test("A scroll asked for before the first layout lands when the layout arrives, and reports the turn once")
     func scrollBeforeTheFirstLayoutIsKept() {
         let reporter = RecordingReporter()
-        let runtime = PagedCanvasController(reporter: reporter)
+        let runtime = PagedCanvasController(reporter: reporter, environment: testEnvironment)
         let pages = descriptors(3)
         runtime.setPages(pages, seq: StructureSeq(1), answering: nil)
         runtime.scroll(to: pages[2].id)
@@ -900,7 +905,7 @@ struct TNCanvasTests {
     @Test("A scroll waiting for a layout is dropped when its page leaves the list")
     func scrollBeforeTheFirstLayoutFollowsItsPage() {
         let reporter = RecordingReporter()
-        let runtime = PagedCanvasController(reporter: reporter)
+        let runtime = PagedCanvasController(reporter: reporter, environment: testEnvironment)
         let pages = descriptors(3)
         runtime.setPages(pages, seq: StructureSeq(1), answering: nil)
         runtime.scroll(to: pages[2].id)
@@ -937,7 +942,7 @@ struct TNCanvasTests {
         let pages = descriptors(1)
         runtime.setPages(pages, seq: StructureSeq(1), answering: nil)
         runtime.installContent(.editable(id: pages[0].id, ink: PKDrawing(), layers: layers, composite: nil, inkSeq: InkSeq(1)))
-        runtime.apply(CanvasEnvironment(tool: .text(.body, .leading)))
+        runtime.apply(CanvasEnvironment(tool: .text(.body, .leading), theme: .macaron))
         let canvas = try #require(runtime.canvases[pages[0].id])
         let first = try #require(layers.first)
         guard case .text(let text) = first.payload else { throw TestFailure.notText }
@@ -993,13 +998,13 @@ struct TNCanvasTests {
         runtime.setPages(pages, seq: StructureSeq(1), answering: nil)
         runtime.installContent(.editable(id: pages[0].id, ink: PKDrawing(), layers: [], composite: nil, inkSeq: InkSeq(1)))
         let canvas = try #require(runtime.canvases[pages[0].id])
-        runtime.apply(CanvasEnvironment(tool: .text(.body, .leading)))
+        runtime.apply(CanvasEnvironment(tool: .text(.body, .leading), theme: .macaron))
         #expect(!canvas.canvasView.drawingGestureRecognizer.isEnabled)
-        runtime.apply(CanvasEnvironment(tool: .ink(PKInkingTool(.pen))))
+        runtime.apply(CanvasEnvironment(tool: .ink(PKInkingTool(.pen)), theme: .macaron))
         #expect(canvas.canvasView.drawingGestureRecognizer.isEnabled)
         // A canvas built after the tool was applied starts with the gesture
         // in the tool's state.
-        runtime.apply(CanvasEnvironment(tool: .text(.body, .leading)))
+        runtime.apply(CanvasEnvironment(tool: .text(.body, .leading), theme: .macaron))
         _ = runtime.retire(pages[0].id)
         runtime.installContent(.editable(id: pages[0].id, ink: PKDrawing(), layers: [], composite: nil, inkSeq: InkSeq(2)))
         let rebuilt = try #require(runtime.canvases[pages[0].id])
@@ -1124,7 +1129,7 @@ struct TNCanvasTests {
     func inkToolCommits() throws {
         let reporter = RecordingReporter()
         let (runtime, _, canvas, _) = try openSession(reporter, layers: [textLayer("hi", x: 100, y: 100)])
-        runtime.apply(CanvasEnvironment(tool: .ink(PKInkingTool(.pen))))
+        runtime.apply(CanvasEnvironment(tool: .ink(PKInkingTool(.pen)), theme: .macaron))
         #expect(reporter.textEditsEnded.count == 1)
         if case .idle = canvas.phase {} else { Issue.record("phase is \(canvas.phase)") }
         #expect(canvas.canvasView.drawingGestureRecognizer.isEnabled)
@@ -1136,12 +1141,45 @@ struct TNCanvasTests {
         let reporter = RecordingReporter()
         let (runtime, _, _, overlay) = try openSession(reporter, layers: [textLayer("hi", x: 100, y: 100)])
         let bold = TextStyle(font: "system", size: 16, bold: true, italic: false, underline: false, color: TextStyle.body.color)
-        runtime.apply(CanvasEnvironment(tool: .text(bold, .center)))
+        runtime.apply(CanvasEnvironment(tool: .text(bold, .center), theme: .macaron))
         overlay.insertText("!")
         let runs = overlay.committedLayer.runs
         #expect(runs.last == TextRun(string: "!", style: bold))
         #expect(overlay.committedLayer.alignment == .center)
         _ = runtime.retireAll()
+    }
+
+    @Test("A theme alone hands no canvas a tool: an open box keeps its selected words as they were, and a selection stays up")
+    func themeOnlyApplyKeepsTheSession() throws {
+        let reporter = RecordingReporter()
+        let (runtime, _, canvas, overlay) = try openSession(reporter, layers: [textLayer("hi", x: 100, y: 100)])
+        let bold = TextStyle(font: "system", size: 16, bold: true, italic: false, underline: false, color: TextStyle.body.color)
+        // Bold is what the caret types with; the words already there stay
+        // body, so a tool handed down again would visibly restyle them.
+        overlay.selectedRange = NSRange(location: 2, length: 0)
+        runtime.apply(CanvasEnvironment(tool: .text(bold, .leading), theme: .macaron))
+        overlay.selectedRange = NSRange(location: 0, length: 2)
+        let before = overlay.committedLayer
+        #expect(before.runs == [TextRun(string: "hi", style: .body)])
+
+        runtime.apply(CanvasEnvironment(tool: .text(bold, .leading), theme: .macaronDark))
+
+        #expect(overlay.committedLayer == before, "the selected words keep their own style")
+        #expect(overlay.selectedRange == NSRange(location: 0, length: 2))
+        #expect(reporter.textEditsEnded.isEmpty)
+        if case .editing = canvas.phase {} else { Issue.record("phase is \(canvas.phase)") }
+        _ = runtime.retireAll()
+
+        let image = imageLayer(x: 100, y: 200)
+        let (lasso, _, page) = try livePage(reporter, layers: [image])
+        page.tapped(at: centre(of: image))
+        let selection = try #require(frame(on: page))
+
+        lasso.apply(CanvasEnvironment(tool: .ink(PKLassoTool()), theme: .macaronDark))
+
+        #expect(frame(on: page) === selection)
+        if case .selected = page.phase {} else { Issue.record("phase is \(page.phase)") }
+        _ = lasso.retireAll()
     }
 
     @Test("A resize cannot go below one line, and typing past the bottom grows the box")
@@ -1219,7 +1257,7 @@ struct TNCanvasTests {
         let pages = descriptors(1)
         runtime.setPages(pages, seq: StructureSeq(1), answering: nil)
         runtime.installContent(.editable(id: pages[0].id, ink: PKDrawing(), layers: layers, composite: nil, inkSeq: InkSeq(1)))
-        runtime.apply(CanvasEnvironment(tool: .ink(tool)))
+        runtime.apply(CanvasEnvironment(tool: .ink(tool), theme: .macaron))
         let canvas = try #require(runtime.canvases[pages[0].id])
         return (runtime, pages[0].id, canvas)
     }
@@ -1450,16 +1488,50 @@ struct TNCanvasTests {
 
         canvas.tapped(at: centre(of: image))
         #expect(frame(on: canvas) != nil)
-        runtime.apply(CanvasEnvironment(tool: .text(.body, .leading)))
+        runtime.apply(CanvasEnvironment(tool: .text(.body, .leading), theme: .macaron))
         if case .idle = canvas.phase {} else { Issue.record("phase is \(canvas.phase)") }
         #expect(frame(on: canvas) == nil)
 
-        runtime.apply(CanvasEnvironment(tool: .ink(PKLassoTool())))
+        runtime.apply(CanvasEnvironment(tool: .ink(PKLassoTool()), theme: .macaron))
         canvas.tapped(at: centre(of: image))
         #expect(frame(on: canvas) != nil)
         _ = runtime.retireAll()
         #expect(reporter.transforms.isEmpty, "a selection is not a value, so a retire reports none of it")
         #expect(reporter.retired.count == 1)
+    }
+
+    @Test("The theme reaches the ground, every canvas, every placeholder, a selection frame, and canvases built later")
+    func theThemeReachesEverySurface() throws {
+        let reporter = RecordingReporter()
+        let runtime = hosted(reporter)
+        let pages = descriptors(3)
+        let image = imageLayer(x: 100, y: 200)
+        runtime.setPages(pages, seq: StructureSeq(1), answering: nil)
+        for (index, page) in pages.enumerated() {
+            runtime.installContent(.editable(id: page.id, ink: PKDrawing(), layers: index == 0 ? [image] : [], composite: nil, inkSeq: InkSeq(1)))
+        }
+        runtime.apply(CanvasEnvironment(tool: .ink(PKLassoTool()), theme: .macaron))
+        let canvas = try #require(runtime.canvases[pages[0].id])
+        canvas.tapped(at: centre(of: image))
+        let selection = try #require(frame(on: canvas))
+        let placeholder = try #require(runtime.placeholders[pages[2].id])
+        let ground = try #require(runtime.scrollView.backgroundColor)
+        let dark = Theme.macaronDark
+        let edge = MacaronPage.outline(dark).cgColor
+        #expect(paper(of: canvas)?.layer.borderColor != edge, "the two themes draw the page edge differently")
+
+        runtime.apply(CanvasEnvironment(tool: .ink(PKLassoTool()), theme: dark))
+
+        #expect(runtime.scrollView.backgroundColor !== ground)
+        #expect(paper(of: canvas)?.layer.borderColor == edge)
+        #expect(placeholder.layer.borderColor == edge)
+        #expect(frame(on: canvas) === selection)
+        #expect(selection.theme == dark)
+
+        settle(runtime, at: 2)
+        let built = try #require(runtime.canvases[pages[2].id])
+        #expect(paper(of: built)?.layer.borderColor == edge)
+        _ = runtime.retireAll()
     }
 
     @Test("Delete from the frame's menu is one report, and the frame waits for the composite")

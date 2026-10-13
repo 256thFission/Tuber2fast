@@ -108,7 +108,8 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
     /// lands inside one is an intention, reported and never acted on here.
     private(set) var hitTargets: [HitTarget] = []
 
-    private var tool: CanvasTool?
+    private var tool: CanvasTool
+    private var theme: Theme
     private(set) var phase: OverlayPhase = .idle
     /// Overlays whose end was reported and whose composite has not landed.
     /// Inert. A side map, not a phase: closing A and editing B happen in one
@@ -171,7 +172,7 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         inkSeq: InkSeq?,
         composite: Composite?,
         layers: [Layer],
-        tool: CanvasTool?,
+        environment: CanvasEnvironment,
         canUndo: Bool,
         canRedo: Bool,
         owner: any PageCanvasOwner,
@@ -181,6 +182,10 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         self.geometry = geometry
         self.owner = owner
         self.inkSeq = inkSeq
+        // The drawing gesture is PencilKit's and exists once the view loads;
+        // the tool is applied there.
+        self.tool = environment.tool
+        self.theme = environment.theme
         // The one report this controller does not route through its owner: the
         // undo manager is handed to the responder chain and answers UIKit
         // directly, so it carries the reporter rather than a hop through here.
@@ -212,9 +217,6 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         clearEchoLatchAtEndOfTurn(inkSeq)
 
         setLayers(layers)
-        // The drawing gesture is PencilKit's and exists once the view loads;
-        // the tool is applied there.
-        self.tool = tool
         if let composite { backdropView.image = UIImage(cgImage: composite.image) }
     }
 
@@ -278,15 +280,14 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         ])
 
         backdropView.isOpaque = true
-        backdropView.backgroundColor = MacaronPage.paper
         backdropView.contentMode = .scaleToFill
-        backdropView.layer.borderColor = MacaronPage.outline.cgColor
         backdropView.clipsToBounds = true
         backdropView.frame = CGRect(x: 0, y: 0, width: geometry.width, height: geometry.height)
         paperView.isUserInteractionEnabled = false
         paperView.addSubview(backdropView)
         view.insertSubview(paperView, belowSubview: canvasView)
         view.addSubview(overlayView)
+        paint()
         syncPageMirrors()
 
         // Allowed to recognize alongside PencilKit's own: a tap that is not on
@@ -296,7 +297,7 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         tap.delegate = self
         canvasView.addGestureRecognizer(tap)
 
-        if let tool { apply(tool: tool) }
+        apply(tool: tool)
 
         // A finger-typed session is covered by the keyboard on the first
         // keystroke without this.
@@ -310,11 +311,17 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
         }
     }
 
-    /// The theme changed under it. The frame's geometry is restated by the
-    /// next mirror sync; only the two colours are read again here.
-    func repaintPaper() {
-        backdropView.backgroundColor = MacaronPage.paper
-        backdropView.layer.borderColor = MacaronPage.outline.cgColor
+    /// The theme changed under it. Only colours change: an open session
+    /// and a selection stay as they are, and no tool is applied.
+    func apply(_ theme: Theme) {
+        self.theme = theme
+        if isViewLoaded { paint() }
+    }
+
+    private func paint() {
+        backdropView.backgroundColor = MacaronPage.paper(theme)
+        backdropView.layer.borderColor = MacaronPage.outline(theme).cgColor
+        if case .selected(_, let frame) = phase { frame.apply(theme) }
     }
 
     package override func viewDidLayoutSubviews() {
@@ -692,7 +699,7 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
             }
         case .ink(let pkTool) where pkTool is PKLassoTool:
             selectObject(at: pagePoint)
-        case .ink, nil:
+        case .ink:
             guard let hit = Self.linkHit(at: pagePoint, targets: hitTargets) else { return }
             TNLog.event(.canvas, "link activated on page \(pageID)")
             owner.pageDidActivateLink(pageID, layer: hit)
@@ -745,7 +752,7 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
 
     private func select(_ target: HitTarget) {
         clearSelection()
-        let frame = LayerSelectionView(layer: target.id, transform: target.transform, locked: target.locked)
+        let frame = LayerSelectionView(layer: target.id, transform: target.transform, locked: target.locked, theme: theme)
         overlayView.addSubview(frame)
         setOverlayScale(frame)
         // A drag on the frame neither draws, nor pans the page, nor turns it.

@@ -209,7 +209,7 @@ import UIKit
         drain()
     }
 
-    /// Delivers the tool to the runtime.
+    /// Delivers the tool and the theme to the runtime.
     package func apply(_ environment: CanvasEnvironment) {
         surface.apply(environment)
     }
