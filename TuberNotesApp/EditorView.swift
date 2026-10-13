@@ -24,10 +24,12 @@ struct EditorView: View {
     @State private var isPickingLinkTarget = false
     @State private var isConfirmingPageDelete = false
     @State private var isAddingPage = false
+    @State private var isChangingPaper = false
+    @State private var isPaperPhotoPending = false
     @State private var pendingPage: (choice: NewPagePaperChoice, size: PageSize, orientation: PageOrientation)?
 
-    /// What the picked photo is for. The picker serves two destinations, and
-    /// a second Bool beside `isPickingPhoto` could claim both at once.
+    /// What the picked photo is for. The picker serves three destinations,
+    /// and a Bool for each beside `isPickingPhoto` could claim two at once.
     private enum PhotoDestination {
         case layerOnCurrentPage
         case paperForCurrentPage
@@ -35,8 +37,6 @@ struct EditorView: View {
     }
     @State private var isShowingNavigator = false
     @State private var isExporting = false
-    @State private var bookmarkTarget: NavigatorPage?
-    @State private var bookmarkTitle = ""
     @State private var isInserting = false
 
     var body: some View {
@@ -67,6 +67,7 @@ struct EditorView: View {
             if args.contains("-TNShowExport") { isExporting = true }
             if args.contains("-TNShowNavigator") { isShowingNavigator = true }
             if args.contains("-TNShowAddPage") { isAddingPage = true }
+            if args.contains("-TNShowPaper") { isChangingPaper = true }
             if args.contains("-TNShowLinkTarget") { isPickingLinkTarget = true }
         }
             .confirmationDialog("Insert", isPresented: $isInserting, titleVisibility: .visible) {
@@ -74,14 +75,20 @@ struct EditorView: View {
                     photoDestination = .layerOnCurrentPage
                     isPickingPhoto = true
                 }
+                // The source raises when there is no camera, as on the simulator.
+                if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                    Button("Take a photo") { isTakingPhoto = true }
+                }
                 if VNDocumentCameraViewController.isSupported {
                     Button("Scan Document") { isScanning = true }
                 }
                 Button("PDF") { isPickingPDF = true }
                 Button("Link") { isPickingLinkTarget = true }
                 Button("Add page") { isAddingPage = true }
+                Button("Change this page's paper") { isChangingPaper = true }
                 Button("Pages") { isShowingNavigator = true }
                 Button("Delete page", role: .destructive) { isConfirmingPageDelete = true }
+                    .disabled(!editor.canDeleteCurrentPage)
                 Button("Cancel", role: .cancel) {}
             }
         // The choice is acted on after the sheet is gone: the photo leg
@@ -92,12 +99,14 @@ struct EditorView: View {
                 pendingPage = (choice, size, orientation)
             }
         }
+        // The photo leg waits for the panel to go, as Add page's does.
+        .sheet(isPresented: $isChangingPaper, onDismiss: pickPaperPhoto) {
+            PagePaperSheet(editor: editor) { isPaperPhotoPending = true }
+        }
         .photosPicker(isPresented: $isPickingPhoto, selection: $photoItem, matching: .images)
         // A cover, not a sheet: on iPad a sheet is a centred card, and a camera
-        // preview letterboxed inside one is wrong. Opening it from a `Menu` is
-        // not the chained-presentation hazard the comment above warns about —
-        // a menu is not a presentation, so nothing is dismissed in the frame
-        // the cover appears in.
+        // preview letterboxed inside one is wrong. Insert's Take a photo row
+        // opens it the way the other rows open their sheets.
         .fullScreenCover(isPresented: $isTakingPhoto) {
             CameraCapture(onFinish: capture)
                 .ignoresSafeArea()
@@ -142,7 +151,6 @@ struct EditorView: View {
         } message: {
             Text("The page and everything on it are removed.")
         }
-        .bookmarkAlert(editor: editor, page: $bookmarkTarget, title: $bookmarkTitle)
     }
 
     private var seatBinding: Binding<Bool> {
@@ -157,15 +165,6 @@ struct EditorView: View {
         case .export: isExporting = true
         case .seat: workspace.isSeatOpen.toggle()
         }
-    }
-
-    /// The page the reader is on, as the navigator sees it. Nil only if the
-    /// mirrors have not caught up with an empty notebook, which cannot
-    /// happen: a notebook always has a page.
-    private var currentPage: NavigatorPage? {
-        let pages = editor.navigatorPages
-        guard editor.currentPageIndex >= 0, editor.currentPageIndex < pages.count else { return nil }
-        return pages[editor.currentPageIndex]
     }
 
     // MARK: Pages
@@ -186,6 +185,13 @@ struct EditorView: View {
         case .flattened:
             Task { await editor.addPageFlatteningCurrentPage(size: pending.size, orientation: pending.orientation) }
         }
+    }
+
+    private func pickPaperPhoto() {
+        guard isPaperPhotoPending else { return }
+        isPaperPhotoPending = false
+        photoDestination = .paperForCurrentPage
+        isPickingPhoto = true
     }
 
     // MARK: Imports

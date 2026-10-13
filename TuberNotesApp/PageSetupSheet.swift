@@ -44,6 +44,7 @@ enum PageNames {
 private struct PaperCap: View {
     let paper: DrawnPaper
     let isHeld: Bool
+    var isEnabled = true
     let select: () -> Void
 
     @Environment(\.macaron) private var theme
@@ -55,6 +56,7 @@ private struct PaperCap: View {
                 size: CGSize(width: Macaron.shell, height: Macaron.shell),
                 radius: Macaron.chipRadius,
                 isHeld: isHeld,
+                isEnabled: isEnabled,
                 action: select
             ) {
                 marks
@@ -389,6 +391,39 @@ struct AddPageSheet: View {
         switch choice {
         case .photo, .from, .flattened: true
         case .sameAsThisPage, .drawn: false
+        }
+    }
+}
+
+/// The current page's paper, changed in place. A drawn paper applies at
+/// once and closes the panel. A photo is picked after the panel has gone,
+/// so the caller is told and opens the picker itself. A PDF page or a photo
+/// keeps its paper, so on one every choice is shown and none is offered.
+struct PagePaperSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    let editor: EditorViewModel
+    let pickPhoto: () -> Void
+
+    var body: some View {
+        let current = editor.currentPaper
+        let keepsPaper = current?.isAsset == true
+        MacaronPanel(title: "This page's paper", onClose: { dismiss() }) {
+            HStack(alignment: .top, spacing: Macaron.columnGap) {
+                ForEach(DrawnPaper.allCases, id: \.self) { candidate in
+                    PaperCap(paper: candidate, isHeld: current == .drawn(candidate), isEnabled: !keepsPaper) {
+                        Task { await editor.setPaper(candidate) }
+                        dismiss()
+                    }
+                }
+            }
+            MacaronButton(title: "Photo", isEnabled: !keepsPaper) {
+                pickPhoto()
+                dismiss()
+            }
+            if keepsPaper {
+                MacaronNote(text: "This page is a PDF page or a photo, so it keeps its paper: a change of paper can't be undone.")
+            }
         }
     }
 }

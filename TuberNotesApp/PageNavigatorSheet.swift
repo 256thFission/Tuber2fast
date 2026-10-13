@@ -63,8 +63,8 @@ struct PageNavigatorSheet: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.macaron) private var theme
-    /// The page a delete is being confirmed for. The toolbar's own dialog
-    /// is bound to the current page and cannot take an argument.
+    /// The page a delete is being confirmed for. Insert's own dialog is
+    /// bound to the current page and cannot take an argument.
     @State private var pageToDelete: PageID?
     @State private var tab = NavigatorTab.all
     @State private var bookmarkTarget: NavigatorPage?
@@ -98,7 +98,7 @@ struct PageNavigatorSheet: View {
             if tab == .marked, shown.isEmpty {
                 VStack(alignment: .leading, spacing: Macaron.rowGap) {
                     MacaronHeading(text: "No marked pages")
-                    Text("Mark a page from its menu here, or from the toolbar.")
+                    Text("Mark a page from its menu here.")
                         .font(Macaron.body(13))
                         .foregroundStyle(theme.outline(of: theme.chrome).color)
                 }
@@ -280,15 +280,15 @@ struct PageNavigatorSheet: View {
         }
     }
 
-    /// Until a page-setup sheet exists, a new page copies the current page's
+    /// The grid's add asks nothing, so a new page copies the current page's
     /// paper and size, whichever page it is added after; the label says so.
+    /// Insert's Add page is where a paper and a size are chosen.
     private static let addAfterLabel = "Add page (same paper as the current page)"
 }
 
-/// Naming a mark, from the navigator's menu or from the toolbar's button.
-/// One definition, so the two surfaces cannot drift: Cancel, Save, and
-/// Remove when the page is already marked. Saving an empty title is a mark
-/// nobody named, which the Marked tab still lists.
+/// Naming a mark, from a cell's menu: Cancel, Save, and Remove when the
+/// page is already marked. Saving an empty title is a mark nobody named,
+/// which the Marked tab still lists.
 struct BookmarkAlert: ViewModifier {
     let editor: EditorViewModel
     @Binding var page: NavigatorPage?

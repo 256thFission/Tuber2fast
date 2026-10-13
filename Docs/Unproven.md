@@ -750,3 +750,15 @@ Not gaps — properties of the tooling that read as project defects when hit.
   colour; close it and the colour is the first recent; drag the bar by its
   grab pill and no tray opens; take the pen, then the eraser, then the pen,
   and the held swatch sinks, rises and trampolines as before.
+- **The camera and the page's paper from Insert (U38, I3 line 15).** The
+  editor suite proves drawn paper and a photo are refused on a PDF page,
+  with the index and the assets as they were, and that deleting the only
+  page is refused with a reason; the notebook suite proves the same paper
+  again writes nothing. Screenshots show the paper panel on a blank page in
+  Macaron and Macaron Dark. The simulator has no camera, so Insert offers
+  no Take a photo there, and the cover, the capture, the panel dimmed on a
+  PDF page and the dimmed Delete page row are reviewed by diff only. Owed:
+  Insert > Take a photo opens the camera and the photo lands on the page;
+  on a PDF page, Insert > Change this page's paper shows every choice
+  dimmed with the reason; on a blank page, Lined applies; in a one-page
+  notebook, Insert's Delete page is dimmed.
