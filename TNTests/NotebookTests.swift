@@ -337,6 +337,30 @@ struct NotebookTests {
         #expect(try await store.base.loadPage(page).inkArchive != nil)
     }
 
+    @Test("A load that lands after a clean close installs nothing and arms no save")
+    func aLoadAfterCloseIsDropped() async throws {
+        let scratch = try Scratch("nb-load-after-close")
+        let base = try await PackageStore.create(root: scratch.packageURL, index: Fixture.index(pages: 1))
+        let index = try await base.load().index
+        let page = index.pageIDs[0]
+        // A container the page file does not record: the load adopts it and
+        // marks the page dirty, so a load that installed would save.
+        try InkContainer.encode(notebookID: index.notebookID, pageID: page, archive: Ink.drawing(strokes: 1).dataRepresentation())
+            .write(to: base.layout.inkURL(page))
+        let pageFile = try Data(contentsOf: base.layout.pageURL(page))
+        let store = HeldLoadStore(base)
+        let notebook = try await Notebook.open(store: store, schedule: fast)
+        await store.hold()
+        notebook.windowChanged(to: [page])
+        #expect(await notebook.close() == .clean)
+
+        await store.release()
+        for load in notebook.loads.values { await load.value }
+        #expect(notebook.state(of: page)?.content == nil, "the load installed nothing")
+        #expect(notebook.debounce == nil && notebook.currentSave == nil, "and armed no save")
+        #expect(try Data(contentsOf: base.layout.pageURL(page)) == pageFile)
+    }
+
     @Test("Undo restores the prior value without the echo counting as an edit; redo returns")
     func undoWithoutEcho() async throws {
         let scratch = try Scratch("nb-undo")

@@ -48,7 +48,9 @@ package final class Notebook {
     @ObservationIgnored private var savedIndexSeq: UInt64 = 0
     @ObservationIgnored private var states: [PageID: PageState] = [:]
     @ObservationIgnored private var wanted: Set<PageID> = []
-    @ObservationIgnored private var loads: [PageID: Task<Void, Never>] = [:]
+    /// Readable, like the save engine's two tasks, so a test can await a
+    /// load and see where it landed without a member that exists only for it.
+    @ObservationIgnored private(set) var loads: [PageID: Task<Void, Never>] = [:]
     @ObservationIgnored private var nextGeneration: UInt64 = 1
     @ObservationIgnored private var nextStructureSeq: UInt64 = 1
     @ObservationIgnored private var nextInkSeq: UInt64 = 1
@@ -68,8 +70,8 @@ package final class Notebook {
     // MARK: Save engine
 
     @ObservationIgnored package let schedule: SaveSchedule
-    @ObservationIgnored private var debounce: Task<Void, Never>?
-    @ObservationIgnored private var currentSave: Task<Void, Never>?
+    @ObservationIgnored private(set) var debounce: Task<Void, Never>?
+    @ObservationIgnored private(set) var currentSave: Task<Void, Never>?
     @ObservationIgnored private var lastSerialize: Duration = .milliseconds(100)
     @ObservationIgnored private var firstDirtyAt: ContinuousClock.Instant?
     @ObservationIgnored private var backoff: Duration?
@@ -230,7 +232,7 @@ package final class Notebook {
     }
 
     private func installLoaded(_ page: PageID, generation: UInt64, result: LoadOutcome) {
-        guard case .loading(let current) = states[page], current == generation else { return }
+        guard !isClosed, case .loading(let current) = states[page], current == generation else { return }
         loads[page] = nil
         guard wanted.contains(page) else {
             TNLog.event(.notebook, "dropped a stale load for page \(page)")
@@ -1227,12 +1229,14 @@ package final class Notebook {
 
     // MARK: The save engine
 
-    /// Recounts the mirror and arms the debounce unless a pass is running;
-    /// the running pass re-arms at its exit, the single owner of re-arming.
+    /// Recounts the mirror and arms the debounce unless a pass is running
+    /// or the notebook is closed; the running pass re-arms at its exit, the
+    /// single owner of re-arming. A report after the close arms nothing and
+    /// is not a trap: it is late, not invalid.
     private func markDirty() {
         dirtyPageCount = states.values.count(where: \.isDirty)
         if firstDirtyAt == nil { firstDirtyAt = .now }
-        guard currentSave == nil, debounce == nil else { return }
+        guard !isClosed, currentSave == nil, debounce == nil else { return }
         let interval = nextInterval()
         debounce = Task { [weak self] in
             try? await Task.sleep(for: interval)
@@ -1261,7 +1265,7 @@ package final class Notebook {
 
     /// Capture is synchronous and total; the write is a task.
     private func beginSave() {
-        guard currentSave == nil else { return }
+        guard !isClosed, currentSave == nil else { return }
         var captured: [Captured] = []
         for page in index.pageIDs {
             guard case .ready(let content) = states[page], content.isDirty else { continue }
@@ -1371,6 +1375,7 @@ package final class Notebook {
     /// Runs a pass now and waits for it, and for any pass already running.
     /// Every pending revision is in custody first, so the pass writes it.
     package func flush() async {
+        guard !isClosed else { return }
         await settlePendingRestores()
         debounce?.cancel()
         debounce = nil
@@ -1411,6 +1416,7 @@ package final class Notebook {
 
     /// The final pass. After this, no write is outstanding.
     package func close() async -> CloseOutcome {
+        guard !isClosed else { return .clean }
         await flush()
         viewWrite?.cancel()
         try? await store.writeView(ViewState(currentPageID: currentPageID))
@@ -1419,6 +1425,19 @@ package final class Notebook {
         if isDirty { return .dirty(pages: dirtyPages, indexUnsaved: indexSeq > savedIndexSeq) }
         isClosed = true
         return .clean
+    }
+
+    /// The close without its final pass: the unsaved pages are abandoned on
+    /// purpose. A pass already running cannot be called back, so it is waited
+    /// for, and the checkout ends with no write outstanding.
+    package func discard() async {
+        debounce?.cancel()
+        debounce = nil
+        for load in loads.values { load.cancel() }
+        loads.removeAll()
+        viewWrite?.cancel()
+        isClosed = true
+        if let running = currentSave { await running.value }
     }
 }
 

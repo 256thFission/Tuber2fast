@@ -132,9 +132,37 @@ struct LibraryTests {
         await #expect(throws: LibraryError.notebookIsOpen(name: "Notes")) { try await library.rename(at: item.relativePath, to: "Other") }
         await #expect(throws: LibraryError.notebookIsOpen(name: "Notes")) { try await library.trash(at: item.relativePath) }
         #expect(library.openCount == 1)
-        #expect(await library.release(item.relativePath) == .clean)
+        #expect(await notebook.close() == .clean)
+        library.release(item.relativePath)
         #expect(library.openCount == 0)
         _ = try await library.rename(at: item.relativePath, to: "Other")
+    }
+
+    @Test("A discard after a failing save stops the save engine before the checkout ends, and nothing more is written")
+    func discardStopsTheSaveEngine() async throws {
+        let scratch = try Scratch("lib-discard")
+        defer { withExtendedLifetime(scratch) {} }
+        let item = try await LibraryStore(base: scratch.root).createNotebook(named: "Notes", in: "")
+        // The first publish after the checkout is the first pass's; a retry
+        // would succeed and write the ink.
+        let library = Library(store: try LibraryStore(base: scratch.root, fileSystem: FaultingFileSystem(faults: [.failPublish(nth: 1)])))
+        guard case .opened(let notebook) = await library.checkout(item.relativePath, schedule: fast) else { Issue.record("open failed"); return }
+        let page = notebook.pageIDs[0]
+        notebook.windowChanged(to: [page])
+        try await waitUntil { notebook.state(of: page)?.content != nil }
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 2), echoOf: nil)
+        await notebook.flush()
+        #expect(notebook.lastSaveError != nil)
+        #expect(notebook.debounce != nil, "the failed pass armed its retry")
+        let package = library.store.url(of: item.relativePath)
+        let before = try files(under: package)
+
+        await library.discard(item.relativePath)
+        #expect(notebook.isClosed)
+        #expect(notebook.debounce == nil && notebook.currentSave == nil)
+        #expect(!library.isCheckedOut(item.relativePath))
+        try await Task.sleep(for: .milliseconds(200))   // well past the retry's 20 ms backoff
+        #expect(try files(under: package) == before)
     }
 
     @Test("A folder holding an open notebook is locked too, and the refusal names the notebook")
@@ -143,10 +171,11 @@ struct LibraryTests {
         defer { withExtendedLifetime(scratch) {} }
         _ = try await library.store.createFolder(named: "Work", in: "")
         let item = try await library.store.createNotebook(named: "Plan", in: "Work")
-        guard case .opened = await library.checkout(item.relativePath) else { Issue.record("open failed"); return }
+        guard case .opened(let notebook) = await library.checkout(item.relativePath) else { Issue.record("open failed"); return }
         #expect(library.isLocked("Work"))
         await #expect(throws: LibraryError.notebookIsOpen(name: "Plan")) { try await library.rename(at: "Work", to: "Play") }
-        _ = await library.release(item.relativePath)
+        #expect(await notebook.close() == .clean)
+        library.release(item.relativePath)
         #expect(!library.isLocked("Work"))
     }
 
@@ -208,7 +237,8 @@ struct LibraryTests {
         notebook.windowChanged(to: [page])
         try await waitUntil { notebook.state(of: page)?.content != nil }
         notebook.inkChanged(on: page, Ink.drawing(strokes: 4), echoOf: nil)
-        _ = await library.release(item.relativePath)
+        #expect(await notebook.close() == .clean)
+        library.release(item.relativePath)
 
         let copy = try await library.duplicateNotebook(at: item.relativePath)
         #expect(copy.relativePath == "Source copy.tubernotes")
@@ -619,21 +649,23 @@ struct LibraryTests {
         try FileManager.default.copyItem(at: library.store.url(of: item.relativePath), to: library.store.url(of: "Two.tubernotes"))
 
         // Before the index is built, only the ledger can see the collision.
-        guard case .opened = await library.checkout("Two.tubernotes") else { Issue.record("open failed"); return }
+        guard case .opened(let two) = await library.checkout("Two.tubernotes") else { Issue.record("open failed"); return }
         guard case .failed(.identityCollision("One.tubernotes")) = await library.checkout("One.tubernotes") else {
             Issue.record("a second checkout under one identity must refuse")
             return
         }
         #expect(library.openCount == 1)
-        #expect(await library.release("Two.tubernotes") == .clean)
+        #expect(await two.close() == .clean)
+        library.release("Two.tubernotes")
 
         try await library.refreshIdentities()
         guard case .failed(.identityCollision("Two.tubernotes")) = await library.checkout("Two.tubernotes") else {
             Issue.record("a collided path must refuse")
             return
         }
-        guard case .opened = await library.checkout("One.tubernotes") else { Issue.record("open failed"); return }
-        #expect(await library.release("One.tubernotes") == .clean)
+        guard case .opened(let one) = await library.checkout("One.tubernotes") else { Issue.record("open failed"); return }
+        #expect(await one.close() == .clean)
+        library.release("One.tubernotes")
     }
 
     /// The three faults a sidecar commit meets, and whether the old file is
@@ -935,7 +967,8 @@ struct LibraryTests {
         written.windowChanged(to: [page])
         try await waitUntil { written.state(of: page)?.content != nil }
         written.inkChanged(on: page, Ink.drawing(strokes: 4), echoOf: nil)
-        #expect(await library.release(item.relativePath) == .clean)
+        #expect(await written.close() == .clean)
+        library.release(item.relativePath)
         try writeOlderVersion(of: item, in: library)
         await #expect(throws: FormatFault.olderFormat(found: NotebookIndex.currentFormatVersion - 1)) {
             try await PackageStore(root: library.store.url(of: item.relativePath)).load()
@@ -946,7 +979,8 @@ struct LibraryTests {
             return
         }
         #expect(migrated.notebookID == item.notebookID)
-        #expect(await library.release(item.relativePath) == .clean)
+        #expect(await migrated.close() == .clean)
+        library.release(item.relativePath)
         let index = try jsonObject(Data(contentsOf: PackageLayout(root: library.store.url(of: item.relativePath)).indexURL))
         #expect(index["formatVersion"] as? Int == Int(NotebookIndex.currentFormatVersion))
         #expect(index["title"] == nil)

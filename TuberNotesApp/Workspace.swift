@@ -232,7 +232,8 @@ final class Workspace {
         guard let tab = tabs.first(where: { $0.id == tabID }) else { return }
         switch await tab.editor.close() {
         case .clean:
-            await release(tab)
+            library.release(tab.path)
+            dropTab(tab)
         case .dirty:
             // The tab stays open, because closing it would be the one way to
             // lose the pages that did not land.
@@ -245,13 +246,13 @@ final class Workspace {
     /// the unsaved pages are abandoned on purpose.
     func discardAndClose(tabID: NotebookID) async {
         guard let tab = tabs.first(where: { $0.id == tabID }) else { return }
-        await release(tab)
+        await library.discard(tab.path)
+        dropTab(tab)
         banner = nil
         discardableTabID = nil
     }
 
-    private func release(_ tab: Tab) async {
-        _ = await library.release(tab.path)
+    private func dropTab(_ tab: Tab) {
         tabs.removeAll { $0.id == tab.id }
         if activeTabID == tab.id { activeTabID = tabs.last?.id }
         if discardableTabID == tab.id { discardableTabID = nil }

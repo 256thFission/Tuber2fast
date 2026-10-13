@@ -98,14 +98,23 @@ package final class Library {
         }
     }
 
-    /// The final pass, then the checkout ends. The outcome says what, if
-    /// anything, is unsaved.
-    package func release(_ relativePath: String) async -> CloseOutcome? {
-        guard let notebook = openNotebooks[relativePath] else { return nil }
-        let outcome = await notebook.close()
+    /// The checkout of a closed notebook ends. The close was decided by the
+    /// editor's `close`, whose outcome the caller acted on; a notebook still
+    /// open here would be dropped with its unsaved pages.
+    package func release(_ relativePath: String) {
+        guard let notebook = openNotebooks[relativePath] else { return }
+        TNPrecondition.require(notebook.isClosed, "\(relativePath) was released while still open")
         openNotebooks[relativePath] = nil
         openCount = openNotebooks.count
-        return outcome
+    }
+
+    /// The notebook's saves stop, then its checkout ends; the unsaved pages
+    /// are abandoned on purpose.
+    package func discard(_ relativePath: String) async {
+        guard let notebook = openNotebooks[relativePath] else { return }
+        await notebook.discard()
+        openNotebooks[relativePath] = nil
+        openCount = openNotebooks.count
     }
 
     // MARK: The identity index

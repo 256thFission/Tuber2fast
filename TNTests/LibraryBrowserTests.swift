@@ -320,7 +320,7 @@ struct LibraryBrowserTests {
         _ = try await browser.library.store.createFolder(named: "Term", in: "")
         let open = try await browser.library.store.createNotebook(named: "Open", in: "Term")
         await browser.reload()
-        guard case .opened = await browser.library.checkout(open.relativePath) else {
+        guard case .opened(let notebook) = await browser.library.checkout(open.relativePath) else {
             Issue.record("open failed")
             return
         }
@@ -334,7 +334,8 @@ struct LibraryBrowserTests {
         #expect(try await browser.library.store.list(folder: "Archive").isEmpty)
         #expect(try await browser.library.store.list(folder: "Term").map(\.name) == ["Open"])
 
-        _ = await browser.library.release(open.relativePath)
+        #expect(await notebook.close() == .clean)
+        browser.library.release(open.relativePath)
     }
 
     @Test("A three-item move with one open notebook lands the other two and refuses once")
@@ -346,7 +347,7 @@ struct LibraryBrowserTests {
         let open = try await browser.library.store.createNotebook(named: "Open", in: "")
         _ = try await browser.library.store.createNotebook(named: "Two", in: "")
         await browser.reload()
-        guard case .opened = await browser.library.checkout(open.relativePath) else {
+        guard case .opened(let notebook) = await browser.library.checkout(open.relativePath) else {
             Issue.record("open failed")
             return
         }
@@ -359,7 +360,8 @@ struct LibraryBrowserTests {
         #expect(try await browser.library.store.list(folder: "Done").map(\.name) == ["One", "Two"])
         #expect(try await browser.library.store.list(folder: "").map(\.name) == ["Done", "Open"])
 
-        _ = await browser.library.release(open.relativePath)
+        #expect(await notebook.close() == .clean)
+        browser.library.release(open.relativePath)
     }
 
     @Test("A refused mutation says so and leaves the listing standing")
@@ -368,7 +370,7 @@ struct LibraryBrowserTests {
         defer { withExtendedLifetime(scratch) {} }
         let item = try await browser.library.store.createNotebook(named: "Open", in: "")
         await browser.reload()
-        guard case .opened = await browser.library.checkout(item.relativePath) else {
+        guard case .opened(let notebook) = await browser.library.checkout(item.relativePath) else {
             Issue.record("open failed")
             return
         }
@@ -377,7 +379,8 @@ struct LibraryBrowserTests {
         #expect(browser.refusal == "close Open first")
         #expect(browser.displayed.map(\.name) == ["Open"])
 
-        _ = await browser.library.release(item.relativePath)
+        #expect(await notebook.close() == .clean)
+        browser.library.release(item.relativePath)
         await browser.trash([item.relativePath])
         #expect(browser.refusal == nil)
         #expect(browser.displayed.isEmpty)

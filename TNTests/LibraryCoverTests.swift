@@ -52,7 +52,8 @@ struct LibraryCoverTests {
         notebook.inkChanged(on: page, Ink.drawing(strokes: 1), echoOf: nil)
         let open = try #require(await library.cover(of: created))
         #expect(open === (await notebook.thumbnail(of: page)))
-        _ = await library.release(created.relativePath)
+        #expect(await notebook.close() == .clean)
+        library.release(created.relativePath)
 
         let saved = try await listed(library, created.relativePath)
         #expect(saved.modifiedAt > created.modifiedAt)
