@@ -276,7 +276,7 @@ struct ToolPaletteTests {
 
     @Test("The bindings round-trip through the encoder the defaults store uses")
     func theBindingsRoundTrip() throws {
-        // `ToolPaletteDefaults` encodes the whole record as a property list,
+        // `PreferenceDefaults` encodes the whole record as a property list,
         // and a dictionary keyed by an enum is the one field whose shape on
         // disk is not obvious. Whatever shape it takes, what matters is that
         // it comes back.

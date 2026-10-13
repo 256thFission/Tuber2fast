@@ -30,7 +30,7 @@ final class Workspace {
 
     /// The tool presets, the colour recents, and the last kind, shared by
     /// every tab and kept between launches.
-    let palette = ToolPalette(store: ToolPaletteDefaults(.standard))
+    let palette = ToolPalette(store: PreferenceDefaults<ToolPaletteRecord>(key: "tn.toolPalette", .standard))
 
     private(set) var tabs: [Tab] = []
     /// `nil` means the library is showing.
@@ -58,7 +58,7 @@ final class Workspace {
     /// canvas is told, through each tab's editor.
     private(set) var theme: Theme = .macaron
 
-    private let themeStore = ThemeDefaults(.standard)
+    private let themeStore = PreferenceDefaults<ThemeChoice>(key: "tn.theme", .standard)
 
     private func resolveTheme() {
         theme = choice.resolve(dark: colourScheme == .dark)
@@ -75,15 +75,21 @@ final class Workspace {
     /// goes on as if the argument were absent. The argument is outside data,
     /// as the preference beside it is, and an app that traps on a typo in
     /// one shows nothing to photograph.
-    static func launchChoice(_ arguments: [String], _ store: ThemeDefaults) -> ThemeChoice {
-        guard let index = arguments.firstIndex(of: "-TNTheme"), index + 1 < arguments.count else {
-            return store.load() ?? .system
+    ///
+    /// A saved preset this build has no row for is a preference it cannot
+    /// read, so it opens on the system's own light and dark, as unreadable
+    /// bytes do: a build that ships fewer themes than the one that wrote the
+    /// choice draws rather than traps.
+    static func launchChoice(_ arguments: [String], _ store: PreferenceDefaults<ThemeChoice>) -> ThemeChoice {
+        if let index = arguments.firstIndex(of: "-TNTheme"), index + 1 < arguments.count {
+            let value = arguments[index + 1]
+            if value == "system" { return .system }
+            if let preset = Theme.preset(ThemeID(rawValue: value)) { return .preset(preset.id) }
+            TNLog.event(.lifecycle, "-TNTheme names no theme: \(value)")
         }
-        let value = arguments[index + 1]
-        if value == "system" { return .system }
-        if let preset = Theme.preset(ThemeID(rawValue: value)) { return .preset(preset.id) }
-        TNLog.event(.lifecycle, "-TNTheme names no theme: \(value)")
-        return store.load() ?? .system
+        let saved = store.load()
+        if case .preset(let id) = saved, Theme.preset(id) == nil { return .system }
+        return saved ?? .system
     }
 
     /// Whether the seat is out. One tenant, one flag.
@@ -115,7 +121,7 @@ final class Workspace {
             // refuse from, so this fails loud rather than running blind.
             TNPrecondition.fail("the library store could not be created: \(error)")
         }
-        browser = LibraryBrowser(library: library, optionsStore: LibraryViewDefaults(.standard))
+        browser = LibraryBrowser(library: library, optionsStore: PreferenceDefaults<LibraryViewOptions>(key: "tn.libraryView", .standard))
         // Assigned here rather than in its declaration so the launch
         // argument and the preference are read through the one store this
         // object owns.

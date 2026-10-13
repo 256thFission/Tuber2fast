@@ -70,8 +70,8 @@ package struct ToolPaletteRecord: Equatable, Sendable, Codable {
 ///
 /// A protocol rather than the API itself, because `UserDefaults` inside a
 /// module would widen what `TNEditor` is: the binding and the editor view
-/// model. The one production conformer is
-/// `TuberNotesApp/ToolPaletteDefaults.swift`.
+/// model. The one production conformer is the app's
+/// `PreferenceDefaults<ToolPaletteRecord>`.
 package protocol ToolPaletteStore: Sendable {
     func load() -> ToolPaletteRecord?
     func save(_ record: ToolPaletteRecord)

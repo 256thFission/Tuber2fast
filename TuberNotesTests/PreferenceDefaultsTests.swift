@@ -5,17 +5,16 @@ import Testing
 
 /// A domain of its own per use, torn down after it, so a run leaves the
 /// machine holding nothing it did not start with.
-private func withStore(_ body: (ThemeDefaults, UserDefaults) -> Void) {
+private func withStore(_ body: (PreferenceDefaults<ThemeChoice>, UserDefaults) -> Void) {
     let name = "tn.themeTests.\(UUID().uuidString)"
     let defaults = UserDefaults(suiteName: name)!
-    body(ThemeDefaults(defaults), defaults)
+    body(PreferenceDefaults(key: "tn.theme", defaults), defaults)
     defaults.removePersistentDomain(forName: name)
 }
 
-/// The one boundary a theme crosses: a choice written to a preference, and
-/// read back by a build that may no longer have the row it names.
-@Suite("The theme preference")
-struct ThemeDefaultsTests {
+/// One preference, the theme choice, written and read back whole.
+@Suite("A preference")
+struct PreferenceDefaultsTests {
     @Test("An unset preference is no choice at all")
     func absent() {
         withStore { themes, _ in
@@ -31,14 +30,6 @@ struct ThemeDefaultsTests {
                 themes.save(choice)
                 #expect(themes.load() == choice)
             }
-        }
-    }
-
-    @Test("A choice naming a theme this build has no row for opens on the system")
-    func unknownIdentity() {
-        withStore { themes, _ in
-            themes.save(.preset(ThemeID(rawValue: "noSuchTheme")))
-            #expect(themes.load() == nil)
         }
     }
 
@@ -74,6 +65,15 @@ struct LaunchThemeTests {
             #expect(Workspace.launchChoice(["TuberNotes"], themes) == .system)
             themes.save(.preset(Theme.presets[1].id))
             #expect(Workspace.launchChoice(["TuberNotes"], themes) == .preset(Theme.presets[1].id))
+        }
+    }
+
+    @Test("A saved choice naming a theme this build has no row for opens on the system")
+    func unknownSavedIdentity() {
+        withStore { themes, _ in
+            themes.save(.preset(ThemeID(rawValue: "noSuchTheme")))
+            #expect(Workspace.launchChoice(["TuberNotes"], themes) == .system)
+            #expect(Workspace.launchChoice(["TuberNotes", "-TNTheme", "noSuchTheme"], themes) == .system)
         }
     }
 

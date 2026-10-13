@@ -962,19 +962,12 @@ struct ContractStructureTests {
         "Modules/TNLibrary/LibraryStore.swift",
         // The import picker's security-scoped read.
         "TuberNotesApp/ImportReader.swift",
-        // The tool palette's preferences: which pen, which colours, which
-        // eraser. It writes no notebook and no library state, which is what
+        // The three preferences: the palette, the library view and the theme
+        // choice. It writes no notebook and no library state, which is what
         // the rule is for — a preference has no integrity to protect, no
         // relationship to any other file, and an unreadable one is replaced
-        // by the built-in default at the cost of a tap.
-        "TuberNotesApp/ToolPaletteDefaults.swift",
-        // The browser's grid-or-list, sort key and direction: a preference
-        // on the tool palette's reasoning above.
-        "TuberNotesApp/LibraryViewDefaults.swift",
-        // Which theme the app opens in: a preference on the same reasoning,
-        // and the one whose unreadable state is a launch in the wrong
-        // colours.
-        "TuberNotesApp/ThemeDefaults.swift",
+        // by its built-in default at the cost of a tap.
+        "TuberNotesApp/PreferenceDefaults.swift",
     ]
 
     @Test("Each module imports only what its place in the graph allows")
