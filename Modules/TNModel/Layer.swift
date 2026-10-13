@@ -188,6 +188,8 @@ package struct TextRun: Codable, Sendable, Equatable {
     package let underline: Bool
     /// `#RRGGBBAA`.
     package let color: String
+    /// The largest point size a valid run carries.
+    package static let maximumSize: Double = 1024
 
     package init(string: String, font: String, size: Double, bold: Bool, italic: Bool, underline: Bool, color: String) {
         self.string = string
@@ -200,7 +202,7 @@ package struct TextRun: Codable, Sendable, Equatable {
     }
 
     package var isValid: Bool {
-        size.isFinite && size > 0 && size <= 1024 && TextFont(rawValue: font) != nil && RGBA8(hex: color) != nil
+        size.isFinite && size > 0 && size <= Self.maximumSize && TextFont(rawValue: font) != nil && RGBA8(hex: color) != nil
     }
 }
 
@@ -214,6 +216,8 @@ package struct TextLayer: Codable, Sendable, Equatable {
     package let rect: PageRect
     package let runs: [TextRun]
     package let alignment: TextAlignment
+    /// A new text box's frame at the page origin; `moved(to:)` places it.
+    package static let newBox = PageRect(x: 0, y: 0, width: 240, height: 96)
 
     package init(rect: PageRect, runs: [TextRun], alignment: TextAlignment) {
         self.rect = rect

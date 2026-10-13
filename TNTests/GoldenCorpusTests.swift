@@ -526,7 +526,7 @@ struct GoldenCorpusGenerator {
             .write(to: layout.inkURL(handIn))
         try Data(contentsOf: layout.inkURL(sheet)).write(to: PosixFileSystem().tempURL(beside: layout.inkURL(sheet)))
         let box = Layer(id: LayerID(), transform: .identity, payload: .text(TextLayer(
-            rect: PageRect(x: 72, y: 72, width: 240, height: 96),
+            rect: TextLayer.newBox.moved(to: PagePoint(x: 72, y: 72)),
             runs: [TextRun(string: "Never saved", style: .body)], alignment: .leading)))
         try LayerFile.encode(box).write(to: layout.layerURL(box.id))
         let stray = PageFile(pageID: PageID(), hasInk: false, layers: [box.id])

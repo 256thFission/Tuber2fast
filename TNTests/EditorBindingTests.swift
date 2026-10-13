@@ -560,7 +560,7 @@ struct EditorBindingTests {
 
         binding.textBoxRequested(on: page, at: PagePoint(x: 30, y: 40), style: .body, alignment: .leading)
         let layer = try #require(notebook.state(of: page)?.content?.layers.first)
-        #expect(layer.payload == .text(TextLayer(rect: PageRect(x: 30, y: 40, width: 240, height: 96), runs: [], alignment: .leading)))
+        #expect(layer.payload == .text(TextLayer(rect: TextLayer.newBox.moved(to: PagePoint(x: 30, y: 40)), runs: [], alignment: .leading)))
         try await waitUntil { surface.calls.contains(.beginTextEditing(page, layer.id)) }
         #expect(Array(surface.calls.suffix(2)) == [.updateComposite(page), .beginTextEditing(page, layer.id)])
         #expect(surface.layersSeen[page]?.map(\.id) == [layer.id])
