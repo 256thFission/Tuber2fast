@@ -180,7 +180,7 @@ struct WritingBar: View {
             // A screenshot of the open tray needs no hold to get to it. Late,
             // because a popover asked for before the bar is on screen is not
             // shown.
-            guard LaunchHooks.arguments.contains("-TNColourTray") else { return }
+            guard LaunchScene.current.tray else { return }
             try? await Task.sleep(for: .seconds(1))
             tray = 0
         }

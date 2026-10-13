@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import TNEditor
+@testable import TNLibrary
 @testable import TNModel
 @testable import TuberNotes
 
@@ -114,7 +115,7 @@ struct LaunchThemeTests {
     @Test("A theme argument that is no preset's id is dropped, and the preference decides")
     func unknownThemeNameFallsBack() {
         let remembered = ThemeChoice.preset(Theme.presets[1].id)
-        let unknown = ["noSuchTheme", "-TNShowSettings", Theme.presets[1].name]
+        let unknown = ["noSuchTheme", "-TNSeed", Theme.presets[1].name]
         withStore { themes, _ in
             for value in unknown {
                 #expect(Workspace.launchChoice(["TuberNotes", "-TNTheme", value], themes) == .system)
@@ -126,3 +127,48 @@ struct LaunchThemeTests {
         }
     }
 }
+
+#if DEBUG
+/// What a screenshot launch opens on, read from its arguments.
+@Suite("The launch scene")
+struct LaunchSceneTests {
+    @Test("No arguments open nothing")
+    func empty() {
+        let scene = LaunchScene(["TuberNotes"])
+        #expect(scene == LaunchScene([]))
+        #expect(scene.sheet == nil && scene.section == nil && scene.layout == nil && scene.dialog == nil)
+        #expect(!scene.tray && !scene.seed && !scene.opensEditor)
+    }
+
+    @Test("Each hook takes its value, and the flags stand alone")
+    func everyHook() {
+        let scene = LaunchScene([
+            "TuberNotes", "-TNSeed", "-TNSheet", "export", "-TNLibrary", "trash",
+            "-TNLayout", "list", "-TNDialog", "insert", "-TNTray",
+        ])
+        #expect(scene.sheet == .export)
+        #expect(scene.section == .trash)
+        #expect(scene.layout == .list)
+        #expect(scene.dialog == .insert)
+        #expect(scene.tray && scene.seed)
+        #expect(LaunchScene(["-TNLibrary", "documents"]).section == .documents)
+        #expect(LaunchScene(["-TNLayout", "grid"]).layout == .grid)
+    }
+
+    @Test("A value no case has, or a missing one, opens nothing")
+    func unknownValues() {
+        let scene = LaunchScene(["-TNSheet", "stickers", "-TNLibrary", "favorites", "-TNLayout", "-TNSeed", "-TNDialog"])
+        #expect(scene.sheet == nil && scene.section == nil && scene.layout == nil && scene.dialog == nil)
+        #expect(scene.seed)
+    }
+
+    @Test("Settings is the library's sheet; every other sheet, the dialog and the tray are the editor's")
+    func whichSurface() {
+        #expect(!LaunchScene(["-TNSheet", "settings"]).opensEditor)
+        #expect(LaunchScene(["-TNSheet", "addPage"]).opensEditor)
+        #expect(LaunchScene(["-TNDialog", "insert"]).opensEditor)
+        #expect(LaunchScene(["-TNTray"]).opensEditor)
+        #expect(!LaunchScene(["-TNSeed", "-TNLayout", "list"]).opensEditor)
+    }
+}
+#endif

@@ -6,6 +6,9 @@ import TNLibrary
 import TNModel
 import TNNotebook
 import UIKit
+#if DEBUG
+import PencilKit
+#endif
 
 /// The app's one owner of durable state: the library, the open tabs, and the
 /// background-execution lease. Views render its snapshots and send it
@@ -144,6 +147,10 @@ final class Workspace {
         if LaunchHooks.arguments.contains("-TNSmokeNotebook") {
             Task { await self.openSmokeNotebook() }
         }
+        if let section = LaunchScene.current.section { browser.section = section }
+        if LaunchScene.current.seed {
+            Task { await self.seed() }
+        }
         #endif
     }
 
@@ -158,6 +165,92 @@ final class Workspace {
             _ = try? await library.store.createNotebook(named: "Smoke", in: "")
         }
         await open(path: path, name: "Smoke")
+    }
+
+    /// `-TNSeed`: a library with something on every surface the theme
+    /// screenshots cover. Made through the store, never by copying packages,
+    /// which would collide on identity. It makes only what is missing, by
+    /// name, and sets what it sets to the same values, so a second run
+    /// leaves the same library.
+    private func seed() async {
+        let store = library.store
+        do {
+            var top = try await store.list(folder: "")
+            let names = Set(top.map(\.name))
+            // `.neutral` with `.folder` is how a folder no one has decorated
+            // looks, so the decorated ones skip that symbol.
+            let symbols = Array(FolderSymbol.allCases.dropFirst())
+            for (index, color) in FolderColor.allCases.enumerated() where !names.contains(color.rawValue.capitalized) {
+                let folder = try await store.createFolder(named: color.rawValue.capitalized, in: "")
+                try await store.setDecoration(FolderDecoration(color: color, symbol: symbols[index % symbols.count]), at: folder.relativePath)
+            }
+            if !names.contains("Undecorated") { _ = try await store.createFolder(named: "Undecorated", in: "") }
+            for name in ["Homework", "Lecture", "Reading", "Journal"] where !names.contains(name) {
+                let made = try await store.createNotebook(named: name, in: "")
+                if name == "Homework" { try await seedHomework(made.relativePath) }
+                if name == "Lecture" { try await seedLecture(made.relativePath) }
+            }
+            if try await !store.listTrash().contains(where: { $0.name == "Old notes" }) {
+                let old = try await store.createNotebook(named: "Old notes", in: "")
+                _ = try await library.trash(at: old.relativePath)
+            }
+            top = try await store.list(folder: "")
+            if let reading = top.first(where: { $0.name == "Reading" })?.identity {
+                try await store.setFavorite(reading, true)
+            }
+        } catch {
+            banner = "Couldn't seed the library: \(error)"
+            return
+        }
+        await refreshIdentities()
+        await open(path: "Lecture.tubernotes", name: "Lecture")
+        await open(path: "Homework.tubernotes", name: "Homework")
+        if !LaunchScene.current.opensEditor { showLibrary() }
+    }
+
+    private func seedHomework(_ path: String) async throws {
+        try await withSeedPage(path) { notebook, page in
+            let points = (0..<24).map { i in
+                PKStrokePoint(
+                    location: CGPoint(x: 72 + Double(i) * 12, y: 140 + sin(Double(i) / 2) * 18),
+                    timeOffset: Double(i) * 0.01, size: CGSize(width: 3, height: 3),
+                    opacity: 1, force: 1, azimuth: 0, altitude: .pi / 2
+                )
+            }
+            let stroke = PKStroke(ink: PKInk(.pen, color: .black), path: PKStrokePath(controlPoints: points, creationDate: Date()))
+            notebook.inkChanged(on: page, PKDrawing(strokes: [stroke]))
+            let text = TextLayer(
+                rect: PageRect(x: 72, y: 200, width: 320, height: 60),
+                runs: [TextRun(string: "1. Show that the sum converges.", style: .body)], alignment: .leading
+            )
+            try notebook.insertLayer(Layer(id: LayerID(), transform: .identity, payload: .text(text)), on: page)
+        }
+    }
+
+    private func seedLecture(_ path: String) async throws {
+        let pdf = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792)).pdfData { context in
+            context.beginPage()
+            ("Lecture 1: Limits" as NSString).draw(at: CGPoint(x: 72, y: 72), withAttributes: [.font: UIFont.boldSystemFont(ofSize: 28)])
+        }
+        try await withSeedPage(path) { notebook, _ in
+            try await notebook.importPDF(pdf)
+        }
+    }
+
+    /// Checks the notebook out, waits for its first page, does `work`, and
+    /// closes it, as a tab would.
+    private func withSeedPage(_ path: String, _ work: (Notebook, PageID) async throws -> Void) async throws {
+        guard case .opened(let notebook) = await library.checkout(path) else {
+            TNPrecondition.fail("the seed could not open \(path), which it just made")
+        }
+        let page = notebook.pageIDs[0]
+        notebook.windowChanged(to: [page])
+        while notebook.state(of: page)?.content == nil { try await Task.sleep(for: .milliseconds(10)) }
+        try await work(notebook, page)
+        guard case .clean = await notebook.close() else {
+            TNPrecondition.fail("the seed could not save \(path)")
+        }
+        library.release(path)
     }
     #endif
 

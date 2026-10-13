@@ -68,13 +68,22 @@ struct EditorView: View {
         }
         .ignoresSafeArea(edges: .top)
         .onAppear {
-            let args = LaunchHooks.arguments
-            if args.contains("-TNSelectLasso") { editor.selectLasso() }
-            if args.contains("-TNShowExport") { isExporting = true }
-            if args.contains("-TNShowNavigator") { isShowingNavigator = true }
-            if args.contains("-TNShowAddPage") { isAddingPage = true }
-            if args.contains("-TNShowPaper") { isChangingPaper = true }
-            if args.contains("-TNShowLinkTarget") { isPickingLinkTarget = true }
+            if LaunchHooks.arguments.contains("-TNSelectLasso") { editor.selectLasso() }
+            switch LaunchScene.current.sheet {
+            case .export: isExporting = true
+            case .navigator: isShowingNavigator = true
+            case .addPage: isAddingPage = true
+            case .paper: isChangingPaper = true
+            case .linkTarget: isPickingLinkTarget = true
+            case .settings, nil: break
+            }
+        }
+        .task {
+            // Late, as the colour tray's is: a dialog asked for in the first
+            // pass is not shown.
+            guard LaunchScene.current.dialog == .insert else { return }
+            try? await Task.sleep(for: .seconds(1))
+            isInserting = true
         }
             .confirmationDialog("Insert", isPresented: $isInserting, titleVisibility: .visible) {
                 Button("Photo") {

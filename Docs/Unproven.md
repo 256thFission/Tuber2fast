@@ -664,7 +664,7 @@ Not gaps — properties of the tooling that read as project defects when hit.
   drives `Workspace.activate`, so its new `.collided` arm is reviewed by
   diff only. Owed: tap a link into another notebook; it opens on its page.
 - **Settings opens from the library sidebar (U34, I3 line 12).** Launched
-  with `-TNShowSettings`, the panel draws in the chosen preset, dark ones
+  with `-TNSheet settings`, the panel draws in the chosen preset, dark ones
   included, and the cap stands under Trash. The simulator cannot tap the
   cap or a card, so the press is reviewed by diff only. Owed: tap Settings
   in the library sidebar and pick a dark preset; the panel and the library

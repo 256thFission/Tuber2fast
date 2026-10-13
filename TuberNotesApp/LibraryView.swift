@@ -21,7 +21,7 @@ struct LibraryView: View {
     @State private var moveRequest: MoveRequest?
     @State private var styleTarget: LibraryItem?
     @State private var isDroppingOnBack = false
-    @State private var isShowingSettings = LaunchHooks.arguments.contains("-TNShowSettings")
+    @State private var isShowingSettings = LaunchScene.current.sheet == .settings
 
     /// The paths a move picker is open for. A sheet needs an identity, and a
     /// set of paths has none.
@@ -31,6 +31,10 @@ struct LibraryView: View {
     }
 
     private var browser: LibraryBrowser { workspace.browser }
+
+    /// A launch scene's layout is shown, not saved: a run that exists to be
+    /// photographed leaves the preference as it found it.
+    private var layout: LibraryLayout { LaunchScene.current.layout ?? browser.options.layout }
 
     var body: some View {
         HStack(alignment: .top, spacing: Macaron.inset) {
@@ -232,7 +236,7 @@ struct LibraryView: View {
         Button {
             browser.options.layout = layout
         } label: {
-            if browser.options.layout == layout {
+            if self.layout == layout {
                 Label(title, systemImage: "checkmark")
             } else {
                 Text(title)
@@ -319,7 +323,7 @@ struct LibraryView: View {
                 offersCreation: offersCreation
             )
         case .loaded:
-            switch browser.options.layout {
+            switch layout {
             case .grid: grid
             case .list: list
             }
