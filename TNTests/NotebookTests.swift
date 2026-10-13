@@ -23,7 +23,7 @@ class ForwardingStore: PackageStoring, @unchecked Sendable {
 
 /// A real store whose `save` waits until released.
 final class HeldStore: ForwardingStore, @unchecked Sendable {
-    private let gate = Gate()
+    let gate = Gate()
     func hold() async { await gate.close() }
     func release() async { await gate.open() }
     override func save(_ batch: SaveBatch) async throws(FormatFault) -> SaveReport {
@@ -411,6 +411,31 @@ struct NotebookTests {
         await #expect(throws: FormatFault.self) { try await scan.value }
         #expect(await store.gate.arrivals == 1, "the second write reached the store")
         #expect(try FileManager.default.contentsOfDirectory(atPath: store.base.layout.assetsDirectory.path).count == 1)
+    }
+
+    @Test("A discard while a close awaits its pass ends the close: no view.json, and clean")
+    func aDiscardDuringCloseEndsIt() async throws {
+        let scratch = try Scratch("nb-discard-during-close")
+        defer { withExtendedLifetime(scratch) {} }
+        _ = try await PackageStore.create(root: scratch.packageURL, index: Fixture.index(pages: 1))
+        // The pass fails, so a close that went on would answer dirty. The
+        // default debounce is long, so only the close's flush runs a pass.
+        let store = HeldStore(PackageStore(root: scratch.packageURL, fileSystem: FaultingFileSystem(faults: [.failStage(nth: 1)])))
+        let notebook = try await Notebook.open(store: store)
+        let page = notebook.pageIDs[0]
+        notebook.windowChanged(to: [page])
+        try await waitUntil { notebook.state(of: page)?.content != nil }
+        await store.hold()
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 1), echoOf: nil)
+        let closing = Task { await notebook.close() }
+        try await notebook.waitForArrivals(store.gate, 1)
+        let discarding = Task { await notebook.discard() }
+        try await waitUntil { notebook.isClosed }
+
+        await store.release()
+        #expect(await closing.value == .clean)
+        await discarding.value
+        #expect(!FileManager.default.fileExists(atPath: store.base.layout.viewURL.path), "the close wrote view.json")
     }
 
     @Test("Undo restores the prior value without the echo counting as an edit; redo returns")

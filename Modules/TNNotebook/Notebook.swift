@@ -1430,6 +1430,8 @@ package final class Notebook {
     package func close() async -> CloseOutcome {
         guard !isClosed else { return .clean }
         await flush()
+        // A discard, or a second close, can latch during the flush.
+        guard !isClosed else { return .clean }
         viewWrite?.cancel()
         try? await store.writeView(ViewState(currentPageID: currentPageID))
         // A dirty close leaves the notebook open: the checkout stays, the
