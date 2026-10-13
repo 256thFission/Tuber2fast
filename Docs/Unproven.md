@@ -771,3 +771,15 @@ Not gaps — properties of the tooling that read as project defects when hit.
   diff only. Owed: select an image with the lasso and pinch-zoom the page
   in and out past both ends; nothing traps, and the frame and the page's
   edge stay drawn.
+- **Export opens on All pages and says its refusal in the sheet (U41, I3
+  line 7).** The editor suite proves an export of pages 2-3 carries each
+  page's worksheet and ink, an unloaded page read from its files, and marks
+  nothing dirty and records nothing; that a cancel while a page's files are
+  read leaves no refusal; and that a page refused for its missing worksheet
+  refuses the export. A screenshot shows the sheet opening with All pages
+  held. The simulator cannot tap a cap or drive the share sheet, so the
+  buttons drawn from the request list, the refusal inside the sheet, and
+  the result's Share and Print are reviewed by diff only. Owed: Export
+  opens with All pages held; Export PDF, share it to Files and open it:
+  every page has the typed answer and the ink over the worksheet; Export
+  image of this page offers Share image and no Print.
