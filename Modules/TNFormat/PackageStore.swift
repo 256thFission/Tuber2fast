@@ -145,8 +145,8 @@ package actor PackageStore {
         return .invalidWrite("\(error)")
     }
 
-    /// A stat that fails for any reason but absence is an I/O fault, never
-    /// an absent file.
+    /// A stat a write depends on that fails for any reason but absence is
+    /// an I/O fault, never an absent file.
     private func exists(_ url: URL) throws(FormatFault) -> Bool {
         do { return try fs.exists(url) } catch { throw Self.ioFault(error) }
     }
@@ -169,15 +169,25 @@ package actor PackageStore {
         } catch {
             throw .indexInvalid(error)
         }
+        // A stat that fails other than by absence refuses that page only, as
+        // any other unreadable file of the page does.
         var faults: [PageID: [PageFault]] = [:]
-        for page in validated.pageIDs where try !exists(layout.pageURL(page)) {
-            faults[page, default: []].append(.missingPageFile)
+        for page in validated.pageIDs {
+            do {
+                if try !fs.exists(layout.pageURL(page)) { faults[page, default: []].append(.missingPageFile) }
+            } catch {
+                faults[page, default: []].append(.pageFileUnreadable("stat: \(error)"))
+            }
         }
         // Stat only: the asset's bytes are the renderer's business, and open
         // reads no page.
         for record in validated.pages {
-            guard let asset = record.paperAsset, try !exists(layout.assetURL(asset)) else { continue }
-            faults[record.id, default: []].append(.paperAssetMissing(asset.fileName))
+            guard let asset = record.paperAsset else { continue }
+            do {
+                if try !fs.exists(layout.assetURL(asset)) { faults[record.id, default: []].append(.paperAssetMissing(asset.fileName)) }
+            } catch {
+                faults[record.id, default: []].append(.pageFileUnreadable("paper asset \(asset.fileName): \(error)"))
+            }
         }
         knownNotebookID = validated.notebookID
         return LoadedNotebook(index: validated, pageFaults: faults)
@@ -241,10 +251,18 @@ package actor PackageStore {
             }
             switch result {
             case .success(let layer):
-                if let asset = layer.payload.asset, try !exists(layout.assetURL(asset)) {
-                    faults.append(.layerRefused(.danglingAsset(layer.id, asset)))
-                } else {
+                guard let asset = layer.payload.asset else {
                     layers.append(layer)
+                    continue
+                }
+                do {
+                    if try fs.exists(layout.assetURL(asset)) {
+                        layers.append(layer)
+                    } else {
+                        faults.append(.layerRefused(.danglingAsset(layer.id, asset)))
+                    }
+                } catch {
+                    faults.append(.layerRefused(.fileUnreadable(layer.id, "asset \(asset.fileName): \(error)")))
                 }
             case .failure(let fault):
                 faults.append(.layerRefused(fault))

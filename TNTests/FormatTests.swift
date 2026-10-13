@@ -548,6 +548,35 @@ struct StoreTests {
         #expect(try await PackageStore(root: scratch.packageURL).load().index == index)
     }
 
+    @Test("A stat that fails other than by absence on open refuses the page it touches, never the notebook")
+    func aStatFailureRefusesOnlyItsPage() async throws {
+        func stat(_ url: URL) -> FileSystemError { FileSystemError(.stat, url.path, code: EIO) }
+        let scratch = try Scratch("stat-page")
+        let (_, index, layer) = try await Fixture.populated(at: scratch.packageURL)
+        let store = PackageStore(root: scratch.packageURL, fileSystem: FaultingFileSystem(faults: [.failStat]))
+        let loaded = try await store.load()
+        #expect(loaded.index == index)
+        for page in index.pageIDs {
+            #expect(loaded.pageFaults[page] == [.pageFileUnreadable("stat: \(stat(store.layout.pageURL(page)))")])
+        }
+        let asset = try #require(layer.payload.asset)
+        let bytes = try await store.loadPage(index.pageIDs[1])
+        #expect(bytes.layers.isEmpty)
+        #expect(bytes.faults == [.layerRefused(.fileUnreadable(layer.id, "asset \(asset.fileName): \(stat(store.layout.assetURL(asset)))"))])
+
+        let paperScratch = try Scratch("stat-paper")
+        let paper = AssetRef(id: AssetID(), format: .heic)
+        let papered = NotebookIndex(
+            notebookID: NotebookID(), createdAt: Date(),
+            pages: [PageRecord(id: PageID(), geometry: .letter, paper: .image(paper))], bookmarks: [])
+        try await PackageStore.create(root: paperScratch.packageURL, index: papered).writeAsset(Fixture.archive(4, count: 256), paper)
+        let paperStore = PackageStore(root: paperScratch.packageURL, fileSystem: FaultingFileSystem(faults: [.failStat]))
+        #expect(try await paperStore.load().pageFaults[papered.pageIDs[0]] == [
+            .pageFileUnreadable("stat: \(stat(paperStore.layout.pageURL(papered.pageIDs[0])))"),
+            .pageFileUnreadable("paper asset \(paper.fileName): \(stat(paperStore.layout.assetURL(paper)))"),
+        ])
+    }
+
     @Test("hasInk=true with no container is a page fault, never a blank")
     func missingInkIsAFault() async throws {
         let scratch = try Scratch("missingink")
