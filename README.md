@@ -58,8 +58,8 @@ xcodebuild test -project TuberNotes.xcodeproj -scheme TuberNotes \
   -destination "platform=iOS Simulator,name=$(< Tools/pinned-simulator)"
 ```
 
-`Tools/pinned-simulator` is the only place that name is written. The workflows
-read the same file, so the docs and CI cannot drift apart, and neither has a
+`Tools/pinned-simulator` is the only place that name is written. CI reads the
+same file, so the docs and CI cannot drift apart, and neither has a
 fallback: a missing pin fails the run rather than quietly substituting a
 different device.
 

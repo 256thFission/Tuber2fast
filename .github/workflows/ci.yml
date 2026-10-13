@@ -1,27 +1,20 @@
-# Build and test, run where everyone can see it.
+# Generates the project, builds the app in Release, and runs the tests on the
+# pinned simulator.
 #
-# Two of six contributors have no Mac. This workflow is how they find out
-# whether their change compiles and passes tests, and how six people working in
-# parallel find out that main is red without pulling it first.
-#
-# It references NO secrets. That is deliberate and load-bearing: it keeps fork
-# pull requests working and lets the repository stay public. The signing
-# credentials live in device.yml and testflight workflows, which are separate
-# files for exactly that reason.
-#
-# This workflow proves the app compiles and its tests pass. It proves nothing
-# about Pencil feel, stroke fidelity, palm rejection, or page-turn quality —
-# those need a person holding an iPad. See CONTRIBUTING.md, "Device evidence".
+# Green means it compiled and the tests passed. It proves nothing about Pencil
+# feel, stroke fidelity, palm rejection, or page-turn quality — those need a
+# person holding an iPad. See CONTRIBUTING.md, "Device evidence".
 
 name: ci
 
 on:
   pull_request:
   push:
-    branches: [main]
+    # clean-slate is temporary: its tip needs a green build-and-test before
+    # main fast-forwards to it. Remove it once main has been promoted.
+    branches: [main, clean-slate]
 
-# A newer push makes an in-flight run irrelevant. With six people pushing, this
-# is also what keeps the macOS queue from filling with superseded work.
+# A newer push makes an in-flight run irrelevant.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -42,11 +35,11 @@ jobs:
       # opaque destination error. Fail here instead, naming what this runner
       # actually has.
       #
-      # Tools/pinned-simulator is the only home for this value — the docs and
-      # device.yml read the same file. It holds a bare name and no KEY=VALUE,
-      # because the device name contains spaces and parentheses and is
-      # therefore not valid bash to source. There is deliberately no fallback:
-      # a missing pin kills the run rather than silently substituting one.
+      # Tools/pinned-simulator is the only home for this value — the docs read
+      # the same file. It holds a bare name and no KEY=VALUE, because the
+      # device name contains spaces and parentheses and is therefore not valid
+      # bash to source. There is deliberately no fallback: a missing pin kills
+      # the run rather than silently substituting one.
       - name: Verify the pinned simulator exists
         run: |
           PIN=Tools/pinned-simulator
@@ -79,8 +72,9 @@ jobs:
       - name: Generate the project
         run: xcodegen generate
 
-      # SWIFT_TREAT_WARNINGS_AS_ERRORS is set in project.yml, so a clean exit
-      # here also means no new warnings.
+      # Release, because it is what a friend's iPad runs and the Test step
+      # below never builds it. SWIFT_TREAT_WARNINGS_AS_ERRORS is set in
+      # project.yml, so a clean exit here also means no new warnings.
       - name: Build
         run: |
           mkdir -p Artifacts
@@ -88,6 +82,7 @@ jobs:
           xcodebuild build \
             -project TuberNotes.xcodeproj \
             -scheme TuberNotes \
+            -configuration Release \
             -destination "platform=iOS Simulator,name=$TN_SIM_NAME" \
             -derivedDataPath DerivedData \
             2>&1 | tee Artifacts/build.log
@@ -116,97 +111,8 @@ jobs:
             exit 1
           fi
 
-      # Two of six contributors have no Mac. Without this step, the answer to
-      # "why is it red" is inside a zip: they must download ci-logs-N.zip,
-      # unzip it, open a 38KB build.log, and know to search for "error:".
-      # Nothing renders on the run page, because xcodebuild failures produce no
-      # GitHub annotation on their own.
-      #
-      # This emits ::error:: annotations, which land inline on the pull request
-      # diff, plus a summary that renders on the run page in any browser — on a
-      # phone, on an iPad, with no gh CLI and no Mac. It also surfaces every
-      # error at once rather than the first one someone happens to scroll to,
-      # which is what actually reduces the number of round trips.
-      #
-      # Deliberately NOT -resultBundlePath with an .xcresult upload. That is
-      # the better answer on any other project and useless here: opening an
-      # .xcresult requires a Mac, which is precisely what the reader lacks.
-      #
-      # This step never decides anything. It runs only on failure, and if it
-      # broke entirely the verdict above would be unchanged.
-      - name: Explain the failure on the run page
-        if: failure()
-        run: |
-          # No `set -e`: every grep here legitimately matches nothing, and a
-          # reporter that dies while reporting is worse than a quiet one.
-          found=0
-
-          # Compile errors carry a column; XCTest assertion failures do not.
-          # Both are anchored to a file and line, so both become annotations.
-          errors="$(grep -hoE '[^ :]+\.swift:[0-9]+(:[0-9]+)?: (error|fatal error): .*' Artifacts/*.log 2>/dev/null | sort -u)"
-          zero_tests=0
-          grep -qE 'Executed 0 tests|Test run with 0 test' Artifacts/test.log 2>/dev/null && zero_tests=1
-
-          [ -n "$errors" ] && found=1
-          [ "$zero_tests" -eq 1 ] && found=1
-
-          # Annotations go to stdout, NOT to the summary file — GitHub scrapes
-          # them from the step's output. Paths must be workspace-relative or
-          # they cannot be anchored to the pull request diff.
-          if [ -n "$errors" ]; then
-            printf '%s\n' "$errors" | while IFS= read -r line; do
-              rel="${line#"$GITHUB_WORKSPACE"/}"
-              file="${rel%%:*}"
-              rest="${rel#*:}"
-              lineno="${rest%%:*}"
-              # Drop the "error:"/"fatal error:" prefix; GitHub adds its own.
-              msg="$(printf '%s' "$line" | sed -E 's|^.*:[0-9]+(:[0-9]+)?: (fatal error\|error): ||')"
-              echo "::error file=$file,line=$lineno::$msg"
-            done
-          fi
-
-          {
-            echo "## CI failed"
-            echo
-
-            if [ -n "$errors" ]; then
-              echo "### Errors"
-              echo
-              echo '```'
-              printf '%s\n' "$errors" | sed "s|^$GITHUB_WORKSPACE/||"
-              echo '```'
-              echo
-            fi
-
-            # A scheme that ran nothing exits 0, so the guard above is what
-            # fails the job. Say so in words, or the reader sees a red run with
-            # no error line anywhere.
-            if [ "$zero_tests" -eq 1 ]; then
-              echo "### No tests executed"
-              echo
-              echo "The scheme ran zero tests. xcodebuild exits 0 for this, so it is caught"
-              echo "by an explicit guard rather than by the build failing."
-              echo
-            fi
-
-            # A reporter that silently finds nothing looks identical to a green
-            # run. If the job failed and none of the patterns above matched,
-            # that is itself the finding, and it must be loud.
-            if [ "$found" -eq 0 ]; then
-              echo "### This job failed and the log parser did not recognise why"
-              echo
-              echo "Not a compile error, not a test assertion, not a zero-test run."
-              echo "Likely a linker error, a signing failure, a missing simulator, or an"
-              echo "infrastructure fault. Download \`ci-logs-${{ github.run_number }}\` and read the tail:"
-              echo
-              echo '```'
-              tail -30 Artifacts/build.log 2>/dev/null || echo "(no build.log — the job failed before building)"
-              echo '```'
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      # The logs remain downloadable for anything the summary above did not
-      # explain, and for anyone who wants the full context.
+      # Every run keeps its build and test logs, so a red one can be read
+      # without running it again.
       - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4

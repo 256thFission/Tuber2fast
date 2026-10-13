@@ -69,10 +69,9 @@ why neither exists.
 ## CI is the arbiter
 
 The generate/build/test commands live in `AGENTS.md`, under **Build** — their
-one home. `.github/workflows/ci.yml` runs exactly those on pushes to `main`.
-On failure it writes the compile errors and failed assertions onto the run
-page and emits them as annotations, then uploads the logs — so a contributor
-reads the verdict in a browser rather than inside a downloaded zip.
+one home. `.github/workflows/ci.yml` runs exactly those on pushes to `main`,
+after building the app in Release, and keeps the build and test logs of every
+run as a downloadable artifact.
 
 The default gate never runs the benchmarks in `HistoryEntryCostTests`; it
 reports them as skipped. They read the wall clock and process-wide memory, so
@@ -90,9 +89,9 @@ xcodebuild test -project TuberNotes.xcodeproj -scheme TuberNotesBenchmarks \
 scheme cannot select the suite itself; its comment in `project.yml` says why.
 
 **CI calls no script in `Tools/`, deliberately.** What "green" means has to stay
-readable without running anything we would factor into it, so the workflows
-spell out `xcodebuild` and duplicate their few guard lines rather than sharing
-a program. `Tools/` is a convenience; it never decides whether work is done.
+readable without running anything we would factor into it, so the workflow
+spells out `xcodebuild` and its few guard lines rather than calling a program.
+`Tools/` is a convenience; it never decides whether work is done.
 
 The simulator is pinned on purpose. A moving destination makes results
 incomparable between runs, and runner images have shipped an Xcode whose
@@ -100,10 +99,11 @@ matching iOS runtime was absent — which surfaces from `xcodebuild` as an opaqu
 destination error.
 
 `Tools/pinned-simulator` holds that name and is the only place it is written —
-both workflows and the commands in `AGENTS.md` read it. It is a bare value with no `KEY=`,
-because the device name contains spaces and parentheses and so is not valid
-shell to `source`. There is no fallback anywhere: a missing pin fails the run
-naming the file, per the contract's rule that nothing is silently defaulted.
+`ci.yml` and the commands in `AGENTS.md` read it. It is a bare value with no
+`KEY=`, because the device name contains spaces and parentheses and so is not
+valid shell to `source`. There is no fallback anywhere: a missing pin fails the
+run naming the file, per the contract's rule that nothing is silently
+defaulted.
 
 **Green CI means it compiled and the tests passed. That is all it means.** It
 is not evidence about ink, and saying otherwise in a commit message is lying
@@ -174,11 +174,10 @@ everything it writes comes from an untrusted machine and is trivially forgeable,
 so a human cites it and nothing verifies it.
 
 `TNLog`'s stderr mirror is present in **every** configuration, Release
-included, and is gated on `TN_TRACE` alone. That is deliberate: `device.yml`
-archives `-configuration Release` and distributes that build to every registered
-iPad, so a mirror only Debug carried would be compiled out of the one build most
-contributors ever hold. `Tools/device --release` builds and captures that
-configuration on your own iPad.
+included, and is gated on `TN_TRACE` alone. That is deliberate: a build for
+friends (below) is an archive, and an archive is Release, so a mirror only Debug
+carried would be compiled out of the one build they hold. `Tools/device
+--release` builds and captures that configuration on your own iPad.
 
 If the capture says `NO TRACE CAPTURED`, believe it, and look for a launch that
 did not set `TN_TRACE` or an attach to an already-running process — a summary of
@@ -192,6 +191,27 @@ the most boring one. `Tools/device-tests` holds the digest against a fixture per
 outcome — crash with no trace, crash after a trace, native crash, uncaught
 exception, empty, no-trace, and clean. Run it when you touch the digest; CI does
 not, per the rule above.
+
+## A build for friends
+
+A friend's iPad runs an archive, signed by the Apple Developer Program team and
+distributed ad hoc. Signing, the team, and the bundle id are Phillip's to
+change. Settle the bundle id before the first friend installs: their notebooks
+live in that app's container, and a build with another id cannot see them.
+
+1. Raise `CURRENT_PROJECT_VERSION` in `project.yml` and run `xcodegen
+   generate`. Each build gets its own number, which is how a crash report
+   finds its archive.
+2. In Xcode, pick **Any iOS Device (arm64)** and choose **Product → Archive**.
+   The scheme archives Release.
+3. Keep the `.xcarchive` the Organizer lists. It holds that build's dSYM, and
+   Release drops a `TNPrecondition` trap's message, so a friend's crash report
+   reads only against that dSYM.
+4. **Distribute App → Release Testing** (or **Ad Hoc**). `TN_DEVELOPMENT_TEAM`
+   in `Local.xcconfig` must name the program team: a personal team cannot
+   export ad hoc, and its profiles expire after seven days. The build installs
+   only on iPads whose UDIDs are registered with the team.
+5. Install the `.ipa` on each iPad from **Window → Devices and Simulators**.
 
 ## Rules for any check you add
 
@@ -328,14 +348,13 @@ and record the gap explicitly in `Docs/Unproven.md` as outstanding device eviden
   on the iPad. Change the prefix if two people share one iPad.
 - `Artifacts/` holds build and test logs and captured device sessions. It is
   regenerated and gitignored — cite paths from it as evidence, never commit it.
-- **`Tools/` is five files and no shared library.** `pinned-simulator` is one
+- **`Tools/` is four files and no shared library.** `pinned-simulator` is one
   line of data; `setup` gets a clone to an Xcode window; `device` runs the iPad
-  loop; `device-tests` holds `device`'s digest against fixtures; `machines`
-  answers what a given Mac can do. There is deliberately no shared library: a
-  library that does work at
-  *source* time hands its caller values cached before the caller's world
-  exists. Two scripts sharing a few lines of `sed` should duplicate them.
-  Nothing in `Tools/` decides whether work is done.
+  loop; `device-tests` holds `device`'s digest against fixtures. There is
+  deliberately no shared library: a library that does work at *source* time
+  hands its caller values cached before the caller's world exists. Two
+  scripts sharing a few lines of `sed` should duplicate them. Nothing in
+  `Tools/` decides whether work is done.
 
 ## Scope discipline
 

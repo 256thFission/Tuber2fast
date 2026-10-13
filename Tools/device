@@ -8,11 +8,11 @@
 #   Tools/device --release  build -configuration Release rather than Debug
 #   Tools/device --digest F re-read a saved console.log, no device needed
 #
-# --release exists because Release is what ships: device.yml archives Release
-# and distributes it to every registered iPad. CanvasLog's stderr mirror is
-# present in every configuration and gated only on TN_TRACE, so a Release
-# capture is readable — this is the flag that proves it on your own iPad
-# rather than trusting that the distributed build behaves like the local one.
+# --release exists because Release is what friends run: a build for friends
+# (CONTRIBUTING.md) is an archive, and an archive is Release. TNLog's stderr
+# mirror is present in every configuration and gated only on TN_TRACE, so a
+# Release capture is readable — this is the flag that proves it on your own
+# iPad rather than trusting that the friends' build behaves like the local one.
 #
 # One environment variable is forwarded to the app at launch, and only one:
 #   TN_TRACE                  defaults to 1; set it to anything to keep it on
