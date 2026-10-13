@@ -563,3 +563,11 @@ Not gaps — properties of the tooling that read as project defects when hit.
   reads as PencilKit ignoring page space; the implementation is right and the
   assertion is wrong. "Fixing" it in the code silently corrupts page space to
   view space.
+
+## Owed by the clean-slate fix phase
+
+- **A keycap acts on lift, and nobody has felt it (U06, I3 lines 2 and 16).**
+  The action now runs at touch-up and the squash plays after it, where it
+  used to wait 60 ms for the stretch. The simulator shows the tool change;
+  whether a finger tap on a bar tool or a band chip feels right, and whether
+  the trampoline still plays as the tool lands, is a hand's verdict.
