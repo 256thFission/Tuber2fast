@@ -39,7 +39,7 @@ final class TextEditingView: UITextView, UITextViewDelegate, UIScribbleInteracti
     private static let handleSize = CGSize(width: 44, height: 10)
     private static let cornerSize: CGFloat = 12
 
-    init(text: TextLayer, typing: TextStyle) {
+    init(text: TextLayer, typing: TextStyle, theme: Theme) {
         self.typingStyle = text.runs.last?.style ?? typing
         self.alignment = text.alignment
         // A TextKit 1 stack built by hand: the designated initializer is the
@@ -64,7 +64,6 @@ final class TextEditingView: UITextView, UITextViewDelegate, UIScribbleInteracti
         backgroundColor = .clear
         clipsToBounds = false
         layer.borderWidth = 1
-        layer.borderColor = UIColor.systemBlue.cgColor
         attributedText = TextTypesetting.attributed(text.runs, alignment: text.alignment)
         typingAttributes = TextTypesetting.attributes(for: typingStyle, alignment: text.alignment)
         delegate = self
@@ -76,10 +75,10 @@ final class TextEditingView: UITextView, UITextViewDelegate, UIScribbleInteracti
         addInteraction(scribbleInteraction)
 
         for handle in [moveHandle, resizeHandle] {
-            handle.backgroundColor = .systemBlue
             handle.layer.cornerRadius = 3
             addSubview(handle)
         }
+        apply(theme)
         moveHandle.addGestureRecognizer(moveRecognizer)
         resizeHandle.addGestureRecognizer(resizeRecognizer)
         moveRecognizer.addTarget(self, action: #selector(handleMove(_:)))
@@ -89,6 +88,15 @@ final class TextEditingView: UITextView, UITextViewDelegate, UIScribbleInteracti
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("TextEditingView is created in code only")
+    }
+
+    /// The border and handles are the theme's accent, as the lasso's frame
+    /// is, and follow a theme change while the box is open.
+    func apply(_ theme: Theme) {
+        let accent = theme.accent.uiColor
+        layer.borderColor = accent.cgColor
+        moveHandle.backgroundColor = accent
+        resizeHandle.backgroundColor = accent
     }
 
     /// The fidelity test snapshots the text alone; the border and handles

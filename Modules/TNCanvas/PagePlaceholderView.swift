@@ -19,6 +19,7 @@ final class PagePlaceholderView: UIView {
         layer.cornerRadius = MacaronPage.radius
         isUserInteractionEnabled = false
 
+        // macaron: one-off the type scale is the app's, and TNCanvas cannot import the app.
         label.font = .preferredFont(forTextStyle: .footnote)
         label.textAlignment = .center
         label.numberOfLines = 3

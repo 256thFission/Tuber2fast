@@ -241,6 +241,21 @@ final class TNCanvasTextTests: HostingSuite {
         _ = lasso.retireAll()
     }
 
+    @Test("An open box draws its border and handles in the theme's accent, and follows a theme change")
+    func textBoxBorderUsesTheAccent() throws {
+        let reporter = RecordingReporter()
+        let (runtime, _, _, overlay) = try openSession(reporter, layers: [textLayer("hi", x: 100, y: 100)])
+        let lime = try #require(Theme.preset(ThemeID(rawValue: "lime"))).theme
+        #expect(lime.accent != Theme.macaron.accent)
+        for theme in [Theme.macaron, lime] {
+            runtime.apply(CanvasEnvironment(tool: .text(.body, .leading), theme: theme))
+            let accent = theme.accent.uiColor
+            #expect(overlay.layer.borderColor == accent.cgColor)
+            #expect(overlay.subviews.filter { $0.backgroundColor == accent }.count == 2, "the move and resize handles")
+        }
+        _ = runtime.retireAll()
+    }
+
     @Test("A resize cannot go below one line, and typing past the bottom grows the box")
     func resizeFloorAndGrowth() throws {
         let reporter = RecordingReporter()

@@ -140,7 +140,7 @@ struct TextFidelityTests {
     }
 
     private static func overlayPixels(_ layer: TextLayer, scale: CGFloat) throws -> Pixels {
-        let view = TextEditingView(text: layer, typing: .body)
+        let view = TextEditingView(text: layer, typing: .body, theme: .macaron)
         view.hideChrome()
         let host = UIView(frame: CGRect(x: 0, y: 0, width: layer.rect.width, height: layer.rect.height))
         view.frame = host.bounds

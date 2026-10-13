@@ -308,7 +308,11 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
     private func paint() {
         backdropView.backgroundColor = MacaronPage.paper(theme)
         backdropView.layer.borderColor = MacaronPage.outline(theme).cgColor
-        if case .selected(_, let frame) = phase { frame.apply(theme) }
+        switch phase {
+        case .editing(_, let box): box.apply(theme)
+        case .selected(_, let frame): frame.apply(theme)
+        case .idle, .opening: break
+        }
     }
 
     package override func viewDidLayoutSubviews() {
@@ -429,7 +433,7 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
             return
         }
         let typing: TextStyle = if case .text(let style, _) = tool { style } else { .body }
-        let view = TextEditingView(text: start.text, typing: typing)
+        let view = TextEditingView(text: start.text, typing: typing, theme: theme)
         overlayView.addSubview(view)
         setOverlayScale(view)
         // A border drag neither pans the page nor turns it. Turning the page
