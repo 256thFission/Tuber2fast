@@ -71,24 +71,29 @@ struct ToolPaletteTests {
         #expect(second.inks[.pencil] == InkPreset(color: .black, width: .medium))
     }
 
-    @Test("A record missing a kind is the built-in default, not a patched record")
-    func anIncompleteRecordIsTheBuiltInDefault() {
-        // A preference written before a kind existed. Filling the hole in
-        // place would leave the rest of a record nobody can vouch for; the
-        // whole of it goes instead.
-        let partial = ToolPaletteRecord(
+    @Test("A record written before a kind joined the bar keeps everything it saved")
+    func aNewInkKindKeepsTheSavedPalette() {
+        // The one place a saved record may be short of this build: the
+        // missing kind gets its built-in preset, and the presets and the
+        // recents the person kept are not reset for it.
+        let older = ToolPaletteRecord(
             lastKind: .ink(.pen),
             inks: [.pen: InkPreset(color: swatch(0xC4), width: .thick)],
             eraserMode: .pixel,
             pixelEraserWidth: .thin,
-            recentColors: [],
+            recentColors: [swatch(0xC4)],
             text: .body,
             gestures: [:]
         )
-        #expect(!partial.isComplete)
-        let palette = ToolPalette(store: MemoryPaletteStore(partial))
-        #expect(palette.currentTool == .ink(.pen, InkPreset(color: .black, width: .medium)))
-        #expect(palette.eraserMode == .object)
+        let palette = ToolPalette(store: MemoryPaletteStore(older))
+        #expect(palette.currentTool == .ink(.pen, InkPreset(color: swatch(0xC4), width: .thick)))
+        #expect(palette.eraserTool == .erasePixel(.thin))
+        #expect(palette.recentColors == [swatch(0xC4)])
+        #expect(palette.gestures.isEmpty)
+        #expect(Set(ToolPaletteRecord.builtIn.inks.keys) == Set(InkKind.allCases))
+        for kind in [InkKind.pencil, .highlighter] {
+            #expect(palette.inks[kind] == ToolPaletteRecord.builtIn.inks[kind])
+        }
     }
 
     @Test("A second palette over one store opens on everything the first left")
@@ -138,6 +143,21 @@ struct ToolPaletteTests {
         // The width the person chose is still there for the next switch back.
         #expect(palette.pixelEraserWidth == .thin)
         #expect(palette.eraserTool == .eraseObject)
+    }
+
+    @Test("One tool change is one write, and opening writes nothing")
+    func oneToolChangeIsOneWrite() {
+        let store = MemoryPaletteStore()
+        let palette = ToolPalette(store: store)
+        #expect(store.saves == 0)
+
+        palette.remember(.ink(.pencil, InkPreset(color: swatch(0x2B), width: .thin)))
+        #expect(store.saves == 1)
+        palette.remember(.erasePixel(.thick))
+        #expect(store.saves == 2)
+        palette.remember(.text(.body, .center))
+        #expect(store.saves == 3)
+        #expect(store.stored == palette.record)
     }
 
     @Test("Remembering a lasso leaves the palette alone and writes nothing")
@@ -270,23 +290,27 @@ struct ToolPaletteTests {
         }
     }
 
-    @Test("A record written before the gestures field existed reads the built-in bindings")
-    func aRecordWithoutGesturesDecodes() throws {
-        // A whole palette somebody keeps, not a record that cannot be used.
+    @Test("A record missing any one key does not decode, so nothing is filled in")
+    func droppingAnyKeyRefusesTheRecord() throws {
+        // The store turns the throw into no record, and an unreadable
+        // record opens on the built-in whole: no field is patched from it.
         let data = try PropertyListEncoder().encode(ToolPaletteRecord.builtIn)
-        var plist = try #require(try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])
-        #expect(plist.removeValue(forKey: "gestures") != nil)
-        let older = try PropertyListSerialization.data(fromPropertyList: plist, format: .binary, options: 0)
-        let read = try PropertyListDecoder().decode(ToolPaletteRecord.self, from: older)
-        #expect(read == .builtIn)
-        #expect(read.gestures == [.scribble: .erase], "the built-in ships scribble bound to erase")
+        let plist = try #require(try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])
+        #expect(plist.count == Mirror(reflecting: ToolPaletteRecord.builtIn).children.count)
+        for key in plist.keys {
+            var short = plist
+            short.removeValue(forKey: key)
+            let bytes = try PropertyListSerialization.data(fromPropertyList: short, format: .binary, options: 0)
+            #expect(throws: (any Error).self, "a record without \(key)") {
+                try PropertyListDecoder().decode(ToolPaletteRecord.self, from: bytes)
+            }
+        }
     }
 
     @Test("A record that names only the scribble reads the double circle as unbound")
     func aRecordWithoutTheDoubleCircle() throws {
-        // The map is the record, not a merge with `builtIn`: `builtIn` is
-        // the fallback for a record written before the field existed, and a
-        // person who kept one with scribble bound has not asked for a
+        // The gesture map is the record, not a merge with `builtIn` as the
+        // ink map is: a person who kept scribble bound has not asked for a
         // second trigger.
         var record = ToolPaletteRecord.builtIn
         record.gestures = [.scribble: .erase]

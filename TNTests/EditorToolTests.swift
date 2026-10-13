@@ -171,15 +171,6 @@ struct EditorToolTests {
         #expect(try PropertyListDecoder().decode(ToolPaletteRecord.self, from: data) == record)
     }
 
-    @Test("A record written before the text slot existed reads back with the built-in text preset")
-    func aRecordWithoutTextDecodes() throws {
-        let data = try PropertyListEncoder().encode(ToolPaletteRecord.builtIn)
-        var plist = try #require(try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])
-        #expect(plist.removeValue(forKey: "text") != nil)
-        let older = try PropertyListSerialization.data(fromPropertyList: plist, format: .binary, options: 0)
-        #expect(try PropertyListDecoder().decode(ToolPaletteRecord.self, from: older) == .builtIn)
-    }
-
     @Test("A stored colour that is not opaque is an undecodable record")
     func aTranslucentStoredColourIsRefused() throws {
         // Encoded by hand, because the type will not make one: the point is

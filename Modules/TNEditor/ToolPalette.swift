@@ -13,9 +13,14 @@ package enum EraserMode: String, Sendable, Codable {
 ///
 /// One value, not five keys: a partial write can only ever lose the lot,
 /// which the built-in default covers, rather than leave two fields
-/// disagreeing about which tool is in hand.
+/// disagreeing about which tool is in hand. The decoder is the synthesized
+/// one, so a record missing any key is unreadable whole and the palette
+/// opens on `builtIn`.
 package struct ToolPaletteRecord: Equatable, Sendable, Codable {
     package var lastKind: ToolPalette.Kind
+    /// The one place a saved record may be short of this build: a map
+    /// without a kind is still a map, and `ToolPalette.init` gives the
+    /// missing kind its built-in preset rather than resetting the rest.
     package var inks: [InkKind: InkPreset]
     package var eraserMode: EraserMode
     package var pixelEraserWidth: ToolWidth
@@ -42,27 +47,6 @@ package struct ToolPaletteRecord: Equatable, Sendable, Codable {
         self.gestures = gestures
     }
 
-    private enum CodingKeys: String, CodingKey {
-        case lastKind, inks, eraserMode, pixelEraserWidth, recentColors, text, gestures
-    }
-
-    // The text slot, and later the gesture bindings, arrived after the
-    // palette first shipped, so a record written without either is a whole
-    // palette somebody keeps, not a record that cannot be used: it reads
-    // back with the built-in preset for the field that is missing. An ink
-    // slot is different, and `isComplete` says why.
-    package init(from decoder: any Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        lastKind = try container.decode(ToolPalette.Kind.self, forKey: .lastKind)
-        inks = try container.decode([InkKind: InkPreset].self, forKey: .inks)
-        eraserMode = try container.decode(EraserMode.self, forKey: .eraserMode)
-        pixelEraserWidth = try container.decode(ToolWidth.self, forKey: .pixelEraserWidth)
-        recentColors = try container.decode([ToolColor].self, forKey: .recentColors)
-        text = try container.decodeIfPresent(TextPreset.self, forKey: .text) ?? .body
-        gestures = try container.decodeIfPresent(GestureBindings.self, forKey: .gestures)
-            ?? Self.builtIn.gestures
-    }
-
     /// What a first launch opens on, and what an unreadable preference
     /// falls back to.
     package static let builtIn = ToolPaletteRecord(
@@ -80,17 +64,6 @@ package struct ToolPaletteRecord: Equatable, Sendable, Codable {
         // toolbar to switch it on.
         gestures: [.scribble: .erase]
     )
-
-    /// Whether every ink kind has a slot.
-    ///
-    /// A record written before a kind existed is missing one, and the
-    /// palette answers `tool(for:)` for every kind. Rather than filling the
-    /// hole in place, an incomplete record is treated as unreadable and the
-    /// whole of it is replaced: one rule for a preference that cannot be
-    /// used, not two.
-    package var isComplete: Bool {
-        InkKind.allCases.allSatisfy { inks[$0] != nil }
-    }
 }
 
 /// Persistence for the palette. `TNEditor` names it; the app conforms.
@@ -121,40 +94,40 @@ package protocol ToolPaletteStore: Sendable {
         case text
     }
 
-    package private(set) var lastKind: Kind
-    package private(set) var inks: [InkKind: InkPreset]
-    package private(set) var eraserMode: EraserMode
-    package private(set) var pixelEraserWidth: ToolWidth
+    /// Everything the palette keeps, written to the store whole each time
+    /// it changes, so one change is one write.
+    private(set) var record: ToolPaletteRecord {
+        didSet { store.save(record) }
+    }
+
+    package var lastKind: Kind { record.lastKind }
+    package var inks: [InkKind: InkPreset] { record.inks }
+    package var eraserMode: EraserMode { record.eraserMode }
+    package var pixelEraserWidth: ToolWidth { record.pixelEraserWidth }
     /// Simply the colours drawn with: most recent first, at most
     /// `recentLimit`, no duplicates. A colour becomes recent when a stroke
     /// lands in it, not when it is picked. Whoever draws a row of swatches
     /// out of this and the theme's own is the one responsible for not
     /// showing the same swatch twice.
-    package private(set) var recentColors: [ToolColor]
+    package var recentColors: [ToolColor] { record.recentColors }
     /// The style and alignment the text tool last typed with.
-    package private(set) var text: TextPreset
+    package var text: TextPreset { record.text }
     /// Which Pencil gesture does what, for every ink kind at once. A
     /// trigger absent from the map is off. Nobody copies this: the editor
     /// binding asks for it on every stroke that lands.
-    package private(set) var gestures: GestureBindings
+    package var gestures: GestureBindings { record.gestures }
 
-    /// Eight, which is one row beside the theme's own colours on the
-    /// narrowest strip the popover draws.
+    /// Eight, the length of the colour tray's recents run (decided U3). The
+    /// bar's four swatches take theirs from the front.
     package static let recentLimit = 8
 
     @ObservationIgnored private let store: any ToolPaletteStore
 
     package init(store: any ToolPaletteStore) {
         self.store = store
-        let loaded = store.load()
-        let record = (loaded?.isComplete == true ? loaded : nil) ?? .builtIn
-        self.lastKind = record.lastKind
-        self.inks = record.inks
-        self.eraserMode = record.eraserMode
-        self.pixelEraserWidth = record.pixelEraserWidth
-        self.recentColors = record.recentColors
-        self.text = record.text
-        self.gestures = record.gestures
+        var record = store.load() ?? .builtIn
+        record.inks = ToolPaletteRecord.builtIn.inks.merging(record.inks) { _, saved in saved }
+        self.record = record
     }
 
     // MARK: The tools it names
@@ -172,7 +145,7 @@ package protocol ToolPaletteStore: Sendable {
 
     package func tool(for kind: InkKind) -> EditorTool {
         guard let preset = inks[kind] else {
-            TNPrecondition.fail("the palette has no slot for \(kind), which init guarantees")
+            TNPrecondition.fail("the palette has no slot for \(kind), which builtIn and init's merge guarantee")
         }
         return .ink(kind, preset)
     }
@@ -187,28 +160,31 @@ package protocol ToolPaletteStore: Sendable {
     // MARK: What it is told
 
     package func remember(_ tool: EditorTool) {
+        // Changed on a copy and assigned once: a tool is a slot and a kind,
+        // and two assignments would be two writes.
+        var next = record
         switch tool {
         case .ink(let kind, let preset):
-            inks[kind] = preset
-            lastKind = .ink(kind)
+            next.inks[kind] = preset
+            next.lastKind = .ink(kind)
         case .eraseObject:
-            eraserMode = .object
-            lastKind = .eraser
+            next.eraserMode = .object
+            next.lastKind = .eraser
         case .erasePixel(let width):
-            eraserMode = .pixel
-            pixelEraserWidth = width
-            lastKind = .eraser
+            next.eraserMode = .pixel
+            next.pixelEraserWidth = width
+            next.lastKind = .eraser
         case .text(let style, let alignment):
             // A colour typed with is never a recent; `used(_:)` is the ink
             // report's and no text report calls it.
-            text = TextPreset(style: style, alignment: alignment)
-            lastKind = .text
+            next.text = TextPreset(style: style, alignment: alignment)
+            next.lastKind = .text
         case .lasso:
             // Lasso has nothing to remember and is not a `Kind`, so there
             // is nothing to write and no reason to touch the store.
             return
         }
-        save()
+        record = next
     }
 
     /// A colour a stroke landed in, whatever it is.
@@ -222,26 +198,12 @@ package protocol ToolPaletteStore: Sendable {
         // one colour must not write the preference on every stroke, which
         // is work on the report path for no change at all.
         guard recentColors.first != color else { return }
-        recentColors = Array(([color] + recentColors.filter { $0 != color }).prefix(Self.recentLimit))
-        save()
+        record.recentColors = Array(([color] + recentColors.filter { $0 != color }).prefix(Self.recentLimit))
     }
 
     /// Binds a gesture, or unbinds it when `effect` is nil.
     package func bind(_ trigger: GestureTrigger, to effect: GestureEffect?) {
         guard gestures[trigger] != effect else { return }
-        gestures[trigger] = effect
-        save()
-    }
-
-    private func save() {
-        store.save(ToolPaletteRecord(
-            lastKind: lastKind,
-            inks: inks,
-            eraserMode: eraserMode,
-            pixelEraserWidth: pixelEraserWidth,
-            recentColors: recentColors,
-            text: text,
-            gestures: gestures
-        ))
+        record.gestures[trigger] = effect
     }
 }
