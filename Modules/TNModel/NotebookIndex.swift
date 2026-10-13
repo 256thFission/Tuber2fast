@@ -60,23 +60,10 @@ package struct NotebookIndex: Codable, Sendable, Equatable {
     /// without this list being kept in it.
     package let bookmarks: [PageBookmark]
 
-    package static let currentFormatVersion: UInt32 = 4
+    package static let currentFormatVersion: UInt32 = 1
 
     package init(notebookID: NotebookID, createdAt: Date, pages: [PageRecord], bookmarks: [PageBookmark]) {
         self.formatVersion = Self.currentFormatVersion
-        self.notebookID = notebookID
-        self.createdAt = createdAt
-        self.pages = pages
-        self.bookmarks = bookmarks
-    }
-
-    /// The decoder's form: the version as found, so a newer file refuses by
-    /// number in `validated()` rather than as a decode failure.
-    package init(
-        formatVersion: UInt32, notebookID: NotebookID, createdAt: Date,
-        pages: [PageRecord], bookmarks: [PageBookmark]
-    ) {
-        self.formatVersion = formatVersion
         self.notebookID = notebookID
         self.createdAt = createdAt
         self.pages = pages
@@ -114,33 +101,24 @@ package struct NotebookIndex: Codable, Sendable, Equatable {
     package func withPages(_ pages: [PageRecord]) -> NotebookIndex {
         let kept = Set(pages.map(\.id))
         return NotebookIndex(
-            formatVersion: formatVersion, notebookID: notebookID, createdAt: createdAt,
+            notebookID: notebookID, createdAt: createdAt,
             pages: pages, bookmarks: bookmarks.filter { kept.contains($0.page) }
         )
     }
 
     package func withBookmarks(_ bookmarks: [PageBookmark]) -> NotebookIndex {
-        NotebookIndex(
-            formatVersion: formatVersion, notebookID: notebookID, createdAt: createdAt,
-            pages: pages, bookmarks: bookmarks
-        )
+        NotebookIndex(notebookID: notebookID, createdAt: createdAt, pages: pages, bookmarks: bookmarks)
     }
 
     /// A duplicate keeps its outline: the copy has the same pages under the
     /// same identities, so the marks that name them still name pages.
     package func withNotebookID(_ notebookID: NotebookID) -> NotebookIndex {
-        NotebookIndex(
-            formatVersion: formatVersion, notebookID: notebookID, createdAt: createdAt,
-            pages: pages, bookmarks: bookmarks
-        )
+        NotebookIndex(notebookID: notebookID, createdAt: createdAt, pages: pages, bookmarks: bookmarks)
     }
 
     /// Notebook-scope rules, refused by name. Page-scope faults (unknown
     /// paper) are not thrown here; `pageFaults` reports them.
     package func validated() throws(NotebookIndexFault) -> NotebookIndex {
-        guard formatVersion == Self.currentFormatVersion else {
-            throw .unsupportedFormatVersion(formatVersion)
-        }
         guard !pages.isEmpty else { throw .noPages }
         var seen = Set<PageID>()
         for page in pages {
@@ -171,7 +149,6 @@ package struct NotebookIndex: Codable, Sendable, Equatable {
 }
 
 package enum NotebookIndexFault: Error, Sendable, Equatable {
-    case unsupportedFormatVersion(UInt32)
     case noPages
     case duplicatePageID(PageID)
     case geometryOutOfBounds(PageID, width: Double, height: Double)

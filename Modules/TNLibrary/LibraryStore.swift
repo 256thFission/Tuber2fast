@@ -49,7 +49,7 @@ package struct FolderFile: Codable, Sendable, Equatable {
     package let folderID: FolderID
     package let color: FolderColor
     package let symbol: FolderSymbol
-    package static let currentFormatVersion: UInt32 = 2
+    package static let currentFormatVersion: UInt32 = 1
 
     package init(folderID: FolderID, decoration: FolderDecoration) {
         self.formatVersion = Self.currentFormatVersion
@@ -269,13 +269,14 @@ package actor LibraryStore {
         (try? fm.attributesOfItem(atPath: url.path)[.creationDate] as? Date) ?? .distantPast
     }
 
-    /// Identity and birth date in one read of the index, so a listing opens
-    /// each package once rather than twice.
+    /// Identity and birth date in one read of the index's header, so a
+    /// listing opens each package once rather than twice, and a package at a
+    /// version this build cannot open still lists as itself.
     private func indexFacts(ofPackageAt url: URL) -> (id: NotebookID, createdAt: Date)? {
         guard let data = try? Data(contentsOf: PackageLayout(root: url).indexURL),
-              let index = try? IndexFile.decode(data)
+              let header = try? IndexFile.header(data)
         else { return nil }
-        return (index.notebookID, index.createdAt)
+        return (header.notebookID, header.createdAt)
     }
 
     private func notebookID(ofPackageAt url: URL) -> NotebookID? {
@@ -359,8 +360,7 @@ package actor LibraryStore {
 
     /// The sidecar, or nil when it is missing, at another version, or names a
     /// colour or symbol this build does not ship. Nil costs the folder its
-    /// identity, which costs it its star and its trash container name; the
-    /// remedy the Contract names is deleting the dev library.
+    /// identity, which costs it its star and its trash container name.
     package func folderFile(of folder: String) -> FolderFile? {
         let sidecar = url(of: folder).appendingPathComponent(Self.folderSidecar)
         guard let data = try? Data(contentsOf: sidecar),

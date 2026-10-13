@@ -354,7 +354,7 @@ struct LibraryTests {
         object["color"] = "chartreuse"
         try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]).write(to: sidecar)
 
-        // This is the cost of the version bump, pinned rather than argued
+        // This is the cost of a strict sidecar, pinned rather than argued
         // away: an unreadable sidecar is a folder with no identity, and a
         // folder with no identity has no star, though the file still holds it.
         let listed = try #require(try await library.store.list(folder: "").first)
@@ -373,7 +373,7 @@ struct LibraryTests {
         let sidecar = library.store.url(of: "Term").appendingPathComponent(".folder.json")
         let written = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: sidecar)) as? [String: Any])
         #expect(Set(written.keys) == ["formatVersion", "folderID", "color", "symbol"])
-        #expect(written["formatVersion"] as? Int == 2)
+        #expect(written["formatVersion"] as? Int == 1)
 
         for key in written.keys {
             var short = written
@@ -389,6 +389,27 @@ struct LibraryTests {
 
         try JSONSerialization.data(withJSONObject: written, options: [.sortedKeys]).write(to: sidecar)
         #expect(await library.store.folderFile(of: "Term") != nil, "the file as written must read back")
+    }
+
+    @Test("A notebook at a newer version lists as itself and refuses to open by its version")
+    func listingKeepsANewerNotebooksIdentity() async throws {
+        let (scratch, library) = try makeLibrary("lib-newer")
+        defer { withExtendedLifetime(scratch) {} }
+        let made = try await library.store.createNotebook(named: "Physics", in: "")
+        let identity = try #require(made.notebookID)
+        let indexURL = PackageLayout(root: library.store.url(of: made.relativePath)).indexURL
+        var object = try jsonObject(Data(contentsOf: indexURL))
+        let newer = NotebookIndex.currentFormatVersion + 1
+        object["formatVersion"] = newer
+        object["title"] = "Physics"
+        try jsonData(object).write(to: indexURL)
+
+        let listed = try #require(try await library.store.list(folder: "").first)
+        #expect(listed.notebookID == identity)
+        guard case .failed(.format(.newerFormat(found: newer))) = await library.checkout(made.relativePath) else {
+            Issue.record("a newer notebook must refuse by its version")
+            return
+        }
     }
 
     @Test("Two packages with one identity: the scan re-mints the second")

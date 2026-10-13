@@ -102,6 +102,8 @@ package enum FormatFault: Error, Sendable, Equatable, CustomStringConvertible {
     case corruptJSON(String)
     case indexUnreadable(String)
     case indexInvalid(NotebookIndexFault)
+    case newerFormat(found: UInt32)
+    case olderFormat(found: UInt32)
     case insufficientSpace(needed: Int64, available: Int64)
     case invalidWrite(String)
     case io(FileSystemError)
@@ -126,6 +128,8 @@ package enum FormatFault: Error, Sendable, Equatable, CustomStringConvertible {
         case .corruptJSON(let detail): "corrupt JSON: \(detail)"
         case .indexUnreadable(let detail): "index unreadable: \(detail)"
         case .indexInvalid(let fault): "index invalid: \(fault)"
+        case .newerFormat: "made by a newer TuberNotes; update the app"
+        case .olderFormat: "made by an older TuberNotes this version cannot upgrade"
         case .insufficientSpace(let needed, let available): "insufficient space: need \(needed), have \(available)"
         case .invalidWrite(let detail): "invalid write: \(detail)"
         case .io(let error): "I/O: \(error)"

@@ -553,8 +553,25 @@ package actor PackageStore {
 /// The index file with its nested key sets checked, so a page record or a
 /// paper object with a missing or extra key refuses by name.
 package enum IndexFile {
+    /// The three keys that never change name or type, read at any version.
+    package struct Header: Decodable, Sendable, Equatable {
+        package let formatVersion: UInt32
+        package let notebookID: NotebookID
+        package let createdAt: Date
+    }
+
+    package static func header(_ data: Data) throws(FormatFault) -> Header {
+        try Codecs.decode(Header.self, from: data)
+    }
+
     package static func decode(_ data: Data) throws(FormatFault) -> NotebookIndex {
         let top = try Codecs.topLevelObject(of: data)
+        // The version is read before any key: another version's key set is
+        // not this one's. This is the only version gate, so an index in
+        // memory is always current and save checks no version.
+        guard let version = top["formatVersion"] as? UInt32 else { throw .missingKey("formatVersion") }
+        if version > NotebookIndex.currentFormatVersion { throw .newerFormat(found: version) }
+        if version < NotebookIndex.currentFormatVersion { throw .olderFormat(found: version) }
         try Codecs.checkKeys(Set(top.keys), against: DurableKeys.index)
         guard let pages = top["pages"] as? [[String: Any]] else { throw .corruptJSON("pages is not an array of objects") }
         for page in pages {

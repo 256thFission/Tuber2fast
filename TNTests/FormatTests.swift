@@ -22,7 +22,7 @@ struct KeySetPins {
         for bookmark in bookmarks {
             #expect(Set(bookmark.keys) == DurableKeys.bookmark)
         }
-        #expect(top["formatVersion"] as? Int == 4)
+        #expect(top["formatVersion"] as? Int == 1)
     }
 
     @Test("pages/<id>.json carries exactly its keys")
@@ -66,6 +66,9 @@ struct StrictDecode {
         var extra = base
         extra["title"] = "x"
         #expect(throws: FormatFault.unknownKey("title")) { try IndexFile.decode(try jsonData(extra)) }
+        var unnumbered = base
+        unnumbered["formatVersion"] = "1"
+        #expect(throws: FormatFault.missingKey("formatVersion")) { try IndexFile.decode(try jsonData(unnumbered)) }
 
         var pages = try #require(base["pages"] as? [[String: Any]])
         for key in DurableKeys.pageRecord {
@@ -99,14 +102,42 @@ struct StrictDecode {
         #expect(throws: FormatFault.unknownKey("colour")) { try IndexFile.decode(try jsonData(withWide)) }
     }
 
-    @Test("A newer format version refuses by number, an unknown paper refuses the page only")
-    func versionAndPaper() throws {
-        var object = try jsonObject(try Codecs.encode(Fixture.index(pages: 1)))
-        object["formatVersion"] = 5
-        let newer = try IndexFile.decode(try jsonData(object))
-        #expect(throws: NotebookIndexFault.unsupportedFormatVersion(5)) { try newer.validated() }
+    @Test("A newer version that adds a key and drops one refuses by its number, and its header still reads")
+    func newerVersionWithChangedKeysRefusesByVersion() throws {
+        let index = Fixture.index(pages: 1)
+        let newer = NotebookIndex.currentFormatVersion + 1
+        var object = try jsonObject(try Codecs.encode(index))
+        object["formatVersion"] = newer
+        object["title"] = "Physics"
+        object.removeValue(forKey: "bookmarks")
+        let data = try jsonData(object)
+        #expect(throws: FormatFault.newerFormat(found: newer)) { try IndexFile.decode(data) }
+        let header = try IndexFile.header(data)
+        #expect(header.formatVersion == newer)
+        #expect(header.notebookID == index.notebookID)
+        #expect(header.createdAt == index.createdAt)
+    }
 
-        object["formatVersion"] = 4
+    @Test("A newer version with this version's keys refuses by its number")
+    func newerVersionSameShapeRefusesByVersion() throws {
+        let newer = NotebookIndex.currentFormatVersion + 1
+        var object = try jsonObject(try Codecs.encode(Fixture.index(pages: 1)))
+        object["formatVersion"] = newer
+        #expect(throws: FormatFault.newerFormat(found: newer)) { try IndexFile.decode(try jsonData(object)) }
+    }
+
+    @Test("An older version refuses by its number before any key, until a migration step exists")
+    func olderVersionIsRefusedBeforeTheLadder() throws {
+        let older = NotebookIndex.currentFormatVersion - 1
+        var object = try jsonObject(try Codecs.encode(Fixture.index(pages: 1)))
+        object["formatVersion"] = older
+        object.removeValue(forKey: "bookmarks")
+        #expect(throws: FormatFault.olderFormat(found: older)) { try IndexFile.decode(try jsonData(object)) }
+    }
+
+    @Test("An unknown paper refuses the page only")
+    func unknownPaperRefusesThePageOnly() throws {
+        var object = try jsonObject(try Codecs.encode(Fixture.index(pages: 1)))
         var pages = try #require(object["pages"] as? [[String: Any]])
         pages[0]["paper"] = ["kind": "parchment"]
         object["pages"] = pages
