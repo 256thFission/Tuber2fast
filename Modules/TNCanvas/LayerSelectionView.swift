@@ -13,9 +13,9 @@ import UIKit
 /// price of keeping every piece of selection state here instead of giving the
 /// notebook a lifted layer, and it is what the device check is for.
 ///
-/// Framed in page space as a subview of the canvas view, like
-/// `TextEditingView`: the scroll view pans and zooms it, and nothing of ours
-/// follows the viewport per frame.
+/// Framed in page space as a subview of the page's overlay, like
+/// `TextEditingView`. The overlay is placed on every scroll and zoom tick, as
+/// a change of frame, not a draw, so the frame pans and zooms with the page.
 @MainActor
 final class LayerSelectionView: UIView {
     /// Which corner a drag grabbed, in unit-square coordinates.

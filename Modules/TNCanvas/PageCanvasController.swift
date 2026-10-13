@@ -346,7 +346,7 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
 
     // MARK: - Told, never asked
 
-    /// A sharper or refreshed backdrop. Ink is untouched, at every zoom.
+    /// A refreshed backdrop. Ink is untouched, at every zoom.
     func updateComposite(_ composite: Composite) {
         backdropView.image = UIImage(cgImage: composite.image)
     }

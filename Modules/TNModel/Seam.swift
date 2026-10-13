@@ -154,9 +154,9 @@ package enum TransformOutcome: Sendable, Equatable {
     /// forgets its snapshot; the page gets a canvas again only from a later
     /// `installContent`. Never sent for a page with a canvas.
     func unload(_ page: PageID)
-    /// A sharper or refreshed backdrop for a live page, with the layer list
-    /// it was rendered from, so the runtime's hit rects match the picture.
-    /// Ink is untouched.
+    /// A refreshed backdrop for a live page, with the layer list it was
+    /// rendered from, so the runtime's hit rects match the picture. Ink is
+    /// untouched.
     func updateComposite(on page: PageID, _ composite: Composite, layers: [Layer])
     /// The layer and its value; arrives with the composite that omits the
     /// layer, and the runtime raises a live text view over it.

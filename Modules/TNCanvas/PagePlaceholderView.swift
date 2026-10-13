@@ -54,7 +54,8 @@ final class PagePlaceholderView: UIView {
 /// The words a placeholder says. One place, so the fault taxonomy and the copy
 /// stay in step.
 enum PlaceholderCopy {
-    /// A page the notebook has not sent content for yet.
+    /// A page with no canvas and no fault: its content has not arrived, or
+    /// it has and the page is outside the live window.
     static let waiting = "Loading…"
 
     static func text(for fault: PageFault) -> String {
