@@ -455,14 +455,15 @@ frame never rotates one: its transform is the identity, which
 resizes one: a link's rect is set when the link is placed, and a move is
 the only edit it has; a text box resized would reflow its words, and R2-09
 decided a move, not a reflow, so the frame offers no handle for it and
-`layerMoved` carries nothing it could use. A text box's place and size
-also change inside its text session, and only there: the box grows with
-the words typed into it, its own border and corner handles move and resize
-it, and the commit carries the whole rect through `textEditingEnded`,
-which the notebook stores with the words. The draft is the session's
-until it ends (*Custody*), so the size is the session's to change and
-never the frame's (decided R2-09; round-three call: text and links never
-rotate; critique C14; simple-data-03, policy-06).
+`layerMoved` carries nothing it could use. A text box's size changes
+inside its text session and only there, and its place changes there too,
+as well as by the frame: the box grows with the words typed into it, its
+own border and corner handles move and resize it, and the commit carries
+the whole rect through `textEditingEnded`, which the notebook stores with
+the words. The draft is the session's until it ends (*Custody*), so the
+size is the session's to change and never the frame's (decided R2-09;
+round-three call: text and links never rotate; critique C14;
+simple-data-03, policy-06).
 
 **Every layer carries `locked`.** A locked layer renders and exports like
 any other; it refuses a transform, a move and a delete, and says so. A
@@ -473,8 +474,9 @@ a locked layer however it is asked, answering the request with
 wait ends with no box up. The reason is that the session is where a text
 box's words, place and size change, and where an emptied box is removed,
 each a change the lock exists to refuse; a session that opened and refused
-them all would take typing it could not keep. The lasso's Unlock is the
-only way back, for a text box as for an image (decided R2-09).
+them all would take typing it could not keep. The lock is one entry on the
+stack, so the lasso's Unlock, or an Undo of the lock, is the way back, for
+a text box as for an image (decided R2-09).
 
 **Assets** are immutable. An asset is written at import, before any layer
 refers to it, and is limited to 256 MB and 16384 pixels on an edge; an
