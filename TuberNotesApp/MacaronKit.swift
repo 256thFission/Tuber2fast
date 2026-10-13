@@ -48,6 +48,9 @@ enum Macaron {
     static let chipWall: CGFloat = 4
     static let swatchWall: CGFloat = 3
     static let dash: [CGFloat] = [9, 7]
+    /// How long a cap with a hold is held before the hold fires. The charge
+    /// squash runs exactly this long, so it lands as the hold does.
+    static let hold: TimeInterval = 0.45
 
     /// Lilita One for labels and callsigns, Nunito for body. Neither is in
     /// the repository, so the build stands them in with the system's rounded
@@ -74,12 +77,15 @@ enum TypeScale: CGFloat {
     case display = 28
 }
 
-/// The three curves a press is made of.
+/// The curves the chrome moves on, each one of Macaron.md §7's seven, and
+/// the cross-fade Reduce Motion collapses them to.
 enum MacaronCurve {
     static let outQuint = Animation.timingCurve(0.22, 1, 0.36, 1, duration: 0.06)
     static let outBack = Animation.timingCurve(0.34, 1.9, 0.64, 1, duration: 0.13)
     static let settle = Animation.interpolatingSpring(mass: 1, stiffness: 420, damping: 22)
     static let snap = Animation.timingCurve(0.34, 1.56, 0.64, 1, duration: 0.34)
+    /// In-out-sine over the hold.
+    static let charge = Animation.timingCurve(0.37, 0, 0.63, 1, duration: Macaron.hold)
     static let reduced = Animation.easeInOut(duration: 0.12)
 }
 
@@ -150,8 +156,8 @@ struct Keycap<Label: View>: View {
     /// What VoiceOver calls a cap whose label is only a symbol. A cap with a
     /// word on it is called by the word.
     var name: String?
-    /// A second thing the cap does when held for 450 ms rather than tapped.
-    /// While the hold charges, the cap squashes toward 88%.
+    /// A second thing the cap does when held for `Macaron.hold` rather than
+    /// tapped. While the hold charges, the cap squashes toward 88%.
     var hold: (() -> Void)?
     var action: () -> Void
     @ViewBuilder var label: () -> Label
@@ -196,11 +202,11 @@ struct Keycap<Label: View>: View {
             anchor: .bottom
         )
         .scaleEffect(isCharging ? 0.88 : 1, anchor: .bottom)
-        .animation(isCharging ? .linear(duration: 0.45) : MacaronCurve.settle, value: isCharging)
+        .animation(isCharging ? MacaronCurve.charge : MacaronCurve.settle, value: isCharging)
         .opacity(isEnabled ? 1 : 0.4)
         .contentShape(.rect)
         .onTapGesture { if isEnabled { press() } }
-        .modifier(HoldGesture(hold: isEnabled ? hold : nil, isCharging: $isCharging, squashes: !reduceMotion))
+        .modifier(HoldGesture(hold: hold, isEnabled: isEnabled, isCharging: $isCharging, squashes: !reduceMotion))
         .accessibilityElement(children: .combine)
         .accessibilityLabel(Text(name ?? ""), isEnabled: name != nil)
         .accessibilityAddTraits(.isButton)
@@ -240,18 +246,24 @@ struct Keycap<Label: View>: View {
 
 /// A cap's hold, on the caps that have one. Every other cap takes no long
 /// press, so a cap held a long time still taps on lift.
+///
+/// Whether the gesture is there is fixed by the call site, and `isEnabled`
+/// only gates it. A branch that followed `isEnabled` would rebuild every
+/// swatch each time the hand moved to or from a tool with no colour, and
+/// cross-fade the held one's trampoline.
 private struct HoldGesture: ViewModifier {
     let hold: (() -> Void)?
+    let isEnabled: Bool
     @Binding var isCharging: Bool
     let squashes: Bool
 
     func body(content: Content) -> some View {
         if let hold {
-            content.onLongPressGesture(minimumDuration: 0.45) {
+            content.onLongPressGesture(minimumDuration: Macaron.hold) {
                 isCharging = false
-                hold()
+                if isEnabled { hold() }
             } onPressingChanged: { pressing in
-                isCharging = pressing && squashes
+                isCharging = pressing && squashes && isEnabled
             }
         } else {
             content
