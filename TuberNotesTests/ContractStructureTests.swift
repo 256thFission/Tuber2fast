@@ -511,19 +511,8 @@ struct CanvasConstructionSite: Sendable, Equatable {
 
 // MARK: - The rules, checked against the real source tree
 
-/// The structural rules of `Docs/Contract.md`, machine-checked.
-///
-/// These were once enforced by a shell gate. They are tests rather than a
-/// script for three reasons:
-///
-/// - they run inside the thing that already decides — CI and `Cmd-U` — so they
-///   need no new entrypoint and no second verdict vocabulary;
-/// - they fail like any other test, so nothing here resembles the gate; and
-/// - **the checker itself is testable.** The shell gate once looked green while
-///   two of its rules were dead code: a `|` inside a regex collided with the `|`
-///   used as a field separator and the pattern silently truncated. Only a
-///   negative test found it. Here, `CheckerOwnTests` is permanent rather than a
-///   ritual someone performed once.
+/// The structural rules of `Docs/Contract.md`, machine-checked. Why they are
+/// tests and not a script: `CONTRIBUTING.md`, *Scope discipline*.
 ///
 /// Each rule is expressed as an **allowlist of what may do the forbidden
 /// thing**, never a blocklist of known offenders, so a new file breaks the test
@@ -546,14 +535,8 @@ struct ContractStructureTests {
         .deletingLastPathComponent()
         .deletingLastPathComponent()
 
-    /// Every module's source directory, repo-relative, in graph order. The app
-    /// target's directory is last because it is the top of the graph.
-    ///
-    /// This is the list the split turned into the unit of every rule below.
-    /// Before it, one flat allowlist of file paths spanned three frameworks, so
-    /// a file allowlisted for CoreGraphics could add `import PencilKit`
-    /// silently — and every entry was a hardcoded path that expired the moment
-    /// anything moved.
+    /// Every module's source directory, repo-relative: the unit of every rule
+    /// below.
     static let moduleDirectories = [
         "TuberNotesApp",
         // Docs/Forks/fundamental-rewrite.md, Part 8.
@@ -967,7 +950,7 @@ struct ContractStructureTests {
     }
 
     /// `PKCanvasView` is constructed at exactly one code site.
-    /// `Docs/Contract.md`, *Performance*, names this a hard invariant.
+    /// `Docs/Contract.md`, *Structure*, names this a hard invariant.
     ///
     /// One site, not a singleton: future scenes and virtualized page editors
     /// must be able to own independent active canvases.
@@ -1088,12 +1071,6 @@ struct ContractStructureTests {
     }
 
     /// An allowlist entry naming a file that no longer exists.
-    ///
-    /// Two allowlists are left to keep honest. The UI-framework half of this
-    /// test died with the twenty-three-entry path allowlist it policed: a
-    /// module policy has no paths to go stale, and `policedFilesAreTargetFiles`
-    /// covers the failure that replaced it — a module `project.yml` builds that
-    /// no policy names.
     @Test("No allowlist entry outlives its file")
     func allowlistsNameFilesThatExist() throws {
         let sources = try Self.appSources()
@@ -1115,12 +1092,12 @@ struct ContractStructureTests {
 
 /// The rules are only worth trusting if they can fail.
 ///
-/// `Docs/Queue.md`, `contract-checker-is-blind`: "The recursion is covered by
-/// the checker's own tests, because an untested checker can go dead and keep
-/// passing." These plant real `.swift` files in real subdirectories of a temp
-/// tree and assert each rule catches them. Hermetic on purpose — a test that
-/// writes into `TuberNotesApp/` and then crashes leaves the repository dirty
-/// and the next run lying.
+/// `CONTRIBUTING.md`, *Scope discipline*: "the checker has its own tests",
+/// because an untested checker can go dead and keep passing. These plant
+/// real `.swift` files in real subdirectories of a temp tree and assert each
+/// rule catches them. Hermetic on purpose — a test that writes into
+/// `TuberNotesApp/` and then crashes leaves the repository dirty and the
+/// next run lying.
 @Suite("Contract structure — the checker")
 struct ContractCheckerOwnTests {
 
@@ -1128,11 +1105,6 @@ struct ContractCheckerOwnTests {
 
     /// Creates a fresh temp directory, runs `body` against its root, and
     /// removes the tree either way.
-    ///
-    /// Hermetic on purpose. The obvious way to test this checker is to drop a
-    /// file into `TuberNotesApp/` and take it out again; a run that fails
-    /// between those two steps leaves the repository dirty and the next run
-    /// lying about a violation nobody wrote.
     private func withPlantedTree(_ body: (URL) throws -> Void) throws {
         let root = URL(fileURLWithPath: NSTemporaryDirectory())
             .resolvingSymlinksInPath()
@@ -1182,10 +1154,9 @@ struct ContractCheckerOwnTests {
 
     // MARK: Each rule, planted in a new subdirectory
 
-    /// The queue item's exit condition, stated as a test: a `.swift` file
-    /// planted in a *new subdirectory*, violating each of the three rules,
-    /// fails the suite. Before the recursion landed, all three of these
-    /// assertions saw an empty list.
+    /// A `.swift` file planted in a *new subdirectory*, violating each of
+    /// the three rules, fails the suite. Before the recursion landed, all
+    /// three of these assertions saw an empty list.
     @Test("A violation planted in a new subdirectory is caught — all three rules")
     func plantedSubdirectoryViolationsAreCaught() throws {
         try withPlantedTree { root in
