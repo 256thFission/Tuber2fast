@@ -234,9 +234,10 @@ package struct Theme: Equatable, Sendable {
         ]
     )
 
-    /// The same theme after dark: the cream and the ink trade places and
-    /// the mix target inverts, so an outline now comes up off its fill
-    /// instead of going down into it. The paper stays white.
+    /// The same theme after dark: a dark ground and chrome, the day's cream
+    /// as the ink, and the day's accent, secondary and palette. The mix
+    /// target inverts, so an outline now comes up off its fill instead of
+    /// going down into it. The paper stays white.
     package static let macaronDark = Theme(
         ground: hex("#26211B"),
         chrome: hex("#332C24"),
