@@ -143,7 +143,10 @@ package final class EditorViewModel {
         canUndo = notebook.canUndo || notebook.hasTextSession
         canRedo = notebook.canRedo || notebook.hasTextSession
         pageCount = notebook.pageCount
-        currentPageIndex = notebook.pageIDs.firstIndex(of: notebook.currentPageID) ?? 0
+        guard let position = notebook.pageIDs.firstIndex(of: notebook.currentPageID) else {
+            TNPrecondition.fail("the current page \(notebook.currentPageID) is not in the page list")
+        }
+        currentPageIndex = position
         let records = notebook.index.pages
         // `uniqueKeysWithValues` rather than a merge: two marks for one page
         // is an index `validated()` refuses, so it cannot be reached here,
@@ -273,12 +276,7 @@ package final class EditorViewModel {
     /// A photo becomes the new page's paper. The asset is published first,
     /// so the append that follows only has to measure it.
     package func addPage(size: PageSize, orientation: PageOrientation, photo data: Data) async {
-        lastContentError = nil
-        let stored: AssetRef
-        do { stored = try await notebook.storeImageAsset(data) } catch {
-            lastContentError = error
-            return
-        }
+        guard let stored = await contentChange({ () async throws(FormatFault) in try await notebook.storeImageAsset(data) }) else { return }
         await append(size, orientation, .asset(.image(stored)))
     }
 
@@ -292,35 +290,21 @@ package final class EditorViewModel {
     /// the thing the paper comes from, and this one takes nothing, since the
     /// source is always the page the reader is on.
     package func addPageFlatteningCurrentPage(size: PageSize, orientation: PageOrientation) async {
-        let page = notebook.currentPageID
-        lastContentError = nil
-        commitTextEditing()
-        let flattened: AssetRef
-        do { flattened = try await notebook.flatten(page) } catch {
-            lastContentError = error
-            return
-        }
+        guard let flattened = await contentChange({ () async throws(FormatFault) in try await notebook.flatten(notebook.currentPageID) }) else { return }
         await append(size, orientation, .asset(.image(flattened)))
     }
 
-    /// The `do`/`catch` sits at method scope, for the reason the comment
-    /// above `importImage` gives, and a refusal is reported through
-    /// `lastContentError` like any other content change. A refused append
-    /// creates nothing, so there is nothing to take the reader to.
+    /// A refused append creates nothing, so there is nothing to take the
+    /// reader to.
     private func append(_ size: PageSize, _ orientation: PageOrientation, _ paper: NewPagePaper) async {
-        commitTextEditing()
-        lastContentError = nil
-        guard let geometry = size.geometry(orientation) else {
-            lastContentError = Self.sizeOutOfBounds
-            return
+        let created = await contentChange { () async throws(FormatFault) -> PageID in
+            guard let geometry = size.geometry(orientation) else { throw Self.sizeOutOfBounds }
+            do throws(NewPageRefusal) {
+                return try await notebook.appendPage(after: notebook.currentPageID, geometry: geometry, paper: paper)
+            } catch {
+                throw Self.fault(error)
+            }
         }
-        var created: PageID?
-        do {
-            created = try await notebook.appendPage(after: notebook.currentPageID, geometry: geometry, paper: paper)
-        } catch {
-            lastContentError = Self.fault(error)
-        }
-        binding.drain()
         if let created { binding.surface.scroll(to: created) }
     }
 
@@ -362,12 +346,8 @@ package final class EditorViewModel {
     /// The notebook reads an unloaded source from its files, so a cell in the
     /// navigator can be duplicated without being visited first.
     package func duplicatePage(_ page: PageID) async {
-        commitTextEditing()
-        lastContentError = nil
-        var created: PageID?
-        do { created = try await notebook.duplicatePage(page) } catch { lastContentError = error }
-        binding.drain()
-        if let created { binding.surface.scroll(to: created) }
+        guard let created = await contentChange({ () async throws(FormatFault) in try await notebook.duplicatePage(page) }) else { return }
+        binding.surface.scroll(to: created)
     }
 
     /// The only page cannot be deleted; the notebook refuses it, silently,
@@ -437,10 +417,7 @@ package final class EditorViewModel {
     /// creation sheet opens on: a page added without asking is the size of
     /// the one it follows.
     package var currentPageSize: (size: PageSize, orientation: PageOrientation) {
-        guard let geometry = notebook.index.record(of: notebook.currentPageID)?.geometry else {
-            TNPrecondition.fail("the current page \(notebook.currentPageID) has no record")
-        }
-        return PageSize.matching(geometry)
+        PageSize.matching(notebook.currentRecord.geometry)
     }
 
     /// Drawn paper only: the two asset papers are intentions of their own,
@@ -458,18 +435,24 @@ package final class EditorViewModel {
 
     // MARK: Content
 
-    // A content mutation's `do`/`catch` sits at method scope, never inside
-    // a closure: a closure literal loses the `throws(FormatFault)` and the
-    // catch binds `any Error`. So these three call `drain()` themselves
-    // rather than run inside `binding.intention`, which is the same two
-    // steps in the same order.
-
-    package func importImage(_ data: Data) async {
-        let page = notebook.currentPageID
+    /// Every content change's shape: the last refusal clears, an open text
+    /// box commits, the notebook acts, and the drain pushes what it did.
+    /// Returns what the act made, or nil when it was refused, and the
+    /// refusal is in `lastContentError`. A closure handed here spells out
+    /// `throws(FormatFault)`, because a literal that does not loses it and
+    /// the catch binds `any Error`.
+    @discardableResult
+    private func contentChange<Made>(_ act: () async throws(FormatFault) -> Made) async -> Made? {
         lastContentError = nil
         commitTextEditing()
-        do { try await notebook.importImage(data, on: page) } catch { lastContentError = error }
+        var made: Made?
+        do { made = try await act() } catch { lastContentError = error }
         binding.drain()
+        return made
+    }
+
+    package func importImage(_ data: Data) async {
+        await contentChange { () async throws(FormatFault) in try await notebook.importImage(data, on: notebook.currentPageID) }
     }
 
     /// A photo as the current page's paper. The notebook refuses a page that
@@ -477,11 +460,7 @@ package final class EditorViewModel {
     /// covers the whole page; the refusal reaches the bar through
     /// `lastContentError` like any other.
     package func setPaper(photo data: Data) async {
-        let page = notebook.currentPageID
-        lastContentError = nil
-        commitTextEditing()
-        do { try await notebook.importImageAsPaper(data, on: page) } catch { lastContentError = error }
-        binding.drain()
+        await contentChange { () async throws(FormatFault) in try await notebook.importImageAsPaper(data, on: notebook.currentPageID) }
     }
 
     /// One new page per PDF page, after the current one, and the reader is
@@ -491,12 +470,10 @@ package final class EditorViewModel {
     }
 
     package func addLink(to target: LinkTarget) async {
-        let page = notebook.currentPageID
-        let rect = Self.defaultRect(width: 160, height: 44, on: notebook.index.record(of: page)?.geometry)
-        lastContentError = nil
-        commitTextEditing()
-        do { try notebook.addLinkLayer(on: page, rect: rect, target: target) } catch { lastContentError = error }
-        binding.drain()
+        await contentChange { () throws(FormatFault) in
+            let rect = Self.defaultRect(width: Self.linkSize.width, height: Self.linkSize.height, on: notebook.currentRecord.geometry)
+            try notebook.addLinkLayer(on: notebook.currentPageID, rect: rect, target: target)
+        }
     }
 
     /// An open text box commits before anything is inserted, a page added,
@@ -510,8 +487,10 @@ package final class EditorViewModel {
     /// same distance from the corner whatever the page's size.
     private static let defaultInset: Double = 48
 
-    private static func defaultRect(width: Double, height: Double, on geometry: PageGeometry?) -> PageRect {
-        let available = geometry ?? .letter
+    /// A new link's button, in page points.
+    private static let linkSize = (width: 160.0, height: 44.0)
+
+    private static func defaultRect(width: Double, height: Double, on available: PageGeometry) -> PageRect {
         let inset = min(Self.defaultInset, available.width / 4, available.height / 4)
         return PageRect(
             x: inset, y: inset,
@@ -536,12 +515,8 @@ package final class EditorViewModel {
     /// says what happened; the pages a stopped scan did make are already
     /// in the notebook and pushed by the drain.
     private func importPages(_ make: () async throws(FormatFault) -> [PageID]) async {
-        lastContentError = nil
-        commitTextEditing()
-        var created: [PageID] = []
-        do { created = try await make() } catch { lastContentError = error }
-        binding.drain()
-        if let first = created.first { binding.surface.scroll(to: first) }
+        guard let first = await contentChange(make)?.first else { return }
+        binding.surface.scroll(to: first)
     }
 
     // MARK: Export

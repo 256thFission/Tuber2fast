@@ -649,3 +649,11 @@ Not gaps — properties of the tooling that read as project defects when hit.
   paged canvas through the pair. Owed: new notebook, Insert > PDF (3
   pages): the view lands on PDF page 1, the blank page is gone, 3 pages in
   all.
+- **One Undo takes only the photo (U26, I3 line 7).** Every content change
+  in the editor now runs one shape: clear the last refusal, commit an open
+  box, act, drain. A recorder shows an insert over an open box commit it
+  first and one undo take only the image, and the notebook refuses an
+  image under a box that opened while the image waited. No seam drives a
+  real canvas through the pair. Owed: with a box open and an answer typed,
+  Insert > Photo: the box commits, the photo lands, and one Undo removes
+  only the photo.

@@ -497,7 +497,7 @@ package final class Notebook {
     }
 
     /// `currentPageID` always names a page the index holds.
-    private var currentRecord: PageRecord {
+    package var currentRecord: PageRecord {
         guard let record = index.record(of: currentPageID) else {
             TNPrecondition.fail("the current page \(currentPageID) has no record")
         }
@@ -951,10 +951,7 @@ package final class Notebook {
         guard !images.isEmpty else { return [] }
         // The width is the current page's, read once: every page of one scan
         // is the same width, whatever the reader does while it runs.
-        guard let template = index.record(of: currentPageID) else {
-            throw .invalidWrite("no current page to scan after")
-        }
-        let width = template.geometry.width
+        let width = currentRecord.geometry.width
         let after = currentPageID
         var made: [(record: PageRecord, content: PageContent)] = []
         var stopped: FormatFault?
