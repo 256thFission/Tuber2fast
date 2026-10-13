@@ -256,7 +256,13 @@ production runs; there is no fallback for a surface that cannot answer
 Reports, `CanvasReporting`:
 
 - `inkChanged`: the drawing, and the `InkSeq` it echoes if any.
-- `layerTransformed`: answered at once with `.accepted` or `.refused`.
+- `layerTransformed`: an image or PDF layer's new transform, from a drag of
+  its frame; answered at once with `.accepted` or `.refused`.
+- `layerMoved`: a link or text layer's new origin, and nothing else, from a
+  drag of its frame; answered the same way. The report carries no rect and
+  no transform, so the runtime has no way to ask for a size or a rotation
+  it may not change (*A layer placed by a rect moves, and only moves*)
+  (decided R2-09).
 - `layerDeleteRequested`: answered by an `updateComposite` that omits the
   layer, which is also what takes the selection frame down.
 - `layerLockRequested`: lock or unlock, answered by an `updateComposite`
@@ -418,10 +424,36 @@ frames, and the tool are never saved in the package.
 **Transforms.** Image and PDF layers carry an affine transform from the
 unit square into page space. It must be finite, have `|det| > 1e-9`, and
 translate by no more than ten page edges. Link and text layers carry the
-identity transform and a rect in page space.
+identity transform and a rect in page space. A layer's placement is the
+one it carries, the transform or the unit square mapped onto the rect, and
+`Layer` says which; the canvas hit-tests and frames every kind by that
+placement and derives none of its own (thermo-canvas-08).
+
+**Every layer is selected, moved and deleted the same way.** A tap with
+the lasso tool selects the topmost layer under it, a link or a text box as
+readily as an image or a PDF clipping, and the frame that comes up, its
+menu, the delete and the lock are the same for every kind: delete reports
+`layerDeleteRequested` and lock `layerLockRequested`, and each is answered
+as it is for an image. What differs by kind is what a drag of the frame
+may do, below. The reason is the first flow: a text box or a link placed
+in the wrong spot could be neither moved nor deleted, and a text box could
+only be removed by emptying it (decided R2-09).
+
+**A layer placed by a rect moves, and only moves.** A link or a text box
+is dragged whole; its frame shows no corner handle and no rotate knob, and
+the drag's one report is `layerMoved` with the rect's new origin. The
+notebook moves the rect to that origin at the size it had, recorded as any
+layer edit is, one entry on the stack, refused for a locked layer as a
+transform is, and the composite that follows restates the rect through its
+layer list. It never rotates: its transform is the identity, which
+`validated()` requires, and a rotated rect has none. It never resizes: a
+text box resized would reflow its words, and R2-09 decided a move, not a
+reflow; a resize is a decision not taken, so the frame offers none, and
+the size is not the runtime's to change (decided R2-09; round-three call:
+text and links never rotate; critique C14; simple-data-03, policy-06).
 
 **Every layer carries `locked`.** A locked layer renders and exports like
-any other; it refuses a transform and a delete, and says so.
+any other; it refuses a transform, a move and a delete, and says so.
 
 **Assets** are immutable. An asset is written at import, before any layer
 refers to it, and is limited to 256 MB and 16384 pixels on an edge; an
