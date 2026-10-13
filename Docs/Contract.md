@@ -259,10 +259,12 @@ Reports, `CanvasReporting`:
 - `layerTransformed`: an image or PDF layer's new transform, from a drag of
   its frame; answered at once with `.accepted` or `.refused`.
 - `layerMoved`: a link or text layer's new origin, and nothing else, from a
-  drag of its frame; answered the same way. The report carries no rect and
-  no transform, so the runtime has no way to ask for a size or a rotation
-  it may not change (*A layer placed by a rect moves, and only moves*)
-  (decided R2-09).
+  drag of its selection frame; answered the same way. The report carries
+  no rect and no transform, so the frame has no way to ask for a size or a
+  rotation it may not change (*A layer placed by a rect is dragged whole;
+  its frame never resizes or rotates it*). A text box's size reaches the
+  notebook only inside its text session, in the rect `textEditingEnded`
+  carries (decided R2-09).
 - `layerDeleteRequested`: answered by an `updateComposite` that omits the
   layer, which is also what takes the selection frame down.
 - `layerLockRequested`: lock or unlock, answered by an `updateComposite`
@@ -275,7 +277,9 @@ Reports, `CanvasReporting`:
 - `retired`: the final ink, or nil for a placeholder.
 - `undoRequested`, `redoRequested`.
 - `textBoxRequested`, `textEditRequested`: the tool's style rides with the
-  first. Answered by `beginTextEditing` once the composite omits the layer.
+  first. Answered by `beginTextEditing` once the composite omits the layer,
+  or by `endTextEditing` alone when the notebook opens no session (*Every
+  layer carries `locked`*).
 - `textEditingEnded`: the whole committed value. Answered by
   `endTextEditing` once the composite has the text.
 
@@ -439,21 +443,38 @@ may do, below. The reason is the first flow: a text box or a link placed
 in the wrong spot could be neither moved nor deleted, and a text box could
 only be removed by emptying it (decided R2-09).
 
-**A layer placed by a rect moves, and only moves.** A link or a text box
-is dragged whole; its frame shows no corner handle and no rotate knob, and
-the drag's one report is `layerMoved` with the rect's new origin. The
-notebook moves the rect to that origin at the size it had, recorded as any
-layer edit is, one entry on the stack, refused for a locked layer as a
-transform is, and the composite that follows restates the rect through its
-layer list. It never rotates: its transform is the identity, which
-`validated()` requires, and a rotated rect has none. It never resizes: a
-text box resized would reflow its words, and R2-09 decided a move, not a
-reflow; a resize is a decision not taken, so the frame offers none, and
-the size is not the runtime's to change (decided R2-09; round-three call:
-text and links never rotate; critique C14; simple-data-03, policy-06).
+**A layer placed by a rect is dragged whole; its frame never resizes or
+rotates it.** A link or a text box selected with the lasso moves as one
+piece: its frame shows no corner handle and no rotate knob, and the drag's
+one report is `layerMoved` with the rect's new origin. The notebook moves
+the rect to that origin at the size it had, recorded as any layer edit is,
+one entry on the stack, refused for a locked layer as a transform is, and
+the composite that follows restates the rect through its layer list. The
+frame never rotates one: its transform is the identity, which
+`validated()` requires, and a rotated rect has none. The frame never
+resizes one: a link's rect is set when the link is placed, and a move is
+the only edit it has; a text box resized would reflow its words, and R2-09
+decided a move, not a reflow, so the frame offers no handle for it and
+`layerMoved` carries nothing it could use. A text box's place and size
+also change inside its text session, and only there: the box grows with
+the words typed into it, its own border and corner handles move and resize
+it, and the commit carries the whole rect through `textEditingEnded`,
+which the notebook stores with the words. The draft is the session's
+until it ends (*Custody*), so the size is the session's to change and
+never the frame's (decided R2-09; round-three call: text and links never
+rotate; critique C14; simple-data-03, policy-06).
 
 **Every layer carries `locked`.** A locked layer renders and exports like
-any other; it refuses a transform, a move and a delete, and says so.
+any other; it refuses a transform, a move and a delete, and says so. A
+locked text box refuses its text session too: under the text tool a tap on
+it is nothing, as a tap on a link is, and the notebook opens no session on
+a locked layer however it is asked, answering the request with
+`endTextEditing` alone, the one way a session closes, so the runtime's
+wait ends with no box up. The reason is that the session is where a text
+box's words, place and size change, and where an emptied box is removed,
+each a change the lock exists to refuse; a session that opened and refused
+them all would take typing it could not keep. The lasso's Unlock is the
+only way back, for a text box as for an image (decided R2-09).
 
 **Assets** are immutable. An asset is written at import, before any layer
 refers to it, and is limited to 256 MB and 16384 pixels on an edge; an
