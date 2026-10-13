@@ -21,6 +21,7 @@ struct LibraryView: View {
     @State private var moveRequest: MoveRequest?
     @State private var styleTarget: LibraryItem?
     @State private var isDroppingOnBack = false
+    @State private var isShowingSettings = LaunchHooks.arguments.contains("-TNShowSettings")
 
     /// The paths a move picker is open for. A sheet needs an identity, and a
     /// set of paths has none.
@@ -33,7 +34,7 @@ struct LibraryView: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: Macaron.inset) {
-            LibrarySidebar(section: Bindable(browser).section)
+            LibrarySidebar(section: Bindable(browser).section) { isShowingSettings = true }
                 .frame(width: 232)
                 .padding(.leading, Macaron.inset)
                 .padding(.top, Macaron.inset)
@@ -79,6 +80,9 @@ struct LibraryView: View {
             FolderStyleSheet(name: item.name, decoration: item.decoration) { decoration in
                 run { await browser.setDecoration(decoration, on: item) }
             }
+        }
+        .sheet(isPresented: $isShowingSettings) {
+            SettingsPanel { isShowingSettings = false }
         }
     }
 
@@ -513,17 +517,21 @@ struct LibrarySearchField: View {
 /// and entering a folder does not move the highlight.
 private struct LibrarySidebar: View {
     @Binding var section: LibrarySection
+    let openSettings: () -> Void
 
     @Environment(\.macaron) private var theme
 
     var body: some View {
-        // A shell hugs what is in it. The column is taller than three rows,
-        // so the shell sits at the top of it and the ground shows below.
+        // A shell hugs what is in it. The column is taller than its rows, so
+        // the shell sits at the top of it and the ground shows below.
         MacaronShell {
             VStack(alignment: .leading, spacing: Macaron.rowGap) {
                 row(.documents, title: "Documents", symbol: "folder.fill")
                 row(.favorites, title: "Favorites", symbol: "star.fill")
                 row(.trash, title: "Trash", symbol: "trash")
+                // Not a collection, so it is never held: it opens a panel
+                // over the library rather than showing a place in it.
+                cap(title: "Settings", symbol: "gearshape", action: openSettings)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -532,20 +540,24 @@ private struct LibrarySidebar: View {
 
     /// The band's tabs, in a column: the collection you are in is the cap
     /// that has dropped its wall, and nothing else marks it.
-    ///
-    /// The cap is composed here rather than taken from `MacaronButton`,
-    /// which hugs its word by design: three caps each as wide as their own
-    /// word read as three objects, not as one list. The label fills the
-    /// column instead, and the glyph sits in a fixed slot so the words start
-    /// on one edge.
     private func row(_ target: LibrarySection, title: String, symbol: String) -> some View {
+        cap(title: title, symbol: symbol, isHeld: section == target) { section = target }
+            .accessibilityAddTraits(section == target ? .isSelected : [])
+    }
+
+    /// Composed here rather than taken from `MacaronButton`, which hugs its
+    /// word by design: caps each as wide as their own word read as separate
+    /// objects, not as one list. The label fills the column instead, and the
+    /// glyph sits in a fixed slot so the words start on one edge.
+    private func cap(
+        title: String, symbol: String, isHeld: Bool = false, action: @escaping () -> Void
+    ) -> some View {
         Keycap(
-            fill: section == target ? theme.accent : theme.chrome,
+            fill: isHeld ? theme.accent : theme.chrome,
             size: CGSize(width: 0, height: Macaron.chip + 6),
-            isHeld: section == target
+            isHeld: isHeld,
+            action: action
         ) {
-            section = target
-        } label: {
             HStack(spacing: Macaron.columnGap) {
                 Image(systemName: symbol)
                     .font(Macaron.body(14))
@@ -555,6 +567,7 @@ private struct LibrarySidebar: View {
             }
             .padding(.horizontal, 14)
         }
-        .accessibilityAddTraits(section == target ? .isSelected : [])
+        // The word, without the glyph beside it.
+        .accessibilityLabel(title)
     }
 }

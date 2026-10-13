@@ -88,7 +88,7 @@ struct LaunchThemeTests {
     @Test("A theme argument that is no preset's id is dropped, and the preference decides")
     func unknownThemeNameFallsBack() {
         let remembered = ThemeChoice.preset(Theme.presets[1].id)
-        let unknown = ["noSuchTheme", "-TNShowThemes", Theme.presets[1].name]
+        let unknown = ["noSuchTheme", "-TNShowSettings", Theme.presets[1].name]
         withStore { themes, _ in
             for value in unknown {
                 #expect(Workspace.launchChoice(["TuberNotes", "-TNTheme", value], themes) == .system)

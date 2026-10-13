@@ -86,11 +86,6 @@ final class Workspace {
         return store.load() ?? .system
     }
 
-    /// Whether the themes panel is up. It hangs off the library chip, and
-    /// both chips that call themselves that are in different views, so the
-    /// flag is here rather than in either of them.
-    var isShowingThemes = LaunchHooks.arguments.contains("-TNShowThemes")
-
     /// Whether the seat is out. One tenant, one flag.
     var isSeatOpen = LaunchHooks.arguments.contains("-TNSeatOpen")
 

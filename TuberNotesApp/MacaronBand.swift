@@ -76,11 +76,6 @@ struct MacaronBand: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Library")
-        // The themes hang off the one chip that is about the whole app
-        // rather than about the notebook. The band's own list is fixed.
-        .contextMenu {
-            Button("Themes…") { workspace.isShowingThemes = true }
-        }
     }
 
     /// Four at most on the band itself; the rest go behind the overflow chip.

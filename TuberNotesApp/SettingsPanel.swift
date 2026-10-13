@@ -1,19 +1,21 @@
 import SwiftUI
 import TNModel
 
-/// Every theme the build has, as a wall of cards, with the system's own
-/// light and dark above them.
+/// What applies to the whole app. Today that is the theme: every theme the
+/// build has, as a wall of cards, with the system's own light and dark above
+/// them.
 ///
 /// The panel stays up after a tap: the whole app repaints under it, which is
 /// the only way to compare two themes.
-struct ThemesPanel: View {
+struct SettingsPanel: View {
     @Environment(Workspace.self) private var workspace
     let onClose: () -> Void
 
     private static let columns = 4
 
     var body: some View {
-        MacaronPanel(title: "Themes", onClose: onClose) {
+        MacaronPanel(title: "Settings", onClose: onClose) {
+            MacaronHeading(text: "Themes")
             MacaronButton(
                 title: "Follow the system",
                 icon: "circle.lefthalf.filled",
@@ -78,7 +80,7 @@ private struct ThemeCard: View {
             // The card draws in its own theme; its name is the panel's, and
             // reads in the theme the app is actually wearing.
             .environment(\.macaron, preset.theme)
-            .accessibilityAddTraits(isChosen ? [.isButton, .isSelected] : .isButton)
+            .accessibilityAddTraits(isChosen ? .isSelected : [])
             .accessibilityLabel(preset.name)
 
             Text(preset.name)
