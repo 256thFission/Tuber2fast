@@ -350,7 +350,7 @@ package struct Theme: Equatable, Sendable {
 /// What the app was told to draw in. One value: a theme and a flag saying
 /// whether it was chosen are two, and they disagree the moment one is set
 /// without the other.
-package enum ThemeChoice: Equatable, Codable, Sendable {
+package enum ThemeChoice: Hashable, Codable, Sendable {
     /// Macaron by day and Macaron Dark after dark.
     case system
     /// One preset, whatever the system says the hour is.

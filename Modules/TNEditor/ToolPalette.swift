@@ -1,12 +1,33 @@
 import Foundation
 import Observation
 import TNCore
+import TNModel
 import TNNotebook
 
 /// Which eraser the person last used. Kept across mode switches, so the
 /// eraser button restores what it was rather than a fixed default.
 package enum EraserMode: String, Sendable, Codable {
     case object, pixel
+}
+
+/// Which run of the bar's swatches: the theme choice it belongs to, and
+/// whether it is the pen's or the highlighter's.
+///
+/// The choice, not the theme it resolves to, so following the system is
+/// one run by day and after dark, and each preset picked by name is its own.
+package struct SwatchKey: Hashable, Sendable, Codable {
+    /// The pen's run is the pencil's and the text tool's too.
+    package enum Run: String, Hashable, Sendable, Codable {
+        case pen, highlighter
+    }
+
+    package let choice: ThemeChoice
+    package let run: Run
+
+    package init(_ choice: ThemeChoice, _ run: Run) {
+        self.choice = choice
+        self.run = run
+    }
 }
 
 /// The whole palette as one value, for the store.
@@ -18,8 +39,8 @@ package enum EraserMode: String, Sendable, Codable {
 /// opens on `builtIn`.
 package struct ToolPaletteRecord: Equatable, Sendable, Codable {
     package var lastKind: ToolPalette.Kind
-    /// The one place a saved record may be short of this build: a map
-    /// without a kind is still a map, and `ToolPalette.init` gives the
+    /// One of the two places a saved record may be short of this build: a
+    /// map without a kind is still a map, and `ToolPalette.init` gives the
     /// missing kind its built-in preset rather than resetting the rest.
     package var inks: [InkKind: InkPreset]
     package var eraserMode: EraserMode
@@ -28,6 +49,9 @@ package struct ToolPaletteRecord: Equatable, Sendable, Codable {
     package var text: TextPreset
     /// Which Pencil gesture does what. A trigger absent from the map is off.
     package var gestures: GestureBindings
+    /// Only the runs a person has changed. A key the map lacks is read as
+    /// its seed, so a theme joining the table adds nothing here.
+    package var swatches: [SwatchKey: [ToolColor]]
 
     package init(
         lastKind: ToolPalette.Kind,
@@ -36,7 +60,8 @@ package struct ToolPaletteRecord: Equatable, Sendable, Codable {
         pixelEraserWidth: ToolWidth,
         recentColors: [ToolColor],
         text: TextPreset,
-        gestures: GestureBindings
+        gestures: GestureBindings,
+        swatches: [SwatchKey: [ToolColor]]
     ) {
         self.lastKind = lastKind
         self.inks = inks
@@ -45,6 +70,7 @@ package struct ToolPaletteRecord: Equatable, Sendable, Codable {
         self.recentColors = recentColors
         self.text = text
         self.gestures = gestures
+        self.swatches = swatches
     }
 
     /// What a first launch opens on, and what an unreadable preference
@@ -62,7 +88,8 @@ package struct ToolPaletteRecord: Equatable, Sendable, Codable {
         text: .body,
         // Scribble ships bound: the point of a gesture is not visiting the
         // toolbar to switch it on.
-        gestures: [.scribble: .erase]
+        gestures: [.scribble: .erase],
+        swatches: [:]
     )
 }
 
@@ -78,8 +105,8 @@ package protocol ToolPaletteStore: Sendable {
 }
 
 /// What the person keeps between notebooks: a preset per ink kind, an
-/// eraser mode, the colours they have drawn with, and which kind of tool a
-/// new tab opens on.
+/// eraser mode, the colours they have drawn with, the bar's swatches, and
+/// which kind of tool a new tab opens on.
 ///
 /// One writer. Views read it and the view model calls its methods. Every
 /// field holds the attributes of a tool, never a tool, so the slots cannot
@@ -107,9 +134,7 @@ package protocol ToolPaletteStore: Sendable {
     package var pixelEraserWidth: ToolWidth { record.pixelEraserWidth }
     /// Simply the colours drawn with: most recent first, at most
     /// `recentLimit`, no duplicates. A colour becomes recent when a stroke
-    /// lands in it, not when it is picked. Whoever draws a row of swatches
-    /// out of this and the theme's own is the one responsible for not
-    /// showing the same swatch twice.
+    /// lands in it, not when it is picked.
     package var recentColors: [ToolColor] { record.recentColors }
     /// The style and alignment the text tool last typed with.
     package var text: TextPreset { record.text }
@@ -118,8 +143,7 @@ package protocol ToolPaletteStore: Sendable {
     /// binding asks for it on every stroke that lands.
     package var gestures: GestureBindings { record.gestures }
 
-    /// Eight, the length of the colour tray's recents run (decided U3). The
-    /// bar's four swatches take theirs from the front.
+    /// Eight, the length of the colour tray's recents run (decided U3).
     package static let recentLimit = 8
 
     @ObservationIgnored private let store: any ToolPaletteStore
@@ -203,6 +227,30 @@ package protocol ToolPaletteStore: Sendable {
         // is work on the report path for no change at all.
         guard recentColors.first != color else { return }
         record.recentColors = Array(([color] + recentColors.filter { $0 != color }).prefix(Self.recentLimit))
+    }
+
+    // MARK: The swatches
+
+    /// The run the bar offers under `key`, in order: the one a person left
+    /// there, or else its seed. Reading writes nothing.
+    package func swatches(for key: SwatchKey, in theme: Theme) -> [ToolColor] {
+        if let run = record.swatches[key] { return run }
+        switch key.run {
+        case .pen: return theme.palette.prefix(4).map { ToolColor(rgba: $0) }
+        case .highlighter: return ToolColor.highlighterRow
+        }
+    }
+
+    /// Replaces one swatch in the run `key` names and no other. The first
+    /// replacement under a key writes the rest of its seed with it.
+    package func replaceSwatch(at index: Int, with color: ToolColor, for key: SwatchKey, in theme: Theme) {
+        var run = swatches(for: key, in: theme)
+        TNPrecondition.require(run.indices.contains(index), "swatch \(index) of a run of \(run.count)")
+        // A seed rewritten with its own colour is a run nobody changed, and
+        // writing it would pin it against a retuned row.
+        guard run[index] != color else { return }
+        run[index] = color
+        record.swatches[key] = run
     }
 
     /// Binds a gesture, or unbinds it when `effect` is nil.

@@ -115,6 +115,7 @@ enum SnapPoint: CaseIterable {
 struct WritingBar: View {
     let editor: EditorViewModel
 
+    @Environment(Workspace.self) private var workspace
     @Environment(\.macaron) private var theme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -380,10 +381,12 @@ struct WritingBar: View {
 
     // MARK: Swatches
 
-    /// Four, always, in one run. The run is a row when the bar lies down and
-    /// a column when it stands up, and never a column inside a row.
+    /// The palette's run for the theme choice and the tool in hand, in one
+    /// run of keycaps. The run is a row when the bar lies down and a column
+    /// when it stands up, and never a column inside a row.
     @ViewBuilder private var swatches: some View {
-        ForEach(Array(fourColours.enumerated()), id: \.offset) { _, colour in
+        let key = SwatchKey(workspace.choice, editor.tool.swatchRun)
+        ForEach(Array(editor.palette.swatches(for: key, in: theme).enumerated()), id: \.offset) { _, colour in
             let isHeld = colour == editor.tool.color
             Keycap(
                 fill: colour.rgba,
@@ -402,19 +405,6 @@ struct WritingBar: View {
             }
             .accessibilityAddTraits(isHeld ? .isSelected : [])
         }
-    }
-
-    /// The colours the person actually drew with, ahead of the theme's own,
-    /// cut to four. The document fixes the count and leaves the source to
-    /// the palette and the theme that already hold them.
-    private var fourColours: [ToolColor] {
-        var seen: [ToolColor] = []
-        let offered = theme.palette.map { ToolColor(rgba: $0) }
-        for colour in editor.palette.recentColors + offered where !seen.contains(colour) {
-            seen.append(colour)
-            if seen.count == 4 { break }
-        }
-        return seen
     }
 }
 

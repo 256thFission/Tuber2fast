@@ -73,8 +73,8 @@ struct ToolPaletteTests {
 
     @Test("A record written before a kind joined the bar keeps everything it saved")
     func aNewInkKindKeepsTheSavedPalette() {
-        // The one place a saved record may be short of this build: the
-        // missing kind gets its built-in preset, and the presets and the
+        // One of the two places a saved record may be short of this build:
+        // the missing kind gets its built-in preset, and the presets and the
         // recents the person kept are not reset for it.
         let older = ToolPaletteRecord(
             lastKind: .ink(.pen),
@@ -83,7 +83,8 @@ struct ToolPaletteTests {
             pixelEraserWidth: .thin,
             recentColors: [swatch(0xC4)],
             text: .body,
-            gestures: [:]
+            gestures: [:],
+            swatches: [:]
         )
         let palette = ToolPalette(store: MemoryPaletteStore(older))
         #expect(palette.currentTool == .ink(.pen, InkPreset(color: swatch(0xC4), width: .thick)))
@@ -285,6 +286,94 @@ struct ToolPaletteTests {
         // anywhere near it.
         #expect(ToolPalette(store: store).recentColors == [swatch(0x21)])
         withExtendedLifetime((firstScratch, secondScratch)) {}
+    }
+
+    // MARK: Swatches
+
+    /// Every choice a person can make: the system's, and each preset by name.
+    private var choices: [ThemeChoice] { [.system] + Theme.presets.map { .preset($0.id) } }
+
+    @Test("An unseen key reads as its seed, the theme's first four for the pen and the fixed row for the highlighter")
+    func swatchesSeedPerChoice() throws {
+        let store = MemoryPaletteStore()
+        let palette = ToolPalette(store: store)
+        for choice in choices {
+            let theme = choice.resolve(dark: false)
+            #expect(palette.swatches(for: SwatchKey(choice, .pen), in: theme) == theme.palette.prefix(4).map { ToolColor(rgba: $0) })
+            #expect(palette.swatches(for: SwatchKey(choice, .highlighter), in: theme) == ToolColor.highlighterRow)
+        }
+        // A seed is read, never written: a theme joining the table, or a row
+        // retuned, reaches everyone who never replaced a swatch in it.
+        #expect(store.saves == 0)
+        #expect(palette.record.swatches.isEmpty)
+
+        // A fresh install follows the system, and before its first stroke
+        // the pen and the highlighter each hold a swatch.
+        let day = ThemeChoice.system.resolve(dark: false)
+        #expect(palette.swatches(for: SwatchKey(.system, .pen), in: day).contains(try #require(palette.inks[.pen]).color))
+        #expect(palette.swatches(for: SwatchKey(.system, .highlighter), in: day).contains(try #require(palette.inks[.highlighter]).color))
+    }
+
+    @Test("A replaced swatch is written under its key alone, with the rest of its seed, and survives the store")
+    func replacingASwatchPersists() throws {
+        let store = MemoryPaletteStore()
+        let palette = ToolPalette(store: store)
+        let lime = try #require(Theme.preset(ThemeID(rawValue: "lime")))
+        let key = SwatchKey(.preset(lime.id), .pen)
+        var expected = palette.swatches(for: key, in: lime.theme)
+        expected[2] = swatch(0xA1)
+
+        palette.replaceSwatch(at: 2, with: swatch(0xA1), for: key, in: lime.theme)
+
+        #expect(palette.swatches(for: key, in: lime.theme) == expected)
+        #expect(palette.record.swatches == [key: expected])
+        #expect(store.saves == 1)
+
+        // Each preset picked by name has its own run, and the highlighter's
+        // is apart from the pen's.
+        for choice in choices where choice != key.choice {
+            let theme = choice.resolve(dark: false)
+            #expect(palette.swatches(for: SwatchKey(choice, .pen), in: theme) == theme.palette.prefix(4).map { ToolColor(rgba: $0) })
+        }
+        #expect(palette.swatches(for: SwatchKey(key.choice, .highlighter), in: lime.theme) == ToolColor.highlighterRow)
+
+        // A swatch replaced with the colour it already is changes nothing,
+        // so a seed is not written down as though somebody chose it.
+        palette.replaceSwatch(at: 0, with: ToolColor.highlighterRow[0], for: SwatchKey(.system, .highlighter), in: .macaron)
+        #expect(store.saves == 1)
+        #expect(palette.record.swatches.count == 1)
+
+        // Through the encoder the defaults store uses, into a second palette.
+        let data = try PropertyListEncoder().encode(try #require(store.stored))
+        let read = try PropertyListDecoder().decode(ToolPaletteRecord.self, from: data)
+        #expect(ToolPalette(store: MemoryPaletteStore(read)).swatches(for: key, in: lime.theme) == expected)
+    }
+
+    @Test("Following the system is one run by day and after dark")
+    func systemIsOneSetDayAndNight() {
+        let palette = ToolPalette(store: MemoryPaletteStore())
+        let (day, night) = (ThemeChoice.system.resolve(dark: false), ThemeChoice.system.resolve(dark: true))
+        for run in [SwatchKey.Run.pen, .highlighter] {
+            let key = SwatchKey(.system, run)
+            #expect(palette.swatches(for: key, in: day) == palette.swatches(for: key, in: night))
+
+            palette.replaceSwatch(at: 1, with: swatch(0xB2), for: key, in: day)
+            #expect(palette.swatches(for: key, in: night)[1] == swatch(0xB2), "\(run)")
+            palette.replaceSwatch(at: 3, with: swatch(0xB3), for: key, in: night)
+            #expect(palette.swatches(for: key, in: day) == palette.swatches(for: key, in: night), "\(run)")
+        }
+    }
+
+    @Test("The highlighter's row is the same in every theme, and its built-in yellow leads it")
+    func highlighterRowIsTheSameEverywhere() throws {
+        let palette = ToolPalette(store: MemoryPaletteStore())
+        for choice in choices {
+            for dark in [false, true] {
+                #expect(palette.swatches(for: SwatchKey(choice, .highlighter), in: choice.resolve(dark: dark)) == ToolColor.highlighterRow)
+            }
+        }
+        #expect(Set(ToolColor.highlighterRow.map(\.rgba.hex)).count == 4)
+        #expect(ToolColor.highlighterRow.first == ToolPaletteRecord.builtIn.inks[.highlighter]?.color)
     }
 
     // MARK: Gesture bindings

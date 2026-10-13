@@ -49,7 +49,28 @@ struct EditorToolTests {
         // How many colours the strip offers, and whether any of them
         // repeats, is the theme's question now and `ThemeTests` holds every
         // preset to it. These two are the app's own, whichever theme is on.
-        #expect([ToolColor.black, .yellow].map(\.rgba.hex) == ["#1C1C1FFF", "#F2C200FF"])
+        #expect([ToolColor.black, .yellow].map(\.rgba.hex) == ["#141414FF", "#F2C200FF"])
+    }
+
+    @Test("The pen's built-in colour is Macaron's first, so a fresh install holds a swatch")
+    func theBuiltInPenIsMacaronsFirst() {
+        // Named here and not in `TNEditor`, which no theme may be named in.
+        // Following the system is Macaron by day and Macaron Dark after
+        // dark, and the two share one row.
+        #expect(ToolColor.black == ToolColor(rgba: Theme.macaron.palette[0]))
+        #expect(ToolColor.black == ToolColor(rgba: Theme.macaronDark.palette[0]))
+    }
+
+    @Test("The highlighter draws from its own run of swatches, and every other tool from the pen's")
+    func eachToolNamesItsSwatchRun() {
+        let preset = InkPreset(color: .black, width: .thin)
+        let rows: [(EditorTool, SwatchKey.Run)] = [
+            (.ink(.pen, preset), .pen), (.ink(.pencil, preset), .pen), (.ink(.highlighter, preset), .highlighter),
+            (.eraseObject, .pen), (.erasePixel(.thick), .pen), (.lasso, .pen), (.text(.body, .center), .pen),
+        ]
+        for (tool, run) in rows {
+            #expect(tool.swatchRun == run, "\(tool)")
+        }
     }
 
     // MARK: pkTool
@@ -190,7 +211,11 @@ struct EditorToolTests {
             pixelEraserWidth: .thick,
             recentColors: [ToolColor(rgba: RGBA8(red: 1, green: 2, blue: 3, alpha: 0xFF))],
             text: TextPreset(style: TextStyle(font: "system", size: 32, bold: false, italic: true, underline: true, color: RGBA8(red: 9, green: 8, blue: 7, alpha: 0xFF)), alignment: .trailing),
-            gestures: [.scribble: .erase]
+            gestures: [.scribble: .erase],
+            swatches: [
+                SwatchKey(.system, .pen): [.black, ToolColor(rgba: RGBA8(red: 1, green: 2, blue: 3, alpha: 0xFF))],
+                SwatchKey(.preset(ThemeID(rawValue: "lime")), .highlighter): ToolColor.highlighterRow,
+            ]
         )
         let data = try PropertyListEncoder().encode(record)
         #expect(try PropertyListDecoder().decode(ToolPaletteRecord.self, from: data) == record)

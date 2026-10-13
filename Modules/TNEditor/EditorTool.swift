@@ -78,12 +78,19 @@ package struct ToolColor: Equatable, Sendable, Codable {
         try container.encode(rgba)
     }
 
-    /// The two a fresh palette writes in, and the only drawing colours the
-    /// app names at all. Every other colour on offer is the theme's, and a
-    /// second list of shipped inks beside it would be a list to keep in
-    /// step with seven presets.
-    package static let black = ToolColor(hex: "#1C1C1FFF")
+    /// The two a fresh palette writes in. Black is Macaron's first, so a
+    /// fresh install, which follows the system, holds a swatch before its
+    /// first stroke; `EditorToolTests` ties the two, because no module the
+    /// ink passes through names a theme.
+    package static let black = ToolColor(hex: "#141414FF")
     package static let yellow = ToolColor(hex: "#F2C200FF")
+
+    /// The highlighter's swatches until a person replaces one, the same in
+    /// every theme. Beside these two, the only drawing colours the app
+    /// names: every other colour on offer is the theme's.
+    package static let highlighterRow: [ToolColor] = [
+        .yellow, ToolColor(hex: "#7ACC52FF"), ToolColor(hex: "#FF7AAEFF"), ToolColor(hex: "#5AB4F0FF"),
+    ]
 
     /// A literal spelled the way the durable form is spelled, so the two
     /// cannot drift. A literal that is not a colour is a programmer error.
@@ -213,6 +220,13 @@ package enum EditorTool: Equatable, Sendable {
     /// Text's colour is its style's, which the swatches never set.
     package var color: ToolColor? {
         if case .ink(_, let preset) = self { preset.color } else { nil }
+    }
+
+    /// Which of the palette's runs the bar's swatches are while this tool
+    /// is in hand: the highlighter's own, or the pen's, which every other
+    /// tool shares.
+    package var swatchRun: SwatchKey.Run {
+        if case .ink(.highlighter, _) = self { .highlighter } else { .pen }
     }
 
     /// Which of the palette's kinds the tool is: what the bar holds sunk,
