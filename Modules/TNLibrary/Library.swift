@@ -78,6 +78,9 @@ package final class Library {
         }
         reservations.insert(relativePath)
         defer { reservations.remove(relativePath) }
+        // Inside the reservation, so no rename, move, trash or duplicate meets
+        // the package while it is swapped.
+        do { try await store.upgradePackage(at: relativePath) } catch { return .failed(error) }
         let packageStore = PackageStore(root: store.url(of: relativePath), fileSystem: store.fileSystem)
         do {
             let notebook = try await Notebook.open(store: packageStore, schedule: schedule)

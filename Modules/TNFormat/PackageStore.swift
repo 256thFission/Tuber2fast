@@ -548,8 +548,9 @@ package enum IndexFile {
     package static func decode(_ data: Data) throws(FormatFault) -> NotebookIndex {
         let top = try Codecs.topLevelObject(of: data)
         // The version is read before any key: another version's key set is
-        // not this one's. This is the only version gate, so an index in
-        // memory is always current and save checks no version.
+        // not this one's. This is the only version gate a load passes, so an
+        // index in memory is always current and save checks no version. An
+        // older index is a step's input, never this decoder's.
         guard let version = top["formatVersion"] as? UInt32 else { throw .missingKey("formatVersion") }
         if version > NotebookIndex.currentFormatVersion { throw .newerFormat(found: version) }
         if version < NotebookIndex.currentFormatVersion { throw .olderFormat(found: version) }
@@ -572,5 +573,29 @@ package enum IndexFile {
             try Codecs.checkKeys(Set(bookmark.keys), against: DurableKeys.bookmark)
         }
         return try Codecs.decode(NotebookIndex.self, from: data)
+    }
+}
+
+/// One rung of the ladder: carries the package at the URL, a copy in
+/// Staging, from one version to the next. It reads its version's shape as
+/// its own input, and writes through the file system it is handed, so its
+/// files are staged with the barrier and published by rename as a save's
+/// are.
+package typealias MigrationStep = @Sendable (URL, any PackageFileSystem) throws -> Void
+
+extension IndexFile {
+    /// Oldest first, and the last carries `currentFormatVersion - 1` to the
+    /// current version. Empty: every version is 1.
+    package static let migrationSteps: [MigrationStep] = []
+
+    /// The steps that carry a package at `version` to the current one: none
+    /// for the current version, and a refusal for a newer one or for an
+    /// older one the ladder does not reach down to.
+    package static func steps(from version: UInt32, in ladder: [MigrationStep]) throws(FormatFault) -> ArraySlice<MigrationStep> {
+        let current = NotebookIndex.currentFormatVersion
+        if version > current { throw .newerFormat(found: version) }
+        let behind = Int(current - version)
+        guard behind <= ladder.count else { throw .olderFormat(found: version) }
+        return ladder.suffix(behind)
     }
 }

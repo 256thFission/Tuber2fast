@@ -201,14 +201,22 @@ package actor LibraryStore {
     /// What every sidecar is committed through, and what every
     /// `PackageStore` this library builds is handed, so a test can fault both.
     package nonisolated let fileSystem: any PackageFileSystem
+    /// The steps an open or a duplicate runs on an older package; a test
+    /// hands in its own.
+    private let ladder: [MigrationStep]
     private let fm = FileManager.default
     private static let folderSidecar = ".folder.json"
     private static let originSidecar = "origin.json"
     private static let favoritesKeys: Set<String> = ["formatVersion", "notebooks", "folders"]
 
-    package init(base: URL, fileSystem: any PackageFileSystem = PosixFileSystem()) throws(LibraryError) {
+    package init(
+        base: URL,
+        fileSystem: any PackageFileSystem = PosixFileSystem(),
+        ladder: [MigrationStep] = IndexFile.migrationSteps
+    ) throws(LibraryError) {
         self.base = base
         self.fileSystem = fileSystem
+        self.ladder = ladder
         for directory in [notebooksRoot, trashRoot, stagingRoot] {
             do {
                 // Complete-until-first-unlock: a background save after the
@@ -219,6 +227,16 @@ package actor LibraryStore {
                 )
             } catch {
                 throw .io("create \(directory.path): \(error)")
+            }
+        }
+        // Nothing in Staging is the only copy of anything, so what a process
+        // that died left there goes (*Staging is scratch*). A leftover that
+        // will not go costs space, not data, and is tried again next launch.
+        for name in (try? FileManager.default.contentsOfDirectory(atPath: stagingRoot.path)) ?? [] {
+            do {
+                try FileManager.default.removeItem(at: stagingRoot.appendingPathComponent(name))
+            } catch {
+                TNLog.event(.library, "Staging leftover \(name) not swept: \(error)")
             }
         }
     }
@@ -273,22 +291,20 @@ package actor LibraryStore {
         (try? fm.attributesOfItem(atPath: url.path)[.creationDate] as? Date) ?? .distantPast
     }
 
-    /// Identity and birth date in one read of the index's header, so a
-    /// listing opens each package once rather than twice, and a package at a
-    /// version this build cannot open still lists as itself.
-    private func indexFacts(ofPackageAt url: URL) -> (id: NotebookID, createdAt: Date)? {
-        guard let data = try? Data(contentsOf: PackageLayout(root: url).indexURL),
-              let header = try? IndexFile.header(data)
-        else { return nil }
-        return (header.notebookID, header.createdAt)
+    /// Version, identity and birth date in one read of the index's header, so
+    /// a listing opens each package once rather than twice, and a package at
+    /// a version this build cannot open still lists as itself.
+    private func indexHeader(ofPackageAt url: URL) -> IndexFile.Header? {
+        guard let data = try? Data(contentsOf: PackageLayout(root: url).indexURL) else { return nil }
+        return try? IndexFile.header(data)
     }
 
     private func notebookID(ofPackageAt url: URL) -> NotebookID? {
-        indexFacts(ofPackageAt: url)?.id
+        indexHeader(ofPackageAt: url)?.notebookID
     }
 
     private func item(at relativePath: String, url: URL, kind: ItemKind) -> LibraryItem {
-        let facts = kind == .notebook ? indexFacts(ofPackageAt: url) : nil
+        let header = kind == .notebook ? indexHeader(ofPackageAt: url) : nil
         // One read of the sidecar, for both the identity and the decoration:
         // the listing opened it for the identity already, so two more keys in
         // it cost nothing.
@@ -297,10 +313,10 @@ package actor LibraryStore {
             id: relativePath,
             name: Self.displayName(of: url.lastPathComponent),
             kind: kind,
-            notebookID: facts?.id,
+            notebookID: header?.notebookID,
             folderID: sidecar?.folderID,
             decoration: sidecar?.decoration,
-            createdAt: facts?.createdAt ?? createdAt(url),
+            createdAt: header?.createdAt ?? createdAt(url),
             modifiedAt: modifiedAt(url, kind: kind)
         )
     }
@@ -664,13 +680,15 @@ package actor LibraryStore {
 
     /// A copy with its own notebook identity, built in Staging and published
     /// like a new notebook. Page identities are preserved, which keeps
-    /// internal links internal.
+    /// internal links internal. The copy of an older package runs the ladder
+    /// before it takes its identity; the original stays as it was.
     package func duplicateNotebook(at relativePath: String) async throws(LibraryError) -> LibraryItem {
         let (source, kind) = try existing(relativePath)
         guard kind == .notebook else { throw .notANotebook(relativePath) }
         let staged = stagingRoot.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? fm.removeItem(at: staged) }
         do { try fm.copyItem(at: source, to: staged) } catch { throw .io("stage duplicate of \(relativePath): \(error)") }
+        try run(try migrationSteps(forPackageAt: staged), on: staged, migrating: relativePath)
         do {
             try await PackageStore(root: staged, fileSystem: fileSystem).rewriteNotebookID(NotebookID())
         } catch {
@@ -689,6 +707,60 @@ package actor LibraryStore {
         let parentPath = relativePath.contains("/") ? String(relativePath[..<relativePath.lastIndex(of: "/")!]) : ""
         let path = parentPath.isEmpty ? target.lastPathComponent : "\(parentPath)/\(target.lastPathComponent)"
         return item(at: path, url: target, kind: .notebook)
+    }
+
+    // MARK: Migration
+
+    /// Brings an older package to the current version before it opens: the
+    /// steps run on a clone in Staging, the clone is loaded whole and synced,
+    /// and one exchange swaps it in for the original (*An older notebook is
+    /// migrated on open*). A current package, and one whose index does not
+    /// read, are left to the open; a newer one is refused. Only
+    /// `Library.checkout` calls it, inside its reservation.
+    package func upgradePackage(at relativePath: String) async throws(LibraryError) {
+        let live = url(of: relativePath)
+        let steps = try migrationSteps(forPackageAt: live)
+        guard !steps.isEmpty else { return }
+        let staged = stagingRoot.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        // The clone until the exchange, the original after it.
+        defer { try? fm.removeItem(at: staged) }
+        do { try fm.copyItem(at: live, to: staged) } catch { throw .io("stage migration of \(relativePath): \(error)") }
+        try run(steps, on: staged, migrating: relativePath)
+        // Loading every page proves the steps left a package this build
+        // reads. A page it refuses is refused again on open and does not
+        // refuse the migration (*Refuse at the narrowest scope*).
+        let clone = PackageStore(root: staged, fileSystem: fileSystem)
+        do {
+            for page in try await clone.load().index.pageIDs { _ = try await clone.loadPage(page) }
+        } catch {
+            throw .format(error)
+        }
+        do {
+            for directory in PackageLayout(root: staged).directories { try fileSystem.syncDirectory(directory) }
+            try fileSystem.exchange(staged, live)
+            try fileSystem.syncDirectory(live.deletingLastPathComponent())
+        } catch {
+            throw .io("migrate \(relativePath): \(error)")
+        }
+        TNLog.event(.library, "migrated \(relativePath) by \(steps.count) steps")
+    }
+
+    /// None when the package is current or its index does not read, which
+    /// the load that follows refuses with its own fault.
+    private func migrationSteps(forPackageAt url: URL) throws(LibraryError) -> ArraySlice<MigrationStep> {
+        guard let header = indexHeader(ofPackageAt: url) else { return [] }
+        do { return try IndexFile.steps(from: header.formatVersion, in: ladder) } catch { throw .format(error) }
+    }
+
+    /// Runs `steps` on `staged`, a copy in Staging and never a live package.
+    private func run(_ steps: ArraySlice<MigrationStep>, on staged: URL, migrating relativePath: String) throws(LibraryError) {
+        do {
+            for step in steps { try step(staged, fileSystem) }
+        } catch let fault as FormatFault {
+            throw .format(fault)
+        } catch {
+            throw .io("migrate \(relativePath): \(error)")
+        }
     }
 
     // MARK: Identity index

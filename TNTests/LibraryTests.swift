@@ -7,12 +7,23 @@ import Testing
 @testable import TNModel
 @testable import TNNotebook
 
+/// The tests' one rung: the version before the current one wrote the
+/// current index plus a `title` key, which strict decoding refuses. The step
+/// drops the key and writes the current version through the save seam.
+let oneStepUp: MigrationStep = { root, fileSystem in
+    let indexURL = root.appendingPathComponent("notebook.json")
+    var object = try jsonObject(fileSystem.read(indexURL))
+    object.removeValue(forKey: "title")
+    object["formatVersion"] = NotebookIndex.currentFormatVersion
+    try fileSystem.writeAtomically(jsonData(object), to: indexURL, syncing: root)
+}
+
 @Suite("Library: the tree, the trash, the ledger")
 @MainActor
 struct LibraryTests {
-    func makeLibrary(_ name: String) throws -> (Scratch, Library) {
+    func makeLibrary(_ name: String, ladder: [MigrationStep] = IndexFile.migrationSteps) throws -> (Scratch, Library) {
         let scratch = try Scratch(name)
-        let store = try LibraryStore(base: scratch.root)
+        let store = try LibraryStore(base: scratch.root, ladder: ladder)
         return (scratch, Library(store: store))
     }
 
@@ -627,5 +638,167 @@ struct LibraryTests {
             let places = live + trashed
             #expect(places.count == 1 && ends.contains(places[0]), "\(landing), sync \(nth): \(places)")
         }
+    }
+
+    // MARK: The ladder
+
+    /// Rewrites the package's index in the shape `oneStepUp` reads.
+    func writeOlderVersion(of item: TNLibrary.LibraryItem, in library: Library) throws {
+        let indexURL = PackageLayout(root: library.store.url(of: item.relativePath)).indexURL
+        var object = try jsonObject(Data(contentsOf: indexURL))
+        object["formatVersion"] = NotebookIndex.currentFormatVersion - 1
+        object["title"] = "Physics"
+        try jsonData(object).write(to: indexURL)
+    }
+
+    /// Every file under `root`, by its path inside it.
+    func files(under root: URL) throws -> [String: Data] {
+        var found: [String: Data] = [:]
+        for path in try FileManager.default.subpathsOfDirectory(atPath: root.path) {
+            let url = root.appendingPathComponent(path)
+            var isDirectory: ObjCBool = false
+            if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory), !isDirectory.boolValue {
+                found[path] = try Data(contentsOf: url)
+            }
+        }
+        return found
+    }
+
+    func formatVersion(of item: TNLibrary.LibraryItem, in library: Library) throws -> Int? {
+        try jsonObject(Data(contentsOf: PackageLayout(root: library.store.url(of: item.relativePath)).indexURL))["formatVersion"] as? Int
+    }
+
+    func stagingIsEmpty(_ library: Library) throws -> Bool {
+        try FileManager.default.contentsOfDirectory(atPath: library.store.stagingRoot.path).isEmpty
+    }
+
+    @Test("An older notebook is migrated on open: it opens with its identity and ink, and its index on disk is current")
+    func olderPackageMigratesOnOpen() async throws {
+        let (scratch, library) = try makeLibrary("lib-migrate", ladder: [oneStepUp])
+        defer { withExtendedLifetime(scratch) {} }
+        let item = try await library.store.createNotebook(named: "Physics", in: "")
+        guard case .opened(let written) = await library.checkout(item.relativePath, schedule: fast) else { Issue.record("open failed"); return }
+        let page = written.pageIDs[0]
+        written.windowChanged(to: [page])
+        try await waitUntil { written.state(of: page)?.content != nil }
+        written.inkChanged(on: page, Ink.drawing(strokes: 4), echoOf: nil)
+        #expect(await library.release(item.relativePath) == .clean)
+        try writeOlderVersion(of: item, in: library)
+        await #expect(throws: FormatFault.olderFormat(found: NotebookIndex.currentFormatVersion - 1)) {
+            try await PackageStore(root: library.store.url(of: item.relativePath)).load()
+        }
+
+        guard case .opened(let migrated) = await library.checkout(item.relativePath, schedule: fast) else {
+            Issue.record("an older notebook must open")
+            return
+        }
+        #expect(migrated.notebookID == item.notebookID)
+        #expect(await library.release(item.relativePath) == .clean)
+        let index = try jsonObject(Data(contentsOf: PackageLayout(root: library.store.url(of: item.relativePath)).indexURL))
+        #expect(index["formatVersion"] as? Int == Int(NotebookIndex.currentFormatVersion))
+        #expect(index["title"] == nil)
+        let bytes = try await PackageStore(root: library.store.url(of: item.relativePath)).loadPage(page)
+        #expect(bytes.faults.isEmpty)
+        #expect(try PKDrawing(data: try #require(bytes.inkArchive)).strokes.count == 4)
+        #expect(try stagingIsEmpty(library))
+    }
+
+    @Test("A migration failing at any stage, publish, sync or exchange, or in its step, refuses the open and leaves the original")
+    func aFaultAtEachPhaseLeavesTheOriginal() async throws {
+        let dry = FaultingFileSystem(faults: [])
+        do {
+            let (scratch, library) = try makeLibrary("lib-migrate-dry")
+            defer { withExtendedLifetime(scratch) {} }
+            let item = try await library.store.createNotebook(named: "Physics", in: "")
+            try writeOlderVersion(of: item, in: library)
+            try await LibraryStore(base: scratch.root, fileSystem: dry, ladder: [oneStepUp]).upgradePackage(at: item.relativePath)
+        }
+        let counts = dry.counts
+        #expect(counts.stages == 1 && counts.publishes == 1 && counts.exchanges == 1)
+        let faults: [FaultingFileSystem.Fault] = [.failStage(nth: 1), .failPublish(nth: 1), .failExchange(nth: 1)]
+            + (1...counts.syncs).map { .failSync(nth: $0) }
+        let cases: [(name: String, faults: [FaultingFileSystem.Fault], ladder: [MigrationStep])] = faults.map { ("\($0)", [$0], [oneStepUp]) } + [
+            ("a step that throws", [], [{ _, _ in throw FormatFault.corruptJSON("the step's own fault") }]),
+            ("a step that breaks the index", [], [{ root, fileSystem in
+                try fileSystem.writeAtomically(Data("{".utf8), to: root.appendingPathComponent("notebook.json"), syncing: root)
+            }]),
+        ]
+        for (name, faults, ladder) in cases {
+            let (scratch, library) = try makeLibrary("lib-migrate-fault")
+            defer { withExtendedLifetime(scratch) {} }
+            let item = try await library.store.createNotebook(named: "Physics", in: "")
+            try writeOlderVersion(of: item, in: library)
+            let live = library.store.url(of: item.relativePath)
+            let original = try files(under: live)
+
+            let faulting = Library(store: try LibraryStore(base: scratch.root, fileSystem: FaultingFileSystem(faults: faults), ladder: ladder))
+            let outcome = await faulting.checkout(item.relativePath)
+            guard case .failed(let error) = outcome else { Issue.record("\(name): the open must be refused, got \(outcome)"); continue }
+            if name == "a step that throws" { #expect(error == .format(.corruptJSON("the step's own fault"))) }
+            // Only the sync after the exchange meets the package already swapped.
+            if faults == [.failSync(nth: counts.syncs)] {
+                #expect(try formatVersion(of: item, in: library) == Int(NotebookIndex.currentFormatVersion), "\(name)")
+            } else {
+                #expect(try files(under: live) == original, "\(name)")
+            }
+            _ = try LibraryStore(base: scratch.root)
+            #expect(try stagingIsEmpty(library), "\(name)")
+        }
+    }
+
+    @Test("Staging is swept when the store starts, and nothing listed goes with it")
+    func stagingIsSweptAtLaunch() async throws {
+        let (scratch, library) = try makeLibrary("lib-sweep")
+        defer { withExtendedLifetime(scratch) {} }
+        let item = try await library.store.createNotebook(named: "Physics", in: "")
+        // What a process that died mid-duplicate or mid-migration leaves: a
+        // whole package, and a loose staged file.
+        let staging = library.store.stagingRoot
+        try FileManager.default.copyItem(at: library.store.url(of: item.relativePath), to: staging.appendingPathComponent(UUID().uuidString))
+        try Data("torn".utf8).write(to: staging.appendingPathComponent("tmp-loose"))
+        #expect(try !stagingIsEmpty(library))
+
+        let restarted = try LibraryStore(base: scratch.root)
+        #expect(try stagingIsEmpty(library))
+        #expect(try await restarted.list(folder: "").map(\.notebookID) == [item.notebookID])
+    }
+
+    @Test("A newer notebook is refused by its version, on open and on duplicate, and is left byte for byte")
+    func newerPackageIsRefusedUntouched() async throws {
+        let (scratch, library) = try makeLibrary("lib-migrate-newer", ladder: [oneStepUp])
+        defer { withExtendedLifetime(scratch) {} }
+        let item = try await library.store.createNotebook(named: "Physics", in: "")
+        let live = library.store.url(of: item.relativePath)
+        let indexURL = PackageLayout(root: live).indexURL
+        var object = try jsonObject(Data(contentsOf: indexURL))
+        let newer = NotebookIndex.currentFormatVersion + 1
+        object["formatVersion"] = newer
+        try jsonData(object).write(to: indexURL)
+        let original = try files(under: live)
+
+        guard case .failed(.format(.newerFormat(found: newer))) = await library.checkout(item.relativePath) else {
+            Issue.record("a newer notebook must refuse by its version")
+            return
+        }
+        await #expect(throws: LibraryError.format(.newerFormat(found: newer))) { try await library.duplicateNotebook(at: item.relativePath) }
+        #expect(try files(under: live) == original)
+        #expect(try await library.store.list(folder: "").map(\.relativePath) == [item.relativePath])
+        #expect(try stagingIsEmpty(library))
+    }
+
+    @Test("Duplicating an older notebook migrates the copy, and the original stays at its version")
+    func duplicateOfAnOlderPackageMigratesTheCopy() async throws {
+        let (scratch, library) = try makeLibrary("lib-migrate-duplicate", ladder: [oneStepUp])
+        defer { withExtendedLifetime(scratch) {} }
+        let item = try await library.store.createNotebook(named: "Physics", in: "")
+        try writeOlderVersion(of: item, in: library)
+        let original = try files(under: library.store.url(of: item.relativePath))
+
+        let copy = try await library.duplicateNotebook(at: item.relativePath)
+        let loaded = try await PackageStore(root: library.store.url(of: copy.relativePath)).load()
+        #expect(loaded.index.notebookID != item.notebookID)
+        #expect(try formatVersion(of: copy, in: library) == Int(NotebookIndex.currentFormatVersion))
+        #expect(try files(under: library.store.url(of: item.relativePath)) == original)
+        #expect(try stagingIsEmpty(library))
     }
 }

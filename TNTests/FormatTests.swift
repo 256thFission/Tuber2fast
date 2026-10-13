@@ -126,13 +126,24 @@ struct StrictDecode {
         #expect(throws: FormatFault.newerFormat(found: newer)) { try IndexFile.decode(try jsonData(object)) }
     }
 
-    @Test("An older version refuses by its number before any key, until a migration step exists")
+    @Test("The decoder refuses an older version by its number before any key: only a step reads that shape")
     func olderVersionIsRefusedBeforeTheLadder() throws {
         let older = NotebookIndex.currentFormatVersion - 1
         var object = try jsonObject(try Codecs.encode(Fixture.index(pages: 1)))
         object["formatVersion"] = older
         object.removeValue(forKey: "bookmarks")
         #expect(throws: FormatFault.olderFormat(found: older)) { try IndexFile.decode(try jsonData(object)) }
+    }
+
+    @Test("The ladder ships empty, and carries a version only from as far down as it holds steps")
+    func ladderReach() throws {
+        #expect(IndexFile.migrationSteps.isEmpty)
+        let current = NotebookIndex.currentFormatVersion
+        let step: MigrationStep = { _, _ in }
+        #expect(try IndexFile.steps(from: current, in: [step]).isEmpty)
+        #expect(try IndexFile.steps(from: current - 1, in: [step]).count == 1)
+        #expect(throws: FormatFault.olderFormat(found: current - 1)) { try IndexFile.steps(from: current - 1, in: IndexFile.migrationSteps) }
+        #expect(throws: FormatFault.newerFormat(found: current + 1)) { try IndexFile.steps(from: current + 1, in: [step]) }
     }
 
     @Test("An unknown paper refuses the page only")
@@ -543,6 +554,29 @@ struct StoreTests {
         try fs.publishExclusive(staged, to: free)
         #expect(!fs.exists(staged))
         #expect(try fs.read(free.appendingPathComponent("a")) == Data("new".utf8))
+    }
+
+    @Test("An exchange swaps two directories under different parents whole, and with one side missing moves nothing")
+    func exchangeSwapsTwoDirectories() throws {
+        let scratch = try Scratch("exchange")
+        let fs = PosixFileSystem()
+        func directory(_ path: String, holding contents: String) throws -> URL {
+            let url = scratch.root.appendingPathComponent(path, isDirectory: true)
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+            try fs.writeAtomically(Data(contents.utf8), to: url.appendingPathComponent("a"), syncing: nil)
+            return url
+        }
+        let live = try directory("Notebooks/Physics.tubernotes", holding: "old")
+        let staged = try directory("Staging/clone", holding: "new")
+
+        try fs.exchange(staged, live)
+        #expect(try fs.read(live.appendingPathComponent("a")) == Data("new".utf8))
+        #expect(try fs.read(staged.appendingPathComponent("a")) == Data("old".utf8))
+
+        let missing = scratch.root.appendingPathComponent("Staging/missing", isDirectory: true)
+        #expect(throws: FileSystemError(.rename, live.path, code: ENOENT)) { try fs.exchange(missing, live) }
+        #expect(try fs.read(live.appendingPathComponent("a")) == Data("new".utf8))
+        #expect(!fs.exists(missing))
     }
 
     @Test("Duplicate's rewrite changes the notebook identity everywhere and keeps page identities")

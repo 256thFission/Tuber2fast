@@ -24,6 +24,10 @@ package protocol PackageFileSystem: Sendable {
     /// takes a name nothing holds, or fails with `EEXIST` and moves nothing.
     /// `publish` would replace an empty directory there.
     func publishExclusive(_ staged: URL, to final: URL) throws
+    /// `renamex_np(a, b, RENAME_SWAP)`: two entries that both exist, files or
+    /// whole directories on one volume, trade names in one atomic step, so
+    /// neither name is ever empty.
+    func exchange(_ a: URL, _ b: URL) throws
     /// `fsync` on the directory so the renames it holds are durable.
     func syncDirectory(_ url: URL) throws
     func read(_ url: URL) throws -> Data
@@ -136,6 +140,12 @@ package struct PosixFileSystem: PackageFileSystem {
         }
     }
 
+    package func exchange(_ a: URL, _ b: URL) throws {
+        if renamex_np(a.path, b.path, UInt32(RENAME_SWAP)) != 0 {
+            throw FileSystemError(.rename, b.path, code: errno)
+        }
+    }
+
     package func syncDirectory(_ url: URL) throws {
         let path = url.path
         let fd = Darwin.open(path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
@@ -230,6 +240,8 @@ package final class FaultingFileSystem: PackageFileSystem {
         case discardAfterPublish(nth: Int)
         /// The Nth `syncDirectory` throws.
         case failSync(nth: Int)
+        /// The Nth `exchange` throws and swaps nothing.
+        case failExchange(nth: Int)
         /// The volume reports no free space.
         case noSpace
     }
@@ -238,6 +250,7 @@ package final class FaultingFileSystem: PackageFileSystem {
         package var stages = 0
         package var publishes = 0
         package var syncs = 0
+        package var exchanges = 0
     }
 
     private let base: any PackageFileSystem
@@ -304,6 +317,15 @@ package final class FaultingFileSystem: PackageFileSystem {
         }
         if faults.contains(.failPublish(nth: nth)) { throw InjectedFault(fault: .failPublish(nth: nth)) }
         try base.publishExclusive(staged, to: final)
+    }
+
+    package func exchange(_ a: URL, _ b: URL) throws {
+        let (nth, faults) = state.withLock { s -> (Int, [Fault]) in
+            s.counts.exchanges += 1
+            return (s.counts.exchanges, s.faults)
+        }
+        if faults.contains(.failExchange(nth: nth)) { throw InjectedFault(fault: .failExchange(nth: nth)) }
+        try base.exchange(a, b)
     }
 
     package func syncDirectory(_ url: URL) throws {
