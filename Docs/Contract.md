@@ -64,7 +64,7 @@ Each piece of state has one owner, and the owner holds the value.
 | The tool in hand, and the text style typed with | `EditorViewModel`, per tab | in memory; the runtime is told and keeps a copy for canvases built later; a canvas with a tool use open takes the new tool when the use ends |
 | The theme | `Workspace` | in memory, resolved from the choice and the system's appearance; each editor is told and tells its runtime with the tool, and the runtime is built with one, so it never lacks one, and keeps a copy for canvases built later |
 | The theme choice: the system's own light and dark, or one preset | `Workspace` | `UserDefaults`, through `PreferenceDefaults` |
-| Tool presets, the text style last typed with, colour recents, gesture bindings, the last-used tool | `ToolPalette` | `UserDefaults`, through `PreferenceDefaults`, as one record; never in the package |
+| Tool presets, the text style last typed with, colour recents, gesture bindings, the last-used tool, and the bar's swatches: a run per theme choice for the pen, and one per theme choice for the highlighter | `ToolPalette` | `UserDefaults`, through `PreferenceDefaults`, as one record; never in the package; a run nobody has changed is not in the record and is read as its seed |
 | How the library is listed: grid or list, the sort, and the setup the last new notebook was made with | `LibraryBrowser` | `UserDefaults`, through `PreferenceDefaults` |
 | The drawing during a stroke | `PKCanvasView` | until its commit lands, or its use is ended without one |
 | The draft of a text box being edited | `PageCanvasController` | until the session ends |
@@ -128,14 +128,48 @@ that disagrees with itself about which tool is in hand. A preference
 carries no version and no ladder, so adding a field to a record costs
 every saved record once: it reads as unreadable, and the next launch opens
 on the built-in. That is a tap, and nothing more, because a preference is
-never notebook or library state. The one entry a saved preference may lack
-is in the palette's map from ink kind to preset: a map short of a kind
-this build has is not an unreadable record, since a map with one entry
-fewer is a map, so the palette keeps every slot the map holds and gives
-the missing kind its built-in preset. The reason is the bar's open set of
-tools: a kind joining it must not reset the presets and the recents a
-person keeps (decided R2, R3, W3; thermo-app-01, format-08, ext-02,
-thermo-app-03, thermo-app-11, contract-12, docs-05).
+never notebook or library state. The entries a saved preference may lack
+are in the palette's two maps, from ink kind to preset and from a swatch
+key to its run (*The swatches are the palette's*): a map short of a kind
+this build has, or of a key no swatch was ever replaced under, is not an
+unreadable record, since a map with one entry fewer is a map, so the
+palette keeps every entry the map holds, gives the missing kind its
+built-in preset, and reads the missing run as its seed. The reason is the
+bar's open set of tools and the preset table's open set of themes: a kind
+or a theme joining must not reset the presets, the swatches and the
+recents a person keeps (decided R2, R3, W3, U2; thermo-app-01, format-08,
+ext-02, ext-03, thermo-app-03, thermo-app-11, contract-12, docs-05).
+
+**The swatches are the palette's: one run per theme choice for the pen,
+and one for the highlighter.** The palette keeps a map from a key, the
+theme choice and whether the run is the pen's or the highlighter's, to an
+ordered run of colours, and the bar shows the run its key names, in order,
+deriving nothing. The pen, the pencil and the text tool draw from the
+pen's run; the highlighter draws from its own, because a highlight is a
+wash over writing and the theme's row is colours a line of handwriting
+can be read in. The key is the choice, not the theme it resolves to: the
+system choice is one key, so one run serves by day and after dark, since
+Macaron and Macaron Dark share one row of colours by construction, and
+each preset picked by name is a key of its own. A run the map lacks is
+read as its seed, and the read writes nothing: the pen's seed is the first
+four of the resolved theme's own row, and the highlighter's is one fixed
+row of four that `TNEditor` holds and that is the same in every theme.
+The built-in record's map is empty, so a fresh install reads every run as
+its seed, and the built-in palette writes in a colour each seed offers,
+the pen in the first of Macaron's row and the highlighter in one of the
+fixed row, so a fresh install holds a swatch before the first stroke.
+`TNEditor` is a module the ink passes through and names no theme, so a
+test ties the pen's built-in colour to Macaron's first, not a reference.
+A swatch is replaced in the run its key names and in no other, and that
+replacement is the first write under its key, carrying the rest of the
+seed with it, so the map holds only runs a person has changed: a theme
+joining the preset table adds nothing to the preference, and a row
+retuned in a later build reaches everyone who never replaced a swatch in
+it. The reason the bar derives nothing is what it derived before: four
+colours from the recents ahead of the theme's row, which put the same
+black on the bar twice after the first stroke and, on a fresh install,
+held no swatch at all (decided U2, R2-04, R2-05; theme-05, ext-03,
+arch-app-09, policy-05, thermo-app-03).
 
 ## The seam
 
