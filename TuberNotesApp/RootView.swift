@@ -94,20 +94,12 @@ private struct TabBar: View {
         Button {
             workspace.showLibrary()
         } label: {
-            HStack(spacing: Macaron.rowGap) {
-                Image(systemName: "books.vertical").font(Macaron.body(14))
-                Text("Library").font(Macaron.title(14))
-            }
-            .foregroundStyle(theme.outline(of: theme.chrome).color)
-            .padding(.horizontal, Macaron.shellPadding)
-            .frame(height: Macaron.chip)
-            .background {
-                RoundedRectangle(cornerRadius: Macaron.chipRadius, style: .continuous)
-                    .fill(theme.chrome.color)
-            }
-            .overlay {
-                RoundedRectangle(cornerRadius: Macaron.chipRadius, style: .continuous)
-                    .strokeBorder(theme.outline(of: theme.chrome).color, lineWidth: Macaron.line)
+            FlatChip(width: nil) {
+                HStack(spacing: Macaron.rowGap) {
+                    Image(systemName: "books.vertical").font(Macaron.body(.label))
+                    Text("Library").font(Macaron.title(.label))
+                }
+                .padding(.horizontal, Macaron.shellPadding)
             }
         }
         .buttonStyle(.plain)
@@ -115,8 +107,7 @@ private struct TabBar: View {
 }
 
 /// The band's tabs, in the bar the library keeps: keycaps, and the active
-/// one is sunk. The close cap stands beside the name rather than inside it,
-/// because a cap holds one press and this chip answers two.
+/// one is sunk. Unlike the band's, each one closes.
 private struct TabChip: View {
     @Environment(Workspace.self) private var workspace
     @Environment(\.macaron) private var theme
@@ -137,11 +128,11 @@ private struct TabChip: View {
         } label: {
             HStack(spacing: Macaron.rowGap) {
                 Text(tab.name)
-                    .font(Macaron.title(14))
+                    .font(Macaron.title(.label))
                     .lineLimit(1)
 
                 Image(systemName: "xmark")
-                    .font(Macaron.body(13))
+                    .font(Macaron.body(.text))
                     .frame(width: Macaron.chip - Macaron.shellPadding, height: Macaron.chip)
                     .contentShape(.rect)
                     .onTapGesture {
@@ -154,7 +145,7 @@ private struct TabChip: View {
             .padding(.leading, Macaron.shellPadding)
             .padding(.trailing, Macaron.chipWall)
         }
-        .accessibilityAddTraits(isActive ? [.isButton, .isSelected] : .isButton)
+        .accessibilityAddTraits(isActive ? .isSelected : [])
         .accessibilityLabel(tab.name)
         // The cap folds its label into one element, glyph included, and a
         // gesture brings no action with it. Without this, VoiceOver has no
@@ -181,7 +172,7 @@ private struct BannerView: View {
     var body: some View {
         HStack(alignment: .center, spacing: Macaron.columnGap) {
             Text(message)
-                .font(Macaron.body(14))
+                .font(Macaron.body(.label))
                 .foregroundStyle(theme.outline(of: theme.chrome).color)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -192,13 +183,9 @@ private struct BannerView: View {
                 }
             }
 
-            Keycap(fill: theme.chrome, size: CGSize(width: Macaron.chip, height: Macaron.chip)) {
+            Keycap("Dismiss", systemImage: "xmark", symbolSize: .text, fill: theme.chrome) {
                 workspace.dismissBanner()
-            } label: {
-                Image(systemName: "xmark").font(Macaron.body(13))
             }
-            .accessibilityAddTraits(.isButton)
-            .accessibilityLabel("Dismiss")
         }
         .padding(Macaron.shellPadding)
         .background { shape.fill(theme.chrome.color) }
