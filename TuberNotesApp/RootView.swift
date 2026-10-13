@@ -166,6 +166,12 @@ private struct TabChip: View {
         }
         .accessibilityAddTraits(isActive ? [.isButton, .isSelected] : .isButton)
         .accessibilityLabel(tab.name)
+        // The cap folds its label into one element, glyph included, and a
+        // gesture brings no action with it. Without this, VoiceOver has no
+        // way to close a tab.
+        .accessibilityAction(named: Text("Close \(tab.name)")) {
+            Task { await workspace.close(tabID: tab.id) }
+        }
     }
 }
 
