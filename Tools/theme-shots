@@ -1,0 +1,159 @@
+#!/bin/bash
+# The theme screenshots, and one contact sheet that groups them by the
+# verdicts they are for.
+#
+#   Tools/theme-shots [out-dir]       default out-dir: Artifacts/shots
+#
+# Builds Debug, installs it fresh on the TN-verify clone (TN_SHOTS_SIMULATOR
+# names another clone), and takes each shot as its own launch with the
+# LaunchScene arguments: no taps. Every preset and the System choice are shot
+# in light, System again in dark, and the Insert dialog, which the system
+# draws, in dark twice: System on a dark iPad, and a dark preset picked by
+# name on a light one. Shots land at <out-dir>/<appearance>/<theme>/<scene>.png
+# and the sheet at <out-dir>/contact-sheet.html.
+#
+# A launch that fails, or an app that is gone by the time of its shot, stops
+# the run. The sheet is evidence for a person's verdict, not a verdict.
+
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT"
+
+SIMULATOR="${TN_SHOTS_SIMULATOR:-TN-verify}"
+OUT="${1:-Artifacts/shots}"
+BUILD="Artifacts/theme-shots-build"
+DARK_PRESET=macaronDark
+
+if [ "$SIMULATOR" = "$(< Tools/pinned-simulator)" ]; then
+  echo "theme-shots: $SIMULATOR is the pinned simulator; use a clone" >&2
+  exit 1
+fi
+
+UDID=$(xcrun simctl list devices -j | python3 -I -c '
+import json, sys
+name = sys.argv[1]
+devices = json.load(sys.stdin)["devices"]
+print(next((d["udid"] for ds in devices.values() for d in ds if d["name"] == name), ""))
+' "$SIMULATOR")
+if [ -z "$UDID" ]; then
+  echo "theme-shots: no simulator named $SIMULATOR" >&2
+  exit 1
+fi
+
+# The preset table is the one list of themes.
+THEMES="system $(sed -nE 's/.*ThemePreset\(id: ThemeID\(rawValue: "([^"]+)"\).*/\1/p' Modules/TNModel/Theme.swift)"
+
+# scene|arguments, one shot per row per theme.
+SCENES="library-grid|-TNSeed -TNLibrary documents -TNLayout grid
+library-list|-TNSeed -TNLibrary documents -TNLayout list
+editor|-TNSeed -TNEditor -TNSeatOpen
+settings|-TNSeed -TNSheet settings
+tray|-TNSeed -TNTray
+export|-TNSeed -TNSheet export"
+INSERT="-TNSeed -TNDialog insert"
+
+xcodegen generate --quiet
+xcodebuild build -quiet -project TuberNotes.xcodeproj -scheme TuberNotes -configuration Debug \
+  -destination "platform=iOS Simulator,id=$UDID" -derivedDataPath "$BUILD"
+APP="$BUILD/Build/Products/Debug-iphonesimulator/TuberNotes.app"
+BUNDLE=$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$APP/Info.plist")
+
+xcrun simctl boot "$UDID" 2>/dev/null || true
+xcrun simctl bootstatus "$UDID" -b >/dev/null
+xcrun simctl uninstall "$UDID" "$BUNDLE"
+xcrun simctl install "$UDID" "$APP"
+xcrun simctl status_bar "$UDID" override --time 9:41 --batteryState charged --batteryLevel 100 --wifiBars 3
+rm -rf "$OUT"
+
+# The first launch builds the seeded library; every later one finds it made.
+WAIT=12
+
+shoot() { # appearance theme scene arguments...
+  local appearance=$1 theme=$2 scene=$3
+  shift 3
+  local file="$OUT/$appearance/$theme/$scene.png"
+  mkdir -p "$(dirname "$file")"
+  xcrun simctl ui "$UDID" appearance "$appearance"
+  xcrun simctl terminate "$UDID" "$BUNDLE" 2>/dev/null || true
+  xcrun simctl launch "$UDID" "$BUNDLE" -TNTheme "$theme" "$@" >/dev/null
+  sleep "$WAIT"
+  WAIT=5
+  local running
+  running=$(xcrun simctl spawn "$UDID" launchctl list)
+  if ! grep -q "UIKitApplication:$BUNDLE" <<< "$running"; then
+    echo "theme-shots: the app was gone before $file" >&2
+    exit 1
+  fi
+  xcrun simctl io "$UDID" screenshot "$file" >/dev/null 2>&1
+  echo "$file"
+}
+
+for theme in $THEMES; do
+  while IFS='|' read -r scene arguments; do
+    shoot light "$theme" "$scene" $arguments
+  done <<< "$SCENES"
+done
+while IFS='|' read -r scene arguments; do
+  shoot dark system "$scene" $arguments
+done <<< "$SCENES"
+shoot dark system insert $INSERT
+shoot light "$DARK_PRESET" insert $INSERT
+xcrun simctl terminate "$UDID" "$BUNDLE" 2>/dev/null || true
+xcrun simctl ui "$UDID" appearance light
+xcrun simctl status_bar "$UDID" clear
+
+cp TuberNotesApp/Assets.xcassets/AppIcon.appiconset/AppIcon.png "$OUT/AppIcon.png"
+
+# The sheet: one section per verdict the final checklist asks for.
+figure() { # path caption
+  [ -f "$OUT/$1" ] || { echo "theme-shots: missing $1" >&2; exit 1; }
+  printf '<figure><img src="%s" loading="lazy"><figcaption>%s</figcaption></figure>\n' "$1" "$2"
+}
+section() { # title note
+  printf '<section><h2>%s</h2><p>%s</p><div class="grid">\n' "$1" "$2"
+}
+end() { echo '</div></section>'; }
+{
+  cat <<'HEAD'
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Theme shots</title>
+<style>
+  body { font: 15px/1.4 -apple-system, sans-serif; margin: 24px; background: #f4f4f2; color: #222; }
+  h2 { margin: 40px 0 4px; }
+  p { margin: 0 0 12px; color: #555; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
+  figure { margin: 0; }
+  img { width: 100%; border: 1px solid #ccc; background: #fff; }
+  figcaption { font-size: 13px; color: #555; }
+</style>
+<h1>Theme shots</h1>
+HEAD
+  section "T2: the Lime palette" "The lime on the chrome, and a paler ground. Macaron's shots sit first, to compare."
+  for scene in library-grid editor tray; do
+    figure "light/macaron/$scene.png" "macaron, $scene"
+    figure "light/lime/$scene.png" "lime, $scene"
+  done
+  end
+  section "The New Notebook tile" "The first cell of the grid, in every theme."
+  for theme in $THEMES; do figure "light/$theme/library-grid.png" "$theme, light"; done
+  figure "dark/system/library-grid.png" "system, dark"
+  end
+  section "The folder walls" "Eight coloured folders and an undecorated one, in the grid and the list."
+  for theme in $THEMES; do
+    figure "light/$theme/library-grid.png" "$theme, grid"
+    figure "light/$theme/library-list.png" "$theme, list"
+  done
+  end
+  section "The placeholder icon" "AppIcon.png, at 1024 pixels."
+  figure "AppIcon.png" "AppIcon.png"
+  end
+  section "System-drawn chrome in dark" "System on a dark iPad, and the Insert dialog under $DARK_PRESET on a light one."
+  while IFS='|' read -r scene _; do figure "dark/system/$scene.png" "system, dark, $scene"; done <<< "$SCENES"
+  figure "dark/system/insert.png" "system, dark iPad, insert"
+  figure "light/$DARK_PRESET/insert.png" "$DARK_PRESET, light iPad, insert"
+  end
+} > "$OUT/contact-sheet.html"
+echo "$OUT/contact-sheet.html"

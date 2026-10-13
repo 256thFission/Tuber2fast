@@ -137,20 +137,20 @@ struct LaunchSceneTests {
         let scene = LaunchScene(["TuberNotes"])
         #expect(scene == LaunchScene([]))
         #expect(scene.sheet == nil && scene.section == nil && scene.layout == nil && scene.dialog == nil)
-        #expect(!scene.tray && !scene.seed && !scene.opensEditor)
+        #expect(!scene.tray && !scene.seed && !scene.editor && !scene.opensEditor)
     }
 
     @Test("Each hook takes its value, and the flags stand alone")
     func everyHook() {
         let scene = LaunchScene([
             "TuberNotes", "-TNSeed", "-TNSheet", "export", "-TNLibrary", "trash",
-            "-TNLayout", "list", "-TNDialog", "insert", "-TNTray",
+            "-TNLayout", "list", "-TNDialog", "insert", "-TNTray", "-TNEditor",
         ])
         #expect(scene.sheet == .export)
         #expect(scene.section == .trash)
         #expect(scene.layout == .list)
         #expect(scene.dialog == .insert)
-        #expect(scene.tray && scene.seed)
+        #expect(scene.tray && scene.seed && scene.editor)
         #expect(LaunchScene(["-TNLibrary", "documents"]).section == .documents)
         #expect(LaunchScene(["-TNLayout", "grid"]).layout == .grid)
     }
@@ -162,12 +162,13 @@ struct LaunchSceneTests {
         #expect(scene.seed)
     }
 
-    @Test("Settings is the library's sheet; every other sheet, the dialog and the tray are the editor's")
+    @Test("Settings is the library's sheet; every other sheet, the dialog, the tray and the bare editor are the editor's")
     func whichSurface() {
         #expect(!LaunchScene(["-TNSheet", "settings"]).opensEditor)
         #expect(LaunchScene(["-TNSheet", "addPage"]).opensEditor)
         #expect(LaunchScene(["-TNDialog", "insert"]).opensEditor)
         #expect(LaunchScene(["-TNTray"]).opensEditor)
+        #expect(LaunchScene(["-TNSeed", "-TNEditor"]).opensEditor)
         #expect(!LaunchScene(["-TNSeed", "-TNLayout", "list"]).opensEditor)
     }
 }

@@ -46,6 +46,8 @@ struct LaunchScene: Equatable {
     var tray = false
     /// `-TNSeed`: the library `Workspace.seed` builds.
     var seed = false
+    /// `-TNEditor`: the seeded editor in front, with nothing open over it.
+    var editor = false
 
     /// Empty in Release, where `LaunchHooks.arguments` is.
     static let current = LaunchScene(LaunchHooks.arguments)
@@ -66,10 +68,11 @@ struct LaunchScene: Equatable {
         dialog = value("-TNDialog", Dialog.init(rawValue:))
         tray = arguments.contains("-TNTray")
         seed = arguments.contains("-TNSeed")
+        editor = arguments.contains("-TNEditor")
     }
 
     /// Whether the shot is of the editor rather than the library.
     var opensEditor: Bool {
-        tray || dialog != nil || (sheet != nil && sheet != .settings)
+        editor || tray || dialog != nil || (sheet != nil && sheet != .settings)
     }
 }
