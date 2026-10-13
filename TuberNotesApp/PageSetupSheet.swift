@@ -39,47 +39,6 @@ enum PageNames {
     }
 }
 
-/// A line of writing the person does rather than presses. Flat, and in the
-/// ground, which is the one token that reads as a hole in the chrome rather
-/// than a surface standing on it.
-private struct MacaronField: View {
-    let prompt: String
-    @Binding var text: String
-
-    @Environment(\.macaron) private var theme
-
-    var body: some View {
-        TextField(prompt, text: $text)
-            .font(Macaron.body(15))
-            .foregroundStyle(theme.ink.color)
-            .tint(theme.accent.color)
-            .padding(.horizontal, 10)
-            .frame(height: Macaron.chip)
-            .background {
-                RoundedRectangle(cornerRadius: Macaron.chipRadius, style: .continuous)
-                    .fill(theme.ground.color)
-                    .overlay {
-                        RoundedRectangle(cornerRadius: Macaron.chipRadius, style: .continuous)
-                            .strokeBorder(theme.outline(of: theme.ground).color, lineWidth: Macaron.line)
-                    }
-            }
-    }
-}
-
-/// A sentence the sheet says about a choice. A readout, so it is flat.
-private struct MacaronNote: View {
-    let text: String
-
-    @Environment(\.macaron) private var theme
-
-    var body: some View {
-        Text(text)
-            .font(Macaron.body(11))
-            .foregroundStyle(theme.outline(of: theme.chrome).color)
-            .fixedSize(horizontal: false, vertical: true)
-    }
-}
-
 /// One paper, shown as the page it makes: white paper, radius 10, the 3pt
 /// derived outline, and its rules drawn small in the token that owns rule
 /// lines. Held is sunk, which is the whole of the chosen state.
@@ -146,62 +105,6 @@ private struct PaperCap: View {
             }
         }
         .frame(width: Macaron.chip, height: Macaron.chip)
-    }
-}
-
-/// A run of caps. Each cap is as wide as its word, neighbours sit one column
-/// gap apart, and a line that will not fit the width wraps to the next one a
-/// row gap down. A fixed column grid would centre every word in a column of
-/// the widest word's width, which reads as caps floating at unrelated
-/// distances rather than as one run.
-private struct MacaronRun: Layout {
-    private struct Line {
-        var indices: [Int] = []
-        var width: CGFloat = 0
-        var height: CGFloat = 0
-    }
-
-    private func lines(of sizes: [CGSize], within limit: CGFloat) -> [Line] {
-        var lines: [Line] = []
-        var line = Line()
-        for (index, size) in sizes.enumerated() {
-            if !line.indices.isEmpty, line.width + Macaron.columnGap + size.width > limit {
-                lines.append(line)
-                line = Line()
-            }
-            line.width = line.indices.isEmpty ? size.width : line.width + Macaron.columnGap + size.width
-            line.height = max(line.height, size.height)
-            line.indices.append(index)
-        }
-        if !line.indices.isEmpty { lines.append(line) }
-        return lines
-    }
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
-        let laid = lines(of: sizes, within: proposal.width ?? .infinity)
-        let gaps = Macaron.rowGap * CGFloat(max(laid.count - 1, 0))
-        return CGSize(
-            width: laid.map(\.width).max() ?? 0,
-            height: laid.map(\.height).reduce(0, +) + gaps
-        )
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
-        var y = bounds.minY
-        for line in lines(of: sizes, within: bounds.width) {
-            var x = bounds.minX
-            for index in line.indices {
-                subviews[index].place(
-                    at: CGPoint(x: x, y: y),
-                    anchor: .topLeading,
-                    proposal: ProposedViewSize(sizes[index])
-                )
-                x += sizes[index].width + Macaron.columnGap
-            }
-            y += line.height + Macaron.rowGap
-        }
     }
 }
 

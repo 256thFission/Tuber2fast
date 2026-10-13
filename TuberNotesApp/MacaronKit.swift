@@ -41,6 +41,7 @@ enum Macaron {
     static let chipRadius: CGFloat = 10
     static let swatchRadius: CGFloat = 6
     static let seatRadius: CGFloat = 14
+    static let bubbleRadius: CGFloat = 19
     static let divider = CGSize(width: 3, height: 24)
     static let rowGap: CGFloat = 6
     static let columnGap: CGFloat = 8
@@ -53,6 +54,24 @@ enum Macaron {
     /// face at the weights the mocks read at.
     static func title(_ size: CGFloat) -> Font { .system(size: size, weight: .heavy, design: .rounded) }
     static func body(_ size: CGFloat) -> Font { .system(size: size, weight: .semibold, design: .rounded) }
+    static func title(_ size: TypeScale) -> Font { title(size.rawValue) }
+    static func body(_ size: TypeScale) -> Font { body(size.rawValue) }
+}
+
+/// Every size the chrome sets a word at, smallest first. A size is one of
+/// these in either face; a size between two of them is a size nobody chose.
+enum TypeScale: CGFloat {
+    case badge = 9
+    case detail = 10
+    case caption = 11
+    case small = 12
+    case text = 13
+    case label = 14
+    case button = 15
+    case instrument = 16
+    case headline = 17
+    case large = 22
+    case display = 28
 }
 
 /// The three curves a press is made of.
@@ -64,6 +83,53 @@ enum MacaronCurve {
     static let reduced = Animation.easeInOut(duration: 0.12)
 }
 
+/// A keycap's face without its tap: the fill, its derived outline, and the
+/// wall the cap stands on, in the outline colour and with no lip. `Keycap`
+/// draws with it, and so does a cap whose tap belongs to something else: a
+/// menu, a share link, or a listing that decides what a tap on a cell means.
+///
+/// It draws behind content already at the cap's size, and leaves the room
+/// under the cap for the wall to its caller.
+struct KeycapFace: ViewModifier {
+    let fill: RGBA8
+    var radius = Macaron.chipRadius
+    /// How far the cap sits below its rest: zero standing, the wall's
+    /// height sunk, negative thrown.
+    let capOffset: CGFloat
+    /// How far the wall's top sits below the cap's.
+    let wallOffset: CGFloat
+    var wallIsVisible = true
+
+    @Environment(\.macaron) private var theme
+
+    func body(content: Content) -> some View {
+        let outline = theme.outline(of: fill)
+        let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
+        content
+            .foregroundStyle(outline.color)
+            .background { shape.fill(fill.color) }
+            .overlay { shape.strokeBorder(outline.color, lineWidth: Macaron.line) }
+            .background {
+                shape.fill(outline.color)
+                    .offset(y: wallOffset)
+                    .opacity(wallIsVisible ? 1 : 0)
+            }
+            .offset(y: capOffset)
+    }
+}
+
+extension KeycapFace {
+    /// A cap at rest, standing or sunk. Only `Keycap`'s own trampoline
+    /// needs the moments in between.
+    init(fill: RGBA8, sunk: Bool) {
+        self.init(
+            fill: fill,
+            capOffset: sunk ? Macaron.chipWall : 0,
+            wallOffset: sunk ? 0 : Macaron.chipWall
+        )
+    }
+}
+
 /// The atom. Everything you can press in this design is one of these.
 ///
 /// A cap standing on a wall in its own outline colour, with no lip on the
@@ -71,6 +137,8 @@ enum MacaronCurve {
 /// is the whole of the selected state.
 struct Keycap<Label: View>: View {
     let fill: RGBA8
+    /// A width of zero means the label decides, which is how a cap with a
+    /// word on it gets to be as wide as the word.
     var size = CGSize(width: Macaron.chip, height: Macaron.chip)
     var radius = Macaron.chipRadius
     var wall = Macaron.chipWall
@@ -82,12 +150,9 @@ struct Keycap<Label: View>: View {
     var action: () -> Void
     @ViewBuilder var label: () -> Label
 
-    @Environment(\.macaron) private var theme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var phase = 0
     @State private var trampoline = 0
-
-    private var outline: RGBA8 { theme.outline(of: fill) }
 
     /// A tool becoming held throws the cap above its rest for a moment,
     /// leaving a taller wall under it, and lands sunk.
@@ -107,24 +172,16 @@ struct Keycap<Label: View>: View {
         }
     }
 
-    /// A width of zero means the label decides, which is how a cap with a
-    /// word on it gets to be as wide as the word.
-    private var shape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: radius, style: .continuous)
-    }
-
     var body: some View {
         label()
-            .foregroundStyle(outline.color)
             .frame(width: size.width > 0 ? size.width : nil, height: size.height)
-            .background { shape.fill(fill.color) }
-            .overlay { shape.strokeBorder(outline.color, lineWidth: Macaron.line) }
-            .background {
-                shape.fill(outline.color)
-                    .offset(y: wallHeight - capOffset)
-                    .opacity(wallIsVisible ? 1 : 0)
-            }
-            .offset(y: capOffset)
+            .modifier(KeycapFace(
+                fill: fill,
+                radius: radius,
+                capOffset: capOffset,
+                wallOffset: wallHeight - capOffset,
+                wallIsVisible: wallIsVisible
+            ))
             .frame(height: size.height + wall, alignment: .top)
         .scaleEffect(
             x: squash.width,
@@ -187,10 +244,6 @@ extension Keycap where Label == Color {
 /// The shell every floating piece of chrome sits in: flat, never a keycap,
 /// and hugging its contents at 8 points of padding.
 struct MacaronShell<Content: View>: View {
-    var radius = Macaron.shellRadius
-    /// Off by default: the writing bar's shell is flat. Only a thing that
-    /// floats free of an edge — the seat — takes the hard offset.
-    var floats = false
     @ViewBuilder var content: () -> Content
 
     @Environment(\.macaron) private var theme
@@ -199,21 +252,90 @@ struct MacaronShell<Content: View>: View {
         content()
             .padding(Macaron.shellPadding)
             .background {
-                RoundedRectangle(cornerRadius: radius, style: .continuous)
+                RoundedRectangle(cornerRadius: Macaron.shellRadius, style: .continuous)
                     .fill(theme.chrome.color)
                     .overlay {
-                        RoundedRectangle(cornerRadius: radius, style: .continuous)
+                        RoundedRectangle(cornerRadius: Macaron.shellRadius, style: .continuous)
                             .strokeBorder(theme.outline(of: theme.chrome).color, lineWidth: Macaron.line)
                     }
             }
-            // The hard zero-blur offset the earlier kit gave floating things.
-            // The document names no colour for it, so it takes the ground's
-            // own outline: nothing is black but ink, and the chrome's outline
-            // here would read as a second border rather than as a shadow.
-            .shadow(
-                color: floats ? theme.outline(of: theme.ground).color : .clear,
-                radius: 0, x: 0, y: 6
-            )
+    }
+}
+
+/// A chip with no wall, for what is not a key: a handle, a count, a way out
+/// of the notebook. A wall would say "press me" about something that is
+/// dragged, or that leaves rather than acts.
+///
+/// The tap is the caller's, because it may be a button, a menu or a drag,
+/// and a caller that disables itself dims the chip.
+struct FlatChip<Label: View>: View {
+    /// The chrome when nil.
+    var fill: RGBA8?
+    var isRound = false
+    /// Nil means the label decides, which is how a chip with a word on it
+    /// gets to be as wide as the word.
+    var width: CGFloat? = Macaron.chip
+    @ViewBuilder var label: () -> Label
+
+    @Environment(\.macaron) private var theme
+    @Environment(\.isEnabled) private var isEnabled
+
+    var body: some View {
+        let fill = fill ?? theme.chrome
+        let outline = theme.outline(of: fill)
+        label()
+            .foregroundStyle(outline.color)
+            .frame(width: width, height: Macaron.chip)
+            .background {
+                if isRound {
+                    face(Circle(), fill, outline)
+                } else {
+                    face(RoundedRectangle(cornerRadius: Macaron.chipRadius, style: .continuous), fill, outline)
+                }
+            }
+            .opacity(isEnabled ? 1 : 0.4)
+    }
+
+    private func face(_ shape: some InsettableShape, _ fill: RGBA8, _ outline: RGBA8) -> some View {
+        shape.fill(fill.color)
+            .overlay { shape.strokeBorder(outline.color, lineWidth: Macaron.line) }
+    }
+}
+
+/// A speech bubble on a tail, pointing at the control that opened it. Flat:
+/// it is a transient, not a keyboard, so nothing in it stands on a wall.
+///
+/// The tail is the popover's own arrow. The popover's background is painted
+/// in the chrome, so the system's material shows nowhere: not in the tail,
+/// and not in the margin the system keeps around the bubble.
+struct MacaronBubble<Content: View>: View {
+    @ViewBuilder var content: () -> Content
+
+    @Environment(\.macaron) private var theme
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: Macaron.bubbleRadius, style: .continuous)
+        content()
+            .padding(Macaron.shellPadding)
+            .background { shape.fill(theme.chrome.color) }
+            .overlay { shape.strokeBorder(theme.outline(of: theme.chrome).color, lineWidth: Macaron.line) }
+            .presentationBackground(theme.chrome.color)
+            .presentationCompactAdaptation(.popover)
+    }
+}
+
+extension View {
+    /// Shows a `MacaronBubble` off this view. The one way a bubble is shown,
+    /// so no view draws a popover of its own.
+    func macaronBubble<Content: View>(
+        isPresented: Binding<Bool>,
+        attachmentAnchor: PopoverAttachmentAnchor = .rect(.bounds),
+        arrowEdge: Edge? = nil,
+        @ViewBuilder content: @escaping () -> Content
+    ) -> some View {
+        popover(isPresented: isPresented, attachmentAnchor: attachmentAnchor, arrowEdge: arrowEdge) {
+            MacaronBubble(content: content)
+        }
     }
 }
 
@@ -240,7 +362,7 @@ struct MacaronDivider: View {
 /// own corners are the only corners and no second border appears.
 struct MacaronPanel<Content: View>: View {
     let title: String
-    var onClose: (() -> Void)?
+    let onClose: () -> Void
     @ViewBuilder var content: () -> Content
 
     @Environment(\.macaron) private var theme
@@ -260,15 +382,13 @@ struct MacaronPanel<Content: View>: View {
                         .font(Macaron.title(17))
                         .foregroundStyle(theme.outline(of: theme.accent).color)
                     Spacer()
-                    if let onClose {
-                        Button(action: onClose) {
-                            Image(systemName: "xmark")
-                                .font(Macaron.body(15))
-                                .foregroundStyle(theme.outline(of: theme.accent).color)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Close")
+                    Button(action: onClose) {
+                        Image(systemName: "xmark")
+                            .font(Macaron.body(15))
+                            .foregroundStyle(theme.outline(of: theme.accent).color)
                     }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Close")
                 }
                 .padding(.horizontal, 14)
             }
@@ -341,5 +461,102 @@ struct MacaronHeading: View {
             .font(Macaron.body(11))
             .tracking(1.2)
             .foregroundStyle(theme.outline(of: theme.chrome).color)
+    }
+}
+
+/// A line of writing the person does rather than presses. Flat, and in the
+/// ground, which is the one token that reads as a hole in the chrome rather
+/// than a surface standing on it.
+struct MacaronField: View {
+    let prompt: String
+    @Binding var text: String
+
+    @Environment(\.macaron) private var theme
+
+    var body: some View {
+        TextField(prompt, text: $text)
+            .font(Macaron.body(15))
+            .foregroundStyle(theme.ink.color)
+            .tint(theme.accent.color)
+            .padding(.horizontal, 10)
+            .frame(height: Macaron.chip)
+            .background {
+                RoundedRectangle(cornerRadius: Macaron.chipRadius, style: .continuous)
+                    .fill(theme.ground.color)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: Macaron.chipRadius, style: .continuous)
+                            .strokeBorder(theme.outline(of: theme.ground).color, lineWidth: Macaron.line)
+                    }
+            }
+    }
+}
+
+/// A sentence the sheet says about a choice. A readout, so it is flat.
+struct MacaronNote: View {
+    let text: String
+
+    @Environment(\.macaron) private var theme
+
+    var body: some View {
+        Text(text)
+            .font(Macaron.body(11))
+            .foregroundStyle(theme.outline(of: theme.chrome).color)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// A run of caps. Each cap is as wide as its word, neighbours sit one column
+/// gap apart, and a line that will not fit the width wraps to the next one a
+/// row gap down. A fixed column grid would centre every word in a column of
+/// the widest word's width, which reads as caps floating at unrelated
+/// distances rather than as one run.
+struct MacaronRun: Layout {
+    private struct Line {
+        var indices: [Int] = []
+        var width: CGFloat = 0
+        var height: CGFloat = 0
+    }
+
+    private func lines(of sizes: [CGSize], within limit: CGFloat) -> [Line] {
+        var lines: [Line] = []
+        var line = Line()
+        for (index, size) in sizes.enumerated() {
+            if !line.indices.isEmpty, line.width + Macaron.columnGap + size.width > limit {
+                lines.append(line)
+                line = Line()
+            }
+            line.width = line.indices.isEmpty ? size.width : line.width + Macaron.columnGap + size.width
+            line.height = max(line.height, size.height)
+            line.indices.append(index)
+        }
+        if !line.indices.isEmpty { lines.append(line) }
+        return lines
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        let laid = lines(of: sizes, within: proposal.width ?? .infinity)
+        let gaps = Macaron.rowGap * CGFloat(max(laid.count - 1, 0))
+        return CGSize(
+            width: laid.map(\.width).max() ?? 0,
+            height: laid.map(\.height).reduce(0, +) + gaps
+        )
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        var y = bounds.minY
+        for line in lines(of: sizes, within: bounds.width) {
+            var x = bounds.minX
+            for index in line.indices {
+                subviews[index].place(
+                    at: CGPoint(x: x, y: y),
+                    anchor: .topLeading,
+                    proposal: ProposedViewSize(sizes[index])
+                )
+                x += sizes[index].width + Macaron.columnGap
+            }
+            y += line.height + Macaron.rowGap
+        }
     }
 }
