@@ -34,7 +34,7 @@ struct ThemeTests {
     func outlineTable() {
         near(theme.outline(of: colour("#FF6A8C")), "#9B4558", "strawberry")
         near(theme.outline(of: colour("#FFB347")), "#9B6F30", "vanilla")
-        near(theme.outline(of: Theme.pistachio), "#6E7763", "pistachio")
+        near(theme.outline(of: colour("#DFF3C8")), "#6E7763", "pistachio")
         near(theme.outline(of: colour("#FFFFFF")), "#7C7C7C", "white")
         near(theme.outline(of: colour("#5BA8E8")), "#3C698E", "sky ink")
     }
@@ -42,7 +42,7 @@ struct ThemeTests {
     @Test("Pale fills take 55 percent and saturated fills take 42")
     func paleness() {
         #expect(theme.isPale(colour("#FFFFFF")))
-        #expect(theme.isPale(Theme.pistachio))
+        #expect(theme.isPale(colour("#DFF3C8")))
         #expect(theme.isPale(theme.ground))
         #expect(theme.isPale(theme.seatBody))
         #expect(!theme.isPale(theme.accent))

@@ -26,10 +26,11 @@ package struct ThemePreset: Equatable, Sendable {
 
 /// The colours a theme sets, and everything the design derives from them.
 ///
-/// Five hexes, two percentages and a palette are the whole of a theme:
-/// nothing else in the editor's chrome carries a colour of its own. Outlines, keycap walls, the
-/// grid line, and the seat's body are all computed here, so a new theme is a
-/// row of hexes and never a sweep through the views.
+/// Five hexes, a palette, two percentages and a dark flag are the whole of
+/// a theme: nothing else in the editor's chrome carries a colour of its
+/// own, bar the red of a save that did not land. Outlines, keycap walls,
+/// the grid line, and the seat's body are all computed here, so a new
+/// theme is a row of the preset table and never a sweep through the views.
 ///
 /// No UIKit and no SwiftUI: this is a durable value, and the bridges to
 /// `UIColor` and `Color` live with the views that need them.
@@ -40,7 +41,7 @@ package struct Theme: Equatable, Sendable {
     package let chrome: RGBA8
     /// Held tool, active tab, seat title strip, lasso, page margin.
     package let accent: RGBA8
-    /// Seat toggle, resize grip, dirty dot, rule lines, highlighter.
+    /// Seat toggle, resize grip, dirty dot, and the second kind of button.
     package let secondary: RGBA8
     /// What every outline is mixed toward, and what the chrome's own
     /// lettering is. Not what handwriting is: a stroke keeps the colour
@@ -302,10 +303,6 @@ package struct Theme: Equatable, Sendable {
     package static func preset(_ id: ThemeID) -> ThemePreset? {
         presets.first { $0.id == id }
     }
-
-    /// The second notebook's tab colour in the mocks. A per-notebook preset,
-    /// not a theme token, so it lives beside the themes rather than in one.
-    package static let pistachio = hex("#DFF3C8")
 
     /// The theme the whole app draws in. One value, read wherever chrome is
     /// drawn; set once, at the top.
