@@ -167,22 +167,20 @@ production runs; there is no fallback for a surface that cannot answer
   canvases, and a tool use PencilKit did not end, ends. Told, never asked;
   see *Every tool use ends* (decided I2, card 09 C3).
 - `commitTextEditing`: an open text box is committed as a tap away
-  commits it. Every live canvas with a session open ends it and reports
-  `textEditingEnded` with the whole value before the call returns, so the
-  notebook holds the words, and the session's history entry, when the
-  caller's next line runs; a canvas with no box open does nothing, and
-  the only answer is the `endTextEditing` that report earns. Told on
-  three occasions: before the forced save on backgrounding (*Going to the
-  background commits an open text box before the forced save*), before
-  an export, and before every insert, a page added, duplicated or deleted
-  included. The commit is the editor's, inside the method and not the row
-  that calls it, because the navigator reaches the same methods as the
-  band. An export or an insert that met an open box once refused it with
-  "has a text box open", so Export > PDF did nothing while an answer was
-  being typed; a page added did not refuse, and scrolled away from a box
-  the keyboard was still typing into. Now each acts on what was typed so
-  far, and the session's entry lands before the insert's, which is the
-  order the refusal guarded (decided R2-08; policy-03).
+  commits it. Every live canvas with a box up ends its session and
+  reports `textEditingEnded` with the whole value before the call
+  returns, so the notebook holds the words, and the session's history
+  entry, when the caller's next line runs; a canvas with no box up does
+  nothing, and the only answer is the `endTextEditing` that report earns.
+  A canvas still opening its box, from the text tap until the composite
+  that leaves the box out lands, has no view to commit and does nothing
+  either, so the notebook's session survives the call; a caller that
+  needs it ended asks the notebook, since the command answers nothing.
+  Told before the forced save on backgrounding (*Going to the background
+  commits an open text box before the forced save*), before an export,
+  and before every insert and page change (*An export or an insert
+  commits an open text box first*) (decided R2-08; arch-app-02,
+  policy-03).
 
 Reports, `CanvasReporting`:
 
@@ -454,6 +452,23 @@ reaches a canvas mid-stroke, and the canvas traps if one does. The reason
 is custody: the drawing under the Pencil is PencilKit's until it commits,
 and a restore under it would replace ink the notebook has never seen
 (decided I1; card 09 C2).
+
+**An export or an insert commits an open text box first.** Before an
+export is read, and before every insert, a page added, duplicated or
+deleted included, `EditorViewModel` tells the runtime `commitTextEditing`,
+then does what was asked. The commit sits inside each editor method, not
+in the row that calls it, because the navigator reaches the same methods
+as the band. The reason is custody: the draft is `PageCanvasController`'s
+until the session ends, so an export read over an open box draws the box
+as it was when the session opened, and an entry recorded under an open
+session would sit above the session's, so one undo would take the words
+with the insert and the next bring back an empty box. A canvas still
+opening its box has nothing to commit, and its session survives the call;
+there, an insert that records an entry, an image or a link, is refused
+until the session ends, and the notebook refuses to duplicate a page
+whose session is open, because the copy would hold the box without the
+words the session ends with. The rest record nothing and are not refused
+on the session's account (decided R2-08; policy-03).
 
 The canvas hands the responder chain a `FilteringUndoManager`. It records
 nothing and undoes nothing itself: PencilKit's registrations are dropped,
@@ -824,11 +839,11 @@ notebook holds the typed words when the pass captures its pages; a
 same, and that pass runs again (*A phase change during the flush makes
 it run again*). Not on `.inactive`: Control Center and the app switcher
 send it and often hand the screen straight back, and a box closed under
-the keyboard would be the app tapping away for the person. The draft is
-`PageCanvasController`'s until the session ends (*Custody*), and nothing
-ended the session on backgrounding, so the forced save wrote the empty
-box and a suspension kill lost everything typed into it (decided R2-08;
-arch-app-02, policy-03).
+the keyboard would be the app tapping away for the person. The reason
+is custody: the draft is `PageCanvasController`'s until the session ends
+(*Custody*), so a forced save with no commit before it writes the box as
+it was when the session opened, and a suspension kill loses the words
+(decided R2-08; arch-app-02, policy-03).
 
 **A phase change during the flush makes it run again.** A phase change
 that arrives while the flush runs is noted, not dropped, and when the pass
