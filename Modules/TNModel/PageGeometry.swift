@@ -40,6 +40,11 @@ package enum PageBounds {
     /// Needs device evidence; the one constant here expected to move.
     package static let maxEdge: Double = 4096
 
+    /// The bounds as a person reads them. `%g` rather than interpolation:
+    /// `minEdge` is derived and prints its binary tail as
+    /// `137.60000000000002`.
+    package static let description = String(format: "%g to %g", minEdge, maxEdge)
+
     package static func contains(_ edge: Double) -> Bool {
         edge.isFinite && edge >= minEdge && edge <= maxEdge
     }

@@ -178,7 +178,7 @@ struct PageSetupControls: View {
                         edge("Width", text: $customWidth)
                         edge("Height", text: $customHeight)
                     }
-                    Text("Each edge is \(Self.bounds) points.")
+                    Text("Each edge is \(PageBounds.description) points.")
                         .font(Macaron.body(.caption))
                         .foregroundStyle(theme.outline(of: theme.chrome).color)
                 }
@@ -249,10 +249,6 @@ struct PageSetupControls: View {
         if isCustom { return "A custom size is taken exactly as typed." }
         return orientationDisabledBecause
     }
-
-    /// `%g` rather than interpolation: `minEdge` is derived and prints its
-    /// binary tail as `137.60000000000002`.
-    private static let bounds = String(format: "%g to %g", PageBounds.minEdge, PageBounds.maxEdge)
 
     private static func typed(_ edge: Double) -> String { String(format: "%g", edge) }
 }

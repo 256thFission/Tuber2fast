@@ -257,9 +257,13 @@ package protocol ToolPaletteStore: Sendable {
         record.swatches[key] = run
     }
 
-    /// Binds a gesture, or unbinds it when `effect` is nil.
+    #if DEBUG
+    /// Binds a gesture, or unbinds it when `effect` is nil. Gesture bindings
+    /// ship with no UI, so only the tests bind, and this does not exist in
+    /// Release.
     package func bind(_ trigger: GestureTrigger, to effect: GestureEffect?) {
         guard gestures[trigger] != effect else { return }
         record.gestures[trigger] = effect
     }
+    #endif
 }

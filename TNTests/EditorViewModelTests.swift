@@ -104,7 +104,7 @@ struct EditorViewModelTests {
         #expect(binding.bindingsForStroke() == [.scribble: .erase], "every ink kind gestures")
 
         editor.select(.ink(.pen))
-        editor.bind(.scribble, to: nil)
+        shared.bind(.scribble, to: nil)
         #expect(shared.gestures.isEmpty, "the intention went to the palette")
         #expect(binding.bindingsForStroke().isEmpty, "the closure reads the palette, it does not hold a copy")
         withExtendedLifetime(scratch) {}

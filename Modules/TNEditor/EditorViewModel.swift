@@ -269,12 +269,6 @@ package final class EditorViewModel {
         return palette.gestures
     }
 
-    /// Binds a Pencil gesture to an effect, or unbinds it when `effect` is
-    /// nil. One set of bindings, shared by every ink kind and every tab.
-    package func bind(_ trigger: GestureTrigger, to effect: GestureEffect?) {
-        palette.bind(trigger, to: effect)
-    }
-
     /// A stroke landed, so the colour it landed in is one the person drew
     /// with. An eraser or a lasso report carries no colour.
     private func inkReported() {
@@ -351,18 +345,14 @@ package final class EditorViewModel {
     /// offers to create anything; this is the same refusal, stated for a
     /// caller that got here anyway.
     private static let sizeOutOfBounds = FormatFault.invalidWrite(
-        "page size is outside \(EditorViewModel.bounds) points")
-
-    /// `%g` rather than interpolation: `minEdge` is derived and prints its
-    /// binary tail as `137.60000000000002`.
-    private static let bounds = String(format: "%g to %g", PageBounds.minEdge, PageBounds.maxEdge)
+        "page size is outside \(PageBounds.description) points")
 
     /// `lastContentError` is a `FormatFault`, the one channel a refused
     /// content change speaks through, so an append's refusal joins it.
     private static func fault(_ refusal: NewPageRefusal) -> FormatFault {
         switch refusal {
         case .geometryOutOfBounds(let width, let height):
-            .invalidWrite("page \(width) x \(height) is outside \(Self.bounds) points")
+            .invalidWrite("page \(width) x \(height) is outside \(PageBounds.description) points")
         case .assetUnreadable(let asset):
             .invalidWrite("paper asset \(asset.fileName) could not be read")
         case .pageGone(let page):

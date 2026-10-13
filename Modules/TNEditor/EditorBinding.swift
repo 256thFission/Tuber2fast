@@ -46,41 +46,46 @@ import UIKit
 
     package init() {}
 
+    /// The binding owns this forwarder, so a report that finds it gone
+    /// came from a runtime that outlived its binding.
+    private var target: EditorBinding {
+        guard let binding else { TNPrecondition.fail("a report reached a forwarder whose binding is gone") }
+        return binding
+    }
+
     package func inkChanged(on page: PageID, _ ink: PKDrawing, echoOf: InkSeq?) {
-        binding?.inkChanged(on: page, ink, echoOf: echoOf)
+        target.inkChanged(on: page, ink, echoOf: echoOf)
     }
 
     package func layerTransformed(on page: PageID, layer: LayerID, to transform: PageSpaceTransform) -> TransformOutcome {
-        guard let binding else { return .refused(reason: "the editor is gone") }
-        return binding.layerTransformed(on: page, layer: layer, to: transform)
+        target.layerTransformed(on: page, layer: layer, to: transform)
     }
 
     package func layerMoved(on page: PageID, layer: LayerID, to origin: PagePoint) -> TransformOutcome {
-        guard let binding else { return .refused(reason: "the editor is gone") }
-        return binding.layerMoved(on: page, layer: layer, to: origin)
+        target.layerMoved(on: page, layer: layer, to: origin)
     }
 
     package func layerDeleteRequested(on page: PageID, layer: LayerID) {
-        binding?.layerDeleteRequested(on: page, layer: layer)
+        target.layerDeleteRequested(on: page, layer: layer)
     }
 
     package func layerLockRequested(on page: PageID, layer: LayerID, locked: Bool) {
-        binding?.layerLockRequested(on: page, layer: layer, locked: locked)
+        target.layerLockRequested(on: page, layer: layer, locked: locked)
     }
 
-    package func pageBecameCurrent(_ page: PageID) { binding?.pageBecameCurrent(page) }
-    package func windowChanged(to pages: [PageID]) { binding?.windowChanged(to: pages) }
-    package func endBoundaryReached(seq: ReportSeq) { binding?.endBoundaryReached(seq: seq) }
-    package func linkActivated(on page: PageID, layer: LayerID) { binding?.linkActivated(on: page, layer: layer) }
-    package func retired(_ page: PageID, finalInk: PKDrawing?) { binding?.retired(page, finalInk: finalInk) }
-    package func undoRequested() { binding?.undoRequested() }
-    package func redoRequested() { binding?.redoRequested() }
+    package func pageBecameCurrent(_ page: PageID) { target.pageBecameCurrent(page) }
+    package func windowChanged(to pages: [PageID]) { target.windowChanged(to: pages) }
+    package func endBoundaryReached(seq: ReportSeq) { target.endBoundaryReached(seq: seq) }
+    package func linkActivated(on page: PageID, layer: LayerID) { target.linkActivated(on: page, layer: layer) }
+    package func retired(_ page: PageID, finalInk: PKDrawing?) { target.retired(page, finalInk: finalInk) }
+    package func undoRequested() { target.undoRequested() }
+    package func redoRequested() { target.redoRequested() }
     package func textBoxRequested(on page: PageID, at point: PagePoint, style: TextStyle, alignment: TextAlignment) {
-        binding?.textBoxRequested(on: page, at: point, style: style, alignment: alignment)
+        target.textBoxRequested(on: page, at: point, style: style, alignment: alignment)
     }
-    package func textEditRequested(on page: PageID, layer: LayerID) { binding?.textEditRequested(on: page, layer: layer) }
+    package func textEditRequested(on page: PageID, layer: LayerID) { target.textEditRequested(on: page, layer: layer) }
     package func textEditingEnded(on page: PageID, layer: LayerID, _ text: TextLayer) {
-        binding?.textEditingEnded(on: page, layer: layer, text)
+        target.textEditingEnded(on: page, layer: layer, text)
     }
 }
 
