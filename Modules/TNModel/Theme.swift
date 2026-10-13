@@ -274,19 +274,19 @@ package struct Theme: Equatable, Sendable {
                 hex("#DBA00A"), hex("#5B4FC2"), hex("#57A65B"),
             ]
         )),
-        // Enamel on a grey shell: one orange, and a black that is the ink and
-        // the second colour at once. It is the theme the paper escape exists
-        // for, since a secondary that is the ink has nowhere darker to go.
+        // Enamel on a grey shell: one orange, a black ink, and a dark grey for
+        // the second colour, near enough the black to belong with it and far
+        // enough from it to take the plain rule.
         ThemePreset(id: ThemeID(rawValue: "enamel"), name: "Enamel", theme: Theme(
             ground: hex("#D9D9D6"),
             chrome: hex("#EFEFEC"),
             accent: hex("#FF5500"),
-            secondary: hex("#1A1A1A"),
+            secondary: hex("#6E6E6B"),
             ink: hex("#1A1A1A"),
-            // The black and the orange are the whole theme, and a palette of
-            // two is not a palette. The other five are the key colours off the
-            // instruments the shell is quoting, which is where its own colour
-            // budget goes when it spends any.
+            // The black, the orange and the grey are the theme's own. The
+            // other four are the key colours off the instruments the shell is
+            // quoting, which is where its own colour budget goes when it
+            // spends any.
             palette: [
                 hex("#1A1A1A"), hex("#FF5500"), hex("#6E6E6B"), hex("#0052CC"),
                 hex("#1F8A5B"), hex("#E02B20"), hex("#D8A100"),

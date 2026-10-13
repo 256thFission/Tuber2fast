@@ -78,14 +78,15 @@ struct ThemeTests {
         #expect(Theme.luminance(theme.ground2) < Theme.luminance(theme.ground))
     }
 
-    @Test("Enamel's secondary is its ink, so it is the one token that escapes")
-    func enamelEscape() throws {
+    @Test("Enamel's grey secondary takes the plain rule, and only its ink escapes")
+    func enamelSecondaryTakesThePlainRule() throws {
         let enamel = try preset("enamel")
-        #expect(enamel.secondary == enamel.ink)
-        near(enamel.outline(of: enamel.secondary), "#7A7A7A", "enamel secondary")
-        for token in [enamel.ground, enamel.chrome, enamel.accent] {
+        #expect(enamel.secondary.hex == "#6E6E6BFF")
+        for token in [enamel.ground, enamel.chrome, enamel.accent, enamel.secondary] {
             #expect(!escapes(enamel, token))
         }
+        #expect(escapes(enamel, enamel.ink))
+        near(enamel.outline(of: enamel.secondary), "#4B4B49", "enamel secondary")
         near(enamel.outline(of: enamel.accent), "#9F3C0B", "enamel accent")
     }
 
@@ -122,6 +123,17 @@ struct ThemeTests {
                     #expect(!folded.contains(mark), "\(label) carries someone else's mark")
                 }
             }
+        }
+    }
+
+    @Test("No two of the five colours a preset sets are the same")
+    func noTwoSetRolesShareAColour() {
+        // The five set colours and no more: the derived paper is white
+        // whatever the chrome is, and the palette repeats a role on purpose.
+        for preset in Theme.presets {
+            let subject = preset.theme
+            let set = [subject.ground, subject.chrome, subject.accent, subject.secondary, subject.ink]
+            #expect(Set(set.map(\.hex)).count == set.count, "\(preset.name) sets one colour for two roles")
         }
     }
 
