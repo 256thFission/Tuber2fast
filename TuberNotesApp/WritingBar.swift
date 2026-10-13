@@ -125,7 +125,7 @@ struct WritingBar: View {
     init(editor: EditorViewModel) {
         self.editor = editor
         // A screenshot of the standing state needs no touches to get to it.
-        let vertical = ProcessInfo.processInfo.arguments.contains("-TNBarVertical")
+        let vertical = LaunchHooks.arguments.contains("-TNBarVertical")
         _snap = State(initialValue: vertical ? .trailing : .top)
     }
 

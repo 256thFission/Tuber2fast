@@ -27,7 +27,7 @@ struct MacaronSeat: View {
     init(editor: EditorViewModel, isOpen: Binding<Bool>) {
         self.editor = editor
         _isOpen = isOpen
-        _isFloating = State(initialValue: ProcessInfo.processInfo.arguments.contains("-TNSeatFloating"))
+        _isFloating = State(initialValue: LaunchHooks.arguments.contains("-TNSeatFloating"))
     }
 
     var body: some View {

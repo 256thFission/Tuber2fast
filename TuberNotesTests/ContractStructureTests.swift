@@ -372,6 +372,27 @@ enum ContractChecker {
         return found
     }
 
+    // MARK: Rule — launch hooks read the process in one place
+
+    /// Reads of the process's launch arguments and environment.
+    ///
+    /// The `-TN…` hooks once read the arguments where each was used, and all
+    /// but one ran in Release: the rule above matches a name, and a hook is
+    /// not named for the tests. `LaunchHooks.arguments` is empty in Release,
+    /// so a hook that reads through it is Debug-only whatever it is called.
+    /// `CommandLine.arguments` is the same read by another spelling; a read
+    /// through `getenv` or a stored `ProcessInfo` is out of reach of a token
+    /// scan.
+    static let processReadTokens = [
+        "ProcessInfo.processInfo.arguments",
+        "ProcessInfo.processInfo.environment",
+        "CommandLine.arguments",
+    ]
+
+    static func processReads(in code: String) -> [String] {
+        processReadTokens.filter { code.contains($0) }
+    }
+
     // MARK: Rule — one PKCanvasView construction site
 
     /// The live ink surface every canvas type descends from.
@@ -1076,13 +1097,40 @@ struct ContractStructureTests {
         }
     }
 
+    /// Who may read the process's launch arguments or environment.
+    static let processReadAllowlist: Set<String> = [
+        // Every `-TN…` hook, through `arguments`, which is empty in Release.
+        "TuberNotesApp/LaunchHooks.swift",
+        // `TN_TRACE` mirrors the log to stderr in every configuration, because
+        // a friend's Release build is traced by launching it through devicectl
+        // with the variable set; only devicectl or Xcode can set it. TNCore
+        // sits below the app, so it cannot read through `LaunchHooks`.
+        "Modules/TNCore/TNLog.swift",
+    ]
+
+    /// A launch hook is a developer's switch, and the build a person holds
+    /// has none.
+    @Test("Launch arguments are read only in LaunchHooks")
+    func launchArgumentsAreReadOnlyInLaunchHooks() throws {
+        for source in try Self.appSources() where !Self.processReadAllowlist.contains(source.path) {
+            let reads = ContractChecker.processReads(in: source.code)
+            #expect(
+                reads.isEmpty,
+                """
+                \(source.path) reads \(reads.joined(separator: ", ")), which runs in Release. A \
+                launch hook reads LaunchHooks.arguments, which is empty there.
+                """
+            )
+        }
+    }
+
     /// An allowlist entry naming a file that no longer exists.
     ///
-    /// One allowlist is left to keep honest. The UI-framework half of this test
-    /// died with the twenty-three-entry path allowlist it policed: a module
-    /// policy has no paths to go stale, and `policedFilesAreTargetFiles` covers
-    /// the failure that replaced it — a module `project.yml` builds that no
-    /// policy names.
+    /// Two allowlists are left to keep honest. The UI-framework half of this
+    /// test died with the twenty-three-entry path allowlist it policed: a
+    /// module policy has no paths to go stale, and `policedFilesAreTargetFiles`
+    /// covers the failure that replaced it — a module `project.yml` builds that
+    /// no policy names.
     @Test("No allowlist entry outlives its file")
     func allowlistsNameFilesThatExist() throws {
         let sources = try Self.appSources()
@@ -1091,6 +1139,11 @@ struct ContractStructureTests {
         #expect(
             staleIO.isEmpty,
             "the file-I/O allowlist names files that do not exist: \(staleIO.joined(separator: ", "))."
+        )
+        let staleReads = Self.staleAllowlistEntries(Self.processReadAllowlist, in: sources)
+        #expect(
+            staleReads.isEmpty,
+            "the launch-read allowlist names files that do not exist: \(staleReads.joined(separator: ", "))."
         )
     }
 }
@@ -1309,6 +1362,30 @@ struct ContractCheckerOwnTests {
                 in: ContractChecker.withoutComments("// a comment about somethingForTesting\nlet x = 1\n")
             ).isEmpty
         )
+    }
+
+    @Test("A read of the launch arguments or environment is caught, and prose is not")
+    func processReadsAreCaught() throws {
+        try withPlantedTree { root in
+            try write("let a = ProcessInfo.processInfo.arguments\n", to: "Deep/RogueHook.swift", under: root)
+            try write(
+                "let t = ProcessInfo.processInfo.environment[\"X\"]\n",
+                to: "Deep/Nested/RogueEnvironment.swift", under: root
+            )
+            try write("let a = CommandLine.arguments\n", to: "RogueCommandLine.swift", under: root)
+            try write(
+                "// ProcessInfo.processInfo.arguments is read in LaunchHooks.\nlet x = 1\n",
+                to: "Innocent.swift", under: root
+            )
+
+            let sources = try ContractChecker.sources(under: root, label: "Planted")
+            let reads = sources.filter { !ContractChecker.processReads(in: $0.code).isEmpty }
+            #expect(Set(reads.map(\.path)) == [
+                "Planted/Deep/RogueHook.swift",
+                "Planted/Deep/Nested/RogueEnvironment.swift",
+                "Planted/RogueCommandLine.swift",
+            ])
+        }
     }
 
     @Test("A source naming the system tool picker is caught, however it names it")

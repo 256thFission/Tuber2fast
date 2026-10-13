@@ -8,8 +8,8 @@ struct ThemeChoiceTests {
     @Test("Every preset is named once and identified once")
     func presetsAreDistinct() {
         #expect(Set(Theme.presets.map(\.id)).count == Theme.presets.count)
-        // `-TNTheme <name>` names a theme by its display name, so two rows
-        // sharing one would make the argument ambiguous.
+        // The picker shows the name, so two rows sharing one could not be
+        // told apart there.
         #expect(Set(Theme.presets.map(\.name)).count == Theme.presets.count)
     }
 

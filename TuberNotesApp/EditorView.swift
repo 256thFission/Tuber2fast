@@ -62,7 +62,7 @@ struct EditorView: View {
         }
         .ignoresSafeArea(edges: .top)
         .onAppear {
-            let args = ProcessInfo.processInfo.arguments
+            let args = LaunchHooks.arguments
             if args.contains("-TNSelectLasso") { editor.selectLasso() }
             if args.contains("-TNShowExport") { isExporting = true }
             if args.contains("-TNShowNavigator") { isShowingNavigator = true }

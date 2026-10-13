@@ -66,31 +66,34 @@ final class Workspace {
         NotificationCenter.default.post(name: Theme.changed, object: nil)
     }
 
-    /// `-TNTheme <name>` opens on a theme, so a screenshot of one needs no
-    /// taps to reach it. It is not saved: a run that exists to be
-    /// photographed must not leave the machine holding a theme nobody chose.
+    /// `-TNTheme <id>` opens on a theme, so a screenshot of one needs no
+    /// taps to reach it. It takes a preset's id or `system`, not the name the
+    /// picker shows: the id is what the preference saves, and a name is free
+    /// to change. It is not saved: a run that exists to be photographed must
+    /// not leave the machine holding a theme nobody chose.
     ///
-    /// A name no preset answers to traps. The argument is a developer's, not
-    /// a preference, and a run that quietly opened on last week's theme would
-    /// file the screenshot under the name it was asked for.
+    /// An id no preset has, or a flag read as one, is logged, and the launch
+    /// goes on as if the argument were absent. The argument is outside data,
+    /// as the preference beside it is, and an app that traps on a typo in
+    /// one shows nothing to photograph.
     static func launchChoice(_ arguments: [String], _ store: ThemeDefaults) -> ThemeChoice {
         guard let index = arguments.firstIndex(of: "-TNTheme"), index + 1 < arguments.count else {
             return store.load() ?? .system
         }
-        let name = arguments[index + 1]
-        guard let match = Theme.presets.first(where: { $0.name == name }) else {
-            TNPrecondition.fail("-TNTheme names no preset: \(name)")
-        }
-        return .preset(match.id)
+        let value = arguments[index + 1]
+        if value == "system" { return .system }
+        if let preset = Theme.preset(ThemeID(rawValue: value)) { return .preset(preset.id) }
+        TNLog.event(.lifecycle, "-TNTheme names no theme: \(value)")
+        return store.load() ?? .system
     }
 
     /// Whether the themes panel is up. It hangs off the library chip, and
     /// both chips that call themselves that are in different views, so the
     /// flag is here rather than in either of them.
-    var isShowingThemes = ProcessInfo.processInfo.arguments.contains("-TNShowThemes")
+    var isShowingThemes = LaunchHooks.arguments.contains("-TNShowThemes")
 
     /// Whether the seat is out. One tenant, one flag.
-    var isSeatOpen = ProcessInfo.processInfo.arguments.contains("-TNSeatOpen")
+    var isSeatOpen = LaunchHooks.arguments.contains("-TNSeatOpen")
 
     /// The refusal surface Part 7 names: one line, dismissible.
     var banner: String?
@@ -118,7 +121,7 @@ final class Workspace {
         // Assigned here rather than in its declaration so the launch
         // argument and the preference are read through the one store this
         // object owns.
-        choice = Self.launchChoice(ProcessInfo.processInfo.arguments, themeStore)
+        choice = Self.launchChoice(LaunchHooks.arguments, themeStore)
         resolveTheme()
         Task { await self.refreshIdentities() }
         // The renderer caches declare "on memory pressure from the app" as an
@@ -135,7 +138,7 @@ final class Workspace {
         // `-TNSmokeNotebook`: create a notebook named Smoke if absent and open
         // it, so a simulator launch reaches the editor with no taps. Debug
         // only; a smoke launch is not a user path.
-        if ProcessInfo.processInfo.arguments.contains("-TNSmokeNotebook") {
+        if LaunchHooks.arguments.contains("-TNSmokeNotebook") {
             Task { await self.openSmokeNotebook() }
         }
         #endif
