@@ -737,3 +737,15 @@ Not gaps — properties of the tooling that read as project defects when hit.
   lasso a text box and drag it; lasso a link, drag it, delete it, then
   Undo: both move like images with no resize handle, delete and Undo work,
   and nothing crashes.
+- **The colour tray opens on a hold (U36, I3 line 13).** The palette suite
+  proves a tray session puts each colour picked into the hand and over its
+  swatch and records one recent, the one it closed on, and a hosted test
+  proves the wheel's conversion round-trips within one per channel.
+  Screenshots show the tray open off swatch 0, on its tail, lying down and
+  standing up, in Macaron and Macaron Dark. The simulator cannot hold a
+  swatch or drag the wheel, so the 450 ms hold, its squash, a tap still
+  taking the swatch, and the session's one recent at close are reviewed by
+  diff only. Owed: hold a swatch half a second and the tray opens on a tail
+  at it; drag the wheel and the slider and the swatch and the pen take the
+  colour; close it and the colour is the first recent; drag the bar by its
+  grab pill and no tray opens.
