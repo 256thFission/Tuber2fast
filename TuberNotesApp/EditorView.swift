@@ -297,12 +297,12 @@ private struct RefusalBar: View {
 
     var body: some View {
         Text(message)
-            // macaron: one-off. The save-failure bar is the kit's one documented exception.
+            // macaron: one-off. Red on white is the same in every theme, so a failed save is never missed.
             .font(.footnote).foregroundStyle(.white)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 16)
             .padding(.vertical, 6)
-            // macaron: one-off. Red is no theme's colour; see above.
+            // macaron: one-off. Red is no theme's colour, so no theme can hide a failed save.
             .background(Color.red)
     }
 }
