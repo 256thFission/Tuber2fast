@@ -458,12 +458,12 @@ struct MacaronPanel<Content: View>: View {
                 theme.accent.color
                 HStack(spacing: 8) {
                     Text(title)
-                        .font(Macaron.title(17))
+                        .font(Macaron.title(.headline))
                         .foregroundStyle(theme.outline(of: theme.accent).color)
                     Spacer()
                     Button(action: onClose) {
                         Image(systemName: "xmark")
-                            .font(Macaron.body(15))
+                            .font(Macaron.body(.button))
                             .foregroundStyle(theme.outline(of: theme.accent).color)
                     }
                     .buttonStyle(.plain)
@@ -520,9 +520,9 @@ struct MacaronButton: View {
         ) {
             HStack(spacing: 6) {
                 if let icon {
-                    Image(systemName: icon).font(Macaron.body(14))
+                    Image(systemName: icon).font(Macaron.body(.label))
                 }
-                Text(title).font(Macaron.title(15))
+                Text(title).font(Macaron.title(.button))
             }
             .padding(.horizontal, 14)
             .fixedSize(horizontal: true, vertical: false)
@@ -537,7 +537,7 @@ struct MacaronHeading: View {
 
     var body: some View {
         Text(text.uppercased())
-            .font(Macaron.body(11))
+            .font(Macaron.body(.caption))
             .tracking(1.2)
             .foregroundStyle(theme.outline(of: theme.chrome).color)
     }
@@ -554,7 +554,7 @@ struct MacaronField: View {
 
     var body: some View {
         TextField(prompt, text: $text)
-            .font(Macaron.body(15))
+            .font(Macaron.body(.button))
             .foregroundStyle(theme.ink.color)
             .tint(theme.accent.color)
             .padding(.horizontal, 10)
@@ -578,9 +578,50 @@ struct MacaronNote: View {
 
     var body: some View {
         Text(text)
-            .font(Macaron.body(11))
+            .font(Macaron.body(.caption))
             .foregroundStyle(theme.outline(of: theme.chrome).color)
             .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// One line about something that went wrong, floating over what it
+/// interrupted, with a cap to dismiss it and room for what can be done
+/// about it. The words are a readout and stay flat; the things you can do
+/// are caps.
+struct MacaronBanner<Actions: View>: View {
+    let message: String
+    let onDismiss: () -> Void
+    @ViewBuilder var actions: () -> Actions
+
+    @Environment(\.macaron) private var theme
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: Macaron.chipRadius, style: .continuous)
+        HStack(alignment: .center, spacing: Macaron.columnGap) {
+            Text(message)
+                .font(Macaron.body(.label))
+                .foregroundStyle(theme.outline(of: theme.chrome).color)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            actions()
+
+            Keycap("Dismiss", systemImage: "xmark", symbolSize: .text, fill: theme.chrome, action: onDismiss)
+        }
+        .padding(Macaron.shellPadding)
+        .background { shape.fill(theme.chrome.color) }
+        .overlay { shape.strokeBorder(theme.outline(of: theme.chrome).color, lineWidth: Macaron.line) }
+        // It floats over whatever it interrupted, so it takes a hard
+        // zero-blur offset. The offset is the ground's own outline: nothing is
+        // black but ink, and the chrome's outline would read as a second border.
+        // Flattened first, or the words cast a shadow of their own onto the fill.
+        .compositingGroup()
+        .shadow(color: theme.outline(of: theme.ground).color, radius: 0, x: 0, y: 6)
+    }
+}
+
+extension MacaronBanner where Actions == EmptyView {
+    init(message: String, onDismiss: @escaping () -> Void) {
+        self.init(message: message, onDismiss: onDismiss, actions: { EmptyView() })
     }
 }
 

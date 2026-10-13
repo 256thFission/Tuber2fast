@@ -48,9 +48,15 @@ struct EditorView: View {
             if let failure = editor.lastSaveError {
                 RefusalBar(message: Self.message(for: failure))
             } else if let fault = editor.lastContentError {
-                // An import or a layer that the page refused: without this it
-                // would be a tap that quietly did nothing.
-                RefusalBar(message: "That couldn't be added: \(fault.description)")
+                // Something the page refused: without this it would be a tap
+                // that quietly did nothing. Not the red bar, which is only for
+                // a save that did not land.
+                MacaronBanner(
+                    message: "That didn't work: \(fault.description)",
+                    onDismiss: { editor.clearContentError() }
+                )
+                .padding(.horizontal)
+                .padding(.vertical, 8)
             }
             CanvasHost(controller: editor.canvasHost)
                 .overlay { WritingBar(editor: editor) }
@@ -274,8 +280,9 @@ struct CanvasHost: UIViewControllerRepresentable {
     func updateUIViewController(_ controller: UIViewController, context: Context) {}
 }
 
-/// A save that did not fully land, or content the page refused, in the words
-/// Part 7 gives each reason.
+/// A save that did not fully land, in the words Part 7 gives each reason.
+/// Red is no theme's colour: this is the one place the chrome steps outside
+/// the theme.
 private struct RefusalBar: View {
     let message: String
 

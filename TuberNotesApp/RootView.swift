@@ -20,7 +20,14 @@ struct RootView: View {
         .ignoresSafeArea(edges: .top)
         .overlay(alignment: .top) {
             if let message = workspace.banner {
-                BannerView(message: message)
+                MacaronBanner(message: message, onDismiss: { workspace.dismissBanner() }) {
+                    if let tabID = workspace.discardableTabID {
+                        // The one thing that still works when a save will not.
+                        MacaronButton(title: "Discard and close", fill: workspace.theme.accent) {
+                            Task { await workspace.discardAndClose(tabID: tabID) }
+                        }
+                    }
+                }
                     .padding(.horizontal)
                     .padding(.top, 8)
                     .transition(.move(edge: .top).combined(with: .opacity))
@@ -153,46 +160,5 @@ private struct TabChip: View {
         .accessibilityAction(named: Text("Close \(tab.name)")) {
             Task { await workspace.close(tabID: tab.id) }
         }
-    }
-}
-
-/// One line, dismissible, and the one action that always works when a save
-/// will not succeed.
-private struct BannerView: View {
-    @Environment(Workspace.self) private var workspace
-    @Environment(\.macaron) private var theme
-    let message: String
-
-    private var shape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: Macaron.chipRadius, style: .continuous)
-    }
-
-    /// The words are a readout and stay flat; the two things you can do
-    /// about them are caps.
-    var body: some View {
-        HStack(alignment: .center, spacing: Macaron.columnGap) {
-            Text(message)
-                .font(Macaron.body(.label))
-                .foregroundStyle(theme.outline(of: theme.chrome).color)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            if let tabID = workspace.discardableTabID {
-                // The one thing that still works when a save will not.
-                MacaronButton(title: "Discard and close", fill: theme.accent) {
-                    Task { await workspace.discardAndClose(tabID: tabID) }
-                }
-            }
-
-            Keycap("Dismiss", systemImage: "xmark", symbolSize: .text, fill: theme.chrome) {
-                workspace.dismissBanner()
-            }
-        }
-        .padding(Macaron.shellPadding)
-        .background { shape.fill(theme.chrome.color) }
-        .overlay { shape.strokeBorder(theme.outline(of: theme.chrome).color, lineWidth: Macaron.line) }
-        // It floats over whatever it interrupted, so it takes a hard
-        // zero-blur offset. The offset is the ground's own outline: nothing is
-        // black but ink, and the chrome's outline would read as a second border.
-        .shadow(color: theme.outline(of: theme.ground).color, radius: 0, x: 0, y: 6)
     }
 }
