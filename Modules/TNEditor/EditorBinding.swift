@@ -8,25 +8,30 @@ import UIKit
 /// The runtime's own controls, which are not part of the value seam.
 ///
 /// `CanvasSurface` in `TNModel` is the value channel: descriptors,
-/// snapshots, composites. Retiring every live canvas at once and telling
-/// the runtime whether undo is available are commands about the runtime
-/// itself, so they live here rather than widening the seam. `TNCanvas`
-/// adopts this in `CanvasRuntime.swift`, the one file in this target that
-/// names `TNCanvas`.
+/// snapshots, composites. Retiring every live canvas at once, telling the
+/// runtime whether undo is available, and asking whether a stroke is in
+/// flight are about the runtime itself, so they live here rather than
+/// widening the seam. The binding holds the runtime as one of these and
+/// nothing narrower, so the close a test proves is the one production
+/// runs. `TNCanvas` adopts this in `CanvasRuntime.swift`, the one file in
+/// this target that names `TNCanvas`.
 @MainActor package protocol CanvasRuntime: CanvasSurface {
     /// Retires every live page. Returns the pages whose retire was
     /// deferred by a stroke in flight; each of those reports later.
     func retireAll() -> [PageID]
     func setUndoAvailability(canUndo: Bool, canRedo: Bool)
+    /// Whether any canvas, a departing one included, has a tool use open.
+    /// Asked, never mirrored: the stroke is PencilKit's.
+    var isStrokeInFlight: Bool { get }
 }
 
-/// Forwards the runtime's reports to the binding without keeping it alive.
+/// Forwards the runtime's reports to the binding.
 ///
-/// The binding owns the runtime, and the runtime holds its reporter; if
-/// the binding were the reporter, the pair would retain each other and the
-/// notebook would never close. The forwarder is the one weak link in that
-/// ring, and it exists before the runtime does, which is also what lets
-/// the runtime be built inside the binding's own initializer.
+/// The runtime takes its reporter when it is built, and the production
+/// binding builds its runtime inside its own initializer, before there is
+/// a `self` to hand over. So the forwarder is made first, given to the
+/// runtime, and pointed at the binding once the binding exists. It breaks
+/// no cycle: the runtime and its undo manager hold the reporter unowned.
 @MainActor package final class ReportForwarder: CanvasReporting {
     fileprivate weak var binding: EditorBinding?
 
@@ -78,7 +83,7 @@ import UIKit
     /// holds the binding, and nothing else holds either.
     package let notebook: Notebook
     /// Strong: the binding owns the runtime it drives.
-    package let surface: any CanvasSurface
+    package let surface: any CanvasRuntime
     /// The canvas as a plain view controller, which is how the app gets it
     /// without ever naming `TNCanvas`.
     package let host: UIViewController
@@ -98,9 +103,6 @@ import UIKit
     /// told about a tool must mean.
     package var bindingsForStroke: @MainActor () -> GestureBindings = { [:] }
 
-    private var runtime: (any CanvasRuntime)? { surface as? any CanvasRuntime }
-    /// The last complete window the runtime reported.
-    private var window: [PageID] = []
     /// Pages the runtime has reported retired, which is how a deferred
     /// retire is known to have landed before the notebook closes.
     private var retirementsReported: Set<PageID> = []
@@ -116,7 +118,7 @@ import UIKit
 
     package init(
         notebook: Notebook,
-        surface: any CanvasSurface,
+        surface: any CanvasRuntime,
         forwarder: ReportForwarder? = nil,
         onLinkActivated: @escaping @MainActor (LinkTarget) -> Void = { _ in }
     ) {
@@ -128,7 +130,8 @@ import UIKit
         self.host = (surface as? UIViewController) ?? UIViewController()
         self.onLinkActivated = onLinkActivated
         // The runtime holds the forwarder unowned, so the binding must own
-        // it for as long as it owns the runtime.
+        // it for as long as it owns the runtime. Pointed here only now,
+        // because the runtime was built before `self` existed.
         self.forwarder = forwarder
         forwarder?.binding = self
 
@@ -164,7 +167,7 @@ import UIKit
             for change in changes { push(change) }
             changes = notebook.drainChanges()
         }
-        runtime?.setUndoAvailability(canUndo: notebook.canUndo, canRedo: notebook.canRedo)
+        surface.setUndoAvailability(canUndo: notebook.canUndo, canRedo: notebook.canRedo)
         onDrained?()
     }
 
@@ -210,8 +213,7 @@ import UIKit
     /// Retires every live canvas. Returns the pages whose retire the
     /// runtime deferred; each of those reports its final ink later.
     package func retireAll() -> [PageID] {
-        if let runtime { return runtime.retireAll() }
-        return window.filter { surface.retire($0) == .deferred }
+        surface.retireAll()
     }
 
     /// Whether every one of `pages` has since reported its retirement.
@@ -222,7 +224,11 @@ import UIKit
     // MARK: Reports
 
     package func inkChanged(on page: PageID, _ ink: PKDrawing, echoOf: InkSeq?) {
-        notebook.inkChanged(on: page, ink, echoOf: echoOf, bindings: bindingsForStroke())
+        // A report that arrives while a stroke is in flight is a commit
+        // landing under the next stroke. No gesture applies to it: a
+        // gesture's restore would replace the drawing under the Pencil.
+        let bindings = surface.isStrokeInFlight ? [:] : bindingsForStroke()
+        notebook.inkChanged(on: page, ink, echoOf: echoOf, bindings: bindings)
         // An echo is the runtime restating ink it was handed, which is a
         // restore and not a stroke anybody drew.
         if echoOf == nil { onInkReported?() }
@@ -255,7 +261,6 @@ import UIKit
     }
 
     package func windowChanged(to pages: [PageID]) {
-        window = pages
         notebook.windowChanged(to: pages)
         // Content for a page that has left the window and is clean is
         // dropped here, which is the only place that decision is taken.
@@ -291,6 +296,14 @@ import UIKit
     }
 
     package func undoRequested() {
+        // I1: ignored while a stroke is in flight. The stroke is PencilKit's
+        // until it commits; a restore under it would replace ink the
+        // notebook has not seen. Asked of the runtime at the moment; nothing
+        // kept here.
+        guard !surface.isStrokeInFlight else {
+            TNLog.event(.canvas, "undo ignored: a stroke is in flight")
+            return
+        }
         // While a box is open the text view's own manager answers, and the
         // stack is not touched: `Notebook.apply` requires no open session,
         // and this routing is what keeps that true. The runtime is not
@@ -310,6 +323,10 @@ import UIKit
     }
 
     package func redoRequested() {
+        guard !surface.isStrokeInFlight else {
+            TNLog.event(.canvas, "redo ignored: a stroke is in flight")
+            return
+        }
         if notebook.hasTextSession {
             surface.redoTyping()
             return

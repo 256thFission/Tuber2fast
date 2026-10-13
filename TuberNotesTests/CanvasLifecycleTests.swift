@@ -51,6 +51,40 @@ struct CanvasLifecycleTests {
         if case .unloaded = state { true } else { false }
     }
 
+    @Test("An undo during a stroke is ignored on both paths and while the stroke commits, and the stroke lands in the notebook")
+    func undoDuringAStrokeIsIgnored() async throws {
+        let editor = try await open(pages: 1)
+        let (notebook, binding, runtime) = (editor.notebook, editor.binding, editor.runtime)
+        let page = notebook.pageIDs[0]
+        try await waitUntil { runtime.canvases[page] != nil }
+        let canvas = try #require(runtime.canvases[page])
+        // The install's echo latch clears at the end of its turn, so the
+        // first stroke is reported as the edit it is.
+        await hop()
+        commitStroke(strokeDrawing(strokes: 1), on: canvas)
+        #expect(notebook.state(of: page)?.content?.ink.strokes.count == 1)
+
+        canvas.canvasViewDidBeginUsingTool(canvas.canvasView)
+        binding.undoRequested()
+        canvas.undoManager?.undo()
+        #expect(canvas.canvasView.drawing.strokes.count == 1)
+        #expect(notebook.state(of: page)?.content?.ink.strokes.count == 1)
+        #expect(notebook.canUndo)
+
+        draw(strokeDrawing(strokes: 2), on: canvas)
+        canvas.canvasViewDidEndUsingTool(canvas.canvasView)
+        binding.undoRequested()
+        #expect(notebook.state(of: page)?.content?.ink.strokes.count == 1, "the use has ended and its commit has not landed")
+
+        canvas.canvasViewDrawingDidChange(canvas.canvasView)
+        #expect(notebook.state(of: page)?.content?.ink.strokes.count == 2, "the stroke is in custody")
+
+        binding.undoRequested()
+        #expect(notebook.state(of: page)?.content?.ink.strokes.count == 1, "the next undo removes exactly that stroke")
+        #expect(canvas.canvasView.drawing.strokes.count == 1)
+        await editor.close()
+    }
+
     @Test("A page the notebook pruned gets no canvas until its content is pushed again")
     func anEvictedPageWaitsForItsReload() async throws {
         let editor = try await open(pages: 6)

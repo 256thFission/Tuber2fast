@@ -115,11 +115,6 @@ package enum TransformOutcome: Sendable, Equatable {
     case refused(reason: String)
 }
 
-package enum RetireOutcome: Sendable, Equatable {
-    case retired
-    case deferred
-}
-
 /// Down: the runtime is driven.
 @MainActor package protocol CanvasSurface: AnyObject {
     func setPages(_ pages: [PageDescriptor], seq: StructureSeq, answering: ReportSeq?)
@@ -130,7 +125,6 @@ package enum RetireOutcome: Sendable, Equatable {
     /// forgets its snapshot; the page gets a canvas again only from a later
     /// `installContent`. Never sent for a page with a canvas.
     func unload(_ page: PageID)
-    func retire(_ page: PageID) -> RetireOutcome
     /// A sharper or refreshed backdrop for a live page, with the layer list
     /// it was rendered from, so the runtime's hit rects match the picture.
     /// Ink is untouched.

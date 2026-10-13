@@ -14,7 +14,7 @@ enum SurfaceCall: Sendable, Equatable {
     case installContent(PageID, editable: Bool)
     case restoreInk(PageID, seq: InkSeq)
     case scroll(PageID)
-    case retire(PageID)
+    case retireAll
     case unload(PageID)
     case updateComposite(PageID)
     case beginTextEditing(PageID, LayerID)
@@ -27,13 +27,16 @@ enum SurfaceCall: Sendable, Equatable {
 /// `PagedCanvasController` stands, which is what lets the binding be
 /// tested in a bundle with no host app and no Pencil.
 @MainActor
-final class RecordingSurface: CanvasSurface {
+final class RecordingSurface: CanvasRuntime {
     private(set) var calls: [SurfaceCall] = []
     private(set) var environments: [CanvasEnvironment] = []
     private(set) var layersSeen: [PageID: [Layer]] = [:]
     private(set) var starts: [TextEditStart] = []
     /// Pages whose retire this surface defers, as a stroke in flight does.
     var deferring: Set<PageID> = []
+    /// What the runtime answers when the binding asks, as a Pencil held
+    /// down would make it answer.
+    var isStrokeInFlight = false
 
     func setPages(_ pages: [PageDescriptor], seq: StructureSeq, answering: ReportSeq?) {
         calls.append(.setPages(pages.map(\.id), seq: seq, answering: answering))
@@ -48,11 +51,6 @@ final class RecordingSurface: CanvasSurface {
     }
 
     func scroll(to page: PageID) { calls.append(.scroll(page)) }
-
-    func retire(_ page: PageID) -> RetireOutcome {
-        calls.append(.retire(page))
-        return deferring.contains(page) ? .deferred : .retired
-    }
 
     func unload(_ page: PageID) { calls.append(.unload(page)) }
 
@@ -72,6 +70,13 @@ final class RecordingSurface: CanvasSurface {
 
     func undoTyping() { calls.append(.undoTyping) }
     func redoTyping() { calls.append(.redoTyping) }
+
+    func retireAll() -> [PageID] {
+        calls.append(.retireAll)
+        return Array(deferring)
+    }
+
+    func setUndoAvailability(canUndo: Bool, canRedo: Bool) {}
 
     // MARK: What a test asks
 
@@ -225,6 +230,63 @@ struct EditorBindingTests {
         binding.inkChanged(on: bound, scribbled, echoOf: nil)
         #expect(notebook.state(of: bound)?.content?.ink.strokes.count == 1, "the two crossed lines and the scribble are gone")
         #expect(surface.calls.contains { if case .restoreInk(let p, _) = $0 { p == bound } else { false } })
+        _ = await notebook.close()
+        withExtendedLifetime(scratch) {}
+    }
+
+    @Test("Undo and redo are ignored while the runtime has a stroke in flight, and the stack is untouched")
+    func undoIsIgnoredWhileAStrokeIsInFlight() async throws {
+        let scratch = try Scratch("editor-undo-under-stroke")
+        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        let surface = RecordingSurface()
+        let binding = EditorBinding(notebook: notebook, surface: surface)
+        let page = notebook.pageIDs[0]
+        binding.windowChanged(to: [page])
+        try await waitUntil { surface.installed.contains(page) }
+        binding.inkChanged(on: page, Ink.drawing(strokes: 3), echoOf: nil)
+        surface.isStrokeInFlight = true
+        let told = surface.calls.count
+
+        binding.undoRequested()
+        binding.redoRequested()
+        #expect(surface.calls.count == told, "nothing was pushed and nothing scrolled")
+        #expect(notebook.canUndo && !notebook.canRedo, "the stack did not move")
+        #expect(notebook.state(of: page)?.content?.ink.strokes.count == 3)
+
+        surface.isStrokeInFlight = false
+        binding.undoRequested()
+        #expect(surface.calls.contains { if case .restoreInk(let p, _) = $0 { p == page } else { false } })
+        #expect(surface.calls.last == .scroll(page))
+        _ = await notebook.close()
+        withExtendedLifetime(scratch) {}
+    }
+
+    @Test("A commit that lands under the next stroke is kept as ink, and no restore is pushed")
+    func aReportUnderAStrokeRunsNoGesture() async throws {
+        let scratch = try Scratch("editor-gesture-under-stroke")
+        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        notebook.appendPage()
+        let surface = RecordingSurface()
+        let binding = EditorBinding(notebook: notebook, surface: surface)
+        let (underAStroke, atRest) = (notebook.pageIDs[0], notebook.pageIDs[1])
+        binding.windowChanged(to: [underAStroke, atRest])
+        try await waitUntil { surface.installed.contains(underAStroke) && surface.installed.contains(atRest) }
+        let lines = (0..<3).map {
+            Ink.line(from: CGPoint(x: 0, y: CGFloat($0) * 50), to: CGPoint(x: 200, y: CGFloat($0) * 50))
+        }
+        let scribbled = PKDrawing(strokes: lines + [Ink.zigzag(over: CGRect(x: 20, y: -10, width: 80, height: 70), turns: 4)])
+        binding.bindingsForStroke = { [.scribble: .erase] }
+
+        surface.isStrokeInFlight = true
+        binding.inkChanged(on: underAStroke, PKDrawing(strokes: lines), echoOf: nil)
+        binding.inkChanged(on: underAStroke, scribbled, echoOf: nil)
+        #expect(!surface.calls.contains { if case .restoreInk = $0 { true } else { false } })
+        #expect(notebook.state(of: underAStroke)?.content?.ink == scribbled, "every stroke the report carried")
+
+        surface.isStrokeInFlight = false
+        binding.inkChanged(on: atRest, PKDrawing(strokes: lines), echoOf: nil)
+        binding.inkChanged(on: atRest, scribbled, echoOf: nil)
+        #expect(surface.calls.contains { if case .restoreInk(let p, _) = $0 { p == atRest } else { false } }, "the gesture still runs at rest")
         _ = await notebook.close()
         withExtendedLifetime(scratch) {}
     }

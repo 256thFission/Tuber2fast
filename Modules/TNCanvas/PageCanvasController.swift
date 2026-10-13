@@ -125,8 +125,8 @@ package final class PageCanvasController: UIViewController, PKCanvasViewDelegate
     private(set) var isStrokeInFlight = false
 
     /// The sequence of the ink this canvas last took from the notebook, at
-    /// build or restore. The owner reads it against the snapshot's to find a
-    /// restore a stroke deferred.
+    /// build or restore. The owner reads it against the snapshot's to find
+    /// ink pushed that this canvas has not taken.
     private(set) var inkSeq: InkSeq?
 
     /// The tool use ended and its drawing change has not arrived yet.

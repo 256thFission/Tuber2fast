@@ -4,6 +4,13 @@ import TNCore
 import TNModel
 import UIKit
 
+/// What a retire did: delivered the final report, or waited for a stroke in
+/// flight, after whose end the owner retires the canvas again.
+enum RetireOutcome {
+    case retired
+    case deferred
+}
+
 /// The driven canvas runtime: a horizontal run of page slots, a bounded window
 /// of live canvases inside it, and one reporter it answers to.
 ///
@@ -236,7 +243,7 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
         // An install waits for a stroke in flight. Storing the value does not:
         // it is the canvas that must not be touched, and the snapshot is a
         // value nobody else can see.
-        if isAnyStrokeInFlight {
+        if isStrokeInFlight {
             windowRefreshDeferred = true
             return
         }
@@ -251,8 +258,7 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
         )
         // The value is remembered whether or not the page is live: a canvas
         // built when the page enters the window carries the restored ink
-        // rather than the ink the last install described, and a live canvas
-        // takes it from here when a stroke in flight has deferred it.
+        // rather than the ink the last install described.
         if let snapshot = snapshots[page], snapshot.isEditable {
             snapshots[page] = PageSnapshot.editable(
                 id: page,
@@ -262,16 +268,11 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
                 inkSeq: seq
             )
         }
-        // A restore waits for a stroke on its own page the way an install
-        // waits for any: the canvas is what must not be touched, and the
-        // notebook's value is already the truth. `pageStrokeDidEnd` applies
-        // it. A stroke on another page holds nothing here.
-        guard let canvas = canvases[page] else { return }
-        if canvas.isStrokeInFlight {
-            windowRefreshDeferred = true
-            return
-        }
-        canvas.restoreInk(ink, seq: seq)
+        // Nothing defers a restore. The binding ignores undo while a stroke
+        // is in flight, and a report that lands under a stroke runs no
+        // gesture, so no restore reaches a canvas mid-stroke; the canvas
+        // traps if one does.
+        canvases[page]?.restoreInk(ink, seq: seq)
     }
 
     package func updateComposite(on page: PageID, _ composite: Composite, layers: [Layer]) {
@@ -289,10 +290,10 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
                 inkSeq: inkSeq
             )
         }
-        // The same wait as a restore, so the picture and the hit rects that
-        // answer one land on the canvas with it. Only this page's stroke
-        // holds it: the `.textEditingEnded` behind a commit's picture does
-        // not wait, so the picture must not wait on a neighbour.
+        // A composite waits for this page's stroke, so the picture and the
+        // hit rects that match it land on the canvas together. Only this
+        // page's stroke holds it: the `.textEditingEnded` behind a commit's
+        // picture does not wait, so the picture must not wait on a neighbour.
         guard let canvas = canvases[page] else { return }
         if canvas.isStrokeInFlight {
             windowRefreshDeferred = true
@@ -363,7 +364,9 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
         placeholders[page]?.text = PlaceholderCopy.waiting
     }
 
-    package func retire(_ page: PageID) -> RetireOutcome {
+    /// One page's retire. Not on the seam: nothing outside the runtime
+    /// retires a single page, and `retireAll` is how the binding closes.
+    func retire(_ page: PageID) -> RetireOutcome {
         if let canvas = canvases[page] {
             switch canvas.retire() {
             case .deferred:
@@ -466,7 +469,9 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
 
     // MARK: - The window
 
-    private var isAnyStrokeInFlight: Bool {
+    /// Whether any canvas, a departing one included, has a tool use open.
+    /// The binding asks before it undoes and before it lets a gesture run.
+    package var isStrokeInFlight: Bool {
         canvases.values.contains(where: \.isStrokeInFlight)
             || retiring.values.contains(where: \.isStrokeInFlight)
     }
@@ -479,7 +484,7 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
     /// pushing content straight back down and must find the runtime's state
     /// already settled.
     private func refreshWindow() {
-        if isAnyStrokeInFlight {
+        if isStrokeInFlight {
             windowRefreshDeferred = true
             return
         }
@@ -537,7 +542,7 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
     /// An existing canvas is never rebuilt, and its ink is touched only when
     /// the notebook has pushed ink the canvas has not taken. Its backdrop and
     /// its layers are restated, because the live ink is the runtime's working
-    /// copy and an install is not an edit; a restore a stroke deferred is.
+    /// copy and an install is not an edit.
     private func applyContent(for page: PageID) {
         guard let snapshot = snapshots[page], let descriptor = descriptors[page] else { return }
 
@@ -560,8 +565,9 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
                 canvas.updateComposite(composite)
             }
             // The sequence names the ink value the notebook last pushed, and
-            // the canvas holds the one it last took; they differ only when a
-            // stroke deferred a restore.
+            // the canvas holds the one it last took. A restore reaches a live
+            // canvas directly and moves both, so they should never differ;
+            // this restates rather than traps until a device shows that.
             if let ink = snapshot.ink, let seq = snapshot.inkSeq, seq != canvas.inkSeq {
                 canvas.restoreInk(ink, seq: seq)
             }
@@ -676,11 +682,6 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
         // for it. The stroke's ink is not lost: the retire that follows the
         // stroke's end carries the whole drawing in its final report.
         guard retiring[page] == nil else { return }
-        // A restore this stroke deferred is about to replace the drawing the
-        // stroke committed into. The notebook already holds the restored
-        // value; this report would be taken for an edit of it, and the echo
-        // that follows for another.
-        if let canvas = canvases[page], let seq = snapshots[page]?.inkSeq, seq != canvas.inkSeq { return }
         reporter.inkChanged(on: page, ink, echoOf: echoOf)
     }
 
