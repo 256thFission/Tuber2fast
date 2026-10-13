@@ -726,3 +726,14 @@ Not gaps — properties of the tooling that read as project defects when hit.
   goes on in the new style, needs a hand on a box. Owed: select words in a
   text box, tap Aa, set size 24, bold, centre and a colour: the selection
   changes, and new typing takes the style.
+- **A text box and a link move like an image (U31, I3 line 8).** The canvas
+  suite proves a lasso tap raises the frame on a text box's or a link's
+  rect, with no handle and no knob, that a drag from its corner moves it
+  whole, and that the drag reports the new origin once; the notebook suite
+  proves the move keeps the size and undoes, and that a deleted link comes
+  back on Undo. The suites drive the frame's drag by hand, so whether a
+  finger on a text box's frame beats the canvas pan and the page turn, and
+  whether the picture's jump at the drop reads right, are unproven. Owed:
+  lasso a text box and drag it; lasso a link, drag it, delete it, then
+  Undo: both move like images with no resize handle, delete and Undo work,
+  and nothing crashes.
