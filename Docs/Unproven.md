@@ -631,3 +631,8 @@ Not gaps — properties of the tooling that read as project defects when hit.
   a box, swipe Home, force-quit from the switcher and relaunch, and see the
   word; with a box open, Insert > Photo closes the box with its words and
   the photo lands; Export > PDF has the typed answer.
+- **A link into another notebook still opens (U22, I3 line 16).** The
+  library suite proves a checkout refuses a collided path and a second
+  checkout under one identity, and that an ordinary checkout opens. No seam
+  drives `Workspace.activate`, so its new `.collided` arm is reviewed by
+  diff only. Owed: tap a link into another notebook; it opens on its page.

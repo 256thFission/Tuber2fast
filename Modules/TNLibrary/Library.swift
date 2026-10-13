@@ -76,6 +76,7 @@ package final class Library {
             if let open = openNotebooks[relativePath] { return .alreadyOpen(open.notebookID) }
             return .failed(.itemNotFound(relativePath))
         }
+        if identities.collisions[relativePath] != nil { return .failed(.identityCollision(relativePath)) }
         reservations.insert(relativePath)
         defer { reservations.remove(relativePath) }
         // Inside the reservation, so no rename, move, trash or duplicate meets
@@ -84,6 +85,11 @@ package final class Library {
         let packageStore = PackageStore(root: store.url(of: relativePath), fileSystem: store.fileSystem)
         do {
             let notebook = try await Notebook.open(store: packageStore, schedule: schedule)
+            // Tabs are keyed by identity. The index may predate this package,
+            // so the ledger is asked too; the refused notebook was only read.
+            if openNotebooks.values.contains(where: { $0.notebookID == notebook.notebookID }) {
+                return .failed(.identityCollision(relativePath))
+            }
             openNotebooks[relativePath] = notebook
             openCount = openNotebooks.count
             return .opened(notebook)

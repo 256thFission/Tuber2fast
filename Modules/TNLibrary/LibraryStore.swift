@@ -190,6 +190,9 @@ package enum LibraryError: Error, Sendable, Equatable, CustomStringConvertible {
     case alreadyExists(String)
     case destinationInsideSource
     case notebookIsOpen(name: String)
+    /// A package whose identity another package holds (*A `NotebookID` is
+    /// minted once and never rewritten*).
+    case identityCollision(String)
     /// A sidecar this build cannot read, named by its file (*An unreadable
     /// sidecar refuses only the item it describes*).
     case unreadable(file: String, reason: String)
@@ -205,6 +208,7 @@ package enum LibraryError: Error, Sendable, Equatable, CustomStringConvertible {
         case .alreadyExists(let path): "already exists: \(path)"
         case .destinationInsideSource: "a folder cannot move into itself"
         case .notebookIsOpen(let name): "close \(name) first"
+        case .identityCollision: "another notebook shares its identity"
         case .unreadable(let file, let reason): "\(file) cannot be read: \(reason)"
         case .format(let fault): fault.description
         case .io(let detail): detail
@@ -428,9 +432,9 @@ package actor LibraryStore {
 
     /// Every item under `folder`, depth first, with full paths: a folder,
     /// then everything inside it, then the next. What a search over the whole
-    /// library reads.
+    /// library, the favorites and the identity scan read.
     ///
-    /// Its own walk, done once per search. The store keeps no tree: a cached
+    /// A fresh walk each time it is asked. The store keeps no tree: a cached
     /// one would be a second copy of the file system, and the file system is
     /// the authority.
     package func listTree(under folder: String) throws(LibraryError) -> [LibraryItem] {
@@ -605,15 +609,7 @@ package actor LibraryStore {
     package func listFavorites() throws(LibraryError) -> [LibraryItem] {
         let starred = try favorites()
         guard !starred.isEmpty else { return [] }
-        var found: [LibraryItem] = []
-        func walk(_ folder: String) throws(LibraryError) {
-            for item in try list(folder: folder) {
-                if let identity = item.identity, starred.contains(identity) { found.append(item) }
-                if item.kind == .folder { try walk(item.relativePath) }
-            }
-        }
-        try walk("")
-        return found
+        return try listTree(under: "").filter { $0.identity.map(starred.contains) ?? false }
     }
 
     // MARK: Decoration
@@ -828,54 +824,39 @@ package actor LibraryStore {
     // MARK: Identity index
 
     /// Every notebook identity under the root and in the trash, by relative
-    /// path. Off-main by being here. A colliding identity is re-minted for
-    /// the second package found, in place.
-    package func scanIdentities() async throws(LibraryError) -> IdentityIndex {
-        var live: [NotebookID: String] = [:]
-        var collisions: [String] = []
-        func walk(_ folder: String) throws(LibraryError) {
-            for item in try list(folder: folder) {
-                switch item.kind {
-                case .folder: try walk(item.relativePath)
-                case .notebook:
-                    guard let id = item.notebookID else { continue }
-                    if live[id] != nil { collisions.append(item.relativePath) } else { live[id] = item.relativePath }
-                }
-            }
+    /// path. Off-main by being here. The first package found under an
+    /// identity holds it; a later one is a collision, recorded and never
+    /// rewritten.
+    package func scanIdentities() throws(LibraryError) -> IdentityIndex {
+        var index = IdentityIndex()
+        for item in try listTree(under: "") where item.kind == .notebook {
+            guard let id = item.notebookID else { continue }
+            if index.live[id] == nil { index.live[id] = item.relativePath } else { index.collisions[item.relativePath] = id }
         }
-        try walk("")
-        for path in collisions {
-            let newID = NotebookID()
-            do { try await PackageStore(root: url(of: path), fileSystem: fileSystem).rewriteNotebookID(newID) } catch { throw .format(error) }
-            live[newID] = path
-            TNLog.event(.library, "re-minted colliding notebook identity at \(path)")
-        }
-        var trashed: [NotebookID: String] = [:]
         for entry in try listTrash() {
-            if let id = entry.notebookID { trashed[id] = entry.id }
+            if let id = entry.notebookID { index.trashed[id] = entry.id }
         }
-        return IdentityIndex(live: live, trashed: trashed)
+        return index
     }
 }
 
-/// `notebookID` to relative path, plus the trashed ones by container. In
-/// memory only; rebuilt by scanning.
+/// `notebookID` to relative path, plus the trashed ones by container and
+/// the collided packages by path. In memory only; rebuilt by scanning.
 package struct IdentityIndex: Sendable, Equatable {
-    package var live: [NotebookID: String]
-    package var trashed: [NotebookID: String]
-
-    package init(live: [NotebookID: String] = [:], trashed: [NotebookID: String] = [:]) {
-        self.live = live
-        self.trashed = trashed
-    }
+    package var live: [NotebookID: String] = [:]
+    package var trashed: [NotebookID: String] = [:]
+    /// Each package found after the first under its identity, by path.
+    package var collisions: [String: NotebookID] = [:]
 
     package enum Resolution: Sendable, Equatable {
         case live(path: String)
         case trashed(container: String)
+        case collided
         case missing
     }
 
     package func resolve(_ id: NotebookID) -> Resolution {
+        if collisions.values.contains(id) { return .collided }
         if let path = live[id] { return .live(path: path) }
         if let container = trashed[id] { return .trashed(container: container) }
         return .missing

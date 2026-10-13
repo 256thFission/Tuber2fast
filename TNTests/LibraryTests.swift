@@ -593,17 +593,47 @@ struct LibraryTests {
         }
     }
 
-    @Test("Two packages with one identity: the scan re-mints the second")
-    func collision() async throws {
+    @Test("Two packages with one identity are both listed, a link to it is collided, and neither is rewritten")
+    func collidedPackagesAreBothListedAndNeitherRewritten() async throws {
         let (scratch, library) = try makeLibrary("lib-collide")
         defer { withExtendedLifetime(scratch) {} }
         let item = try await library.store.createNotebook(named: "One", in: "")
-        let source = library.store.url(of: item.relativePath)
-        try FileManager.default.copyItem(at: source, to: library.store.url(of: "Two.tubernotes"))
+        let id = try #require(item.notebookID)
+        try FileManager.default.copyItem(at: library.store.url(of: item.relativePath), to: library.store.url(of: "Two.tubernotes"))
+        let indexURLs = ["One.tubernotes", "Two.tubernotes"].map { PackageLayout(root: library.store.url(of: $0)).indexURL }
+        let before = try indexURLs.map { try Data(contentsOf: $0) }
+
         try await library.refreshIdentities()
-        #expect(library.identities.live.count == 2)
-        let ids = try await library.store.list(folder: "").compactMap(\.notebookID)
-        #expect(Set(ids).count == 2)
+        #expect(try await library.store.list(folder: "").map(\.notebookID) == [id, id])
+        #expect(library.identities.live == [id: "One.tubernotes"])
+        #expect(library.identities.collisions == ["Two.tubernotes": id])
+        #expect(library.identities.resolve(id) == .collided)
+        #expect(try indexURLs.map { try Data(contentsOf: $0) } == before)
+    }
+
+    @Test("A collided path does not open, and neither does a path whose identity another checkout holds")
+    func checkoutOfACollidedPathIsRefused() async throws {
+        let (scratch, library) = try makeLibrary("lib-collide-checkout")
+        defer { withExtendedLifetime(scratch) {} }
+        let item = try await library.store.createNotebook(named: "One", in: "")
+        try FileManager.default.copyItem(at: library.store.url(of: item.relativePath), to: library.store.url(of: "Two.tubernotes"))
+
+        // Before the index is built, only the ledger can see the collision.
+        guard case .opened = await library.checkout("Two.tubernotes") else { Issue.record("open failed"); return }
+        guard case .failed(.identityCollision("One.tubernotes")) = await library.checkout("One.tubernotes") else {
+            Issue.record("a second checkout under one identity must refuse")
+            return
+        }
+        #expect(library.openCount == 1)
+        #expect(await library.release("Two.tubernotes") == .clean)
+
+        try await library.refreshIdentities()
+        guard case .failed(.identityCollision("Two.tubernotes")) = await library.checkout("Two.tubernotes") else {
+            Issue.record("a collided path must refuse")
+            return
+        }
+        guard case .opened = await library.checkout("One.tubernotes") else { Issue.record("open failed"); return }
+        #expect(await library.release("One.tubernotes") == .clean)
     }
 
     /// The three faults a sidecar commit meets, and whether the old file is

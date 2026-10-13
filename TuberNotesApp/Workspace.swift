@@ -268,6 +268,8 @@ final class Workspace {
                 }
             case .trashed:
                 banner = "That notebook is in the trash. Recover it to open the link."
+            case .collided:
+                banner = "That link points at two notebooks, so it can't open."
             case .missing:
                 banner = "The linked page is no longer in your library."
             }
