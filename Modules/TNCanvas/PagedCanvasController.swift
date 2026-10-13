@@ -110,6 +110,12 @@ package final class PagedCanvasController: UIViewController, CanvasSurface, Page
     package override func viewDidLoad() {
         super.viewDidLoad()
 
+        // The paper is white in every theme, and PencilKit draws ink for a
+        // dark trait as if the paper were dark: black ink would come out
+        // light on white. Everything under the runtime is light, whatever
+        // the window is.
+        view.overrideUserInterfaceStyle = .light
+
         scrollView.isPagingEnabled = true
         scrollView.showsHorizontalScrollIndicator = false
         scrollView.showsVerticalScrollIndicator = false

@@ -29,6 +29,10 @@ struct RootView: View {
         .animation(.default, value: workspace.banner)
         .environment(\.macaron, workspace.theme)
         .background(workspace.theme.ground.color)
+        // What UIKit draws itself (alerts, menus, the keyboard) follows a
+        // preset rather than the hour. System leaves the hour alone, so
+        // the scheme read below is still the system's own.
+        .preferredColorScheme(workspace.choice == .system ? nil : (workspace.theme.invertsMix ? .dark : .light))
         // The view reports the hour and the workspace decides what to do
         // with it: a theme picked by hand is a choice, and the system does
         // not get to overrule it.

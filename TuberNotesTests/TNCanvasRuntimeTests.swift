@@ -661,6 +661,25 @@ final class TNCanvasRuntimeTests: HostingSuite {
         #expect(paper(of: built)?.layer.borderColor == edge)
         _ = runtime.retireAll()
     }
+
+    @Test("The canvas is light under a dark window, because the paper is white in every theme")
+    func canvasIsLightUnderADarkWindow() throws {
+        let reporter = RecordingReporter()
+        let runtime = PagedCanvasController(reporter: reporter, environment: testEnvironment)
+        let window = host(runtime)
+        window.overrideUserInterfaceStyle = .dark
+        window.layoutIfNeeded()
+        let pages = descriptors(1)
+        runtime.setPages(pages, seq: StructureSeq(1), answering: nil)
+        installBlank(pages[0].id, on: runtime)
+        let canvas = try #require(runtime.canvases[pages[0].id])
+        runtime.view.layoutIfNeeded()
+
+        #expect(window.traitCollection.userInterfaceStyle == .dark)
+        // PencilKit reads the trait to decide what colour black ink is drawn in.
+        #expect(canvas.canvasView.traitCollection.userInterfaceStyle == .light)
+        _ = runtime.retireAll()
+    }
 }
 
 /// An undo target that counts what ran.
