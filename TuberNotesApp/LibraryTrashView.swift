@@ -61,7 +61,7 @@ struct LibraryTrashView: View {
     private func empty(_ text: String) -> some View {
         Text(text)
             .font(Macaron.body(.text))
-            .foregroundStyle(theme.outline(of: theme.chrome).color)
+            .foregroundStyle(theme.outline(of: theme.ground).color)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
@@ -69,10 +69,10 @@ struct LibraryTrashView: View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
             Text("Trash")
                 .font(Macaron.title(.large))
-                .foregroundStyle(theme.outline(of: theme.chrome).color)
+                .foregroundStyle(theme.outline(of: theme.ground).color)
             Text(verbatim: browser.trash.count == 1 ? "1 item" : "\(browser.trash.count) items")
                 .font(Macaron.body(.text))
-                .foregroundStyle(theme.outline(of: theme.chrome).color)
+                .foregroundStyle(theme.outline(of: theme.ground).color)
             Spacer()
             // Searching here searches the trash and nothing else: the trash
             // is not in the tree a search elsewhere reads.
@@ -88,14 +88,14 @@ struct LibraryTrashView: View {
         HStack(spacing: 14) {
             Image(systemName: entry.kind == .folder ? "folder" : "book.closed")
                 .font(Macaron.body(.label))
-                .foregroundStyle(theme.outline(of: theme.chrome).color)
+                .foregroundStyle(theme.outline(of: theme.ground).color)
             VStack(alignment: .leading, spacing: 3) {
                 Text(entry.name)
                     .font(Macaron.title(.label))
-                    .foregroundStyle(theme.outline(of: theme.chrome).color)
+                    .foregroundStyle(theme.outline(of: theme.ground).color)
                 Text(verbatim: caption(of: entry))
                     .font(Macaron.body(.caption))
-                    .foregroundStyle(theme.outline(of: theme.chrome).color)
+                    .foregroundStyle(theme.outline(of: theme.ground).color)
             }
             Spacer(minLength: 0)
             LibraryChevronMenu(name: entry.name) {

@@ -1,7 +1,6 @@
 import SwiftUI
 import TNLibrary
 import TNModel
-import UIKit
 
 /// What a colour and a symbol are called. The durable names are English
 /// already, but a raw value is not a label: `FolderSymbol.school` is stored
@@ -88,7 +87,7 @@ struct FolderStyleSheet: View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 48), spacing: Macaron.columnGap)], spacing: Macaron.rowGap) {
             ForEach(FolderColor.allCases, id: \.self) { candidate in
                 Keycap(
-                    fill: Self.fill(of: candidate),
+                    fill: LibraryStyle.rgba(of: candidate),
                     isHeld: candidate == color,
                     action: { color = candidate }
                 )
@@ -108,22 +107,10 @@ struct FolderStyleSheet: View {
                 ) {
                     Image(systemName: candidate.rawValue)
                         .font(Macaron.body(.headline))
-                        .foregroundStyle(LibraryStyle.color(of: color))
+                        .foregroundStyle(LibraryStyle.rgba(of: color).color)
                 }
                 .accessibilityLabel(FolderStyleNames.symbol(candidate))
             }
         }
-    }
-
-    /// The same colour `LibraryStyle` draws the folder in, as the four bytes
-    /// a keycap derives its outline and its wall from.
-    @MainActor private static func fill(of color: FolderColor) -> RGBA8 {
-        var red: CGFloat = 0
-        var green: CGFloat = 0
-        var blue: CGFloat = 0
-        var alpha: CGFloat = 0
-        UIColor(LibraryStyle.color(of: color)).getRed(&red, green: &green, blue: &blue, alpha: &alpha)
-        func byte(_ value: CGFloat) -> UInt8 { UInt8(min(255, max(0, value * 255)).rounded()) }
-        return RGBA8(red: byte(red), green: byte(green), blue: byte(blue), alpha: byte(alpha))
     }
 }

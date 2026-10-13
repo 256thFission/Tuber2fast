@@ -336,19 +336,32 @@ struct LibraryCover: View {
     }
 }
 
+/// A folder's symbol in the folder's colour, standing on a wall in that
+/// colour's outline as a keycap does. The colour is the folder's and the
+/// ground is the theme's, so nothing keeps them apart but the wall.
 struct LibraryFolderGlyph: View {
     /// Nil when the sidecar holding it could not be read. Such a folder has
     /// lost its identity and its star and shows the fault; it draws as it
     /// drew before decoration existed rather than as nothing at all.
     let decoration: FolderDecoration?
 
+    @Environment(\.macaron) private var theme
+
     private var shown: FolderDecoration { decoration ?? .plain }
 
     var body: some View {
-        Image(systemName: shown.symbol.rawValue)
-            .resizable()
-            .scaledToFit()
-            .foregroundStyle(LibraryStyle.color(of: shown.color))
+        let fill = LibraryStyle.rgba(of: shown.color)
+        symbol
+            .foregroundStyle(fill.color)
+            .background {
+                symbol
+                    .foregroundStyle(theme.outline(of: fill).color)
+                    .offset(y: Macaron.chipWall)
+            }
+    }
+
+    private var symbol: some View {
+        Image(systemName: shown.symbol.rawValue).resizable().scaledToFit()
     }
 }
 
@@ -401,22 +414,22 @@ struct LibraryChevronMenu<MenuContent: View>: View {
 
 @MainActor
 enum LibraryStyle {
-    /// A folder's colour is durable per-folder data, the way pistachio is a
-    /// per-notebook preset: it is chosen once and kept, so it cannot come
-    /// off the six tokens, which change under it when the theme does. The
-    /// hexes are written out rather than taken from the system palette so
-    /// that nothing in the library reaches for a colour the app did not pick.
-    /// `.neutral` is what a folder draws in when it has never been decorated.
-    static func color(of color: FolderColor) -> Color {
+    /// A folder's colour is durable per-folder data: it is chosen once and
+    /// kept, so it cannot come off the six tokens, which change under it
+    /// when the theme does. The hexes are written out rather than taken from
+    /// the system palette so that nothing in the library reaches for a
+    /// colour the app did not pick. `.neutral` is what a folder draws in
+    /// when it has never been decorated.
+    static func rgba(of color: FolderColor) -> RGBA8 {
         switch color {
-        case .neutral: Color(.sRGB, red: 0.78, green: 0.72, blue: 0.61)
-        case .red: Color(.sRGB, red: 1.00, green: 0.42, blue: 0.42)
-        case .orange: Color(.sRGB, red: 1.00, green: 0.62, blue: 0.27)
-        case .yellow: Color(.sRGB, red: 1.00, green: 0.82, blue: 0.29)
-        case .green: Color(.sRGB, red: 0.56, green: 0.83, blue: 0.43)
-        case .blue: Color(.sRGB, red: 0.36, green: 0.66, blue: 0.91)
-        case .purple: Color(.sRGB, red: 0.66, green: 0.55, blue: 0.91)
-        case .pink: Color(.sRGB, red: 1.00, green: 0.42, blue: 0.55)
+        case .neutral: RGBA8(red: 0xC7, green: 0xB8, blue: 0x9C, alpha: 0xFF)
+        case .red: RGBA8(red: 0xFF, green: 0x6B, blue: 0x6B, alpha: 0xFF)
+        case .orange: RGBA8(red: 0xFF, green: 0x9E, blue: 0x45, alpha: 0xFF)
+        case .yellow: RGBA8(red: 0xFF, green: 0xD1, blue: 0x4A, alpha: 0xFF)
+        case .green: RGBA8(red: 0x8F, green: 0xD4, blue: 0x6E, alpha: 0xFF)
+        case .blue: RGBA8(red: 0x5C, green: 0xA8, blue: 0xE8, alpha: 0xFF)
+        case .purple: RGBA8(red: 0xA8, green: 0x8C, blue: 0xE8, alpha: 0xFF)
+        case .pink: RGBA8(red: 0xFF, green: 0x6B, blue: 0x8C, alpha: 0xFF)
         }
     }
 
