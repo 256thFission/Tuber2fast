@@ -174,13 +174,15 @@ production runs; there is no fallback for a surface that cannot answer
   nothing, and the only answer is the `endTextEditing` that report earns.
   A canvas still opening its box, from the text tap until the composite
   that leaves the box out lands, has no view to commit and does nothing
-  either, so the notebook's session survives the call; a caller that
-  needs it ended asks the notebook, since the command answers nothing.
-  Told before the forced save on backgrounding (*Going to the background
-  commits an open text box before the forced save*), before an export,
-  and before every insert and page change (*An export or an insert
-  commits an open text box first*) (decided R2-08; arch-app-02,
-  policy-03).
+  either, so the notebook's session survives the call. The command
+  answers nothing, and no caller asks after it: an insert that would
+  record an entry on a page whose session is still open is the
+  notebook's to refuse, and it does (*An export or an insert commits an
+  open text box first*). Told before the forced save on backgrounding
+  (*Going to the background commits an open text box before the forced
+  save*), before an export, and before every insert and every page
+  added, duplicated or deleted (*An export or an insert commits an open
+  text box first*) (decided R2-08; arch-app-02, policy-03).
 
 Reports, `CanvasReporting`:
 
@@ -460,15 +462,19 @@ then does what was asked. The commit sits inside each editor method, not
 in the row that calls it, because the navigator reaches the same methods
 as the band. The reason is custody: the draft is `PageCanvasController`'s
 until the session ends, so an export read over an open box draws the box
-as it was when the session opened, and an entry recorded under an open
-session would sit above the session's, so one undo would take the words
-with the insert and the next bring back an empty box. A canvas still
-opening its box has nothing to commit, and its session survives the call;
-there, an insert that records an entry, an image or a link, is refused
-until the session ends, and the notebook refuses to duplicate a page
-whose session is open, because the copy would hold the box without the
-words the session ends with. The rest record nothing and are not refused
-on the session's account (decided R2-08; policy-03).
+as it was when the session opened; and the session records its entry when
+it ends, from the revision it opened on, so an entry recorded under an
+open session would sit beneath the session's, whose undo restores that
+opening revision: one undo would take the words with the insert and the
+next bring back an empty box. So the notebook refuses an insert that
+records an entry, an image or a link, on any page whose session is open,
+however it came to be open: a canvas still opening its box at the commit
+has nothing to commit and leaves the session standing, and a text tap
+during the insert's own waits opens one after the commit. The notebook
+likewise refuses to duplicate a page whose session is open, because the
+copy would hold the box without the words the session ends with. The rest
+record nothing and are not refused on the session's account (decided
+R2-08; policy-03).
 
 The canvas hands the responder chain a `FilteringUndoManager`. It records
 nothing and undoes nothing itself: PencilKit's registrations are dropped,
