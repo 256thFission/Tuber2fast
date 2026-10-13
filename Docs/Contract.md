@@ -457,17 +457,32 @@ cancelled.
 
 ## Structure
 
-`TuberNotesTests/ContractStructureTests` enforces the module graph:
+`TuberNotesTests/ContractStructureTests` enforces the module graph. It
+reads every source's `import` lines against one table of what that
+module may import, of ours and of the system's; for ours, the table is
+this graph:
 
 ```
 TNCore <- TNModel <- TNFormat <- TNRender <- TNNotebook <- TNEditor <- App
                  \__ TNCanvas <-----------------------------/   TNLibrary <-/
 ```
 
-- `TNCanvas` imports `TNCore` and `TNModel` and nothing else of ours. The app does not
-  import `TNCanvas`; it gets the canvas as a `UIViewController`. Both are
-  build errors.
-- `PKCanvasView` is constructed in exactly one file.
+- `TNCanvas` imports `TNCore` and `TNModel` and nothing else of ours. The
+  app does not import `TNCanvas`; it gets the canvas as a
+  `UIViewController`. Both are structure-test failures, not build errors:
+  every target compiles against one products directory, and
+  `transitivelyLinkDependencies` embeds `TNCanvas` in the app, so the
+  compiler accepts an import this graph forbids. Only the checker refuses
+  it.
+- `PKCanvasView`, or any subclass of it, is constructed in exactly one
+  file: a subclass is the same surface under another name, so the checker
+  finds the subclasses in the sources rather than keeping a list of them
+  (decided I2).
+- The canvas's `tool` is assigned at exactly one site, where `apply`
+  lands. `PKToolPicker`, which assigns it behind the runtime's back, is
+  not named anywhere (*The canvas is told, never asks*). A second
+  assignment by any spelling is a second writer of the tool, so the
+  checker counts the assignments, not only the picker's name.
 - File I/O happens in `PosixFileSystem`, `LibraryStore`, and
   `ImportReader`, and nowhere else. The app's `ToolPaletteDefaults` and
   `LibraryViewDefaults` write preferences to `UserDefaults`; a preference
@@ -477,7 +492,11 @@ TNCore <- TNModel <- TNFormat <- TNRender <- TNNotebook <- TNEditor <- App
   `project.yml`). UIKit is imported only by `TNCanvas`, `TNEditor`, the
   app, and `TextTypesetting.swift` in `TNModel`, the one typesetting
   builder the renderer and the live text view share; the checker names
-  that file by name.
+  that file by name. PencilKit re-exports UIKit, and the modules below
+  those three import PencilKit for `PKDrawing`, so the import line alone
+  cannot keep UIKit out of them: in every module other than those three,
+  an identifier spelled `UI` followed by a capital letter is a
+  structure-test failure as well, `TextTypesetting.swift` excepted.
 - Members that exist for tests are inside `#if DEBUG`.
 - Nothing runs per Pencil sample except PencilKit, and nothing runs per
   keystroke except UIKit's text system: no observation, no task, no actor
