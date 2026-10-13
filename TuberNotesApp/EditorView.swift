@@ -22,7 +22,6 @@ struct EditorView: View {
     @State private var photoItem: PhotosPickerItem?
     @State private var isPickingPDF = false
     @State private var isPickingLinkTarget = false
-    @State private var isPickingSticker = false
     @State private var isConfirmingPageDelete = false
     @State private var isAddingPage = false
     @State private var pendingPage: (choice: NewPagePaperChoice, size: PageSize, orientation: PageOrientation)?
@@ -68,7 +67,6 @@ struct EditorView: View {
             if args.contains("-TNShowExport") { isExporting = true }
             if args.contains("-TNShowNavigator") { isShowingNavigator = true }
             if args.contains("-TNShowAddPage") { isAddingPage = true }
-            if args.contains("-TNShowSticker") { isPickingSticker = true }
             if args.contains("-TNShowLinkTarget") { isPickingLinkTarget = true }
         }
             .confirmationDialog("Insert", isPresented: $isInserting, titleVisibility: .visible) {
@@ -80,7 +78,6 @@ struct EditorView: View {
                     Button("Scan Document") { isScanning = true }
                 }
                 Button("PDF") { isPickingPDF = true }
-                Button("Sticker") { isPickingSticker = true }
                 Button("Link") { isPickingLinkTarget = true }
                 Button("Add page") { isAddingPage = true }
                 Button("Pages") { isShowingNavigator = true }
@@ -121,9 +118,6 @@ struct EditorView: View {
         }
         .sheet(isPresented: $isPickingLinkTarget) {
             LinkTargetPicker(workspace: workspace, editor: editor)
-        }
-        .sheet(isPresented: $isPickingSticker) {
-            StickerSheet(editor: editor)
         }
         // A sheet, not a full-screen cover: the canvas stays laid out under
         // it, so a tap in the grid can scroll to the page.

@@ -839,11 +839,10 @@ package final class Notebook {
         try insertLayer(layer, on: page)
     }
 
-    /// An image, normalized to HEIC, placed centered at up to `fraction` of
-    /// each page edge, beneath the ink. A photo takes 60%; a sticker is the
-    /// same insert from a different source and asks for less.
-    package func importImage(_ data: Data, on page: PageID, fraction: Double = 0.6) async throws(FormatFault) {
-        TNPrecondition.require(fraction > 0 && fraction <= 1, "an image fit outside the page: \(fraction)")
+    /// An image, normalized to HEIC, placed centered at up to 60% of each
+    /// page edge, beneath the ink.
+    package func importImage(_ data: Data, on page: PageID) async throws(FormatFault) {
+        let fraction = 0.6
         guard let normalized = await Task.detached(priority: .userInitiated, operation: { ImageImport.normalize(data) }).value else {
             throw .invalidWrite("image could not be decoded")
         }

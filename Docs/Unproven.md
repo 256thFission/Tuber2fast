@@ -117,16 +117,6 @@ Nothing here is a reason not to ship. It is a reason not to be surprised.
   what iOS does with it. Whether the first tap prompts rather than
   terminating, whether a denial leaves the row harmless, and whether the
   captured photo lands centred on the page are device evidence.
-- **The sticker sheet has never been opened by a hand.** `StickerSheet` is
-  SwiftUI and nothing in either suite presents it. What the tests prove is
-  the catalogue and the insert: every symbol renders, normalizes to HEIC
-  with its transparent ground intact, and lands as an image layer a quarter
-  of the page wide at its centre. What they do not prove is the sheet: that
-  the grid reads as stickers rather than a symbol picker, that the palette
-  colours in the cells match the placed picture, that a tap dismisses and
-  the sticker appears without the sheet lingering over it, and that the
-  lasso then picks the sticker up with the same frame as a photo. Whether a
-  quarter of the page is the right default size is Phillip's verdict.
 - **VisionKit's scanner has never been presented.**
   `VNDocumentCameraViewController.isSupported` is false in a simulator, so the
   Scan Document row is hidden there and no test reaches `DocumentScanner`: not
