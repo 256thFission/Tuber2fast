@@ -690,3 +690,11 @@ Not gaps — properties of the tooling that read as project defects when hit.
   two notebooks open, hold the pixel eraser in one and switch the other to
   object, and the first still shows the pixel glyph; tap a swatch and the
   band's Text chip with two fingers at once: no crash.
+- **The swatches follow the tool in hand (U35, I3 line 13).** The palette
+  suite proves each run's seed, a run per theme choice, and a replaced
+  swatch surviving the store, and screenshots of two launches show a fresh
+  install's pen holding Macaron's black and the highlighter holding its
+  yellow in a row of its own. The simulator cannot tap a swatch or a cap,
+  so the bar swapping runs as the tool changes is reviewed by diff only.
+  Owed: tap each swatch and the pen takes it; switch to the highlighter,
+  and its four swatches are the highlighter row with the yellow held.
