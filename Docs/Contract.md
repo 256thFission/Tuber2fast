@@ -425,6 +425,35 @@ colour, and its symbol. Stars live in `Favorites.json` beside `Notebooks/`,
 as identities, so a star follows a rename or a move and comes back with a
 recovery.
 
+**A sidecar is committed the way the index is, and before the item it
+describes.** The library's sidecars are `.folder.json`, `Favorites.json`
+and `origin.json`. Each is staged beside its final name with the barrier,
+renamed into place, and followed by an fsync of its directory: the
+sequence *One save* uses for the index, through the same file-system seam,
+so `TNTests/LibraryTests.swift` injects the same three faults at each of
+these writes and finds the old file or the new one, never a torn or empty
+one. A sidecar is never written in place, and Foundation's `.atomic` is
+not this sequence: it renames and never syncs. Trash writes `origin.json`
+and syncs its container before the item moves in, so a process that dies
+mid-trash leaves the item where it was, or the complete entry, and a
+listing never meets an item whose sidecar a crash took. A temp file a
+crash leaves beside a sidecar is a plain file, and a listing shows only
+directories, so no sweep is owed. The library writes through the seam;
+its reads, listings, copies and recursive deletes stay on `FileManager`
+(decided F4).
+
+**Trash deletes nothing that holds an item.** The container is named by
+the item's identity, so a container that already holds an item is a second
+item under one identity: a collision, refused with `.alreadyExists` and
+both items left as they were, never resolved by deleting the first. A
+container holding only its `origin.json` is what an interrupted trash or
+recovery leaves; it holds nothing, so it is cleared and the name reused,
+which is how the item it once named can be trashed again. An item whose
+identity cannot be read goes under a fresh UUID, and a notebook's entry
+then carries no `NotebookID`: the trash does not invent one, because an
+invented identity is a default for a value the package failed to give
+(decided F2; *Forbidden*).
+
 The identity index maps `NotebookID` to path. It is built off the main
 thread and marks notebooks in the trash. If two packages share an
 identity, the second one found gets a new one. A link followed before the
