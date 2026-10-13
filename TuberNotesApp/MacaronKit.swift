@@ -19,7 +19,7 @@ private struct MacaronThemeKey: EnvironmentKey {
 }
 
 extension EnvironmentValues {
-    /// The six hexes every piece of chrome draws itself from.
+    /// The theme every piece of chrome draws itself from.
     var macaron: Theme {
         get { self[MacaronThemeKey.self] }
         set { self[MacaronThemeKey.self] = newValue }
@@ -29,8 +29,9 @@ extension EnvironmentValues {
 /// The measurements the design fixes and no theme may touch.
 enum Macaron {
     static let line: CGFloat = 3
-    /// The band is 16 in from each edge (§4.2), so 16 is what a page's
-    /// margin is, and what separates one block of a page from the next.
+    /// The band is 16 in from each edge (`Docs/Design/Macaron.md` §4.2), so
+    /// 16 is what a page's margin is, and what separates one block of a page
+    /// from the next.
     static let inset: CGFloat = 16
     static let chip: CGFloat = 34
     static let swatch: CGFloat = 18
@@ -431,9 +432,10 @@ struct MacaronDivider: View {
     }
 }
 
-/// A sheet's chrome. The document names no sheet, so this is derived from
-/// the seat in §4.3, which is the one panel it does name: an accent title
-/// strip with a close control, a flat body, and a 3pt derived outline.
+/// A sheet's chrome. `Docs/Design/Macaron.md` names no sheet, so this is
+/// derived from the seat in its §4.3, which is the one panel it does name:
+/// an accent title strip with a close control, a flat body, and a 3pt
+/// derived outline.
 ///
 /// It fills its presentation rather than floating inside it, so the sheet's
 /// own corners are the only corners and no second border appears.

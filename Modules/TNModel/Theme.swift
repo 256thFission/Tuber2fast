@@ -64,10 +64,11 @@ package struct Theme: Equatable, Sendable {
     package let accent: RGBA8
     /// Seat toggle, resize grip, dirty dot, and the second kind of button.
     package let secondary: RGBA8
-    /// What every outline is mixed toward, and what the chrome's own
-    /// lettering is. Not what handwriting is: a stroke keeps the colour
-    /// it was drawn in, and no module the ink passes through can name a
-    /// theme at all.
+    /// What every outline is mixed toward, and the one colour the chrome
+    /// uses straight: the words typed into a field, the tray knob's ring,
+    /// the bar's shadow in flight. Not what the hand writes in: a stroke
+    /// keeps the colour it was drawn in, and no module the ink passes
+    /// through can name a theme at all.
     package let ink: RGBA8
     /// The seven colours the brush offers, in the order they are drawn.
     ///
@@ -248,9 +249,10 @@ package struct Theme: Equatable, Sendable {
         invertsMix: true
     )
 
-    /// Every theme this build ships, in the order the design board lays
-    /// them out. A theme is a row of this table and nothing more: no view
-    /// names one, and adding one is a row.
+    /// Every theme this build ships, in the order the design canvas's
+    /// *Six themes* board lays them out (`Docs/Design/Macaron.md` §12), with
+    /// Macaron Dark beside its day theme. A theme is a row of this table and
+    /// nothing more: no view names one, and adding one is a row.
     package static let presets: [ThemePreset] = [
         ThemePreset(id: ThemeID(rawValue: "macaron"), name: "Macaron", theme: .macaron),
         ThemePreset(id: ThemeID(rawValue: "macaronDark"), name: "Macaron Dark", theme: .macaronDark),
