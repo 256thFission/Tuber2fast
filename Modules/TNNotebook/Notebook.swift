@@ -314,6 +314,12 @@ package final class Notebook {
             return
         }
         content.pendingEcho = nil
+        // A report of the ink already held is no edit: the page stays clean
+        // and its ink file is not rewritten.
+        if ink == content.ink {
+            states[page] = .ready(content)
+            return
+        }
         let captured = content.revision
         let gesture = gesture(on: page, in: ink, after: captured, bindings: bindings)
         if let gesture {

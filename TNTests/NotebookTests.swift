@@ -463,6 +463,29 @@ struct NotebookTests {
         #expect(!notebook.canRedo)
     }
 
+    @Test("A report of the ink already held is no edit: the page stays clean and its ink file is not rewritten")
+    func anEqualReportIsNotAnEdit() async throws {
+        let scratch = try Scratch("nb-equal-report")
+        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        let page = notebook.pageIDs[0]
+        notebook.windowChanged(to: [page])
+        try await waitUntil { notebook.state(of: page)?.content != nil }
+        notebook.inkChanged(on: page, Ink.drawing(strokes: 2), echoOf: nil)
+        await notebook.flush()
+        let inkURL = PackageStore(root: scratch.packageURL).layout.inkURL(page)
+        let written = try PosixFileSystem().modificationTime(inkURL)
+        let held = notebook.state(of: page)!.content!
+        _ = notebook.drainChanges()
+
+        notebook.inkChanged(on: page, held.ink, echoOf: nil)
+        let after = notebook.state(of: page)!.content!
+        #expect(after.editSeq == held.editSeq)
+        #expect(!after.isDirty && !notebook.isDirty)
+        #expect(notebook.drainChanges().isEmpty, "no content change reaches the editor")
+        await notebook.flush()
+        #expect(try PosixFileSystem().modificationTime(inkURL) == written)
+    }
+
     @Test("An echo whose ink differs from the restored value is an edit: PencilKit committed a stroke over the restore")
     func echoCarryingDifferentInkIsAnEdit() async throws {
         let scratch = try Scratch("nb-undo-late-commit")

@@ -250,10 +250,12 @@ import UIKit
         // landing under the next stroke. No gesture applies to it: a
         // gesture's restore would replace the drawing under the Pencil.
         let bindings = surface.isStrokeInFlight ? [:] : bindingsForStroke()
+        let before = notebook.contentVersion(of: page)
         notebook.inkChanged(on: page, ink, echoOf: echoOf, bindings: bindings)
-        // An echo is the runtime restating ink it was handed, which is a
-        // restore and not a stroke anybody drew.
-        if echoOf == nil { onInkReported?() }
+        // Only a report that moved custody is a stroke somebody drew: an
+        // echo restates ink the runtime was handed, and a stamped report
+        // with new ink is a stroke committed on top of it.
+        if notebook.contentVersion(of: page) != before { onInkReported?() }
         drain()
     }
 
