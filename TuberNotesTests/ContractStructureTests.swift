@@ -239,6 +239,61 @@ enum ContractChecker {
             + code.matches(of: unqualifiedPOSIXCall).map { "\($0.output.1)(" }
     }
 
+    // MARK: Rule — what project.yml builds
+
+    private typealias YAMLLine = (indent: Int, text: String)
+
+    /// `project.yml`'s lines, trimmed, without comments and blanks.
+    private static func yamlLines(_ yaml: String) -> [YAMLLine] {
+        yaml.split(separator: "\n")
+            .map { (indent: $0.prefix { $0 == " " }.count, text: $0.trimmingCharacters(in: .whitespaces)) }
+            .filter { !$0.text.isEmpty && !$0.text.hasPrefix("#") }
+    }
+
+    /// The lines under the key at `index`: deeper, or a list item at its depth.
+    private static func children(of index: Int, in lines: [YAMLLine]) -> ArraySlice<YAMLLine> {
+        let key = lines[index].indent
+        let end = lines[(index + 1)...].firstIndex {
+            $0.indent < key || ($0.indent == key && !$0.text.hasPrefix("- "))
+        }
+        return lines[(index + 1)..<(end ?? lines.endIndex)]
+    }
+
+    /// Every path a target compiles: each item under a `sources:` key,
+    /// `- path: X` or `- X`, and an inline value as written, so
+    /// `sources: [A, B]` names no directory and fails closed.
+    static func declaredSourcePaths(inYAML yaml: String) -> Set<String> {
+        let lines = yamlLines(yaml)
+        var declared: Set<String> = []
+        for index in lines.indices where lines[index].text.hasPrefix("sources:") {
+            let inline = lines[index].text.dropFirst("sources:".count).trimmingCharacters(in: .whitespaces)
+            if !inline.isEmpty { declared.insert(inline) }
+            let items = children(of: index, in: lines)
+            for item in items where item.indent == items.first?.indent && item.text.hasPrefix("- ") {
+                let value = item.text.dropFirst("- ".count)
+                declared.insert(String(value.hasPrefix("path: ") ? value.dropFirst("path: ".count) : value))
+            }
+        }
+        return declared
+    }
+
+    /// The lines that set `OTHER_SWIFT_FLAGS`. The SwiftUI alias is the
+    /// `Framework` template's, a target's own value replaces a template's in
+    /// XcodeGen, and its `$(inherited)` skips the template, so a second
+    /// setting anywhere can drop the alias for a target.
+    static func swiftFlagsSettings(inYAML yaml: String) -> [String] {
+        yamlLines(yaml).map(\.text).filter { $0.contains("OTHER_SWIFT_FLAGS") }
+    }
+
+    /// The names in `names` with no target that takes the `Framework` template.
+    static func targetsWithoutFrameworkTemplate(_ names: [String], inYAML yaml: String) -> [String] {
+        let lines = yamlLines(yaml)
+        return names.filter { name in
+            guard let target = lines.firstIndex(where: { $0.text == name + ":" }) else { return true }
+            return !children(of: target, in: lines).contains { $0.text == "templates: [Framework]" }
+        }
+    }
+
     // MARK: Rule — test-only members exist only in Debug
 
     /// What a member written for the tests is spelled as here.
@@ -567,6 +622,10 @@ struct ContractStructureTests {
         return sources.sorted { $0.path < $1.path }
     }
 
+    static func projectYAML() throws -> String {
+        try String(contentsOf: repoRoot.appendingPathComponent("project.yml"), encoding: .utf8)
+    }
+
     /// Allowlist entries that name a file that no longer exists.
     ///
     /// A stale entry is not harmless: it is a standing permission nobody is
@@ -599,16 +658,14 @@ struct ContractStructureTests {
     /// mode of under-policing is the silence this whole item is about.
     @Test("Every policed file is a file its module compiles, and every module is policed")
     func policedFilesAreTargetFiles() throws {
-        let yaml = try String(
-            contentsOf: Self.repoRoot.appendingPathComponent("project.yml"),
-            encoding: .utf8
-        )
+        let yaml = try Self.projectYAML()
         let lines = yaml.split(separator: "\n", omittingEmptySubsequences: false)
             .map { $0.trimmingCharacters(in: .whitespaces) }
 
+        let declared = ContractChecker.declaredSourcePaths(inYAML: yaml)
         for directory in Self.moduleDirectories {
             #expect(
-                lines.contains("- path: \(directory)"),
+                declared.contains(directory),
                 """
                 project.yml no longer declares \(directory) as a whole source path, so the set of \
                 files on disk is no longer the set of files compiled. Decide what the checker \
@@ -617,16 +674,11 @@ struct ContractStructureTests {
             )
         }
 
-        let declared = Set(
-            lines
-                .filter { $0.hasPrefix("- path: ") }
-                .map { String($0.dropFirst("- path: ".count)) }
-        )
+        let unpoliced = declared.subtracting(Self.moduleDirectories).subtracting(["TuberNotesTests", "TNTests"])
         #expect(
-            declared.subtracting(Self.moduleDirectories).subtracting(["TuberNotesTests", "TNTests"]).isEmpty,
+            unpoliced.isEmpty,
             """
-            project.yml declares source paths this checker does not police: \
-            \(declared.subtracting(Self.moduleDirectories).subtracting(["TuberNotesTests", "TNTests"]).sorted()). \
+            project.yml declares source paths this checker does not police: \(unpoliced.sorted()). \
             A new module policed by nothing is the silence the split was supposed to end — add it \
             to moduleDirectories and to moduleImportPolicy.
             """
@@ -649,21 +701,34 @@ struct ContractStructureTests {
     /// not compile, and a build failure is not something a suite has to notice.
     /// What a suite *can* notice is the flag going missing — delete
     /// `-module-alias SwiftUI=…` from `project.yml` and every module quietly
-    /// regains SwiftUI with no test anywhere turning red. So this asserts the
-    /// mechanism exists, and leaves the enforcement to the mechanism.
+    /// regains SwiftUI with no test anywhere turning red. It goes missing for
+    /// one module as quietly: a target that sets its own `OTHER_SWIFT_FLAGS`,
+    /// or does not take the `Framework` template. So this asserts the
+    /// mechanism reaches every framework, and leaves the enforcement to it.
     @Test("No module below the app target can import SwiftUI")
     func swiftUIIsBannedBelowTheAppTarget() throws {
-        let yaml = try String(
-            contentsOf: Self.repoRoot.appendingPathComponent("project.yml"),
-            encoding: .utf8
-        )
+        let yaml = try Self.projectYAML()
+        let flags = ContractChecker.swiftFlagsSettings(inYAML: yaml)
         #expect(
-            yaml.contains("-module-alias SwiftUI="),
+            flags.count == 1 && flags.allSatisfy { $0.contains("-module-alias SwiftUI=") },
             """
-            project.yml no longer aliases SwiftUI away from the framework targets, so the canvas \
-            runtime can import it again and nothing but review would say so. The SwiftUI ban in \
-            Contract.md, Structure, is enforced there and nowhere else — restore it, or decide \
-            deliberately that a scanner rule replaces it.
+            project.yml sets OTHER_SWIFT_FLAGS \(flags.count) times: \(flags). The one that aliases \
+            SwiftUI away must be the only one, because a target's own value replaces the Framework \
+            template's and its $(inherited) skips the template. The SwiftUI ban in Contract.md, \
+            Structure, is enforced there and nowhere else — restore it, or decide deliberately that \
+            a scanner rule replaces it.
+            """
+        )
+
+        let frameworks = Self.moduleDirectories
+            .filter { $0.hasPrefix("Modules/") }
+            .map { String($0.dropFirst("Modules/".count)) }
+        let untemplated = ContractChecker.targetsWithoutFrameworkTemplate(frameworks, inYAML: yaml)
+        #expect(
+            untemplated.isEmpty,
+            """
+            \(untemplated.joined(separator: ", ")) does not take the Framework template, which is where \
+            SwiftUI is aliased away, so it can import SwiftUI and nothing but review would say so.
             """
         )
     }
@@ -1469,6 +1534,46 @@ struct ContractCheckerOwnTests {
                 "Planted/Deep/DoubleTap.swift",
                 "Planted/Deep/DoubleTap.swift",
             ])
+        }
+    }
+
+    // MARK: project.yml, planted
+
+    /// Today's `project.yml` with one edit planted in memory.
+    private func projectYAML(replacing old: String, with new: String) throws -> String {
+        let yaml = try ContractStructureTests.projectYAML()
+        #expect(yaml.contains(old), "project.yml no longer reads \(old); plant the edit where it does")
+        return yaml.replacingOccurrences(of: old, with: new)
+    }
+
+    private let canvasTarget = "  TNCanvas:\n    templates: [Framework]\n"
+
+    @Test("A target's own OTHER_SWIFT_FLAGS, which drops the SwiftUI alias, is caught")
+    func swiftFlagsAreSetOnce() throws {
+        let profiled = try projectYAML(
+            replacing: canvasTarget,
+            with: canvasTarget + "    settings:\n      base:\n"
+                + "        OTHER_SWIFT_FLAGS: \"$(inherited) -Xfrontend -warn-long-function-bodies=200\"\n"
+        )
+        #expect(ContractChecker.swiftFlagsSettings(inYAML: profiled).count == 2)
+    }
+
+    @Test("A framework target without the Framework template is caught")
+    func frameworksUseTheTemplate() throws {
+        let untemplated = try projectYAML(replacing: canvasTarget, with: "  TNCanvas:\n    type: framework\n")
+        #expect(ContractChecker.targetsWithoutFrameworkTemplate(["TNCore", "TNCanvas"], inYAML: untemplated) == ["TNCanvas"])
+    }
+
+    @Test("A source path written short, at its key's depth, or inline is a declared path")
+    func shortFormSourcesArePoliced() throws {
+        let sources = "    sources:\n      - path: Modules/TNCanvas\n"
+        for (planted, declared) in [
+            (sources + "      - Modules/Shared\n", "Modules/Shared"),
+            ("    sources:\n    - path: Modules/TNCanvas\n    - Modules/Shared\n", "Modules/Shared"),
+            ("    sources: [Modules/TNCanvas, Modules/Shared]\n", "[Modules/TNCanvas, Modules/Shared]"),
+        ] {
+            let yaml = try projectYAML(replacing: sources, with: planted)
+            #expect(ContractChecker.declaredSourcePaths(inYAML: yaml).contains(declared), "missed \(planted)")
         }
     }
 
