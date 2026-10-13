@@ -135,10 +135,11 @@ Commands, `CanvasSurface`:
 - `apply`: the tool and the theme, as one `CanvasEnvironment`. The
   runtime acts on what changed and on nothing else. A changed tool goes to
   the canvases, each taking it when its use ends. A changed theme repaints
-  the ground, every page's paper and outline, every placeholder and an
-  open selection frame, and sends no tool. A canvas handed a tool is not
-  left as it was: an ink tool commits an open text session and clears a
-  selection, and the text tool restyles the words selected in an open box.
+  the ground, every page's paper and outline, every placeholder, and an
+  open selection frame or text box, and sends no tool. A canvas handed a
+  tool is not left as it was: an ink tool commits an open text session and
+  clears a selection, and the text tool restyles the words selected in an
+  open box.
   Under the system choice the theme changes at sunset, under whatever the
   hand is doing, so a theme that re-sent the tool would do one of those to
   work nobody touched (decided I5; ink-06, deepen-canvas-03).

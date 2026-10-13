@@ -102,6 +102,7 @@ colour in the mocks. It is a per-notebook preset, not a theme token.
 | `paper` | `chrome` at full lightness (white in every shipped theme) |
 | `ground2` | `ground` mixed toward `ink`; the grid line and the second colour of every ground pattern |
 | outline of anything | `fill` mixed toward `ink` at `outlineMix` — 42% if the fill is saturated, 55% if pale |
+| outline over the paper | by day, the ordinary outline; in a dark theme, `fill` mixed toward `ground` at the same `outlineMix`. The paper stays white after dark, so an outline come up toward white would not be there on the page it marks: the lasso box's handle borders and its lock, a page's bookmark. Where the escape fires, the two agree |
 | keycap wall colour | the element's own outline colour (same hex) |
 | seat body | `accent` taken 80% toward `paper`; in a dark theme, 80% toward `ground` (§4.3) |
 
