@@ -76,7 +76,7 @@ package final class Notebook {
     @ObservationIgnored private var firstDirtyAt: ContinuousClock.Instant?
     @ObservationIgnored private var backoff: Duration?
     @ObservationIgnored private var retryBuffer: [PageID: (seq: UInt64, bytes: Data)] = [:]
-    @ObservationIgnored private var viewWrite: Task<Void, Never>?
+    @ObservationIgnored private(set) var viewWrite: Task<Void, Never>?
 
     private init(store: any PackageStoring, loaded: LoadedNotebook, view: ViewState?, schedule: SaveSchedule) {
         self.store = store
@@ -495,6 +495,7 @@ package final class Notebook {
     }
 
     private func scheduleViewWrite() {
+        guard !isClosed else { return }
         viewWrite?.cancel()
         let store = self.store
         let page = currentPageID

@@ -361,6 +361,20 @@ struct NotebookTests {
         #expect(try Data(contentsOf: base.layout.pageURL(page)) == pageFile)
     }
 
+    @Test("A page change after a clean close arms no view write")
+    func aPageChangeAfterCloseWritesNoView() async throws {
+        let scratch = try Scratch("nb-view-after-close")
+        let notebook = try await Notebook.open(
+            store: try await PackageStore.create(root: scratch.packageURL, index: Fixture.index(pages: 3)),
+            schedule: fast)
+        #expect(await notebook.close() == .clean)
+
+        notebook.pageBecameCurrent(notebook.pageIDs[1])
+        #expect(notebook.viewWrite == nil, "turning the page wrote view.json")
+        notebook.deletePage(notebook.currentPageID)
+        #expect(notebook.viewWrite == nil, "deleting the current page wrote view.json")
+    }
+
     @Test("Undo restores the prior value without the echo counting as an edit; redo returns")
     func undoWithoutEcho() async throws {
         let scratch = try Scratch("nb-undo")
