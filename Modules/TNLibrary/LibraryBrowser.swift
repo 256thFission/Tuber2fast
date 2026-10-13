@@ -127,6 +127,9 @@ package final class LibraryBrowser {
                 listing = .loaded([])
             }
         } catch {
+            // The trash draws `trash`, so a refused read leaves no stale
+            // rows behind it and nothing for Empty to count.
+            if section == .trash { trash = [] }
             listing = .refused(error.description)
         }
     }

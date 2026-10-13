@@ -19,7 +19,9 @@ struct LibraryTrashView: View {
                 .padding(.top, 16)
                 .padding(.bottom, 14)
 
-            if browser.trash.isEmpty {
+            if case .refused(let message) = browser.listing {
+                empty("The trash could not be shown: \(message)")
+            } else if browser.trash.isEmpty {
                 empty("Trash is empty")
             } else if browser.displayedTrash.isEmpty {
                 empty("No results for \(browser.searchText)")

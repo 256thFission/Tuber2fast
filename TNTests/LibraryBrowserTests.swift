@@ -451,6 +451,28 @@ struct LibraryBrowserTests {
         #expect(browser.displayed.count == 1)
     }
 
+    @Test("A trash that cannot be read is refused, never shown as empty, and keeps no stale rows")
+    func anUnreadableTrashRefuses() async throws {
+        let (scratch, browser) = try makeBrowser("browser-trash-refused")
+        defer { withExtendedLifetime(scratch) {} }
+        let store = browser.library.store
+        let gone = try await store.createNotebook(named: "Gone", in: "")
+        _ = try await browser.library.trash(at: gone.relativePath)
+        browser.section = .trash
+        await browser.reload()
+        #expect(browser.trash.map(\.name) == ["Gone"])
+
+        try FileManager.default.removeItem(at: store.trashRoot)
+        try Data().write(to: store.trashRoot)
+        await browser.reload()
+
+        guard case .refused = browser.listing else {
+            Issue.record("an unreadable trash must refuse, not list")
+            return
+        }
+        #expect(browser.trash.isEmpty)
+    }
+
     @Test("Creating a folder and a notebook puts both in the folder being shown")
     func creating() async throws {
         let (scratch, browser) = try makeBrowser("browser-create")
