@@ -289,44 +289,41 @@ struct ToolPaletteTests {
     }
 
     /// The third thing asked of the drawing colours: they follow the
-    /// person, not whatever notebook is open. `Workspace` builds one
-    /// `ToolPalette` for the whole app and hands it to every tab, and no
-    /// package holds a tool colour at all, so a colour earned in one
-    /// notebook is on the bar of the next one opened.
+    /// person, not whatever notebook is open. No package holds a tool
+    /// colour, so a colour drawn with in one notebook is in the preference,
+    /// and a palette built fresh over that store, as the next launch builds
+    /// it, offers it in another notebook.
     ///
     /// Over a recording surface, because what is being pinned is custody
     /// and a live canvas would only be two more page controllers to tear
     /// down.
-    @Test("A colour drawn with in one notebook is a recent in every other, and outlives them")
+    @Test("A colour drawn with in one notebook is a recent in another, through the preference alone")
     func theColoursFollowThePersonAndNotTheNotebook() async throws {
         let store = MemoryPaletteStore()
-        let shared = ToolPalette(store: store)
         let firstScratch = try Scratch("palette-global-one")
         let secondScratch = try Scratch("palette-global-two")
-        let one = EditorViewModel(
-            binding: EditorBinding(
-                notebook: try await Notebook.create(at: firstScratch.packageURL, schedule: fast),
-                surface: RecordingSurface()
-            ),
-            palette: shared,
-            theme: .macaron
-        )
+        let first = try await Notebook.create(at: firstScratch.packageURL, schedule: fast)
+        let surface = RecordingSurface()
+        let binding = EditorBinding(notebook: first, surface: surface)
+        let one = EditorViewModel(binding: binding, palette: ToolPalette(store: store), theme: .macaron)
+        one.select(.ink(.pen))
+        one.setColor(swatch(0x21))
+        let page = first.pageIDs[0]
+        binding.windowChanged(to: [page])
+        try await waitUntil { surface.installed.contains(page) }
+        binding.inkChanged(on: page, Ink.drawing(strokes: 1), echoOf: nil)
+        _ = await first.close()
+
         let two = EditorViewModel(
             binding: EditorBinding(
                 notebook: try await Notebook.create(at: secondScratch.packageURL, schedule: fast),
                 surface: RecordingSurface()
             ),
-            palette: shared,
+            palette: ToolPalette(store: store),
             theme: .macaron
         )
-
-        one.palette.used(swatch(0x21))
-
-        #expect(two.palette.recentColors == [swatch(0x21)])
-        // And it is in the preference, not in either package: a palette
-        // built fresh over the same store reads it back with no notebook
-        // anywhere near it.
-        #expect(ToolPalette(store: store).recentColors == [swatch(0x21)])
+        #expect(two.palette !== one.palette)
+        #expect(two.palette.recentColors.first == swatch(0x21))
         withExtendedLifetime((firstScratch, secondScratch)) {}
     }
 

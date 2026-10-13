@@ -221,12 +221,57 @@ struct EditorBindingTests {
         binding.inkChanged(on: page, Ink.drawing(strokes: 3), echoOf: nil)
         #expect(notebook.canUndo)
 
+        // The binding scrolled to this page when it opened, so only what the
+        // undo itself pushed counts.
+        let before = surface.calls.count
         binding.undoRequested()
-        let restored = surface.calls.contains { if case .restoreInk(let p, _) = $0 { p == page } else { false } }
-        #expect(restored)
-        #expect(surface.calls.contains(.scroll(page)))
+        let pushed = Array(surface.calls[before...])
+        guard pushed.count >= 2, case .restoreInk(let restored, _) = pushed[pushed.count - 2] else {
+            Issue.record("the undo pushed \(pushed), not a restore then a scroll")
+            return
+        }
+        #expect(restored == page)
+        #expect(pushed.last == .scroll(page))
         #expect(notebook.state(of: page)?.content?.ink.strokes.isEmpty == true)
         _ = await notebook.close()
+    }
+
+    @Test("A landed stroke records the colour in hand as a recent; an echo and an eraser pass record nothing")
+    func aLandedStrokeRecordsItsColour() async throws {
+        let scratch = try Scratch("editor-recent-colour")
+        let notebook = try await Notebook.create(at: scratch.packageURL, schedule: fast)
+        let surface = RecordingSurface()
+        let binding = EditorBinding(notebook: notebook, surface: surface)
+        let palette = ToolPalette(store: MemoryPaletteStore())
+        let editor = EditorViewModel(binding: binding, palette: palette, theme: .macaron)
+        let page = notebook.pageIDs[0]
+        let (drawn, other) = (
+            ToolColor(rgba: RGBA8(red: 0x21, green: 0x44, blue: 0x55, alpha: 0xFF)),
+            ToolColor(rgba: RGBA8(red: 0x22, green: 0x44, blue: 0x55, alpha: 0xFF))
+        )
+        editor.select(.ink(.pen))
+        editor.setColor(drawn)
+        binding.windowChanged(to: [page])
+        try await waitUntil { surface.installed.contains(page) }
+        #expect(palette.recentColors.first != drawn, "a colour in hand is not yet one drawn with")
+
+        let (one, two) = (Ink.drawing(strokes: 1), Ink.drawing(strokes: 2))
+        binding.inkChanged(on: page, one, echoOf: nil)
+        #expect(palette.recentColors.first == drawn)
+        binding.inkChanged(on: page, two, echoOf: nil)
+
+        editor.setColor(other)
+        binding.undoRequested()
+        guard case .restoreInk(_, let seq) = try #require(surface.calls.last { if case .restoreInk = $0 { true } else { false } }) else { return }
+        let afterStroke = palette.recentColors
+        binding.inkChanged(on: page, one, echoOf: seq)
+        #expect(palette.recentColors == afterStroke, "an echo is no stroke")
+
+        editor.selectEraser()
+        binding.inkChanged(on: page, two, echoOf: nil)
+        #expect(palette.recentColors == afterStroke, "an eraser pass carries no colour")
+        _ = await notebook.close()
+        withExtendedLifetime(scratch) {}
     }
 
     @Test("A recent is a report that moved custody: new ink, stamped or not, and never ink already held")
