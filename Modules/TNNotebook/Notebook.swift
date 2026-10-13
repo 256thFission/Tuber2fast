@@ -1113,8 +1113,10 @@ package final class Notebook {
             return
         }
         guard !found.locked else {
-            // The canvas does not open a locked box, but an undo can relock
-            // one between the tap and this begin. Released the same way.
+            // The canvas does not open a locked box, but its lock flags are
+            // one render stale too: an undo that relocks a box reaches the
+            // canvas only with the composite it queued, so a tap before that
+            // lands can ask for the box. Released the same way.
             TNLog.event(.notebook, "text editing was requested on page \(page) for layer \(layer), which is locked")
             changes.append(.textEditingEnded(page, layer))
             return
