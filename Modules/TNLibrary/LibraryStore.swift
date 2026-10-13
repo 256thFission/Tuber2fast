@@ -306,10 +306,14 @@ package actor LibraryStore {
     }
 
     /// Every way an item enters a directory: one rename that refuses an
-    /// occupied target, then an fsync of each directory in `syncing`, the
-    /// one it entered and, unless it left Staging, the one it left. A target
+    /// occupied target, then an fsync of the directory it left, unless that
+    /// is Staging or the one it entered, and of the one it entered. A target
     /// that exists is `.alreadyExists` and is left as it was.
-    private func land(_ source: URL, at target: URL, syncing directories: [URL], doing action: String) throws(LibraryError) {
+    private func land(_ source: URL, at target: URL, doing action: String) throws(LibraryError) {
+        let left = source.deletingLastPathComponent()
+        let entered = target.deletingLastPathComponent()
+        let unsynced = [stagingRoot, entered].map(\.standardizedFileURL.path)
+        let directories = unsynced.contains(left.standardizedFileURL.path) ? [entered] : [left, entered]
         do {
             try fileSystem.publishExclusive(source, to: target)
             for directory in directories { try fileSystem.syncDirectory(directory) }
@@ -375,7 +379,7 @@ package actor LibraryStore {
         } catch {
             throw .io("create folder \(name): \(error)")
         }
-        try land(staged, at: target, syncing: [parent], doing: "create folder \(name)")
+        try land(staged, at: target, doing: "create folder \(name)")
         let path = folder.isEmpty ? name : "\(folder)/\(name)"
         return item(at: path, url: target, kind: .folder)
     }
@@ -420,7 +424,7 @@ package actor LibraryStore {
         } catch {
             throw .format(error)
         }
-        try land(staged, at: target, syncing: [parent], doing: "create \(name)")
+        try land(staged, at: target, doing: "create \(name)")
         let path = folder.isEmpty ? target.lastPathComponent : "\(folder)/\(target.lastPathComponent)"
         return item(at: path, url: target, kind: .notebook)
     }
@@ -432,7 +436,7 @@ package actor LibraryStore {
         let target = source.deletingLastPathComponent().appendingPathComponent(fileName, isDirectory: true)
         guard target != source else { return item(at: relativePath, url: source, kind: kind) }
         guard self.kind(at: target) == nil else { throw .alreadyExists(newName) }
-        try land(source, at: target, syncing: [source.deletingLastPathComponent()], doing: "rename \(relativePath)")
+        try land(source, at: target, doing: "rename \(relativePath)")
         let parent = relativePath.contains("/") ? String(relativePath[..<relativePath.lastIndex(of: "/")!]) : ""
         let path = parent.isEmpty ? fileName : "\(parent)/\(fileName)"
         return item(at: path, url: target, kind: kind)
@@ -450,7 +454,7 @@ package actor LibraryStore {
         // and a drop on the cell's own parent — reaches this the same way.
         guard target != source else { return item(at: relativePath, url: source, kind: kind) }
         guard self.kind(at: target) == nil else { throw .alreadyExists(source.lastPathComponent) }
-        try land(source, at: target, syncing: [source.deletingLastPathComponent(), parent], doing: "move \(relativePath)")
+        try land(source, at: target, doing: "move \(relativePath)")
         let path = folder.isEmpty ? source.lastPathComponent : "\(folder)/\(source.lastPathComponent)"
         return item(at: path, url: target, kind: kind)
     }
@@ -600,10 +604,7 @@ package actor LibraryStore {
         } catch {
             throw .io("trash \(relativePath): \(error)")
         }
-        try land(
-            source, at: container.appendingPathComponent(source.lastPathComponent, isDirectory: true),
-            syncing: [source.deletingLastPathComponent(), container], doing: "trash \(relativePath)"
-        )
+        try land(source, at: container.appendingPathComponent(source.lastPathComponent, isDirectory: true), doing: "trash \(relativePath)")
         return TrashEntry(id: containerName, name: Self.displayName(of: origin.originName), kind: kind, origin: origin, notebookID: notebookID)
     }
 
@@ -639,7 +640,7 @@ package actor LibraryStore {
             attempt += 1
         }
         let target = parent.appendingPathComponent(fileName, isDirectory: true)
-        try land(source, at: target, syncing: [container, parent], doing: "recover \(entry.id)")
+        try land(source, at: target, doing: "recover \(entry.id)")
         do { try fm.removeItem(at: container) } catch { throw .io("recover \(entry.id): \(error)") }
         let path = folder.isEmpty ? fileName : "\(folder)/\(fileName)"
         return item(at: path, url: target, kind: kind)
@@ -684,7 +685,7 @@ package actor LibraryStore {
             attempt += 1
         }
         let target = parent.appendingPathComponent(Self.packageName(name), isDirectory: true)
-        try land(staged, at: target, syncing: [parent], doing: "land duplicate of \(relativePath)")
+        try land(staged, at: target, doing: "land duplicate of \(relativePath)")
         let parentPath = relativePath.contains("/") ? String(relativePath[..<relativePath.lastIndex(of: "/")!]) : ""
         let path = parentPath.isEmpty ? target.lastPathComponent : "\(parentPath)/\(target.lastPathComponent)"
         return item(at: path, url: target, kind: .notebook)
