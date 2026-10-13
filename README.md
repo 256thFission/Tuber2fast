@@ -36,8 +36,10 @@ Tools/device              # build, install, launch, and capture the session
 guess: it distinguishes **BLOCKED** (plug in, unlock, trust — exit 2) from
 **MISCONFIGURED** (something in this repo is wrong — exit 1), and prints a
 remedy for each. Without `--check` it goes on to build for that iPad, install,
-launch with the app's trace stream attached, and print what the app reported
-when you end the session with Ctrl-C.
+and launch with the app's trace stream attached. When you end the session with
+Ctrl-C it prints the build and device identity, any crash, how many
+`TN[violation]` lines the app wrote, and how many pages were appended.
+`Tools/device --digest <console.log>` summarises a saved console the same way.
 
 It auto-selects the one iPad paired with your Mac and refuses to choose when
 there are several; set `TN_DEVICE_NAME` in `Local.xcconfig` if that is you.

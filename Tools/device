@@ -1,6 +1,6 @@
 #!/bin/bash
 # One command between "I want to hand-exercise the canvas" and a captured
-# session you can cite in a pull request.
+# session you can cite as device evidence.
 #
 #   Tools/device            diagnose, build, install, launch, capture
 #   Tools/device --check    diagnose only, then stop
@@ -31,7 +31,7 @@
 # WHY THIS EXISTS. The simulator has no Apple Pencil, so the whole of this
 # project's risk lives in the on-device loop. Device behaviour is observable
 # from a script through exactly one mechanism — `devicectl device process
-# launch --console`, the stream CanvasLog.swift mirrors trace output to — and
+# launch --console`, the stream TNLog mirrors trace output to — and
 # this is that stream's reader.
 #
 # WHAT THIS MUST NEVER DO:
@@ -134,13 +134,11 @@ keychain_team_ids() {
 # A process that trapped, in the words the runtime actually uses.
 #
 # A Swift trap — precondition, preconditionFailure, a force-unwrapped nil, an
-# out-of-range index — writes "Fatal error: ..." to stderr and dies. It is not
-# an NSException, so CanvasLog's uncaught-exception handler never sees it and
-# nothing prints TN[fatal]; and it can happen before the app logs a single
-# event, so the stream can contain no TN[ at all. Before this pattern existed,
-# such a capture fell through to NO TRACE CAPTURED — the tool's most alarming
-# case reading as its most boring one, in text that explicitly told the reader
-# nothing had been observed.
+# out-of-range index — writes "Fatal error: ..." to stderr and dies. It can
+# happen before the app logs a single event, so the stream can contain no TN[
+# at all. Before this pattern existed, such a capture fell through to NO TRACE
+# CAPTURED — the tool's most alarming case reading as its most boring one, in
+# text that explicitly told the reader nothing had been observed.
 #
 # `Assertion failed:` covers Swift's assert and NSAssert; the signal and
 # exception names cover a native crash devicectl reports without any app output
@@ -154,8 +152,8 @@ digest_trace() {
   printf '\n'
 
   # Traps are looked for FIRST, before any question of whether the capture is
-  # empty. A crash is a result — spike variants exist whose expected answer is
-  # a crash — and it is reported whether or not any trace accompanies it.
+  # empty. A crash is a result, and it is reported whether or not any trace
+  # accompanies it.
   local traps
   traps="$(grep -cE "$TRAP_PATTERN" "$CONSOLE" 2>/dev/null)"
   traps="${traps:-0}"
@@ -164,8 +162,7 @@ digest_trace() {
     printf '  ############################################################\n'
     printf '  ##  THE PROCESS CRASHED — %s trap line(s) in this capture\n' "$traps"
     printf '  ############################################################\n'
-    printf '  A trap is an observation, not a missing capture. Swift traps do\n'
-    printf '  not raise NSException, so no TN[fatal] accompanies them.\n\n'
+    printf '  A trap is an observation, not a missing capture.\n\n'
     printf '  First trap, with what surrounded it:\n'
     grep -nE -m1 -B4 -A8 "$TRAP_PATTERN" "$CONSOLE" | sed 's|^|      |'
     printf '\n'
@@ -197,45 +194,26 @@ digest_trace() {
   # No `|| echo 0` here: grep -c already prints 0 when it matches nothing and
   # exits 1, so a fallback would append a second line and make these two-line
   # strings that break every numeric test below.
-  local saves appends fatals
-  saves="$(grep -c 'wrote .* page file(s)' "$CONSOLE" 2>/dev/null)"
+  local appends violations
   appends="$(grep -c 'appended page' "$CONSOLE" 2>/dev/null)"
-  fatals="$(grep -c 'TN\[fatal\]' "$CONSOLE" 2>/dev/null)"
+  violations="$(grep -c 'TN\[violation\]' "$CONSOLE" 2>/dev/null)"
 
-  grep -q 'session ready' "$CONSOLE" && printf '  session ready:      yes\n' \
-                                     || printf '  session ready:      NOT SEEN\n'
-  grep -q 'first touch reached the canvas' "$CONSOLE" \
-    && printf '  first touch:        reached the canvas\n' \
-    || printf '  first touch:        NOT SEEN (no touch was delivered)\n'
-  printf '  saves:              %s\n' "$saves"
   printf '  pages appended:     %s\n' "$appends"
 
-  # "The save trace names only changed pages" is checkable because each save
-  # logs how many page files it wrote out of how many exist. A save that writes
-  # every page on every turn looks different from one that writes one.
-  if [ "$saves" -gt 0 ]; then
-    printf '  page files per save:\n'
-    grep -oE 'wrote [0-9]+ page file\(s\) of [0-9]+' "$CONSOLE" \
-      | sort | uniq -c | sed 's|^|      |'
-  fi
-
-  # The contract puts encoding off the main thread. This reports what the app
-  # observed about itself; it does not decide whether that is acceptable.
-  if grep -q 'serialized drawing snapshot' "$CONSOLE"; then
-    printf '  serialization on main thread:\n'
-    grep -oE 'mainThread=(true|false)' "$CONSOLE" | sort | uniq -c | sed 's|^|      |'
-  fi
-
-  if [ "$fatals" -gt 0 ]; then
-    printf '\n  TN[fatal] PRESENT (%s) — an uncaught NSException:\n' "$fatals"
-    grep -m1 -A3 'TN\[fatal\]' "$CONSOLE" | sed 's|^|      |'
+  if [ "$violations" -gt 0 ]; then
+    printf '  violations:         %s — the first, with what surrounded it:\n' "$violations"
+    grep -nE -m1 -B4 -A2 'TN\[violation\]' "$CONSOLE" | sed 's|^|      |'
+    if [ "$traps" -eq 0 ]; then
+      printf '  No trap line follows. In a Release build that does not mean the\n'
+      printf '  process survived: TNPrecondition'\''s trap prints nothing there.\n'
+    fi
   else
-    printf '  TN[fatal]:          absent (uncaught NSException only)\n'
+    printf '  violations:         none\n'
   fi
 
   # Restated at the end as well as the top. The counts above are a wall of
   # ordinary-looking lines, and a crash read once and scrolled past is a crash
-  # that gets left out of the pull request.
+  # that goes unrecorded.
   if [ "$traps" -gt 0 ]; then
     printf '  trap:               PRESENT (%s line(s)) — see the crash above\n' "$traps"
   else
@@ -244,7 +222,7 @@ digest_trace() {
 
   printf '\n'
   printf '  No verdict was rendered here. Ink is a maintainer'\''s judgment:\n'
-  printf '  what you saw goes in the pull request, in your own words.\n'
+  printf '  record what you saw in your own words.\n'
 }
 
 # Placed after digest_trace is defined so replay needs none of the device state.
@@ -590,7 +568,7 @@ printf '  environment %s\n\n' "$LAUNCH_ENV"
 # to an already-running app yields an empty console and a digest that says
 # nothing happened.
 #
-# TN_TRACE is what turns on CanvasLog's stderr mirror, in every configuration
+# TN_TRACE is what turns on TNLog's stderr mirror, in every configuration
 # including Release — the mirror is gated on this variable and nothing else.
 # The flag takes a JSON dictionary, not KEY=VALUE.
 xcrun devicectl device process launch \

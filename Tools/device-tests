@@ -6,7 +6,7 @@
 #
 # WHY THIS EXISTS. `digest_trace` is the only part of Tools/device that runs
 # without an iPad, and it is the part that speaks last: whatever it prints is
-# what ends up quoted in a pull request. Its failure mode is not an error, it is
+# what ends up quoted as device evidence. Its failure mode is not an error, it is
 # a *sentence*. It once answered a launch-time crash with "NO TRACE CAPTURED",
 # text that tells the reader nothing was observed — the most alarming case
 # wearing the most boring words. Nothing about that is visible from reading the
@@ -68,12 +68,8 @@ must_not() {
 }
 
 # ---------------------------------------------------------------------------
-# A Swift trap during launch, before the app logged anything.
-#
-# This is CanvasFeatureComplete device spike 1 variant B's expected result: it
-# inserts a subview into PKCanvasView, which has crashed UIKit in
-# _delayTouchesForEvent: in this project before. A crash IS the spike's answer,
-# so a digest that calls it silence loses the whole run.
+# A Swift trap during launch, before the app logged anything. A digest that
+# calls this silence loses the whole run.
 begin "swift trap with no trace at all" "$(cat <<'EOF'
 Launching application...
 TuberNotes/PageCanvasController.swift:212: Fatal error: Unexpectedly found nil while unwrapping an Optional value
@@ -87,19 +83,23 @@ must_not "NO TRACE CAPTURED"
 must_not "nothing was observed"
 
 # ---------------------------------------------------------------------------
-# The same crash, after the app got far enough to trace. The counts must still
-# be reported — and the crash must not be buried under them.
+# A TNPrecondition trap in Debug, after the app got far enough to trace: the
+# violation line, then Swift's own. The counts must still be reported — and
+# the crash must not be buried under them.
 begin "swift trap after a real trace" "$(cat <<'EOF'
-TN[lifecycle] app launched
-TN[canvas] session ready; pages=3
-TN[canvas] first touch reached the canvas; types=[2]
-TuberNotes/PageCanvasController.swift:152: Fatal error: page states have drifted from the document index
+Launching application...
+TN[canvas] setPages seq=3 pages=3 current=8F0C2A9E-0000-0000-0000-000000000001
+TN[canvas] window 3 pages
+TN[canvas] canvas built for page 8F0C2A9E-0000-0000-0000-000000000001
+TN[violation] TNCanvas/PagedCanvasController.swift:169 setPages arrived with sequence 2 behind 3
+TNCanvas/PagedCanvasController.swift:169: Fatal error: setPages arrived with sequence 2 behind 3
 EOF
 )"
 must "THE PROCESS CRASHED"
-must "session ready:      yes"
-must "first touch:        reached the canvas"
+must "pages appended:     0"
+must "violations:         1"
 must "trap:               PRESENT"
+must_not "No trap line follows"
 must_not "NO TRACE CAPTURED"
 
 # ---------------------------------------------------------------------------
@@ -113,16 +113,17 @@ must "THE PROCESS CRASHED"
 must_not "NO TRACE CAPTURED"
 
 # ---------------------------------------------------------------------------
-# The app's own uncaught-NSException handler. Distinct from a trap: this one
-# leaves TN[fatal] behind, and both must be reported as what they are.
-begin "uncaught NSException" "$(cat <<'EOF'
-TN[lifecycle] app launched
-TN[fatal] UNCAUGHT NSInvalidArgumentException: -[NSNull length]: unrecognized selector
-  0   CoreFoundation   0x0000000180b3c1f4
+# The same trap in Release. Swift prints nothing for it, so the violation line
+# is all the capture holds, and "trap: none" must not stand alone as though
+# the process lived.
+begin "violation with no trap text" "$(cat <<'EOF'
+TN[canvas] setPages seq=3 pages=3 current=8F0C2A9E-0000-0000-0000-000000000001
+TN[violation] TNCanvas/PagedCanvasController.swift:169 setPages arrived with sequence 2 behind 3
 EOF
 )"
-must "TN[fatal] PRESENT"
-must "trap:               none"
+must "violations:         1"
+must "setPages arrived with sequence 2 behind 3"
+must "No trap line follows"
 must_not "NO TRACE CAPTURED"
 
 # ---------------------------------------------------------------------------
@@ -131,7 +132,7 @@ must_not "NO TRACE CAPTURED"
 begin "empty capture" ""
 must "NO TRACE CAPTURED"
 must_not "THE PROCESS CRASHED"
-must_not "saves:"
+must_not "pages appended:"
 
 # ---------------------------------------------------------------------------
 # A stream with output but no trace — a launch without TN_TRACE, or an attach
@@ -151,22 +152,26 @@ must_not "DEBUG-only"
 # An ordinary good session. Nothing here may read as a crash, and the digest
 # must still refuse to render a verdict.
 begin "clean session" "$(cat <<'EOF'
-TN[lifecycle] app launched
-TN[canvas] session ready; pages=2
-TN[canvas] first touch reached the canvas; types=[2]
-TN[save] serialized drawing snapshot; bytes=8112 duration=0.004 mainThread=false
-TN[save] wrote 1 page file(s) of 2
-TN[save] wrote 1 page file(s) of 2
-TN[canvas] appended page 3
+Launching application...
+TN[canvas] setPages seq=1 pages=2 current=8F0C2A9E-0000-0000-0000-000000000001
+TN[canvas] window 2 pages
+TN[canvas] canvas built for page 8F0C2A9E-0000-0000-0000-000000000001
+TN[canvas] canvas built for page 8F0C2A9E-0000-0000-0000-000000000002
+TN[canvas] current page 8F0C2A9E-0000-0000-0000-000000000002
+TN[canvas] undo gesture reached the runtime
+TN[canvas] end boundary reached seq=1
+TN[canvas] setPages seq=2 pages=3 current=8F0C2A9E-0000-0000-0000-000000000002
+TN[canvas] appended page is current 8F0C2A9E-0000-0000-0000-000000000003
+TN[format] compact removed 0, kept 3
 EOF
 )"
-must "saves:              2"
-must "serialization on main thread:"
-must "mainThread=false"
+must "pages appended:     1"
+must "violations:         none"
 must "trap:               none"
 must "No verdict was rendered here"
 must_not "THE PROCESS CRASHED"
 must_not "NO TRACE CAPTURED"
+must_not "NOT SEEN"
 
 # ---------------------------------------------------------------------------
 printf '\n── result ──\n'

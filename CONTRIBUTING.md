@@ -142,8 +142,8 @@ BLOCKED is not a failure; MISCONFIGURED is. Confusing the two is how someone
 ends up "fixing" a signing config to work around an unplugged cable.
 
 Every check prints a remedy line. Notable ones: Developer Mode status, pairing
-state, DDI availability, whether iPadOS is newer than the installed SDK (that
-Xcode simply cannot install to it), and whether the bundle identifier has
+state, DDI availability, whether iPadOS is a major release past the installed
+SDK (that Xcode cannot install to it), and whether the bundle identifier has
 drifted onto `com.tubernotes.app` — which would overwrite the behavioral
 reference app on the iPad the next time anyone installs.
 
@@ -158,14 +158,17 @@ dance is what gets skipped under pressure.
 
 A plain run builds for that specific iPad, installs, and launches with
 `devicectl --console` and `TN_TRACE=1`, streaming the app's own trace to
-`Artifacts/device/<utc>-<sha>/console.log`. Ctrl-C ends the session and prints
-the build and device identity plus what the app actually reported: whether the
-session came up, whether a touch reached the canvas, how many saves happened and
-**how many page files each one wrote out of how many exist** — which is how
-"the save trace names only changed pages" becomes checkable rather than
-asserted.
+`Artifacts/device/<utc>-<sha>/console.log`. Ctrl-C ends the session and prints:
 
-Re-read any past capture with `Tools/device --digest <console.log>`.
+- the build and device identity: iPad, iPadOS, UDID, SHA, branch, clean or
+  dirty, configuration, launch environment, bundle id, and the console's path;
+- any crash, with the first trap line and what surrounded it;
+- how many `TN[violation]` lines the app wrote, with the first one in context;
+- how many pages were appended (`appended page is current`).
+
+`Tools/device --digest <console.log>` prints the same summary, less the
+identity, for any saved console: a past capture, or one copied out of Xcode
+after running from there.
 
 Two things it will not do. It renders **no verdict about your branch** — the
 last line it prints says so, because ink is a maintainer's judgment and a tool
@@ -183,14 +186,16 @@ If the capture says `NO TRACE CAPTURED`, believe it, and look for a launch that
 did not set `TN_TRACE` or an attach to an already-running process — a summary of
 an empty stream would otherwise read as "nothing went wrong."
 
-A crash is reported as a crash. A Swift trap writes `Fatal error:` and raises no
-NSException, so it prints no `TN[fatal]` and can happen before the app logs
-anything at all; the digest looks for a trap **before** it decides a stream is
-empty, because the alternative is the most alarming outcome wearing the words of
-the most boring one. `Tools/device-tests` holds the digest against a fixture per
-outcome — crash with no trace, crash after a trace, native crash, uncaught
-exception, empty, no-trace, and clean. Run it when you touch the digest; CI does
-not, per the rule above.
+A crash is reported as a crash. A Swift trap writes `Fatal error:` and can
+happen before the app logs anything at all; the digest looks for a trap
+**before** it decides a stream is empty, because the alternative is the most
+alarming outcome wearing the words of the most boring one. In Release a
+`TNPrecondition` trap prints no `Fatal error:`, so the `TN[violation]` line it
+writes first is all that crash leaves, and the digest says so.
+`Tools/device-tests` holds the digest against a fixture per outcome — crash
+with no trace, crash after a trace, native crash, violation with no trap text,
+empty, no-trace, and clean. Run it when you touch the digest; CI does not, per
+the rule above.
 
 ## A build for friends
 
