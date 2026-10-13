@@ -462,12 +462,11 @@ notebook, or any folder above it, is refused with the notebook's name.
 Trash is `Trash/<NotebookID or FolderID>/<original name>` with an
 `origin.json` beside it. Recovery restores the original name, adds a
 suffix only if that name is taken, and falls back to the root if the
-original folder is gone. Duplicate gives the copy a new `NotebookID`,
-keeps every `PageID`, and builds the copy outside the scanned tree before
-moving it in. A folder has a `.folder.json` holding its `FolderID`, its
-colour, and its symbol. Stars live in `Favorites.json` beside `Notebooks/`,
-as identities, so a star follows a rename or a move and comes back with a
-recovery.
+original folder is gone. Duplicate gives the copy a new `NotebookID` and
+keeps every `PageID`. A folder has a `.folder.json` holding its
+`FolderID`, its colour, and its symbol. Stars live in `Favorites.json`
+beside `Notebooks/`, as identities, so a star follows a rename or a move
+and comes back with a recovery.
 
 **A sidecar is committed the way the index is, and before the item it
 describes.** The library's sidecars are `.folder.json`, `Favorites.json`
@@ -497,6 +496,32 @@ identity cannot be read goes under a fresh UUID, and a notebook's entry
 then carries no `NotebookID`: the trash does not invent one, because an
 invented identity is a default for a value the package failed to give
 (decided F2; *Forbidden*).
+
+**Staging is scratch, and an item enters the tree by one exclusive
+rename.** `Staging/` sits beside `Notebooks/` and `Trash/`, outside the
+scanned tree, and a new item is built there whole before anything lists
+it: a folder with its `.folder.json` already committed inside it, a
+notebook as a complete package, a duplicate as the copy carrying its new
+identity. Each is then published into the tree by a single rename that
+refuses an occupied target (`renamex_np` with `RENAME_EXCL`, which fails
+with `EEXIST`) and never replaces one. The rename is the claim on the
+name: a check before the build claims nothing, because a second create
+can take the name across the build's await, so whatever the rename meets
+is refused with `.alreadyExists` and left as it was, never deleted and
+never written into. A rename, a move, a recovery and a duplicate's landing
+are the same kind of rename, and every landing is followed by an fsync of
+the directory it left and the one it entered, Staging's excepted, since
+nothing in Staging is kept. So a listing never meets a half-built item: a
+folder is listed only with its sidecar, which is how the sidecar comes to
+be committed before the folder it describes; a notebook only with its
+index; a process that dies before the publish leaves nothing listed and
+the name free; and one that dies mid-move leaves the item at its old path
+or its new one. What Staging holds is therefore a copy not yet published
+or the leftover of a process that died, and can be removed at any time
+without loss. That invariant is what a sweep of Staging and a migration
+rely on, and it binds them: a migration that builds in Staging keeps the
+original where it stands until the swap commits, because nothing live is
+ever Staging's alone (decided F4, F1; durability-07).
 
 The identity index maps `NotebookID` to path. It is built off the main
 thread and marks notebooks in the trash. If two packages share an
