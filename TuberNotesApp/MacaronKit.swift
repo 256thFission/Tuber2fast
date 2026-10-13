@@ -147,6 +147,9 @@ struct Keycap<Label: View>: View {
     /// removed: the run's order is fixed and a gap in it would be read as a
     /// different bar.
     var isEnabled = true
+    /// What VoiceOver calls a cap whose label is only a symbol. A cap with a
+    /// word on it is called by the word.
+    var name: String?
     var action: () -> Void
     @ViewBuilder var label: () -> Label
 
@@ -191,6 +194,10 @@ struct Keycap<Label: View>: View {
         .opacity(isEnabled ? 1 : 0.4)
         .contentShape(.rect)
         .onTapGesture { if isEnabled { press() } }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(Text(name ?? ""), isEnabled: name != nil)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { if isEnabled { press() } }
         .animation(reduceMotion ? MacaronCurve.reduced : MacaronCurve.settle, value: isHeld)
         .onChange(of: isHeld) { _, held in if held { trampolineIn() } }
     }
@@ -238,6 +245,35 @@ extension Keycap where Label == Color {
             fill: fill, size: size, radius: radius, wall: wall, isHeld: isHeld,
             isEnabled: isEnabled, action: action, label: { Color.clear }
         )
+    }
+}
+
+extension Keycap where Label == KeycapSymbol {
+    /// A cap with only a symbol on it. The name is not optional: a symbol is
+    /// not something VoiceOver can read out.
+    init(
+        _ name: String,
+        systemImage: String,
+        symbolSize: TypeScale = .label,
+        fill: RGBA8,
+        isHeld: Bool = false,
+        isEnabled: Bool = true,
+        action: @escaping () -> Void
+    ) {
+        self.init(
+            fill: fill, isHeld: isHeld, isEnabled: isEnabled, name: name, action: action,
+            label: { KeycapSymbol(systemImage: systemImage, size: symbolSize) }
+        )
+    }
+}
+
+/// The one thing on a cap that has only a symbol on it.
+struct KeycapSymbol: View {
+    let systemImage: String
+    let size: TypeScale
+
+    var body: some View {
+        Image(systemName: systemImage).font(Macaron.body(size))
     }
 }
 
