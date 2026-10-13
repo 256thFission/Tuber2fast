@@ -513,23 +513,33 @@ adopted when the scroll loads it.
 settles every pending revision before it judges what is dirty: it reads
 the page itself, as a load would, with the revision adopted; then, if the
 revision is still parked, it cancels the page's load if one is still in
-flight, holds the page ready, pushes the content to the runtime as any
-load does, and marks it dirty, so the pass that follows writes the
-revision and the runtime's snapshot of the page is the restored one. A
-load that landed during the read adopted the revision itself, and the
-settle leaves that page as the load left it. A page that cannot be read
-keeps its revision parked, and its own load refuses it, as before. The
-read comes before the cancel because the read can fail and the cancel
-cannot be undone: a page whose load was in flight, cancelled first and
-then not read, would stay marked loading with no task behind it, and the
-window restarts only unloaded pages, so it would never load. A page is
-dirty by its counter and nothing else (*No dirty flag*), and a revision
-parked for a page not in custody moves no counter, so until it is
-adopted the notebook reports clean with an undo unsaved. That is what
+flight, holds the page ready, and marks it dirty, so the pass that
+follows writes the revision. A settled page in the window is pushed to
+the runtime as a load pushes it, its composite rendered behind the push,
+and its canvas's retire report frees it as any page's does. A settled
+page outside the window is held ready and retired, unpushed and without
+a composite, as an import's page is: a load would drop its result for a
+page out there, and the window holds a snapshot and a composite only for
+the pages it shows (*An import pushes only the pages the window shows*).
+When that page enters the window it is pushed as any held page entering
+is, with its composite rendered then; until then it is a page outside
+the window like any other, and `prune()` frees it once the pass has
+written it, as it frees any clean page outside the window that was never
+pushed. A load that landed during the read adopted the revision itself,
+and the settle leaves that page as the load left it. A page that cannot
+be read keeps its revision parked, and its own load refuses it, as
+before. The read comes before the cancel because the read can fail and
+the cancel cannot be undone: a page whose load was in flight, cancelled
+first and then not read, would stay marked loading with no task behind
+it, and the window restarts only unloaded pages, so it would never load.
+A page is dirty by its counter and nothing else (*No dirty flag*), and a
+revision parked for a page not in custody moves no counter, so until it
+is adopted the notebook reports clean with an undo unsaved. That is what
 happened: an undo into a page outside the decoded window, then a close or
 a kill before that page's load landed, reported clean and lost the undone
 ink, and a page that left the window before its load landed kept the
-revision parked for good (decided I2; arch-data-02).
+revision parked for good (decided I2, I6; round-three call: evict page
+images outside the window; arch-data-02).
 
 **Undo waits for the stroke.** An undo or redo that arrives while any
 canvas has a stroke in flight is ignored, whichever way it came, the bar
