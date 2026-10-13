@@ -3,8 +3,14 @@
 The rules in force. This file carries no history and keeps nothing for
 reference. Where the code disagrees with this file, the code is wrong.
 
-**Every rule here is written by a human.** No agent authors a rule, and no
-agent's output becomes a rule by having been committed.
+**Every rule here is a human decision, worded by a Fable agent.** Phillip
+decides what a rule says; an agent on the Fable model words it, in a
+`CONTRACT:` commit of its own that cites the decision behind it. A design
+law in `Docs/Design/Macaron.md` is worded the same way. The agent that
+writes the code a rule governs never words that rule, so the code is held
+to the rule and the rule is not bent to fit the code. Committing a rule
+does not put it in force; Phillip's push does, and that push is the
+approval: there are no pull requests (decided R2-01, M6, R2-02).
 
 **Invalid states fail loud.** When this contract says something must not
 happen, the code calls `TNPrecondition` and the app traps. Nothing is
