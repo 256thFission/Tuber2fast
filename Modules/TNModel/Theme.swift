@@ -223,19 +223,20 @@ package struct Theme: Equatable, Sendable {
                 hex("#17A34A"), hex("#8C33C2"), hex("#5A6270"),
             ]
         )),
-        // An old handheld: its screen's lightest green is the ground, its
-        // darkest is the ink, and the shell's grey-green is the chrome. The
+        // An old handheld's screen: its lightest green is the chrome, a
+        // pale wash of it the ground, and its darkest green the ink. The
         // magenta and the purple are the lettering printed around the
         // screen, the only part of the handheld that is not a green or a grey.
         ThemePreset(id: ThemeID(rawValue: "lime"), name: "Lime", theme: Theme(
-            ground: hex("#9BBC0F"),
-            chrome: hex("#C6CBA5"),
+            ground: hex("#E3EBC4"),
+            chrome: hex("#9BBC0F"),
             accent: hex("#B0176B"),
             secondary: hex("#5C2B8A"),
             ink: hex("#0F380F"),
             // The screen's four greens are only three here: the lightest is
-            // the ground and cannot be written with. The red is the power
-            // lamp, and the grey is the lettering on the shell.
+            // the chrome's, and the one below it stands for both on the page.
+            // The red is the power lamp, and the grey is the lettering on the
+            // shell.
             palette: [
                 hex("#0F380F"), hex("#306230"), hex("#8BAC0F"), hex("#B0176B"),
                 hex("#5C2B8A"), hex("#C1272D"), hex("#4B5A67"),

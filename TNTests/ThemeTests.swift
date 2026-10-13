@@ -89,9 +89,11 @@ struct ThemeTests {
         near(enamel.outline(of: enamel.accent), "#9F3C0B", "enamel accent")
     }
 
-    @Test("Lime's purple escapes and its greens take the plain rule")
+    @Test("Lime's lime is the chrome, its purple escapes, and its greens take the plain rule")
     func limeEscape() throws {
         let lime = try preset("lime")
+        #expect(lime.chrome.hex == "#9BBC0FFF")
+        #expect(lime.ground.hex == "#E3EBC4FF")
         // Both greens sit well clear of the ink, so the escape fires on the
         // purple secondary, which is nearly as dark as the ink is.
         #expect(escapes(lime, lime.secondary))
@@ -99,8 +101,10 @@ struct ThemeTests {
         for token in [lime.ground, lime.chrome, lime.accent] {
             #expect(!escapes(lime, token))
         }
-        near(lime.outline(of: lime.ground), "#60850F", "lime ground")
-        near(lime.outline(of: lime.chrome), "#798D66", "lime chrome")
+        // The ground is pale now, so it takes the longer mix.
+        #expect(lime.isPale(lime.ground))
+        near(lime.outline(of: lime.ground), "#6E8960", "lime ground")
+        near(lime.outline(of: lime.chrome), "#60850F", "lime chrome")
     }
 
     @Test("No preset is named or saved under someone else's mark")
