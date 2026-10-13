@@ -783,3 +783,9 @@ Not gaps — properties of the tooling that read as project defects when hit.
   opens with All pages held; Export PDF, share it to Files and open it:
   every page has the typed answer and the ink over the worksheet; Export
   image of this page offers Share image and no Print.
+- **A recent is a report that moved custody (U49, I3 line 16).** The
+  notebook suite proves a report equal to custody is no edit and writes no
+  ink file. The simulator never sees PencilKit report a stroke, so that a
+  drawn stroke still marks its colour used, and that an undo's echo does
+  not, is unproven. Owed: draw, and the colour you drew with shows as a
+  recent; Undo removes the stroke.
