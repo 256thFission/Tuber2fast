@@ -524,8 +524,8 @@ struct NotebookCustodyTests {
         #expect(faults.contains { if case .inkArchiveUndecodable = $0 { true } else { false } })
     }
 
-    @Test("A page that is loading answers nil at once rather than waiting")
-    func thumbnailOfLoadingPageIsNil() async throws {
+    @Test("A page that is loading thumbnails from its files and stays loading")
+    func thumbnailOfLoadingPageReadsItsFiles() async throws {
         let scratch = try Scratch("nb-thumb-loading")
         let store = HeldLoadStore(try await PackageStore.create(root: scratch.packageURL, index: Fixture.index(pages: 1)))
         let notebook = try await Notebook.open(store: store, schedule: fast)
@@ -533,9 +533,9 @@ struct NotebookCustodyTests {
         await store.hold()
         notebook.windowChanged(to: [page])
         if case .loading = notebook.state(of: page)! {} else { Issue.record("should be loading") }
-        #expect(await notebook.thumbnail(of: page) == nil)
-        if case .loading = notebook.state(of: page)! {} else { Issue.record("still loading") }
+        let asked = Task { await notebook.thumbnail(of: page) }
         await store.release()
+        #expect(await asked.value != nil, "a cover asked for mid-load is drawn, never left blank")
         try await waitUntil { notebook.state(of: page)?.content != nil }
         #expect(await notebook.thumbnail(of: page) != nil)
     }

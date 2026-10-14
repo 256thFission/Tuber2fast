@@ -474,17 +474,18 @@ package final class Notebook {
     // MARK: Thumbnails
 
     /// A page rendered small, keyed by its content version. A ready page
-    /// renders from custody. An unloaded page renders from its files, decoded
-    /// in the caller's task and installed nowhere: the state stays
-    /// `.unloaded` and nothing is marked dirty. A pending restore is
+    /// renders from custody. An unloaded or loading page renders from its
+    /// files, decoded in the caller's task and installed nowhere: the state
+    /// does not move and nothing is marked dirty. A loading page has no edits
+    /// yet, so its files are what its version names; answering nil instead
+    /// would leave a library cover blank, because the library asks again only
+    /// when the notebook's modification date moves. A pending restore is
     /// preferred over the ink on disk, because it is the ink the page will
-    /// have. A loading page answers nil at once rather than waiting; the
-    /// caller asks again when the load settles. An unreadable page is nil.
+    /// have. An unreadable page is nil.
     package func thumbnail(of page: PageID) async -> CGImage? {
         guard let record = index.record(of: page) else { return nil }
         let key = ThumbnailKey(page: page, version: contentVersion(of: page))
         if let cached = await renderer.cachedThumbnail(key) { return cached }
-        if case .loading = states[page] { return nil }
         guard let revision = await revision(of: page) else { return nil }
         return await renderer.thumbnail(key, geometry: record.geometry, paper: record.paper, layers: revision.layers, ink: revision.ink)
     }
